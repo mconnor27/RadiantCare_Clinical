@@ -118,4 +118,35 @@ CUSTOM_CSS = """
         -moz-user-select: none !important;
         -ms-user-select: none !important;
     }
+    /* Year range quick select buttons */
+    .year-select-buttons {
+        display: flex;
+        gap: 6px;
+        margin-bottom: 12px;
+    }
+    .year-select-buttons .btn {
+        flex: 1;
+        font-size: 0.85rem;
+        padding: 6px 8px;
+        border: 1px solid #dee2e6;
+        background-color: white;
+        color: #495057;
+        transition: all 0.2s;
+        white-space: nowrap;
+        min-width: 0;
+    }
+    .year-select-buttons .btn:hover {
+        background-color: #3498DB;
+        border-color: #3498DB;
+        color: white;
+    }
+    .year-select-buttons .btn:active {
+        background-color: #2980B9 !important;
+        border-color: #2980B9 !important;
+    }
+    .year-select-buttons .btn.active {
+        background-color: #3498DB !important;
+        border-color: #3498DB !important;
+        color: white !important;
+    }
 """

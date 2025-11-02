@@ -66,21 +66,36 @@ def create_sidebar_layout(task):
 
         html.Hr(),
 
-        # Year Range Slider
+        # Year Range Dropdowns
         html.Div([
             html.Label("Year Range", style={'fontWeight': 'bold', 'marginBottom': '10px'}),
-            dcc.RangeSlider(
-                id='year-range-slider',
-                min=task.min_year,
-                max=task.max_year,
-                value=[task.min_year, task.max_year],
-                marks=None,
-                step=1,
-                tooltip={"placement": "bottom", "always_visible": True},
-                allowCross=True,
-                pushable=0
-            )
-        ], className='filter-section', style={'marginTop': '10px', 'marginBottom': '30px'}),
+            # Quick select buttons
+            html.Div([
+                dbc.Button("All", id="year-all", size="sm", className="active"),
+                dbc.Button("YTD", id="year-current", size="sm"),
+                dbc.Button("YTD & Prior", id="year-current-last", size="sm"),
+            ], className='year-select-buttons'),
+            dbc.Row([
+                dbc.Col([
+                    html.Label("From", style={'fontSize': '0.85em', 'marginBottom': '5px', 'color': '#666'}),
+                    dcc.Dropdown(
+                        id='year-start',
+                        options=[{'label': str(y), 'value': y} for y in range(task.min_year, task.max_year + 1)],
+                        value=task.min_year,
+                        clearable=False
+                    )
+                ], width=6),
+                dbc.Col([
+                    html.Label("To", style={'fontSize': '0.85em', 'marginBottom': '5px', 'color': '#666'}),
+                    dcc.Dropdown(
+                        id='year-end',
+                        options=[{'label': str(y), 'value': y} for y in range(task.min_year, task.max_year + 1)],
+                        value=task.max_year,
+                        clearable=False
+                    )
+                ], width=6)
+            ])
+        ], className='filter-section', style={'marginTop': '10px', 'marginBottom': '20px'}),
 
         html.Hr(),
 
