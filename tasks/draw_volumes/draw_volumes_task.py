@@ -26,6 +26,22 @@ class DrawVolumesTask(BaseTask):
         self.min_year = int(df['AppointmentTime'].dt.year.min())
         self.max_year = int(df['AppointmentTime'].dt.year.max())
 
+    def get_physicians_for_year_range(self, year_range):
+        """
+        Get list of physicians who have data in the specified year range.
+
+        Args:
+            year_range: Tuple of (min_year, max_year)
+
+        Returns:
+            Sorted list of physician names
+        """
+        filtered_df = self.df[
+            (self.df['AppointmentTime'].dt.year >= year_range[0]) &
+            (self.df['AppointmentTime'].dt.year <= year_range[1])
+        ]
+        return sorted(filtered_df['FirstMD'].dropna().unique())
+
     def filter_data(self, selected_phys, selected_acts, year_range):
         """
         Filter dataframe based on user selections.
