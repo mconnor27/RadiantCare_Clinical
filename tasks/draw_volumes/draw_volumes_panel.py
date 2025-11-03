@@ -1,7 +1,7 @@
 """
 Draw Volumes main panel layout and callbacks
 """
-from dash import html, dcc, Input, Output, callback, dash_table
+from dash import html, dcc, Input, Output, State, callback, dash_table
 import dash_bootstrap_components as dbc
 import dash
 
@@ -14,8 +14,6 @@ def create_main_panel_layout():
         Dash component for main panel
     """
     return html.Div([
-        html.H4("Task Completion Analysis", style={'marginBottom': '20px'}),
-
         # Metrics
         dbc.Row([
             dbc.Col([
@@ -53,11 +51,24 @@ def create_main_panel_layout():
         ], style={'marginBottom': '20px'}),
 
         # Chart
-        dcc.Graph(id='main-chart', style={'height': '500px'}),
+        dcc.Graph(id='main-chart', style={
+            'height': '500px',
+            'border': '1px solid #dee2e6',
+            'borderRadius': '4px',
+            'boxShadow': '0 2px 4px rgba(0,0,0,0.1)'
+        }),
 
         # Data Table
         html.Div([
-            html.H5("Summary Table", style={'marginTop': '30px', 'marginBottom': '15px'}),
+            html.Div([
+                html.H5("Summary Table", style={'marginTop': '30px', 'marginBottom': '15px', 'display': 'inline-block'}),
+                html.I(className="fas fa-download", id='export-table', style={
+                    'marginLeft': '15px',
+                    'fontSize': '16px',
+                    'color': 'rgb(124, 42, 131)',
+                    'cursor': 'pointer'
+                })
+            ]),
             dash_table.DataTable(
                 id='data-table',
                 style_table={'overflowX': 'auto'},
@@ -102,8 +113,7 @@ def create_main_panel_layout():
                     }
                 ],
                 sort_action='native',
-                export_format='xlsx',
-                export_headers='display'
+                sort_mode='single'
             )
         ])
     ])
@@ -237,6 +247,75 @@ def register_callbacks(app, task):
         return f"{len(selected)} of {len(task.activity_names)} selected"
 
     @callback(
+        Output('smoothing-section', 'style'),
+        Input('chart-type', 'value')
+    )
+    def update_smoothing_visibility(chart_type):
+        if chart_type == 'line':
+            return {'display': 'block'}
+        else:
+            return {'display': 'none'}
+
+    @callback(
+        Output('historical-stats-controls', 'style'),
+        Input('comparison-mode', 'value'),
+        Input('aggregation-dropdown', 'value')
+    )
+    def update_stats_controls_visibility(comparison_mode, aggregation):
+        if comparison_mode == 'previous_periods' and aggregation == 'Daily':
+            return {'display': 'block'}
+        else:
+            return {'display': 'none'}
+
+    @callback(
+        Output('calendar-aligned-controls', 'style'),
+        Input('comparison-mode', 'value')
+    )
+    def update_calendar_aligned_visibility(comparison_mode):
+        if comparison_mode == 'physician':
+            return {'display': 'block'}
+        else:
+            return {'display': 'none'}
+
+    @callback(
+        Output('show-std-dev', 'options'),
+        Output('show-ci', 'options'),
+        Output('show-std-dev', 'value'),
+        Output('show-ci', 'value'),
+        Input('show-mean', 'value'),
+        Input('show-median', 'value'),
+        State('show-std-dev', 'value'),
+        State('show-ci', 'value')
+    )
+    def update_error_band_state(show_mean, show_median, current_std, current_ci):
+        # Enable error bands only if mean or median is selected
+        mean_or_median_selected = ('mean' in (show_mean or [])) or ('median' in (show_median or []))
+
+        if mean_or_median_selected:
+            # Enable the checkboxes
+            std_options = [{'label': ' Std Dev', 'value': 'std'}]
+            ci_options = [{'label': ' 95% CI', 'value': 'ci'}]
+            # Keep current values
+            return std_options, ci_options, current_std or [], current_ci or []
+        else:
+            # Disable the checkboxes
+            std_options = [{'label': ' Std Dev', 'value': 'std', 'disabled': True}]
+            ci_options = [{'label': ' 95% CI', 'value': 'ci', 'disabled': True}]
+            # Clear the values
+            return std_options, ci_options, [], []
+
+    @callback(
+        Output('smoothing-value', 'children', allow_duplicate=True),
+        Input('smoothing-slider', 'value'),
+        prevent_initial_call=True
+    )
+    def update_smoothing_display(smoothing_value):
+        if smoothing_value == 0:
+            return "Off"
+        else:
+            return f"{smoothing_value}"
+
+    @callback(
         Output('main-chart', 'figure'),
         Output('metric-total-tasks', 'children'),
         Output('metric-date-range', 'children'),
@@ -250,9 +329,16 @@ def register_callbacks(app, task):
         Input('year-end', 'value'),
         Input('aggregation-dropdown', 'value'),
         Input('chart-type', 'value'),
-        Input('comparison-mode', 'value')
+        Input('comparison-mode', 'value'),
+        Input('smoothing-slider', 'value'),
+        Input('show-mean', 'value'),
+        Input('show-std-dev', 'value'),
+        Input('show-median', 'value'),
+        Input('show-ci', 'value'),
+        Input('calendar-aligned', 'value')
     )
-    def update_chart(selected_phys, selected_acts, year_start, year_end, aggregation, chart_type, comparison_mode):
+    def update_chart(selected_phys, selected_acts, year_start, year_end, aggregation, chart_type, comparison_mode, smoothing,
+                     show_mean, show_std_dev, show_median, show_ci, calendar_aligned):
         year_range = [year_start, year_end]
         # Filter data
         filtered_df = task.filter_data(selected_phys, selected_acts, year_range)
@@ -260,9 +346,22 @@ def register_callbacks(app, task):
         # Calculate metrics
         metrics = task.calculate_metrics(filtered_df, selected_phys if selected_phys else task.physicians)
 
+        # Prepare stats options
+        stats_options = {
+            'show_mean': 'mean' in (show_mean or []),
+            'show_std_dev': 'std' in (show_std_dev or []),
+            'show_median': 'median' in (show_median or []),
+            'show_ci': 'ci' in (show_ci or [])
+        }
+
+        # Check if calendar-aligned mode is enabled
+        is_calendar_aligned = 'aligned' in (calendar_aligned or [])
+
         # Create chart
         fig = task.create_chart(filtered_df, aggregation, chart_type, comparison_mode,
-                                selected_phys if selected_phys else task.physicians)
+                                selected_phys if selected_phys else task.physicians, smoothing,
+                                year_range=(year_start, year_end), stats_options=stats_options,
+                                calendar_aligned=is_calendar_aligned)
 
         # Prepare aggregated table data (physicians as rows, periods as columns)
         if filtered_df.empty:
@@ -270,7 +369,7 @@ def register_callbacks(app, task):
             table_columns = []
         else:
             # Aggregate by time period and physician
-            if aggregation == 'Daily':
+            if aggregation == 'Daily' or aggregation == 'Daily-NonCumulative':
                 filtered_df['Period'] = filtered_df['AppointmentTime'].dt.strftime('%Y-%m-%d')
             elif aggregation == 'Weekly':
                 filtered_df['Period'] = filtered_df['AppointmentTime'].dt.to_period('W').dt.start_time.dt.strftime('%Y-%m-%d')

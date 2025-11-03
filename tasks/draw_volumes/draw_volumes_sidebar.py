@@ -105,7 +105,8 @@ def create_sidebar_layout(task):
             dcc.Dropdown(
                 id='aggregation-dropdown',
                 options=[
-                    {'label': 'Daily (Cumulative)', 'value': 'Daily'},
+                    {'label': 'None (Cumulative)', 'value': 'Daily'},
+                    {'label': 'Daily', 'value': 'Daily-NonCumulative'},
                     {'label': 'Weekly', 'value': 'Weekly'},
                     {'label': 'Monthly', 'value': 'Monthly'},
                     {'label': 'Quarterly', 'value': 'Quarterly'},
@@ -129,6 +130,29 @@ def create_sidebar_layout(task):
             )
         ], className='filter-section'),
 
+        # Smoothing (only for line charts)
+        html.Div([
+            html.Div([
+                html.Label("Smoothing", style={'fontWeight': 'bold', 'marginBottom': '10px', 'display': 'inline-block'}),
+                html.Span(id='smoothing-value', style={
+                    'float': 'right',
+                    'fontSize': '0.85em',
+                    'color': '#3498DB',
+                    'fontWeight': '600',
+                    'marginTop': '2px'
+                })
+            ], style={'marginBottom': '10px'}),
+            dcc.Slider(
+                id='smoothing-slider',
+                min=0,
+                max=10,
+                step=0.5,
+                value=0,
+                marks={0: '0', 2.5: '2.5', 5: '5', 7.5: '7.5', 10: '10'},
+                tooltip={"placement": "bottom", "always_visible": False}
+            )
+        ], id='smoothing-section', className='filter-section', style={'display': 'none'}),
+
         html.Hr(),
 
         # Comparison Mode
@@ -138,10 +162,66 @@ def create_sidebar_layout(task):
                 id='comparison-mode',
                 options=[
                     {'label': 'None', 'value': 'none'},
-                    {'label': 'Physician', 'value': 'physician'}
+                    {'label': 'Physician', 'value': 'physician'},
+                    {'label': 'Previous Time Periods', 'value': 'previous_periods'}
                 ],
                 value='none',
                 clearable=False
             )
-        ], className='filter-section')
+        ], className='filter-section'),
+
+        # Calendar-aligned checkbox (only visible in physician comparison mode)
+        html.Div([
+            dbc.Checklist(
+                id='calendar-aligned',
+                options=[{'label': ' Calendar-aligned', 'value': 'aligned'}],
+                value=[],
+                inline=True,
+                switch=False
+            )
+        ], id='calendar-aligned-controls', className='filter-section', style={'display': 'none'}),
+
+        # Historical Statistics Controls (only visible in previous_periods mode)
+        html.Div([
+            dbc.Row([
+                dbc.Col([
+                    dbc.Checklist(
+                        id='show-mean',
+                        options=[{'label': ' Mean', 'value': 'mean'}],
+                        value=[],
+                        inline=True,
+                        switch=False
+                    )
+                ], width=6),
+                dbc.Col([
+                    dbc.Checklist(
+                        id='show-std-dev',
+                        options=[{'label': ' Std Dev', 'value': 'std'}],
+                        value=[],
+                        inline=True,
+                        switch=False
+                    )
+                ], width=6)
+            ], style={'marginBottom': '8px'}),
+            dbc.Row([
+                dbc.Col([
+                    dbc.Checklist(
+                        id='show-median',
+                        options=[{'label': ' Median', 'value': 'median'}],
+                        value=[],
+                        inline=True,
+                        switch=False
+                    )
+                ], width=6),
+                dbc.Col([
+                    dbc.Checklist(
+                        id='show-ci',
+                        options=[{'label': ' 95% CI', 'value': 'ci'}],
+                        value=[],
+                        inline=True,
+                        switch=False
+                    )
+                ], width=6)
+            ])
+        ], id='historical-stats-controls', className='filter-section', style={'display': 'none'})
     ], className='sidebar')
