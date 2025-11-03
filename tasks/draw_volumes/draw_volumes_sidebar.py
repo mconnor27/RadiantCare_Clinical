@@ -181,8 +181,13 @@ def create_sidebar_layout(task):
             )
         ], id='calendar-aligned-controls', className='filter-section', style={'display': 'none'}),
 
-        # Historical Statistics Controls (only visible in previous_periods mode)
+        # Historical Period Type Controls (only visible in previous_periods mode)
         html.Div([
+            html.Div([
+                dbc.Button("Year", id="period-type-year", size="sm", className="active"),
+                dbc.Button("Quarter", id="period-type-quarter", size="sm"),
+                dbc.Button("Month", id="period-type-month", size="sm"),
+            ], className='year-select-buttons', style={'marginBottom': '15px'}),
             dbc.Row([
                 dbc.Col([
                     dbc.Checklist(
