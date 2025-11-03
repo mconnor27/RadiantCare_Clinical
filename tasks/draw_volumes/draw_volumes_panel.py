@@ -278,25 +278,131 @@ def register_callbacks(app, task):
             return {'display': 'none'}
 
     @callback(
+        Output('period-type-year', 'className'),
+        Output('period-type-month', 'className'),
+        Output('period-type-quarter', 'className'),
+        Input('period-type-year', 'n_clicks'),
+        Input('period-type-month', 'n_clicks'),
+        Input('period-type-quarter', 'n_clicks')
+    )
+    def update_period_type_buttons(year_clicks, month_clicks, quarter_clicks):
+        ctx = dash.callback_context
+        if not ctx.triggered:
+            return "active", "", ""
+
+        button_id = ctx.triggered[0]['prop_id'].split('.')[0]
+
+        if button_id == 'period-type-year':
+            return "active", "", ""
+        elif button_id == 'period-type-month':
+            return "", "active", ""
+        elif button_id == 'period-type-quarter':
+            return "", "", "active"
+        return "active", "", ""
+
+    @callback(
+        Output('show-mean', 'value'),
+        Input('chart-type', 'value'),
+        Input('comparison-mode', 'value'),
+        Input('aggregation-dropdown', 'value'),
+        State('show-mean', 'value'),
+        State('show-median', 'value')
+    )
+    def auto_select_mean_for_bar_chart(chart_type, comparison_mode, aggregation, current_mean, current_median):
+        # Auto-select Mean when entering bar chart + previous periods mode
+        if chart_type == 'bar' and comparison_mode == 'previous_periods' and aggregation == 'Daily':
+            # If neither mean nor median is selected, default to mean
+            mean_selected = 'mean' in (current_mean or [])
+            median_selected = 'median' in (current_median or [])
+            if not mean_selected and not median_selected:
+                return ['mean']
+        return dash.no_update
+
+    @callback(
+        Output('show-mean', 'value', allow_duplicate=True),
+        Output('show-median', 'value'),
+        Input('show-mean', 'value'),
+        Input('show-median', 'value'),
+        Input('chart-type', 'value'),
+        Input('comparison-mode', 'value'),
+        Input('aggregation-dropdown', 'value'),
+        State('show-mean', 'value'),
+        State('show-median', 'value'),
+        prevent_initial_call=True
+    )
+    def enforce_single_statistic_selection(mean_val, median_val, chart_type, comparison_mode, aggregation, prev_mean, prev_median):
+        ctx = dash.callback_context
+        if not ctx.triggered:
+            return dash.no_update, dash.no_update
+
+        # Only enforce in bar chart + previous periods mode
+        if chart_type == 'bar' and comparison_mode == 'previous_periods' and aggregation == 'Daily':
+            trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
+
+            mean_selected = 'mean' in (mean_val or [])
+            median_selected = 'median' in (median_val or [])
+
+            # If both are selected, unselect the one that wasn't just clicked
+            if mean_selected and median_selected:
+                if trigger_id == 'show-mean':
+                    return ['mean'], []
+                elif trigger_id == 'show-median':
+                    return [], ['median']
+
+            # If neither is selected, select mean (user tried to unselect the last one)
+            if not mean_selected and not median_selected:
+                prev_mean_selected = 'mean' in (prev_mean or [])
+                if prev_mean_selected:
+                    return ['mean'], []
+                else:
+                    return [], ['median']
+
+        return dash.no_update, dash.no_update
+
+    @callback(
         Output('show-std-dev', 'options'),
         Output('show-ci', 'options'),
         Output('show-std-dev', 'value'),
         Output('show-ci', 'value'),
         Input('show-mean', 'value'),
         Input('show-median', 'value'),
-        State('show-std-dev', 'value'),
-        State('show-ci', 'value')
+        Input('show-std-dev', 'value'),
+        Input('show-ci', 'value'),
+        Input('chart-type', 'value'),
+        Input('comparison-mode', 'value'),
+        Input('aggregation-dropdown', 'value')
     )
-    def update_error_band_state(show_mean, show_median, current_std, current_ci):
+    def update_error_band_state(show_mean, show_median, std_val, ci_val, chart_type, comparison_mode, aggregation):
+        ctx = dash.callback_context
+
         # Enable error bands only if mean or median is selected
         mean_or_median_selected = ('mean' in (show_mean or [])) or ('median' in (show_median or []))
+
+        # In bar chart + previous periods mode, enforce single error bar selection
+        is_bar_comparison = (chart_type == 'bar' and comparison_mode == 'previous_periods' and aggregation == 'Daily')
 
         if mean_or_median_selected:
             # Enable the checkboxes
             std_options = [{'label': ' Std Dev', 'value': 'std'}]
             ci_options = [{'label': ' 95% CI', 'value': 'ci'}]
-            # Keep current values
-            return std_options, ci_options, current_std or [], current_ci or []
+
+            current_std = std_val or []
+            current_ci = ci_val or []
+
+            # In bar mode, enforce only one error bar type
+            if is_bar_comparison and ctx.triggered:
+                trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
+                std_selected = 'std' in current_std
+                ci_selected = 'ci' in current_ci
+
+                # If both are selected, unselect the one that wasn't just clicked
+                if std_selected and ci_selected:
+                    if trigger_id == 'show-std-dev':
+                        return std_options, ci_options, ['std'], []
+                    elif trigger_id == 'show-ci':
+                        return std_options, ci_options, [], ['ci']
+
+            return std_options, ci_options, current_std, current_ci
         else:
             # Disable the checkboxes
             std_options = [{'label': ' Std Dev', 'value': 'std', 'disabled': True}]
@@ -335,10 +441,13 @@ def register_callbacks(app, task):
         Input('show-std-dev', 'value'),
         Input('show-median', 'value'),
         Input('show-ci', 'value'),
-        Input('calendar-aligned', 'value')
+        Input('calendar-aligned', 'value'),
+        Input('period-type-year', 'className'),
+        Input('period-type-month', 'className'),
+        Input('period-type-quarter', 'className')
     )
     def update_chart(selected_phys, selected_acts, year_start, year_end, aggregation, chart_type, comparison_mode, smoothing,
-                     show_mean, show_std_dev, show_median, show_ci, calendar_aligned):
+                     show_mean, show_std_dev, show_median, show_ci, calendar_aligned, year_class, month_class, quarter_class):
         year_range = [year_start, year_end]
         # Filter data
         filtered_df = task.filter_data(selected_phys, selected_acts, year_range)
@@ -357,11 +466,18 @@ def register_callbacks(app, task):
         # Check if calendar-aligned mode is enabled
         is_calendar_aligned = 'aligned' in (calendar_aligned or [])
 
+        # Determine period type for previous_periods mode
+        period_type = 'year'  # default
+        if 'active' in (month_class or ''):
+            period_type = 'month'
+        elif 'active' in (quarter_class or ''):
+            period_type = 'quarter'
+
         # Create chart
         fig = task.create_chart(filtered_df, aggregation, chart_type, comparison_mode,
                                 selected_phys if selected_phys else task.physicians, smoothing,
                                 year_range=(year_start, year_end), stats_options=stats_options,
-                                calendar_aligned=is_calendar_aligned)
+                                calendar_aligned=is_calendar_aligned, period_type=period_type)
 
         # Prepare aggregated table data (physicians as rows, periods as columns)
         if filtered_df.empty:
