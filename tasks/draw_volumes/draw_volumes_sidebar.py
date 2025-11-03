@@ -5,16 +5,44 @@ from dash import html, dcc
 import dash_bootstrap_components as dbc
 
 
-def create_sidebar_layout(task):
+def create_sidebar_layout(task, state=None):
     """
     Create sidebar layout for Draw Volumes task.
 
     Args:
         task: DrawVolumesTask instance
+        state: Optional dict with persisted state values (from sidebar-state-store)
 
     Returns:
         Dash component for sidebar
     """
+    # Use persisted state if available, otherwise use defaults
+    if state is None:
+        state = {}
+    
+    # Get values from state or defaults
+    physician_value = state.get('physicians') if state.get('physicians') is not None else task.physicians
+    # Activity names always reset (use task defaults)
+    activity_value = task.activity_names
+    year_start_value = state.get('year_start') if state.get('year_start') is not None else task.min_year
+    year_end_value = state.get('year_end') if state.get('year_end') is not None else task.max_year
+    aggregation_value = state.get('aggregation') if state.get('aggregation') is not None else 'Daily'
+    chart_type_value = state.get('chart_type') if state.get('chart_type') is not None else 'line'
+    smoothing_value = state.get('smoothing') if state.get('smoothing') is not None else 0
+    comparison_mode_value = state.get('comparison_mode') if state.get('comparison_mode') is not None else 'none'
+    calendar_aligned_value = state.get('calendar_aligned') if state.get('calendar_aligned') is not None else []
+    period_type_value = state.get('period_type') if state.get('period_type') is not None else 'year'
+    show_mean_value = state.get('show_mean') if state.get('show_mean') is not None else []
+    show_std_dev_value = state.get('show_std_dev') if state.get('show_std_dev') is not None else []
+    show_median_value = state.get('show_median') if state.get('show_median') is not None else []
+    show_ci_value = state.get('show_ci') if state.get('show_ci') is not None else []
+    
+    # Ensure physician_value contains only physicians that exist in current task
+    physician_value = [p for p in physician_value if p in task.physicians] if physician_value else task.physicians
+    # If all physicians were filtered out, use all available
+    if not physician_value:
+        physician_value = task.physicians
+    
     return html.Div([
         html.H5("Filters & Options", style={'marginBottom': '20px', 'marginTop': '20px'}),
 
@@ -33,7 +61,7 @@ def create_sidebar_layout(task):
                         dbc.Checklist(
                             id="physician-checklist",
                             options=[{"label": p, "value": p} for p in task.physicians],
-                            value=task.physicians,
+                            value=physician_value,
                             className="purple-checkbox"
                         )
                     ])
@@ -81,7 +109,7 @@ def create_sidebar_layout(task):
                     dcc.Dropdown(
                         id='year-start',
                         options=[{'label': str(y), 'value': y} for y in range(task.min_year, task.max_year + 1)],
-                        value=task.min_year,
+                        value=year_start_value,
                         clearable=False
                     )
                 ], width=6),
@@ -90,7 +118,7 @@ def create_sidebar_layout(task):
                     dcc.Dropdown(
                         id='year-end',
                         options=[{'label': str(y), 'value': y} for y in range(task.min_year, task.max_year + 1)],
-                        value=task.max_year,
+                        value=year_end_value,
                         clearable=False
                     )
                 ], width=6)
@@ -112,7 +140,7 @@ def create_sidebar_layout(task):
                     {'label': 'Quarterly', 'value': 'Quarterly'},
                     {'label': 'Yearly', 'value': 'Yearly'}
                 ],
-                value='Daily',
+                value=aggregation_value,
                 clearable=False
             )
         ], className='filter-section'),
@@ -126,7 +154,7 @@ def create_sidebar_layout(task):
                     {'label': 'Line Chart', 'value': 'line'},
                     {'label': 'Bar Chart', 'value': 'bar'}
                 ],
-                value='line'
+                value=chart_type_value
             )
         ], className='filter-section'),
 
@@ -147,7 +175,7 @@ def create_sidebar_layout(task):
                 min=0,
                 max=10,
                 step=0.5,
-                value=0,
+                value=smoothing_value,
                 marks={0: '0', 2.5: '2.5', 5: '5', 7.5: '7.5', 10: '10'},
                 tooltip={"placement": "bottom", "always_visible": False}
             )
@@ -165,7 +193,7 @@ def create_sidebar_layout(task):
                     {'label': 'Physician', 'value': 'physician'},
                     {'label': 'Previous Time Periods', 'value': 'previous_periods'}
                 ],
-                value='none',
+                value=comparison_mode_value,
                 clearable=False
             )
         ], className='filter-section'),
@@ -175,7 +203,7 @@ def create_sidebar_layout(task):
             dbc.Checklist(
                 id='calendar-aligned',
                 options=[{'label': ' Calendar-aligned', 'value': 'aligned'}],
-                value=[],
+                value=calendar_aligned_value,
                 inline=True,
                 switch=False
             )
@@ -184,16 +212,16 @@ def create_sidebar_layout(task):
         # Historical Period Type Controls (only visible in previous_periods mode)
         html.Div([
             html.Div([
-                dbc.Button("Year", id="period-type-year", size="sm", className="active"),
-                dbc.Button("Quarter", id="period-type-quarter", size="sm"),
-                dbc.Button("Month", id="period-type-month", size="sm"),
+                dbc.Button("Year", id="period-type-year", size="sm", className="active" if period_type_value == 'year' else ""),
+                dbc.Button("Quarter", id="period-type-quarter", size="sm", className="active" if period_type_value == 'quarter' else ""),
+                dbc.Button("Month", id="period-type-month", size="sm", className="active" if period_type_value == 'month' else ""),
             ], className='year-select-buttons', style={'marginBottom': '15px'}),
             dbc.Row([
                 dbc.Col([
                     dbc.Checklist(
                         id='show-mean',
                         options=[{'label': ' Mean', 'value': 'mean'}],
-                        value=[],
+                        value=show_mean_value,
                         inline=True,
                         switch=False
                     )
@@ -202,7 +230,7 @@ def create_sidebar_layout(task):
                     dbc.Checklist(
                         id='show-std-dev',
                         options=[{'label': ' Std Dev', 'value': 'std'}],
-                        value=[],
+                        value=show_std_dev_value,
                         inline=True,
                         switch=False
                     )
@@ -213,7 +241,7 @@ def create_sidebar_layout(task):
                     dbc.Checklist(
                         id='show-median',
                         options=[{'label': ' Median', 'value': 'median'}],
-                        value=[],
+                        value=show_median_value,
                         inline=True,
                         switch=False
                     )
@@ -222,7 +250,7 @@ def create_sidebar_layout(task):
                     dbc.Checklist(
                         id='show-ci',
                         options=[{'label': ' 95% CI', 'value': 'ci'}],
-                        value=[],
+                        value=show_ci_value,
                         inline=True,
                         switch=False
                     )

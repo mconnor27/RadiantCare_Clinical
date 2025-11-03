@@ -1513,10 +1513,10 @@ class DrawVolumesTask(BaseTask):
 
         return fig
 
-    def get_sidebar_layout(self):
+    def get_sidebar_layout(self, state=None):
         """Implemented in draw_volumes_sidebar.py"""
         from tasks.draw_volumes.draw_volumes_sidebar import create_sidebar_layout
-        return create_sidebar_layout(self)
+        return create_sidebar_layout(self, state=state)
 
     def get_main_panel_layout(self):
         """Implemented in draw_volumes_panel.py"""
