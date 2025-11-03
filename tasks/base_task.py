@@ -24,9 +24,12 @@ class BaseTask(ABC):
         self.df = df
 
     @abstractmethod
-    def get_sidebar_layout(self):
+    def get_sidebar_layout(self, state=None):
         """
         Get the sidebar layout for this task.
+
+        Args:
+            state: Optional dict with persisted state values
 
         Returns:
             Dash component(s) for the sidebar

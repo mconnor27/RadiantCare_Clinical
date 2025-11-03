@@ -128,6 +128,10 @@ def register_callbacks(app, task):
         task: DrawVolumesTask instance
     """
 
+    # Store task reference globally so callbacks can access whichever task is currently active
+    # This will be updated by the render_content callback
+    app._current_task = task
+
     @callback(
         Output('year-start', 'value'),
         Output('year-end', 'value'),
@@ -142,6 +146,7 @@ def register_callbacks(app, task):
         prevent_initial_call=True
     )
     def update_year_range_buttons(all_clicks, current_clicks, current_last_clicks, year_start, year_end):
+        current_task = app._current_task
         ctx = dash.callback_context
         button_id = ctx.triggered[0]['prop_id'].split('.')[0]
 
@@ -152,20 +157,20 @@ def register_callbacks(app, task):
 
         if button_id == 'year-all':
             all_class = "active"
-            return task.min_year, task.max_year, all_class, current_class, current_last_class
+            return current_task.min_year, current_task.max_year, all_class, current_class, current_last_class
         elif button_id == 'year-current':
             current_class = "active"
-            return task.max_year, task.max_year, all_class, current_class, current_last_class
+            return current_task.max_year, current_task.max_year, all_class, current_class, current_last_class
         elif button_id == 'year-current-last':
             current_last_class = "active"
-            return max(task.min_year, task.max_year - 1), task.max_year, all_class, current_class, current_last_class
+            return max(current_task.min_year, current_task.max_year - 1), current_task.max_year, all_class, current_class, current_last_class
         elif button_id in ['year-start', 'year-end']:
             # User manually changed dropdown - check if it matches a preset
-            if year_start == task.min_year and year_end == task.max_year:
+            if year_start == current_task.min_year and year_end == current_task.max_year:
                 all_class = "active"
-            elif year_start == task.max_year and year_end == task.max_year:
+            elif year_start == current_task.max_year and year_end == current_task.max_year:
                 current_class = "active"
-            elif year_start == max(task.min_year, task.max_year - 1) and year_end == task.max_year:
+            elif year_start == max(current_task.min_year, current_task.max_year - 1) and year_end == current_task.max_year:
                 current_last_class = "active"
             # Don't change the dropdown values, just update button states
             return dash.no_update, dash.no_update, all_class, current_class, current_last_class
@@ -182,11 +187,12 @@ def register_callbacks(app, task):
         prevent_initial_call=False
     )
     def update_physicians(year_start, year_end, select_all, clear_all):
+        current_task = app._current_task
         ctx = dash.callback_context
 
         # Get physicians for the current year range
         year_range = [year_start, year_end]
-        available_physicians = task.get_physicians_for_year_range(year_range)
+        available_physicians = current_task.get_physicians_for_year_range(year_range)
         options = [{"label": p, "value": p} for p in available_physicians]
 
         if not ctx.triggered or ctx.triggered[0]['prop_id'] == '.':
@@ -217,11 +223,12 @@ def register_callbacks(app, task):
         prevent_initial_call=True
     )
     def update_activities(select_all, clear_all):
+        current_task = app._current_task
         ctx = dash.callback_context
         button_id = ctx.triggered[0]['prop_id'].split('.')[0]
 
         if button_id == 'select-all-act':
-            return task.activity_names
+            return current_task.activity_names
         elif button_id == 'clear-all-act':
             return []
         return dash.no_update
@@ -242,9 +249,10 @@ def register_callbacks(app, task):
         Input('activity-checklist', 'value')
     )
     def update_act_title(selected):
+        current_task = app._current_task
         if selected is None:
-            selected = task.activity_names
-        return f"{len(selected)} of {len(task.activity_names)} selected"
+            selected = current_task.activity_names
+        return f"{len(selected)} of {len(current_task.activity_names)} selected"
 
     @callback(
         Output('smoothing-section', 'style'),
@@ -448,12 +456,13 @@ def register_callbacks(app, task):
     )
     def update_chart(selected_phys, selected_acts, year_start, year_end, aggregation, chart_type, comparison_mode, smoothing,
                      show_mean, show_std_dev, show_median, show_ci, calendar_aligned, year_class, month_class, quarter_class):
+        current_task = app._current_task
         year_range = [year_start, year_end]
         # Filter data
-        filtered_df = task.filter_data(selected_phys, selected_acts, year_range)
+        filtered_df = current_task.filter_data(selected_phys, selected_acts, year_range)
 
         # Calculate metrics
-        metrics = task.calculate_metrics(filtered_df, selected_phys if selected_phys else task.physicians)
+        metrics = current_task.calculate_metrics(filtered_df, selected_phys if selected_phys else current_task.physicians)
 
         # Prepare stats options
         stats_options = {
@@ -474,8 +483,8 @@ def register_callbacks(app, task):
             period_type = 'quarter'
 
         # Create chart
-        fig = task.create_chart(filtered_df, aggregation, chart_type, comparison_mode,
-                                selected_phys if selected_phys else task.physicians, smoothing,
+        fig = current_task.create_chart(filtered_df, aggregation, chart_type, comparison_mode,
+                                selected_phys if selected_phys else current_task.physicians, smoothing,
                                 year_range=(year_start, year_end), stats_options=stats_options,
                                 calendar_aligned=is_calendar_aligned, period_type=period_type)
 
@@ -484,16 +493,27 @@ def register_callbacks(app, task):
             table_data = []
             table_columns = []
         else:
+            # Determine aggregation type for table
+            # If in "Previous Time Periods" comparison mode, use the selected period type
+            table_aggregation = aggregation
+            if comparison_mode == 'previous_periods' and 'active' in (year_class or month_class or quarter_class):
+                if 'active' in (month_class or ''):
+                    table_aggregation = 'Monthly'
+                elif 'active' in (quarter_class or ''):
+                    table_aggregation = 'Quarterly'
+                elif 'active' in (year_class or ''):
+                    table_aggregation = 'Yearly'
+
             # Aggregate by time period and physician
-            if aggregation == 'Daily' or aggregation == 'Daily-NonCumulative':
+            if table_aggregation == 'Daily' or table_aggregation == 'Daily-NonCumulative':
                 filtered_df['Period'] = filtered_df['AppointmentTime'].dt.strftime('%Y-%m-%d')
-            elif aggregation == 'Weekly':
+            elif table_aggregation == 'Weekly':
                 filtered_df['Period'] = filtered_df['AppointmentTime'].dt.to_period('W').dt.start_time.dt.strftime('%Y-%m-%d')
-            elif aggregation == 'Monthly':
+            elif table_aggregation == 'Monthly':
                 filtered_df['Period'] = filtered_df['AppointmentTime'].dt.strftime('%Y-%m')
-            elif aggregation == 'Quarterly':
+            elif table_aggregation == 'Quarterly':
                 filtered_df['Period'] = filtered_df['AppointmentTime'].dt.to_period('Q').astype(str)
-            elif aggregation == 'Yearly':
+            elif table_aggregation == 'Yearly':
                 filtered_df['Period'] = filtered_df['AppointmentTime'].dt.year.astype(str)
 
             # Group by period and physician (aggregate all selected activities)

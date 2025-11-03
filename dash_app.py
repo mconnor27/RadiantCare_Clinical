@@ -3,12 +3,13 @@ Radiant Care Clinical Dashboard - Main Application
 """
 import dash
 import dash_bootstrap_components as dbc
-from dash import html, Input, Output
+from dash import html, Input, Output, State, dcc
 
 from config.settings import APP_TITLE, get_data_directory
 from data.loader import find_task_file, load_data
 from components.header import create_header
 from tasks.draw_volumes.draw_volumes_task import DrawVolumesTask
+from tasks.review_plan.review_plan_task import ReviewPlanTask
 from utils.styles import CUSTOM_CSS
 
 # Initialize Dash app with Bootstrap theme
@@ -50,11 +51,41 @@ if task_file is None:
 
 df = load_data(task_file)
 
-# Initialize Draw Volumes task
+# Load review data
+from pathlib import Path
+review_file = Path(data_dir) / "Department Schedule No Grouping All_review.csv"
+if review_file.exists():
+    review_df = load_data(str(review_file))
+else:
+    print(f"Warning: Review data file not found at {review_file}")
+    review_df = df  # Fallback to main data
+
+# Initialize tasks
 draw_volumes_task = DrawVolumesTask(df)
+review_plan_task = ReviewPlanTask(review_df)
 
 # App layout
 app.layout = dbc.Container([
+    # Store component to track active task
+    dcc.Store(id='active-task-store', data='draw-volumes'),
+    # Store component to persist sidebar state across task switches
+    dcc.Store(id='sidebar-state-store', data={
+        'physicians': None,
+        'activity_names': None,  # Will reset on task switch
+        'year_start': None,
+        'year_end': None,
+        'aggregation': None,
+        'chart_type': None,
+        'smoothing': None,
+        'comparison_mode': None,
+        'calendar_aligned': None,
+        'period_type': None,
+        'show_mean': None,
+        'show_std_dev': None,
+        'show_median': None,
+        'show_ci': None,
+    }),
+
     # Header
     dbc.Row([
         dbc.Col([
@@ -92,7 +123,7 @@ app.layout = dbc.Container([
     dbc.Row([
         # Sidebar
         dbc.Col([
-            draw_volumes_task.get_sidebar_layout()
+            html.Div(id="sidebar-content")
         ], width=2),
 
         # Main panel content
@@ -102,23 +133,131 @@ app.layout = dbc.Container([
     ])
 ], fluid=True, style={'backgroundColor': '#FFFFFF'})
 
-# Register callbacks
+# Note: We only register callbacks once. Both tasks share the same UI components,
+# and the correct task is used based on which sidebar/panel is currently rendered.
+# No need to register duplicate callbacks.
 draw_volumes_task.register_callbacks(app)
 
-# Tab switching callback
+# Store active task when subtabs are clicked
 @app.callback(
-    Output("tab-content", "children"),
-    Input("main-tabs", "active_tab")
+    Output('active-task-store', 'data'),
+    [Input("subtab-draw-volumes", "n_clicks"),
+     Input("subtab-review-plan", "n_clicks")],
+    [State('active-task-store', 'data')]
 )
-def render_tab_content(active_tab):
-    """Render content based on active tab"""
+def update_active_task(draw_clicks, review_clicks, current_task):
+    """Update which task is active in the store"""
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return 'draw-volumes'
+
+    button_id = ctx.triggered[0]["prop_id"].split(".")[0]
+
+    if button_id == "subtab-draw-volumes":
+        return 'draw-volumes'
+    elif button_id == "subtab-review-plan":
+        return 'review-plan'
+
+    return current_task
+
+# Update sidebar state store when sidebar values change
+@app.callback(
+    Output('sidebar-state-store', 'data'),
+    [Input('physician-checklist', 'value'),
+     Input('year-start', 'value'),
+     Input('year-end', 'value'),
+     Input('aggregation-dropdown', 'value'),
+     Input('chart-type', 'value'),
+     Input('smoothing-slider', 'value'),
+     Input('comparison-mode', 'value'),
+     Input('calendar-aligned', 'value'),
+     Input('period-type-year', 'n_clicks'),
+     Input('period-type-quarter', 'n_clicks'),
+     Input('period-type-month', 'n_clicks'),
+     Input('show-mean', 'value'),
+     Input('show-std-dev', 'value'),
+     Input('show-median', 'value'),
+     Input('show-ci', 'value')],
+    [State('sidebar-state-store', 'data')],
+    prevent_initial_call=True
+)
+def update_sidebar_state(physicians, year_start, year_end, aggregation, chart_type, smoothing,
+                         comparison_mode, calendar_aligned, period_year_clicks, period_quarter_clicks,
+                         period_month_clicks, show_mean, show_std_dev, show_median, show_ci, current_state):
+    """Update sidebar state store when any sidebar component changes"""
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return current_state or {}
+    
+    # Get current state or initialize
+    new_state = current_state.copy() if current_state else {}
+    
+    # Update values for each changed component
+    triggered_prop = ctx.triggered[0]["prop_id"]
+    
+    if 'physician-checklist' in triggered_prop:
+        new_state['physicians'] = physicians
+    if 'year-start' in triggered_prop:
+        new_state['year_start'] = year_start
+    if 'year-end' in triggered_prop:
+        new_state['year_end'] = year_end
+    if 'aggregation-dropdown' in triggered_prop:
+        new_state['aggregation'] = aggregation
+    if 'chart-type' in triggered_prop:
+        new_state['chart_type'] = chart_type
+    if 'smoothing-slider' in triggered_prop:
+        new_state['smoothing'] = smoothing
+    if 'comparison-mode' in triggered_prop:
+        new_state['comparison_mode'] = comparison_mode
+    if 'calendar-aligned' in triggered_prop:
+        new_state['calendar_aligned'] = calendar_aligned
+    if 'period-type' in triggered_prop:
+        # Determine which period type button was clicked
+        if 'period-type-year' in triggered_prop:
+            new_state['period_type'] = 'year'
+        elif 'period-type-quarter' in triggered_prop:
+            new_state['period_type'] = 'quarter'
+        elif 'period-type-month' in triggered_prop:
+            new_state['period_type'] = 'month'
+    if 'show-mean' in triggered_prop:
+        new_state['show_mean'] = show_mean
+    if 'show-std-dev' in triggered_prop:
+        new_state['show_std_dev'] = show_std_dev
+    if 'show-median' in triggered_prop:
+        new_state['show_median'] = show_median
+    if 'show-ci' in triggered_prop:
+        new_state['show_ci'] = show_ci
+    
+    return new_state
+
+# Tab and subtab content callbacks
+@app.callback(
+    [Output("tab-content", "children"),
+     Output("sidebar-content", "children")],
+    [Input("main-tabs", "active_tab"),
+     Input('active-task-store', 'data')],
+    [State('sidebar-state-store', 'data')]
+)
+def render_content(active_tab, active_task_id, sidebar_state):
+    """Render content and sidebar based on active tab and subtab"""
+
     if active_tab == "tasks":
-        return html.Div([
+        # Get the active task and update the current task reference for callbacks
+        if active_task_id == "review-plan":
+            task = review_plan_task
+        else:
+            task = draw_volumes_task
+
+        # Update the current task that callbacks will use
+        app._current_task = task
+
+        content = html.Div([
             # Subtabs for Tasks
             html.Div([
                 dbc.Nav(
                     [
-                        dbc.NavItem(dbc.NavLink("Draw Volumes", id="subtab-draw-volumes", active=True, href="#")),
+                        dbc.NavItem(dbc.NavLink("Draw Volumes", id="subtab-draw-volumes", active=(active_task_id == "draw-volumes"), href="#")),
+                        dbc.NavItem(dbc.NavLink("Review Plan", id="subtab-review-plan", active=(active_task_id == "review-plan"), href="#")),
                     ],
                     pills=True,
                     className="nav-pills"
@@ -127,16 +266,29 @@ def render_tab_content(active_tab):
 
             # Content area
             html.Div([
-                draw_volumes_task.get_main_panel_layout()
+                task.get_main_panel_layout()
             ], className="tab-content-area")
         ])
 
+        # Use persisted state but reset activity_names (will be set to task defaults in sidebar)
+        # Make a copy of state to avoid mutating the store
+        sidebar_state_copy = sidebar_state.copy() if sidebar_state else {}
+        sidebar_state_copy['activity_names'] = None  # Force reset to task defaults
+        
+        sidebar = task.get_sidebar_layout(state=sidebar_state_copy)
+
+        return content, sidebar
+
     # Placeholder for other tabs
-    return html.Div([
+    content = html.Div([
         html.Div([
             html.H4("Coming Soon", style={'textAlign': 'center', 'marginTop': '50px', 'color': '#6c757d'})
         ], className="tab-content-area")
     ])
+
+    sidebar = html.Div()
+
+    return content, sidebar
 
 if __name__ == '__main__':
     app.run(debug=True, port=8050)
