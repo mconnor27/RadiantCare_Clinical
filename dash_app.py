@@ -11,6 +11,7 @@ from components.header import create_header
 from tasks.draw_volumes.draw_volumes_task import DrawVolumesTask
 from tasks.review_plan.review_plan_task import ReviewPlanTask
 from tasks.contour_review.contour_review_task import ContourReviewTask
+from tasks.simulations.simulations_task import SimulationsTask
 from utils.styles import CUSTOM_CSS
 
 # Initialize Dash app with Bootstrap theme
@@ -69,13 +70,22 @@ else:
     print(f"Warning: Contour data file not found at {contour_file}")
     contour_df = df  # Fallback to main data
 
+# Load simulations data
+sim_file = Path(data_dir) / "Department Schedule No Grouping All_sim.csv"
+if sim_file.exists():
+    sim_df = load_data(str(sim_file))
+else:
+    print(f"Warning: Simulations data file not found at {sim_file}")
+    sim_df = df  # Fallback to main data
+
 # Initialize tasks
 draw_volumes_task = DrawVolumesTask(df)
 review_plan_task = ReviewPlanTask(review_df)
 contour_review_task = ContourReviewTask(contour_df)
+simulations_task = SimulationsTask(sim_df)
 
-# App layout
-app.layout = dbc.Container([
+# Define the main layout
+_layout = dbc.Container([
     # Store component to track active task
     dcc.Store(id='active-task-store', data='draw-volumes'),
     # Store component to persist sidebar state across task switches
@@ -114,7 +124,7 @@ app.layout = dbc.Container([
                 children=[
                     dbc.Tab(label="Tasks", tab_id="tasks"),
                     dbc.Tab(label="Clinic Visits", tab_id="clinic_visits", disabled=True),
-                    dbc.Tab(label="Simulations", tab_id="simulations", disabled=True),
+                    dbc.Tab(label="Simulations", tab_id="simulations"),
                     dbc.Tab(label="Billing", tab_id="billing", disabled=True),
                     dbc.Tab(label="Treatment", tab_id="treatment", disabled=True),
                 ]
@@ -131,22 +141,35 @@ app.layout = dbc.Container([
 
     # Main content with sidebar and panel
     dbc.Row([
-        # Sidebar
+        # Sidebar (only visible for Tasks tab)
         dbc.Col([
             html.Div(id="sidebar-content")
-        ], width=2),
+        ], width=2, id="sidebar-column"),
 
         # Main panel content
         dbc.Col([
             html.Div(id="tab-content")
-        ], width=9, style={'padding': '0'})
-    ])
+        ], width=9, id="content-column", style={'padding': '0'})
+    ]),
+
+    # Hidden div containing all simulations components for callback registration
+    # This prevents JavaScript errors by ensuring all components exist in the DOM
+    html.Div([
+        simulations_task.get_sidebar_layout(),
+        simulations_task.get_main_panel_layout()
+    ], style={'display': 'none'}, id='simulations-hidden-components')
 ], fluid=True, style={'backgroundColor': '#FFFFFF'})
+
+# Set the actual app layout
+app.layout = _layout
 
 # Note: We only register callbacks once. Both tasks share the same UI components,
 # and the correct task is used based on which sidebar/panel is currently rendered.
 # No need to register duplicate callbacks.
 draw_volumes_task.register_callbacks(app)
+
+# Register simulations callbacks - they won't error because validation_layout includes all components
+simulations_task.register_callbacks(app)
 
 # Store active task when subtabs are clicked
 @app.callback(
@@ -246,7 +269,9 @@ def update_sidebar_state(physicians, year_start, year_end, aggregation, chart_ty
 # Tab and subtab content callbacks
 @app.callback(
     [Output("tab-content", "children"),
-     Output("sidebar-content", "children")],
+     Output("sidebar-content", "children"),
+     Output("sidebar-column", "width"),
+     Output("content-column", "width")],
     [Input("main-tabs", "active_tab"),
      Input('active-task-store', 'data')],
     [State('sidebar-state-store', 'data')]
@@ -290,10 +315,20 @@ def render_content(active_tab, active_task_id, sidebar_state):
         # Make a copy of state to avoid mutating the store
         sidebar_state_copy = sidebar_state.copy() if sidebar_state else {}
         sidebar_state_copy['activity_names'] = None  # Force reset to task defaults
-        
+
         sidebar = task.get_sidebar_layout(state=sidebar_state_copy)
 
-        return content, sidebar
+        return content, sidebar, 2, 9
+
+    elif active_tab == "simulations":
+        # Simulations tab - uses sidebar like Tasks
+        content = simulations_task.get_main_panel_layout()
+
+        # Use sidebar state if available
+        sidebar_state_copy = sidebar_state.copy() if sidebar_state else {}
+        sidebar = simulations_task.get_sidebar_layout(state=sidebar_state_copy)
+
+        return content, sidebar, 2, 9
 
     # Placeholder for other tabs
     content = html.Div([
@@ -304,7 +339,7 @@ def render_content(active_tab, active_task_id, sidebar_state):
 
     sidebar = html.Div()
 
-    return content, sidebar
+    return content, sidebar, 2, 9
 
 if __name__ == '__main__':
     app.run(debug=True, port=8050)
