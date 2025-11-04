@@ -10,6 +10,7 @@ from data.loader import find_task_file, load_data
 from components.header import create_header
 from tasks.draw_volumes.draw_volumes_task import DrawVolumesTask
 from tasks.review_plan.review_plan_task import ReviewPlanTask
+from tasks.contour_review.contour_review_task import ContourReviewTask
 from utils.styles import CUSTOM_CSS
 
 # Initialize Dash app with Bootstrap theme
@@ -60,9 +61,18 @@ else:
     print(f"Warning: Review data file not found at {review_file}")
     review_df = df  # Fallback to main data
 
+# Load contour data
+contour_file = Path(data_dir) / "Department Schedule No Grouping All_contour.csv"
+if contour_file.exists():
+    contour_df = load_data(str(contour_file))
+else:
+    print(f"Warning: Contour data file not found at {contour_file}")
+    contour_df = df  # Fallback to main data
+
 # Initialize tasks
 draw_volumes_task = DrawVolumesTask(df)
 review_plan_task = ReviewPlanTask(review_df)
+contour_review_task = ContourReviewTask(contour_df)
 
 # App layout
 app.layout = dbc.Container([
@@ -142,10 +152,11 @@ draw_volumes_task.register_callbacks(app)
 @app.callback(
     Output('active-task-store', 'data'),
     [Input("subtab-draw-volumes", "n_clicks"),
-     Input("subtab-review-plan", "n_clicks")],
+     Input("subtab-review-plan", "n_clicks"),
+     Input("subtab-contour-review", "n_clicks")],
     [State('active-task-store', 'data')]
 )
-def update_active_task(draw_clicks, review_clicks, current_task):
+def update_active_task(draw_clicks, review_clicks, contour_clicks, current_task):
     """Update which task is active in the store"""
     ctx = dash.callback_context
     if not ctx.triggered:
@@ -157,6 +168,8 @@ def update_active_task(draw_clicks, review_clicks, current_task):
         return 'draw-volumes'
     elif button_id == "subtab-review-plan":
         return 'review-plan'
+    elif button_id == "subtab-contour-review":
+        return 'contour-review'
 
     return current_task
 
@@ -245,6 +258,8 @@ def render_content(active_tab, active_task_id, sidebar_state):
         # Get the active task and update the current task reference for callbacks
         if active_task_id == "review-plan":
             task = review_plan_task
+        elif active_task_id == "contour-review":
+            task = contour_review_task
         else:
             task = draw_volumes_task
 
@@ -258,6 +273,7 @@ def render_content(active_tab, active_task_id, sidebar_state):
                     [
                         dbc.NavItem(dbc.NavLink("Draw Volumes", id="subtab-draw-volumes", active=(active_task_id == "draw-volumes"), href="#")),
                         dbc.NavItem(dbc.NavLink("Review Plan", id="subtab-review-plan", active=(active_task_id == "review-plan"), href="#")),
+                        dbc.NavItem(dbc.NavLink("Contour Review", id="subtab-contour-review", active=(active_task_id == "contour-review"), href="#")),
                     ],
                     pills=True,
                     className="nav-pills"

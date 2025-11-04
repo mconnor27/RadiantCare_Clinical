@@ -1,0 +1,362 @@
+﻿AppointmentTime,PatientFullName,PatientId,ResourceName,ActivityName,ActivityNote,AppointmentStatus
+1/9/2017 9:37 AM,"Roberts, William",60000583244,"Allen, Gregory W",Contour Review,"Contours look good. Plan is to treat PTV to 30 Gy in 10 fractions if PTV volume is > 30 cc, otherwise 40 Gy in 10 fractions.",Completed
+1/9/2017 10:32 AM,"Burleson, Gary",60004700480,"Reed, Naomi,Raftery, Branden,Moore, Ryan C",Contour Review,"Peer review, cn",Completed
+1/13/2017 5:18 PM,"Burleson, Gary",60004700480,"Lazio, Barbara E",Contour Review,,Completed
+1/18/2017 2:13 PM,"Nguyen, Loc",60000074070,"Lazio, Barbara E",Contour Review,,Completed
+1/26/2017 5:28 PM,"Miller, Ronald",60000978866,"Lazio, Barbara E",Contour Review,"Please review volumes that Dr Werner drew. She is planning to treat him to 12.5Gy, Thanks, Naomi",Completed
+1/31/2017 10:42 AM,"Philpott, Kenneth",60000612791,"Raftery, Branden,Lazio, Barbara E",Contour Review,,Completed
+2/27/2017 9:56 AM,"Green, Orvill",60000127225,"Moore, Ryan C,Lazio, Barbara E",Contour Review,,Completed
+3/2/2017 7:36 AM,"Baker, William",60001043375,"Reed, Naomi",Contour Review,"Dr Lazio reviewed and okay'd the volumes, njr",Completed
+3/15/2017 3:18 PM,"Stokes, Micheal",60000574775,"Lazio, Barbara E",Contour Review,,Open
+3/31/2017 2:40 PM,"Hoffman, John",60000878332,"Reed, Naomi,Raymond, James F,Dr. Hartman (Profile Not Attached)",Contour Review,Please review contour for Dr Allen (Dr Lazio is unavailable to review) njr. Contours look good. JR.,Completed
+4/18/2017 4:37 PM,"Nenson, Helen",60000925350,"Allen, Gregory W",Contour Review,"review for Dr V
+Contours reviewed, with slight adjustments, thanks.",Completed
+5/2/2017 11:00 AM,"Depaszthory, Carol",60001986293,"Raymond, James F,Vera, Robyn B",Contour Review,Please review GTV4 and GTV5 volumes for single fx SRS. Targets confirmed to be OK. JR,Completed
+5/3/2017 9:00 AM,"Gregor, Sheryl",60001973727,"Reed, Naomi",Contour Review,I reviewed it and agree with using 24 grays to the left parietal and 22 grays to the right cerebellum.  Thank you for sending her my way! Dr Lazio,Completed
+5/12/2017 10:15 AM,"Rath, William",60000543888,"Reed, Naomi",Contour Review,I reviewed it and it looks good! Dr Lazio,Completed
+5/16/2017 11:48 AM,"Harmon, Judith",60000901923,"Allen, Gregory W",Contour Review,"Contours reviewed and renamed GTV1-7. GTV1 and GTV2 to 21 Gy, GTV3-7 to 24 Gy.",Completed
+6/1/2017 4:48 PM,"Vining, Jeanette",60002497852,"Lazio, Barbara E",Contour Review,Looks good.  Dr. Allen and I discussed a dose of 15-16 Gy,Completed
+6/22/2017 2:16 PM,"Deleys, Pamela",60004378912,"Lazio, Barbara E,Raftery, Branden",Contour Review,,Completed
+6/29/2017 4:46 PM,"Hoffman, John",60000878332,"Allen, Gregory W,Raymond, James F,Dr. Hartman (Profile Not Attached),Werner, Haleigh A,Vera, Robyn B",Contour Review,"Minniti et al, per IJROBP 2016. Tumors >2cm, plan for 3fractions x 9Gy. rvera.",Completed
+7/5/2017 9:20 AM,"Bay, Rosemarie",60004251485,"Dr. Hartman (Profile Not Attached),Raymond, James F,Allen, Gregory W,Werner, Haleigh A,Vera, Robyn B",Contour Review,I reviewed; looks good - thanks -hw,Completed
+7/7/2017 12:10 PM,"Johnson, Thomas",60001155867,"Vera, Robyn B,Allen, Gregory W,Dr. Hartman (Profile Not Attached),Werner, Haleigh A,Raymond, James F",Contour Review,CTV R parietal and GTV R Cerebellum look OK to me. JR,Completed
+7/11/2017 3:05 PM,"Rumbles, William",60001337838,"Lazio, Barbara E",Contour Review,Looks good.  Too bad he cannot have contrast.  Lesions show well on T2 however.,Completed
+7/12/2017 3:37 PM,"Rinard, Lisa",60001390686,"Raftery, Branden",Contour Review,Dr Lazio has reviewed the volumes; okay to proceed,Completed
+8/8/2017 8:53 AM,"Bay, Rosemarie",60004251485,"Allen, Gregory W,Raymond, James F,Dr. Hartman (Profile Not Attached),Werner, Haleigh A,Vera, Robyn B",Contour Review,,Completed
+8/10/2017 10:29 PM,"Campbell, Sharon",60000928876,"Lazio, Barbara E",Contour Review,CTV4/5/6 to be Tx to 24Gy,Completed
+8/15/2017 11:37 AM,"Trobman, Wendy",60001401507,"Vera, Robyn B",Contour Review,"Equivalent sphere 2cm, let's try for a plan to 18Gy, rvera.",Completed
+8/23/2017 2:47 PM,"Perrenot, Karen",60005451476,"Werner, Haleigh A,Raymond, James F,Dr. Hartman (Profile Not Attached)",Contour Review,"Please review 3 GTVs for Dr Vera, njr. Contours for GTV1, GTV2, GTV3 all good. JR.",Completed
+8/23/2017 3:52 PM,"Vasseur, Sherri",60005292936,Dr. Hartman (Profile Not Attached),Contour Review,,Completed
+9/8/2017 12:23 PM,"Jones, Patricia",60005538923,"Lazio, Barbara E,Raftery, Branden",Contour Review,Will likely treat both 9 Gy x 3. JR,Completed
+9/14/2017 2:40 PM,"Cameron, Pauline",60005433922,"Werner, Haleigh A",Contour Review,done - just added one slice on R - thanks -hw,Completed
+9/19/2017 2:04 PM,"Rice, Jeffrey",60001320453,"Lazio, Barbara E",Contour Review,It all looks good to me.  I think the dura needs to be covered (and it is).  He will likely have some hair loss right frontal.,Completed
+9/26/2017 9:49 AM,"Eskridge, Donald",60001217855,"Raymond, James F",Contour Review, 30Gy/5fx. I added one slice to bottom. Please proceed. JR,Completed
+10/12/2017 3:02 PM,"Dorian, Joanne",60005212024,"Reed, Naomi",Contour Review,,Completed
+10/19/2017 5:20 PM,"Depaszthory, Carol",60001986293,"Vera, Robyn B",Contour Review,"I think the CT/MRI fusion is good and the target volumes are correctly outlined, rvera",Completed
+10/26/2017 12:50 PM,"Turner, Clyde",60005218408,"Werner, Haleigh A",Contour Review,"SRS is ready for volumes, cn. Left post frontal met (GTV2) contoured. Ready for expansions, W or R review (no neurosurg involved) and SRS planning: 24Gy/1fx. jrh; I added one GTV slice superiorly - hw",Completed
+11/6/2017 12:57 PM,"Snodgrass, Clyde",60001190475,"Vera, Robyn B,Dr. Hartman (Profile Not Attached),Allen, Gregory W,Werner, Haleigh A,Raymond, James F",Contour Review,done-thanks -hw,Completed
+11/8/2017 9:28 AM,"Pettit, Kevin",60001135227,"Reed, Naomi",Contour Review,"Contouring is done.  This is not an eloquent area and the volume is small so I think a dose in the 18-22 Gy range would be reasonable, trying to keep the 12 Gy volume to a minimum for risk of radiation necrosis.  Thanks!  BL",Completed
+11/10/2017 10:25 AM,"Shelton, Susan",60005548532,"Reed, Naomi",Contour Review, Dr Lazio's response: That was not an easy chiasm!  I had to go back to her earlier images to figure it out but got it! The resection bed looks good.  I added a little bit of the enhancing tissue on the surface and it now measures 2.4cm. 21Gy is good.,Completed
+11/14/2017 4:44 PM,"Gregor, Sheryl",60001973727,"Lazio, Barbara E",Contour Review,,Completed
+11/28/2017 5:34 PM,"Clegg, James",60005589229,"Allen, Gregory W",Contour Review,"Please review contour and 18Gy dose for Dr Vera, njr (Left posterior frontal lobe lesion, can you put a margin on this (2mm) and plan for 18Gy, rvera.)
+Contours reviewed/approved, gwa.",Completed
+11/29/2017 12:34 PM,"Hadden, Fredrick",60005549349,"Reed, Naomi",Contour Review,"Dr Lazio reviewed volumes and agreed with 18Gy dose, njr",Completed
+1/2/2018 1:26 PM,"Rayle, Lawrence",60001228830,"Reed, Naomi",Contour Review,"Dr Lazio: I reviewed Lawrence Rayle’s contours (3/16/40).  Looks good to me.  I like 14 Gy for the dose, especially since there is mostly encephalomalacia surrounding the new lesion.",Completed
+1/15/2018 12:15 PM,"Lacyroberts, Karen",60002054258,"Raymond, James F",Contour Review,GTV looks good. Consider dropping dose from 24 to 22 Gy due to unusual shape inferior-laterally. JR,Completed
+1/16/2018 8:40 AM,"Lacyroberts, Karen",60002054258,"Raftery, Branden,Lazio, Barbara E",Contour Review,,Completed
+1/23/2018 7:23 AM,"Anstey, Timothy",60001163465,"Reed, Naomi",Contour Review,Dr Lazio: I have reviewed and looks good.  I have a feeling we will be treating the questionable tiny lesion in the right frontal region eventually but it did look contiguous with a vessel on the original images,Completed
+1/26/2018 2:50 PM,"Steffen, Judith",60005626239,"Reed, Naomi",Contour Review,"Dr Raymond review with Dr Lazio over volumes and doses, njr",Completed
+1/30/2018 2:02 PM,"Gregor, Sheryl",60001973727,"Lazio, Barbara E",Contour Review,review contours,Completed
+2/5/2018 2:18 PM,"Cook, Charles",60001089255,"Raymond, James F,Reed, Naomi",Contour Review,Dr Lazio wrote: I checked the contours on Charles Cook and I think it looks good.  The area of discordance is small and surrounded by CSF so we should just cover all of it.  What dose?  I think 12-14 Gy is good.,Completed
+2/9/2018 3:49 PM,"Deleys, Pamela",60004378912,"Reed, Naomi",Contour Review,"Dr Lazio reviewed the 3 lesions and agreed with Dr Werner to 24Gy for all 3 lesions, njr",Completed
+2/16/2018 8:19 AM,"Carlson, John",60005627270,"Reed, Naomi",Contour Review,"Dr Lazio reviewed volumes and dose of 24Gy and approved them, njr",Completed
+3/1/2018 9:37 AM,"Solie, Robert",60000903469,"Dr. Hartman (Profile Not Attached),Werner, Haleigh A,Vera, Robyn B,Allen, Gregory W,Raymond, James F",Contour Review,I reviewed and modified a few of the volumes; will d/w Dr. Vera re: treatment or not given uncontrolled systemic disease - hw,Completed
+3/14/2018 3:23 PM,"Hoff, James",60004570942,"Raymond, James F",Contour Review,GTV contours look fine. JR,Completed
+3/28/2018 11:02 AM,"Esquibel, Valerie",60001036293,"Raftery, Branden",Contour Review,,Completed
+5/1/2018 3:35 PM,"Keeler, Diane",60004114503,"Reed, Naomi",Contour Review,"Dr Lazio's response: Reviewed. I like the contours.   18 Gy is a good dose.  If the plan looks favorable, I would not be opposed to 20 for the occipital lesion.  ",Completed
+5/14/2018 3:44 PM,"Ronneberg, Sandra",60001124867,"Reed, Naomi",Contour Review,,Completed
+5/17/2018 9:38 AM,"Stockard, Thomas",60002543194,"Reed, Naomi",Contour Review,"Dr Lazio reviewed the gtv and says it ""looks good"". njr",Completed
+6/7/2018 2:00 PM,"Doelman, Marie",60001580464,"Lazio, Barbara E,Raftery, Branden",Contour Review,,Completed
+6/8/2018 3:41 PM,"Siegel, Verna",60000690931,"Dr. Hartman (Profile Not Attached),Vera, Robyn B,Werner, Haleigh A,Allen, Gregory W,Raymond, James F",Contour Review,I used a 3 mm margin for the PTV beyond the GTV. Will need to reduce the dose because the PTV volume >30 cc. Treat PTV to 3 Gy x 10 to 30 Gy. Avastin given on day1 and day6. JR,Completed
+6/8/2018 4:41 PM,"Gubser, Joyce",60000924332,"Lazio, Barbara E,Raftery, Branden",Contour Review,Lazio reviewed use 22Gy,Completed
+6/20/2018 2:11 PM,"Shaak, Raymond",60000982592,"Raymond, James F",Contour Review,I modified the GTV R parietal and the GTV L parietal slightly. Please adjust the PTV's and the Ring's accordingly. JR,Completed
+6/26/2018 2:44 PM,"Green, Orvill",60000127225,"Allen, Gregory W,Vera, Robyn B",Contour Review,"Please review for Dr Vera since Dr Lazio is away, njr
+Volumes look good, thanks. Can you plan this to 16Gy, it is retreat, rvera. ",Completed
+6/28/2018 9:21 AM,"Egner, Willie",60005124853,"Allen, Gregory W",Contour Review,"Volumes look good, proceed with planning.",Completed
+7/24/2018 1:20 PM,"Shaak, Raymond",60000982592,"Reed, Naomi",Contour Review,"Dr Lazio to review contour. She said that the volume is good and agrees with the dose 7/24/18, njr",Completed
+10/16/2018 2:50 PM,"Hadley, Sandra",60000528536,"Vera, Robyn B,Allen, Gregory W,Raymond, James F,Werner, Haleigh A",Contour Review,"done - I have modified a few of the GTVs but did not modify the PTVs that were drawn; just modified given fusion - ie take the GTVs out of the bone, etc - thanks -hw",Completed
+10/19/2018 9:34 AM,"Tronson, Julie",60000961388,"Raftery, Branden",Contour Review,,Completed
+11/19/2018 4:06 PM,"Bockelman, Susan",60004449898,"Suszko, Justin W,Werner, Haleigh A,Raymond, James F,Allen, Gregory W",Contour Review,Contours reviewed and approved.,Completed
+11/20/2018 1:28 PM,"Freeman, Beverly",60004400405,"Boyd, Wendy A",Contour Review,"Dr. Lazio has reviewed volumes; will go to 20 Gy on the larger L frontal lobe met and 20 Gy to the larger R cerebellar met (2 ""stuck together"" and 22 Gy to others -t hanks; waiting for Dr. Lazio to review",Completed
+11/28/2018 6:30 PM,"Cothren, Karen",60000524108,"Raymond, James F",Contour Review,Please review PTV expansions done (2mm). PTV Rt parietal and PTV Lt occipital to both receive 24 Gy in 1 fx SRS. Contours look good to me. JR,Completed
+11/30/2018 12:46 PM,"Winbeckler, Florence",60000877052,"Vera, Robyn B,Raymond, James F,Allen, Gregory W,Werner, Haleigh A,Suszko, Justin W",Contour Review,Volumes look fine. JR,Completed
+12/13/2018 3:04 PM,"Ainey-Jones, Deborah",60000871661,"Reed, Naomi",Contour Review,Dr Lazio says: I think it looks good - no changes. 24Gy is fine with me at that size. njr,Completed
+12/26/2018 4:15 PM,"Steves, Julie",60005127375,"Werner, Haleigh A",Contour Review,Please review the CTV and Nodes volumes after I filled the cavities; lots of little funky pieces; should I leave it and do the expansions or do they need to be all one piece with either the CTV or Nodes?,Completed
+12/31/2018 12:02 PM,"Musgrove, William",60000524069,"Lazio, Barbara E",Contour Review,,Completed
+1/18/2019 7:48 AM,"Shaak, Raymond",60000982592,"Reed, Naomi",Contour Review,"Dr Lazio reviewed volumes and dose. She said the volumes were good and she agreed on 900 cGy/ 3fxs for 27Gy, njr",Completed
+1/21/2019 11:43 AM,"Anderson, Christina",60000545783,"Raymond, James F,Suszko, Justin W,Werner, Haleigh A,Allen, Gregory W,Vera, Robyn B",Contour Review,just a few small adjustments; appears that Dr. Lazio was to review volumes also; hw,Completed
+2/14/2019 8:17 AM,"Wicks, John",60001413842,"Reed, Naomi",Contour Review,Dr Lazio reviewed GTV 2/13/19. She says 14Gy is good also. njr,Completed
+3/7/2019 9:42 AM,"Marrow, Captain Jack",99190306,"Raymond, James F,Suszko, Justin W,Allen, Gregory W,Vera, Robyn B,Werner, Haleigh A",Contour Review,,Cancelled
+3/12/2019 10:07 AM,"Carlson, Nancy",60001232563,"Lazio, Barbara E,Raftery, Branden",Contour Review,SRS; -br,Completed
+3/13/2019 8:39 AM,"Egner, Willie",60005124853,"Boyd, Wendy A",Contour Review,"Reviewed by Dr. Lazio, contours ok'd and single fraction of 22Gy ok; wb",Completed
+3/15/2019 1:01 PM,"Wines, Linnea",60001370527,"Reed, Naomi",Contour Review,"Dr Lazio reviewed the volume. She ""tweeked the cochlea slightly"". She agreed with the 12.5 Gy dose, njr",Completed
+3/18/2019 8:10 AM,"Schutz, Richard",60001231896,"Allen, Gregory W,Vera, Robyn B,Werner, Haleigh A,Raymond, James F,Suszko, Justin W",Contour Review,Reviewed and OK'd by Dr. Lazio.  Dr. Lazio to review - text has been sent to her to review - hw,Completed
+3/21/2019 5:05 PM,"Kauff, Howard",60001397493,"Allen, Gregory W",Contour Review,"review SRS contour volumes
+Contours reviewed, proceed with planning.",Completed
+3/22/2019 4:04 PM,"Macdonald, Hugh",60000264124,"Boyd, Wendy A",Contour Review,"Per Dr. R, Dr. Lazio reviewed and ok'd; will be 9Gy x 3fx; wb",Completed
+4/11/2019 2:01 PM,"Fillo, Cheryl",60005115672,"Boyd, Wendy A",Contour Review,"Dr. Lazio reviewed and ok'd 4/11;  Dr. Lazio sent text by Dr. R, 4/10",Completed
+6/18/2019 12:48 PM,"Snodgrass, Clyde",60001190475,"Boyd, Wendy A",Contour Review,Dr. Lazio reviewed/agreed w/ 18Gy & 3mm expansion; wb,Completed
+6/20/2019 8:49 AM,"Giersch, Kendra",60009343601,"Reed, Naomi",Contour Review,"Dr Lazio: the contours look good.  I think for a benign lesion, I would prefer that the prescription dose be to the margin of the tumor, not the expansion.  The dose is not in the plan yet but I don’t feel it necessary to give 14Gy to the normal brain",Completed
+7/2/2019 11:00 AM,"Tyrolt, Timothy",60000958403,"Lazio, Barbara E",Contour Review,I reviewed volumes.  All look good. There are two 1mm spots that are not contoured  and are equivocal on the imaging.  We should just note these and watch on follow up imaging.  They were #9 on the radiology report.,Completed
+7/12/2019 4:09 PM,"Seals, Ronnie",60000633844,"Boyd, Wendy A",Contour Review,"Dr. L reviewed,""tightened the margins a little bit because it travels through deep speech pathways. I was thinking 20-22Gy to the margin.""   She is good with 22Gy.     texted Dr. Lazio 7/12pm",Completed
+8/12/2019 1:55 PM,"Eccel, James",60001579002,"Boyd, Wendy A",Contour Review,"Dr. Lazio looked at James Eccel's contours and is comfortable with them per Dr Allen, njr",Completed
+9/9/2019 9:03 AM,"Schutz, Richard",60001231896,"Boyd, Wendy A",Contour Review,"Review completed by Dr. Lazio, in agreement on dosing and addition of rt insular lesion; wb",Completed
+9/10/2019 9:35 AM,"Wiatrak, Mary",60004655084,"Raymond, James F,Suszko, Justin W,Allen, Gregory W,Vera, Robyn B,Werner, Haleigh A,Raftery, Branden",Contour Review,reviewed by lazio,Completed
+9/11/2019 8:24 AM,"Rhode, Gloria",60001047016,"Boyd, Wendy A",Contour Review,"Per Dr. Vera, Dr. Lazio has reviewed",Completed
+10/2/2019 12:22 PM,"Carlson, John",60005627270,"Raftery, Branden",Contour Review,lazio reviewed / Dr A,Completed
+10/11/2019 5:05 PM,"Bloom, Gregory",60006921106,"Raftery, Branden",Contour Review,reviewed and approved by Lazio,Completed
+10/25/2019 2:47 PM,"Olson, Christopher",60001016201,"Reed, Naomi",Contour Review,"Dr Lazio review volumes and dose of 22Gy. She said the volumes and dose were good, njr",Completed
+10/30/2019 9:08 AM,"Reason, Sharon",60004950250,"Raftery, Branden",Contour Review,volumes were reviewed by Lazio,Completed
+11/20/2019 2:02 PM,"Nation, Kevin",60005793861,"Werner, Haleigh A,Allen, Gregory W,Suszko, Justin W,Raymond, James F,Vera, Robyn B",Contour Review,Dr. Smitherman emailed me that she reviewed and agree with our volumes.,Completed
+11/26/2019 1:23 PM,"Clark, Deanie",60001282844,"Suszko, Justin W,Vera, Robyn B,Werner, Haleigh A,Allen, Gregory W,Raymond, James F",Contour Review,"Lazio has reviewed contours, rvera.",Completed
+12/2/2019 4:42 PM,"Seals, Ronnie",60000633844,"Vera, Robyn B,Suszko, Justin W,Allen, Gregory W,Werner, Haleigh A,Raymond, James F",Contour Review,Targets look OK. Would run them by Dr. Lazio as well. JR,Completed
+1/7/2020 2:59 PM,"Snodgrass, Clyde",60001190475,"Boyd, Wendy A",Contour Review,"Reviewed by Dr. Lazio and approved, 1/2/20",Completed
+3/25/2020 3:24 PM,"Mckissick, Larry",60001232456,"Allen, Gregory W,Suszko, Justin W,Raymond, James F,Vera, Robyn B,Werner, Haleigh A",Contour Review,3/25 Brain MRI shows lesion resolved! will not have tx,Cancelled
+4/3/2020 10:55 AM,"Buckingham, Silvia",60002890691,"Lazio, Barbara E,Raftery, Branden",Contour Review,,Completed
+4/22/2020 9:38 AM,"Coates, Douglas",60005229560,"Boyd, Wendy A",Contour Review,Dr. L reviewed and modified; Dr. W asked Dr. Lazio to review,Completed
+4/25/2020 9:56 AM,"Nurmi, Rozanne",60000618906,"Werner, Haleigh A,Vera, Robyn B,Suszko, Justin W,Allen, Gregory W,Raymond, James F",Contour Review,,Completed
+5/11/2020 5:05 PM,"Volkhardt, Frances",60004788760,"Suszko, Justin W,Allen, Gregory W,Boyd, Wendy A,Werner, Haleigh A,Raymond, James F,Vera, Robyn B",Contour Review,Contours look good. JR,Completed
+5/18/2020 11:30 AM,"Foxworth, Michael",60005214808,"Raftery, Branden",Contour Review,", 22Gy, b/c in the cerebellum (V / email)",Completed
+5/22/2020 11:34 AM,"Cunningham, Ann",60000651552,"Boyd, Wendy A",Contour Review,Reviewed by Dr. Lazio ,Completed
+5/22/2020 5:49 PM,"Baker, William",60001043375,"Allen, Gregory W,Raymond, James F,Suszko, Justin W,Vera, Robyn B,Werner, Haleigh A",Contour Review,SRS 22 Gy to GTV_Vermis. JR,Completed
+5/26/2020 5:11 PM,"Jeffrey, Kathy",60009497940,"Boyd, Wendy A,Vera, Robyn B",Contour Review,Reviewed by Dr. Lazio,Completed
+5/27/2020 10:18 AM,"Backman, Robert",60000875323,"Boyd, Wendy A",Contour Review,Reviewed by Dr. Smitherman per Dr. A,Completed
+6/12/2020 4:19 PM,"Morris, Michael",60001012794,"Boyd, Wendy A,Werner, Haleigh A",Contour Review,"Dr. Lazio reviewed volumes, not treating Inf R cerebellar lesion or Lt temp lobe lesion; wb",Completed
+6/20/2020 11:21 AM,"Wiatrak, Mary",60004655084,"Werner, Haleigh A,Suszko, Justin W,Raymond, James F,Allen, Gregory W,Vera, Robyn B",Contour Review,reviewed; looks good; Looks like Dr. A was contacting Dr. Lazio to review also - hw,Completed
+6/23/2020 2:23 PM,"Poppe, Craig",60001062159,"Raftery, Branden",Contour Review,,Completed
+6/29/2020 8:30 AM,"Welch, Lorrie",60009931018,"Lex, Eric",Contour Review,,Completed
+7/9/2020 11:20 AM,"Mathews, Jack",60001254291,"Werner, Haleigh A",Contour Review,"Please review SRS contour, Dr. Lazio not involved w/ this patient; wb; looks fine - thansk -hw",Completed
+7/13/2020 3:37 PM,"Bender, Maxine",60000928283,"Vera, Robyn B,Werner, Haleigh A,Raymond, James F,Allen, Gregory W,Suszko, Justin W,Lex, Eric",Contour Review,looks good - looks like Dr. Lazio to review also - hw,Completed
+7/17/2020 2:14 PM,"Westbrook, Ardith",60005642266,"Vera, Robyn B,Werner, Haleigh A,Allen, Gregory W,Suszko, Justin W,Raymond, James F",Contour Review,I reviewed ; looks good - hw,Completed
+7/23/2020 9:48 AM,"Szilagyi, Anna",60001048176,"Boyd, Wendy A",Contour Review,"Dr. Lazio reviewed, all okay",Completed
+8/20/2020 1:43 PM,"Ritchie, Marian",60000647942,"Raftery, Branden,Lazio, Barbara E",Contour Review,,Completed
+8/21/2020 4:43 PM,"Bolt, Donald",60005854761,"Suszko, Justin W,Vera, Robyn B,Werner, Haleigh A,Allen, Gregory W,Lex, Eric,Raymond, James F",Contour Review,,Completed
+8/24/2020 6:10 PM,"Gottwald, Kim",60005167729,"Suszko, Justin W,Allen, Gregory W,Werner, Haleigh A,Raymond, James F,Vera, Robyn B",Contour Review,Contours reviewed by Dr. Smitherman and she approves.,Completed
+9/14/2020 12:04 PM,"Finnegan, Julia",60000979661,"Werner, Haleigh A,Allen, Gregory W,Raymond, James F,Vera, Robyn B,Suszko, Justin W,Boyd, Wendy A",Contour Review,Will need peer review since Iuliano is neurosurgeon. I reviewed - thanks -hw,Completed
+9/16/2020 1:07 PM,"Clarke, Sandra",60009430040,"Raymond, James F,Werner, Haleigh A,Allen, Gregory W,Vera, Robyn B,Suszko, Justin W",Contour Review,,Completed
+9/29/2020 11:29 AM,"Baker, William",60001043375,"Raymond, James F,Werner, Haleigh A,Suszko, Justin W,Allen, Gregory W,Vera, Robyn B",Contour Review,,Cancelled
+10/2/2020 2:20 PM,"Stedham, Michael",60000604080,"Boyd, Wendy A",Contour Review,"Per Dr. W, Dr. Lazio reviewed and agrees w volumes",Completed
+10/16/2020 5:49 PM,"Towner, Terry",60000604392,"Allen, Gregory W,Raymond, James F,Vera, Robyn B,Suszko, Justin W,Werner, Haleigh A",Contour Review,R Frontal and L cerebellum targets OK. JR,Completed
+10/26/2020 3:04 PM,"Naves, Rocio",60009319622,"Vera, Robyn B,Lazio, Barbara E,Boyd, Wendy A",Contour Review,"reviewed today, looks good,  Have had trouble getting patient to the clinic",Completed
+10/28/2020 3:17 PM,"Rhode, Gloria",60001047016,"Lazio, Barbara E,Vera, Robyn B,Boyd, Wendy A",Contour Review,"Has been reviewed by RVera and Laxio, treat to 24Gy, rvera. ",Completed
+11/16/2020 9:14 AM,"Jeffrey, Kathy",60009497940,"Suszko, Justin W,Raymond, James F,Werner, Haleigh A,Vera, Robyn B,Allen, Gregory W",Contour Review,I reviewed current volumes; will text Dr. Lazio to review - hw,Completed
+12/16/2020 1:26 PM,"Cunningham, Ann",60000651552,"Lex, Eric",Contour Review,,Completed
+12/18/2020 5:14 PM,"Hanson, Erlene",60000929741,"Vera, Robyn B,Werner, Haleigh A,Allen, Gregory W,Raymond, James F,Lex, Eric,Suszko, Justin W",Contour Review,GTV contour OK. JR,Completed
+1/6/2021 2:11 PM,"Heck, Karla",60001178721,"Vera, Robyn B,Werner, Haleigh A,Allen, Gregory W,Suszko, Justin W,Raymond, James F,Lex, Eric",Contour Review,I texted Dr Smitherman to see if she can access Aria/Eclipse - she said she has access and will look at it this morning - Smitherman texted back and said volumes look good,Completed
+1/12/2021 1:23 PM,"Naves, Rocio",60009319622,"Allen, Gregory W,Lex, Eric,Raymond, James F,Vera, Robyn B,Suszko, Justin W,Werner, Haleigh A",Contour Review,Dr Lazio texted back and said volumes look good and agrees w/ SRS dose of 20 Gy in 1 fx since deeper location of brain in basal ganglia.,Completed
+1/12/2021 2:34 PM,"Stedham, Michael",60000604080,"Werner, Haleigh A",Contour Review,approved by Dr. Lazio - however will to 20 gy instead of 22 Gy - thanks -hw,Completed
+1/15/2021 9:21 AM,"Anderson, Wayne",60000521866,"Suszko, Justin W,Werner, Haleigh A,Raymond, James F,Allen, Gregory W,Vera, Robyn B",Contour Review,,Completed
+1/27/2021 10:05 AM,"Millar, Teresa",60001105119,"Boyd, Wendy A",Contour Review,"per Dr. S, Lazio reviewed/agrees w/ volumes",Completed
+2/27/2021 8:38 AM,"Schultz, Linda",60000575456,"Raymond, James F,Suszko, Justin W,Werner, Haleigh A,Allen, Gregory W,Vera, Robyn B",Contour Review,Lazio texted back she agrees w/ volumes and dose 20 Gy in 1 fx. Proceed to planning.,Completed
+3/22/2021 4:12 PM,"Jennings, Aron",60007732178,"Raymond, James F,Boyd, Wendy A,Lazio, Barbara E",Contour Review,"reviewed by Dr. Lazio, 14Gy x 1fx; wb",Completed
+4/8/2021 9:01 AM,"Jetter, Melvin",60008445317,"Suszko, Justin W,Vera, Robyn B,Werner, Haleigh A,Allen, Gregory W,Raymond, James F",Contour Review,,Completed
+4/21/2021 2:43 PM,"Orme, Leslie",60004632811,"Raymond, James F,Werner, Haleigh A,Suszko, Justin W,Allen, Gregory W,Vera, Robyn B",Contour Review,,Completed
+4/28/2021 9:03 AM,"Jennings, Aron",60007732178,"Boyd, Wendy A,Raymond, James F",Contour Review,"Reviewed by Lazio, liked the GTV New on Aron Jennings. Please add 2 mm to GTV New and treat PTV New to 14 Gy in a single fx",Completed
+5/3/2021 3:42 PM,"Bloom, Gregory",60006921106,"Allen, Gregory W,Werner, Haleigh A,Raymond, James F,Vera, Robyn B,Suszko, Justin W",Contour Review,Dr. Lazio good with volume and dose 30 gy/5fx - thanks -hw,Completed
+5/7/2021 3:14 PM,"Anderson, Christina",60000545783,"Raftery, Branden",Contour Review,,Completed
+5/14/2021 11:21 AM,"Schultz, Linda",60000575456,"Vera, Robyn B,Werner, Haleigh A,Allen, Gregory W,Raftery, Branden,Suszko, Justin W,Raymond, James F",Contour Review,,Completed
+5/25/2021 5:12 PM,"Davis, Diane",60005300993,"Boyd, Wendy A,Allen, Gregory W",Contour Review,Dr. Lazio reviewed/approved,Completed
+5/28/2021 4:34 PM,"Shannon, Kenneth",60004767558,"Boyd, Wendy A",Contour Review,Dr. Lazio reviewed/approved; wb,Completed
+6/18/2021 10:28 PM,"Charlton, Wilber",60005450633,"Suszko, Justin W,Vera, Robyn B,Werner, Haleigh A,Raymond, James F,Allen, Gregory W",Contour Review,Contours approved by Lazio. Proceed to planning.,Completed
+6/23/2021 10:05 AM,"Rosdahl, Kenneth",60002334827,"Gruhl, Joshua,Lex, Eric,Suszko, Justin W,Allen, Gregory W,Raymond, James F,Werner, Haleigh A",Contour Review,,Completed
+6/24/2021 3:48 PM,"Caswell Jr, William",60000542059,"Allen, Gregory W,Suszko, Justin W,Werner, Haleigh A,Vera, Robyn B,Raymond, James F",Contour Review,Waiting on Lazio to review targets. JR,Completed
+6/28/2021 4:10 PM,"Claridge, Trisha",60000958297,"Raymond, James F,Allen, Gregory W,Suszko, Justin W,Boyd, Wendy A,Gruhl, Joshua,Werner, Haleigh A",Contour Review,"reviewed by Lazio per Dr. R, R frontal to 22 Gy and the L frontal one to 20 Gy because of proximity to the motor strip.",Completed
+7/23/2021 9:03 AM,"Jackson, Carol",60000980025,"Allen, Gregory W",Contour Review,,Completed
+8/19/2021 8:37 AM,"Hedrick, Paulette",60009378908,"Raftery, Branden",Contour Review,,Completed
+8/19/2021 8:39 AM,"Cunningham, Ann",60000651552,"Boyd, Wendy A,Raymond, James F,Allen, Gregory W,Suszko, Justin W,Werner, Haleigh A,Gruhl, Joshua",Contour Review,,Completed
+8/25/2021 4:53 PM,"Clark, Deanie",60001282844,"Gruhl, Joshua,Suszko, Justin W,Werner, Haleigh A,Allen, Gregory W,Raymond, James F",Contour Review,Reviewed GTV contours. Added PTV expansions to all 3 lesions. I think we can combine the 2 medial ones into one target and treat to 27 Gy/3 fx or 18 Gy single fx and treat the lateral PTV to 22 Gy single fx. Lazio will review. I discussed with her. JR,Completed
+9/24/2021 2:09 PM,"Harder, Sandra",60001013776,"Werner, Haleigh A",Contour Review,peer review contours; looks good - thanks -hw,Completed
+10/13/2021 4:43 PM,"Schill, Alan",60004509924,"Suszko, Justin W",Contour Review,Contour review done - approved. Proceed to planning.,Completed
+10/18/2021 12:38 PM,"Baker, Cynthia",60005605484,"Allen, Gregory W",Contour Review,Contours are acceptable.,Completed
+11/5/2021 4:32 PM,"Buck, Patricia",60000524140,"Suszko, Justin W,Raymond, James F,Gruhl, Joshua,Lex, Eric,Allen, Gregory W,Werner, Haleigh A",Contour Review,Dr. Lazio reviewed/approved contours; good to go with 20 gy x 1 - thanks -hw,Completed
+11/22/2021 8:39 AM,"Hacker, Susan",60004954597,"Boyd, Wendy A,Raymond, James F,Werner, Haleigh A,Suszko, Justin W,Gruhl, Joshua,Allen, Gregory W",Contour Review,,Completed
+12/7/2021 3:58 PM,"Catterall, Ann",60005278977,"Boyd, Wendy A",Contour Review,volumes completed and reviewed by Dr. Lazio too. 30Gy/5fx to R frontal resection cavity with margin (PTV saved). thanks. jg,Completed
+12/8/2021 10:42 AM,"Reise, Cheryl",60010183352,"Raymond, James F,Werner, Haleigh A,Allen, Gregory W",Contour Review,"Please review SRS volume, no neuro eval; GTV looks good - thanks - hw",Completed
+12/20/2021 12:37 PM,"Tobeck, Adam",60001308234,"Allen, Gregory W,Werner, Haleigh A,Raymond, James F,Suszko, Justin W,Gruhl, Joshua",Contour Review,,Completed
+1/7/2022 9:40 AM,"Coulter, Vonda",60001007701,"Boyd, Wendy A",Contour Review,Dr.Lazio has approved volumes on Coulter - but will do 2mm margin on the 5 SRS lesions to 22 Gy and 5mm margin on the resection bed 27 Gy/3 fx ,Completed
+1/21/2022 12:14 PM,"Rosal, Luigi",60009717662,"Lex, Eric",Contour Review,,Completed
+2/3/2022 9:13 AM,"Coffey, Dale",60010367377,"Boyd, Wendy A",Contour Review,Dr. Lazio reviewed,Completed
+2/4/2022 2:31 PM,"Wallace, Cynthia",60001309300,"Lex, Eric,Gruhl, Joshua,Raymond, James F,Werner, Haleigh A,Allen, Gregory W,Suszko, Justin W",Contour Review,,Completed
+2/15/2022 11:01 AM,"Hanson, Cheryle",60005664599,"Gruhl, Joshua,Raymond, James F,Lex, Eric,Allen, Gregory W,Suszko, Justin W,Werner, Haleigh A",Contour Review,"Contours reviewed. After repeat MRI fusion, GTV contours were adjusted slightly and PTV re-expanded. Proceed with plan.",Completed
+2/15/2022 3:39 PM,"Young, Irene",60001414255,"Allen, Gregory W,Gruhl, Joshua,Raymond, James F,Suszko, Justin W,Werner, Haleigh A",Contour Review,,Completed
+2/16/2022 2:12 PM,"Anderson, Terri",60000909604,"Lex, Eric",Contour Review,,Completed
+2/18/2022 1:15 PM,"Wayman, Richard",60005756127,"Allen, Gregory W,Gruhl, Joshua,Suszko, Justin W,Werner, Haleigh A,Raymond, James F",Contour Review,"Dr. Lazio has approved the contours and dose, proceed with the planning process.",Completed
+2/22/2022 12:37 PM,"Lorenz, David",60009317093,"Raymond, James F,Werner, Haleigh A,Allen, Gregory W,Gruhl, Joshua,Suszko, Justin W",Contour Review,"Will need peer review by Dr. A, Dr. R, Dr. W or Dr. G since his neurosurgeon is in Tacoma (Dr. Chowdhary); looks good - hw",Completed
+2/22/2022 5:05 PM,"Edminster, Bobby",60004922024,"Allen, Gregory W,Raymond, James F,Werner, Haleigh A,Suszko, Justin W,Gruhl, Joshua",Contour Review,looks good - hw,Completed
+2/28/2022 1:01 PM,"Williams, Alan",60010462691,"Allen, Gregory W,Werner, Haleigh A,Suszko, Justin W,Gruhl, Joshua,Raymond, James F,Lex, Eric",Contour Review,,Completed
+3/22/2022 3:49 PM,"Mckenna, Jeanne",60000522290,"Raftery, Branden",Contour Review,reviewed and approved by Lazio,Completed
+3/24/2022 11:05 AM,"Naves, Rocio",60009319622,"Raymond, James F,Werner, Haleigh A,Allen, Gregory W,Suszko, Justin W,Gruhl, Joshua",Contour Review,Contours approved by Dr. Lazio,Completed
+3/31/2022 3:02 PM,"Kautz, Deborah",60000975178,"Boyd, Wendy A,Lazio, Barbara E",Contour Review,"per Dr. W, Dr. Lazio okayed volumes",Completed
+4/4/2022 2:37 PM,"Block, Sadie",60007875427,"Lazio, Barbara E,Boyd, Wendy A",Contour Review,Reviewed per Dr. G,Completed
+4/7/2022 9:23 AM,"Baumel, Scott",60000557998,"Werner, Haleigh A",Contour Review,approved by Dr. Lazio - good to go - thanks - hw,Completed
+4/8/2022 12:28 PM,"Azanza, Carmencita",60001205924,"Suszko, Justin W",Contour Review,Lazio reviewed contours and agrees with volumes and dose. Proceed with planning.,Completed
+4/12/2022 10:15 AM,"Freels, Charles",60000642801,"Allen, Gregory W,Suszko, Justin W,Raymond, James F,Werner, Haleigh A,Gruhl, Joshua",Contour Review,looks like Dr. Lazio has approved volumes per Dr. Gruhl's note so I completed the task - hw,Completed
+4/14/2022 12:45 PM,"Baker, Cynthia",60005605484,"Werner, Haleigh A,Allen, Gregory W,Gruhl, Joshua,Raymond, James F",Contour Review,"SRS to new 5-6 mm L parietal subcortical brain met -- 22 Gy in 1 fx to PTV.  Will need peer review since she does not have a neurosurgeon.
+Contours look good -Dr. A",Completed
+4/20/2022 7:55 AM,"Sivonen, Melissa",60000984930,"Gruhl, Joshua,Raymond, James F,Werner, Haleigh A,Suszko, Justin W,Allen, Gregory W",Contour Review,Dr. Lazio reviewed/approved the contours. We have decided to treat the resection bed to 30 Gy in 5 fractions.,Completed
+5/2/2022 8:30 AM,"Walter, Camille",60010404527,"Boyd, Wendy A",Contour Review,Dr. Lazio reviewed.,Completed
+5/9/2022 10:19 AM,"Mullins, James",60000536024,"Raymond, James F",Contour Review,contour review by Dr. Lazio? Dr. Lazio has approved the contours as of 5/9/22. JR,Completed
+5/11/2022 1:11 PM,"Czaplinski, Thomas",60005792213,"Boyd, Wendy A,Raymond, James F",Contour Review,"Dr. Lazio reviewed volumes/doses, all good",Completed
+5/23/2022 2:19 PM,"Olson, Patricia",60000914079,"Allen, Gregory W,Raymond, James F,Suszko, Justin W",Contour Review,"please review contour
+Contours look good.",Completed
+5/27/2022 12:44 PM,"Dixon, Kelli",60000650510,"Lex, Eric",Contour Review,GOOD TO GO PER lAZIO -el,Completed
+6/14/2022 3:35 PM,"Williams, Brandie",60000539706,"Suszko, Justin W,Allen, Gregory W,Raymond, James F,Werner, Haleigh A,Gruhl, Joshua",Contour Review,Contours reviewed by Dr Lazio.  OK to drop dose to 13 Gy x1 fraction if we can't meet Rt optic nerve constraints. Please prioritize optic nerve constraints over PTV coverage.,Completed
+6/15/2022 1:32 PM,"Coffey, Dale",60010367377,"Lex, Eric,Suszko, Justin W,Gruhl, Joshua,Raymond, James F,Allen, Gregory W,Werner, Haleigh A",Contour Review,Contours reviewed and approved already by Dr. Lazio. JR,Completed
+6/15/2022 1:33 PM,"Rosal, Luigi",60009717662,"Werner, Haleigh A,Suszko, Justin W,Allen, Gregory W,Gruhl, Joshua,Raymond, James F",Contour Review,Contours reviewed and approved already by Dr. Lazio. JR,Completed
+6/17/2022 6:18 PM,"Rose, Carol",60000574609,"Gruhl, Joshua,Werner, Haleigh A,Suszko, Justin W,Allen, Gregory W,Raymond, James F",Contour Review,"Please check with Dr. Suszko whether he has had Dr. Lazio involved. If so, then she needs to confirm contours. JR",Completed
+6/29/2022 8:08 AM,"Kahala, Rory",60000909567,"Werner, Haleigh A",Contour Review,contour is fine; plan is fine -t hanks -hw - align to skull/cerebellum/midbrain -,Completed
+7/8/2022 11:33 AM,"Sheldon, Odis",60004389965,"Boyd, Wendy A",Contour Review,"ok by Dr. Lazio, per Dr. Werner on 7/8",Completed
+7/18/2022 12:56 PM,"Porter, Christina",60000603186,"Smitherman, Sheila,Boyd, Wendy A",Contour Review,completed per Dr. Suszko,Completed
+7/19/2022 12:47 PM,"Swindler, John",60000606168,"Raymond, James F",Contour Review,"Please reiew contours for Dr. W, Dr. Lazio is out of town but will review plan later; wb. GTV looks fine. JR",Completed
+8/8/2022 11:42 AM,"Fountain, Phyllis",60004914060,"Raftery, Branden",Contour Review,reviewed by Lazio/ Werner,Completed
+8/16/2022 5:26 PM,"Glenn, David",60000585428,"Boyd, Wendy A",Contour Review,contours reviewed per Dr. S,Completed
+9/2/2022 9:44 AM,"Porter, Christina",60000603186,"Boyd, Wendy A",Contour Review,,Completed
+9/12/2022 9:57 AM,"Rosal, Luigi",60009717662,"Raftery, Branden",Contour Review,reviewed by Lazio/ Dr S,Completed
+10/17/2022 3:42 PM,"Mcmonagle Harader, Kristi",60005229066,"Boyd, Wendy A,Deig, Christopher,Lazio, Barbara E",Contour Review,contours ok'd by Dr. Lazio,Completed
+10/18/2022 11:07 AM,"Adkins, Michele",60005573049,"Boyd, Wendy A,Deig, Christopher",Contour Review,reviewed by Dr. Deig,Completed
+11/22/2022 11:38 AM,"Gallivan, Brian",60005011450,"Raftery, Branden",Contour Review,,Completed
+12/20/2022 9:41 AM,"Hoel, Connie",60010539535,"Boyd, Wendy A,Suszko, Justin W",Contour Review,reviewed volumes for urgent SRS/SRT,Completed
+12/20/2022 4:17 PM,"Mackay, Karen",60002037013,"Raftery, Branden",Contour Review,reviewed by lazio,Completed
+12/22/2022 10:59 AM,"Fountain, Phyllis",60004914060,"Raftery, Branden",Contour Review,,Completed
+1/4/2023 12:51 PM,"Wendler, Elizabeth",60004722324,"Boyd, Wendy A,Deig, Christopher",Contour Review,,Completed
+1/5/2023 1:31 PM,"Stone, Patrick",60004371643,"Boyd, Wendy A,Deig, Christopher",Contour Review,reviewed per Dr. S,Completed
+1/23/2023 5:14 PM,"Russell, Melissa",60001157457,"Allen, Gregory W",Contour Review,"Please review contours for SRS/SRT, Dr. W patient, Dr. Lazio out until 2/1; wb
+Contours are accetable, proceed with planning.",Completed
+2/6/2023 10:13 AM,"Lichtenstein, Karen",60001504263,"Ward, Christopher",Contour Review,Dr. Smitherman reviewed volumes...per Dr. Allen,Completed
+3/20/2023 7:24 PM,"Mcmonagle Harader, Kristi",60005229066,"Connor, Michael,Boyd, Wendy A",Contour Review,"22Gy in 1 fraction to PTV01, reviewed by Lazio",Completed
+3/22/2023 10:56 AM,"Ware, Buck",60000937441,"Suszko, Justin W,Boyd, Wendy A",Contour Review,"(C) Post-op fractionated SRT to surgical cavity & any residual disease, 3-5fx pending planning (27Gy). Fused with MRI 2/8/23 & 2/14/23. fused w/ 3/20 MRI, cn. previous lung and prostate tx. sim 3/17/23. bb",Completed
+3/27/2023 9:30 AM,"Hicker, Gary",60002313276,"Deig, Christopher,Boyd, Wendy A",Contour Review,Lazio approved contours.,Completed
+4/4/2023 12:47 PM,"Guenther, Carl",60004625471,"Ward, Christopher",Contour Review,,Completed
+4/17/2023 10:12 AM,"Beech, Debra",60005027548,"Connor, Michael",Contour Review,SRS contours for Dr. Deig.,Completed
+4/17/2023 1:40 PM,"Beckett, Sydney",60000598846,"Connor, Michael,Boyd, Wendy A",Contour Review,Lazio reviewed and approved,Completed
+4/17/2023 2:54 PM,"Exendine, Richard",60011066753,"Raftery, Branden",Contour Review,,Completed
+4/24/2023 3:59 PM,"Wallace, Cynthia",60001309300,"Boyd, Wendy A,Connor, Michael",Contour Review,approved by Lazio,Completed
+5/2/2023 1:38 PM,"Womer, Sally",60001144590,"Boyd, Wendy A",Contour Review,contours reviewed by Deig,Completed
+5/3/2023 9:04 PM,"Carossino, Josiah",60011280517,"Deig, Christopher",Contour Review,Please review voilumes for SRS/SRT,Completed
+5/5/2023 1:40 PM,"Carney, Richard",60001172203,"Ward, Christopher",Contour Review,reviewed by JS,Completed
+5/17/2023 8:39 AM,"Downing, Tiffanie",60000904349,"Boyd, Wendy A,Deig, Christopher",Contour Review,reviewed by CD,Completed
+5/25/2023 11:18 AM,"Wheeler, Shannon",60000904596,"Boyd, Wendy A,Deig, Christopher",Contour Review,,Completed
+6/6/2023 5:10 PM,"Shiells, Patricia",60000914671,"Ward, Christopher",Contour Review,Lazio reviewed,Completed
+6/7/2023 3:42 PM,"Matthews, Cindy",60011002953,"Connor, Michael",Contour Review,,Completed
+6/13/2023 11:31 AM,"Myers, Shawn",60001182704,"Connor, Michael,Boyd, Wendy A",Contour Review,Lazio reviewed,Completed
+6/14/2023 12:37 PM,"Mcfarland, Brian",60006638420,"Ward, Christopher",Contour Review,Volumes reviewed by JS,Completed
+6/26/2023 2:12 PM,"Wilson, Stephen",60005456848,"Boyd, Wendy A,Deig, Christopher",Contour Review,,Completed
+7/7/2023 12:32 PM,"Hartwell, James",60005056559,"Boyd, Wendy A",Contour Review,Dr. Suszko reviewed for Dr. W,Completed
+7/7/2023 4:50 PM,"Olson-Neidhardt, Kristi",60000889135,"Boyd, Wendy A,Suszko, Justin W",Contour Review,,Completed
+7/17/2023 6:55 AM,"King, Margaret",60004802842,"Ward, Christopher",Contour Review,,Completed
+7/23/2023 9:31 PM,"Huntington, Terrence",60009137713,"Boyd, Wendy A,Connor, Michael",Contour Review,,Completed
+7/24/2023 1:23 PM,"Gallagher, Leonilda",60000977128,"Smitherman, Sheila,Raftery, Branden",Contour Review,,Completed
+8/1/2023 9:17 AM,"Stutler, Sandra",60001370948,"Deig, Christopher,Boyd, Wendy A",Contour Review,,Completed
+8/1/2023 1:12 PM,"Cloud, Jeremy",60010110854,"Connor, Michael,Boyd, Wendy A",Contour Review,,Completed
+8/16/2023 4:39 AM,"Pruett, Patricia",60000563030,"Ward, Christopher",Contour Review,Reviewed by CD,Completed
+8/28/2023 12:03 PM,"Koss, Joanna",60005587303,"Allen, Gregory W,Connor, Michael",Contour Review,,Completed
+8/30/2023 6:11 PM,"Enstrom, Tammi",60001022257,"Ward, Christopher",Contour Review,reviewed by Dr. Connor,Completed
+9/11/2023 3:05 PM,"Rearden, Debra",60000912367,"Suszko, Justin W,Connor, Michael,Werner, Haleigh A",Contour Review,I reviewed; minimal modifications except made 2mm PTV margins instead of 1mm - thank s-hw,Completed
+9/14/2023 3:04 PM,"Staab, Carlyle",60000624567,"Boyd, Wendy A,Deig, Christopher",Contour Review,,Completed
+10/1/2023 1:25 PM,"Haskins, Camille",60000634565,"Deig, Christopher,Suszko, Justin W,Allen, Gregory W,Werner, Haleigh A,Connor, Michael",Contour Review,,Completed
+10/12/2023 12:55 PM,"Haskins, Camille",60000634565,"Boyd, Wendy A,Connor, Michael",Contour Review,,Completed
+10/26/2023 1:29 PM,"Beckner, Lester",60005409688,"Suszko, Justin W",Contour Review,Reviewed/approved. CD,Completed
+11/3/2023 4:14 PM,"Fucal, Gemiliano",60000937504,"Connor, Michael,Suszko, Justin W,Werner, Haleigh A,Deig, Christopher,Allen, Gregory W",Contour Review,,Completed
+11/7/2023 3:42 PM,"Krumrey, Pauline",60010873695,"Connor, Michael,Allen, Gregory W,Deig, Christopher,Werner, Haleigh A,Suszko, Justin W",Contour Review,Reviewed by Dr. Deig,Completed
+11/21/2023 8:20 AM,"Bohren, Richard",60005031424,"Suszko, Justin W,Deig, Christopher,Allen, Gregory W,Connor, Michael,Werner, Haleigh A",Contour Review,"Contours reviewed, JS. Ready to plan",Completed
+11/26/2023 3:05 PM,"Thompson, April",60001379888,"Connor, Michael",Contour Review,"L frontal - 30 Gy in 5 fx
+R frontal - 27/3
+2x occipital - 20/1
+Can add 2mm PTVs
+Reviewed with CD also, discussed with radiologist. Included some of the left lateral linear enhacements and the surgical tract per consensus guidelines",Completed
+12/12/2023 11:33 AM,"Copelin, Ray",60005170614,"Allen, Gregory W,Connor, Michael,Suszko, Justin W,Werner, Haleigh A,Deig, Christopher",Contour Review,,Completed
+12/21/2023 2:16 PM,"Wilson, Stephen",60005456848,"Allen, Gregory W,Suszko, Justin W,Werner, Haleigh A,Deig, Christopher,Connor, Michael",Contour Review,,Completed
+12/27/2023 9:26 AM,"Thigpen, Fanshelia",60005097327,"Werner, Haleigh A,Suszko, Justin W,Deig, Christopher,Allen, Gregory W,Connor, Michael",Contour Review,,Completed
+1/4/2024 3:16 PM,"Seabolt, Debra",60000592589,"Deig, Christopher,Allen, Gregory W,Connor, Michael,Suszko, Justin W,Werner, Haleigh A",Contour Review,reviewed - hw,Completed
+1/12/2024 8:05 AM,"Tongue, Dale",60011355526,"Suszko, Justin W,Connor, Michael,Allen, Gregory W,Werner, Haleigh A,Deig, Christopher",Contour Review,,Completed
+1/12/2024 9:06 AM,"Membreno, Lori",60000890777,"Werner, Haleigh A,Connor, Michael,Suszko, Justin W,Allen, Gregory W,Deig, Christopher",Contour Review,,Completed
+1/12/2024 10:30 AM,"Cote, Tavohna",60001145822,"Suszko, Justin W",Contour Review,"Contour review complete, 27 Gy in 3 fx's SRT to Lt cerebellar resection cavity; 20 Gy in 1 fx SRS to remaining 3 lesions",Completed
+1/23/2024 9:37 AM,"Hutchison, Robert",60000116611,"Allen, Gregory W,Suszko, Justin W,Deig, Christopher,Werner, Haleigh A,Connor, Michael",Contour Review,,Cancelled
+1/29/2024 3:25 PM,"Hinchcliffe, Dora",60001102517,"Connor, Michael",Contour Review,Ready for planning,Completed
+2/16/2024 8:05 AM,"Carossino, Josiah",60011280517,"Suszko, Justin W,Allen, Gregory W,Connor, Michael,Werner, Haleigh A,Ward, Christopher,Deig, Christopher",Contour Review,Contours reviewed/approved by Dr. Connor,Completed
+2/27/2024 2:01 PM,"Hasch, Eugene",60007104201,"Connor, Michael,Deig, Christopher,Werner, Haleigh A,Suszko, Justin W,Allen, Gregory W",Contour Review,,Completed
+3/5/2024 3:38 PM,"Philpot, Alana",60011096539,"Deig, Christopher,Allen, Gregory W,Werner, Haleigh A,Connor, Michael,Suszko, Justin W",Contour Review,,Completed
+3/11/2024 12:37 PM,"Lloyd, Gerald",60011515591,"Deig, Christopher,Ward, Christopher,Werner, Haleigh A,Connor, Michael,Allen, Gregory W,Suszko, Justin W",Contour Review,,Completed
+3/19/2024 3:13 PM,"Davis, Vicky",60004428757,"Werner, Haleigh A,Suszko, Justin W,Connor, Michael,Deig, Christopher,Seering, Shaenna,Allen, Gregory W",Contour Review,Reviewed by JS,Completed
+3/19/2024 4:12 PM,"Membreno, Lori",60000890777,"Connor, Michael,Allen, Gregory W,Deig, Christopher,Suszko, Justin W,Werner, Haleigh A",Contour Review,Contours look good - proceed w/ planning,Completed
+3/21/2024 11:38 AM,"Delong, Mary",60001007119,"Connor, Michael,Werner, Haleigh A,Allen, Gregory W,Suszko, Justin W",Contour Review,Contours approved - Intracranial met 20gy/1fx; calvarial met 27gy/3fx's,Completed
+3/21/2024 12:49 PM,"Heilman, Sandra",60004678507,"Deig, Christopher,Allen, Gregory W,Werner, Haleigh A,Connor, Michael,Suszko, Justin W",Contour Review,,Completed
+4/4/2024 9:56 AM,"Evans, Stephen",60000982373,"Suszko, Justin W",Contour Review,Reviewed by JS,Completed
+4/4/2024 12:45 PM,"Hearn, Holli",60000567098,"Connor, Michael,Werner, Haleigh A,Allen, Gregory W,Suszko, Justin W,Deig, Christopher",Contour Review,"Adjusted/reviewed
+-MC",Completed
+4/5/2024 2:35 PM,"Cole, Leslie",60004733436,"Allen, Gregory W,Werner, Haleigh A,Deig, Christopher,Suszko, Justin W,Connor, Michael",Contour Review,,Cancelled
+4/15/2024 8:28 AM,"Stuart, Loretta",60010483759,"Connor, Michael,Suszko, Justin W,Allen, Gregory W,Deig, Christopher,Werner, Haleigh A",Contour Review,,Cancelled
+5/20/2024 10:02 AM,"Ebeling, Robert",60000517311,"Connor, Michael,Allen, Gregory W,Deig, Christopher,Suszko, Justin W,Werner, Haleigh A",Contour Review,Contours approved by Dr. A,Completed
+5/23/2024 12:05 PM,"Anderson, Byron",60001005506,"Allen, Gregory W,Deig, Christopher,Suszko, Justin W,Werner, Haleigh A,Connor, Michael",Contour Review,"Ready for planning, PTV 30 Gy in 5 fractions, thanks.",Completed
+5/23/2024 12:08 PM,"Staab, Carlyle",60000624567,"Suszko, Justin W,Werner, Haleigh A,Connor, Michael,Deig, Christopher,Allen, Gregory W",Contour Review,"Contours look good, proceed per Dr. Connor's plan, thanks.",Completed
+7/2/2024 12:17 PM,"Spencer, Joseph",60004792014,"Allen, Gregory W,Connor, Michael,Werner, Haleigh A,Suszko, Justin W",Contour Review,,Completed
+7/3/2024 8:43 AM,"D Andrea, Charles",60001257542,"Allen, Gregory W,Connor, Michael,Werner, Haleigh A",Contour Review,"PTV01 to receive SRT 27 Gy in 3 fx's 
+PTV02 and PTV03 to receive SRS 22 Gy in 1 fx
+Reviewed by MC",Completed
+7/3/2024 10:11 AM,"Heilman, Sandra",60004678507,"Werner, Haleigh A,Allen, Gregory W,Suszko, Justin W,Connor, Michael",Contour Review,Reviewed by JS,Completed
+7/8/2024 10:34 AM,"Marshburn, Julia",60000881144,"Suszko, Justin W,Allen, Gregory W,Werner, Haleigh A,Connor, Michael,Seering, Shaenna",Contour Review,Reviewed by MC,Completed
+7/18/2024 10:37 AM,"Smiley, James",60000558904,"Allen, Gregory W",Contour Review,Contours look good,Completed
+7/22/2024 9:22 AM,"D Andrea, Charles",60001257542,"Connor, Michael",Contour Review,"Targets appeared to have shifted w/ re-sim, also widened contour all way to bone edge of cavity per Dr. W. 2mm for PTV01 - 27 Gy in 3 fx's ; 1mm for PTV02 and PTV03 - 22 Gy in 1 fx.  Will have Dr. C review volumes.
+
+Looks good-MC",Completed
+7/29/2024 11:32 AM,"Thigpen, Fanshelia",60005097327,"Connor, Michael,Suszko, Justin W",Contour Review,approved -MC,Completed
+8/5/2024 8:35 AM,"Greenfield, Steven",60004676275,"Boyd, Wendy A,Connor, Michael",Contour Review,Looks good,Completed
+8/17/2024 9:20 AM,"Skans, Dorothy",60005035315,"Connor, Michael,Werner, Haleigh A,Suszko, Justin W,Allen, Gregory W",Contour Review,"Contours reviewed. Proceed with SRS 22 Gy x1 fx to PTV 01, PTV 02, PTV 03",Completed
+8/20/2024 10:46 AM,"Kiser, Amber",60000122267,"Allen, Gregory W,Suszko, Justin W,Werner, Haleigh A,Connor, Michael",Contour Review,Contours approved- JS. Proceed w/ SRS to both lesions 22 Gy in 1 fx,Completed
+8/20/2024 12:02 PM,"Carlson, Charles",60005594677,"Suszko, Justin W,Connor, Michael",Contour Review,"Adjusted image fusion and contour slightly, approved by MC and JS",Completed
+8/23/2024 9:01 AM,"Hammett, Karen",60000001115,"Connor, Michael,Allen, Gregory W,Suszko, Justin W,Werner, Haleigh A,Seering, Shaenna",Contour Review,Contours look great - proceed w/ SRT 27 Gy in 3 fx's as per Dr. C.,Completed
+8/23/2024 3:56 PM,"Heilman, Sandra",60004678507,"Suszko, Justin W,Ward, Christopher,Werner, Haleigh A,Allen, Gregory W,Connor, Michael",Contour Review,JS reviewed,Completed
+9/9/2024 8:49 AM,"Chambers, Dennis",60011580898,"Connor, Michael,Suszko, Justin W,Seering, Shaenna",Contour Review,,Completed
+9/20/2024 2:32 PM,"Lacelle, Leroy",60004916440,"Connor, Michael,Werner, Haleigh A,Allen, Gregory W,Suszko, Justin W",Contour Review,Contours reviewed and good to plan. JS,Completed
+9/23/2024 9:13 AM,"Doan, Nga",60001842991,"Connor, Michael,Suszko, Justin W",Contour Review,,Completed
+10/11/2024 3:39 PM,"Springer, Jeffrey",60000520623,"Allen, Gregory W,Tinnel, Brent,Suszko, Justin W,Connor, Michael,Seering, Shaenna,Werner, Haleigh A",Contour Review,,Completed
+11/6/2024 9:29 AM,"Davidson, Michelle",60000524533,"Werner, Haleigh A,Connor, Michael,Allen, Gregory W,Suszko, Justin W,Tinnel, Brent",Contour Review,Reviewed by JS,Completed
+11/7/2024 11:25 AM,"Ellis, Dawn",60009342002,"Allen, Gregory W,Suszko, Justin W,Werner, Haleigh A,Connor, Michael",Contour Review,,Cancelled
+11/20/2024 1:34 PM,"Hawbaker, Cory",60003606877,"Werner, Haleigh A,Suszko, Justin W,Allen, Gregory W,Connor, Michael,Tinnel, Brent",Contour Review,reviewed by JS,Completed
+11/22/2024 12:03 PM,"Pittman, Linda",60004964067,"Allen, Gregory W,Suszko, Justin W,Werner, Haleigh A,Connor, Michael,Tinnel, Brent",Contour Review,Contours reviewed (ga). Proceed with planning,Completed
+11/27/2024 8:53 AM,"Falcon, Carrie",60011578282,"Tinnel, Brent,Connor, Michael,Suszko, Justin W,Werner, Haleigh A,Allen, Gregory W",Contour Review,You already did this reveiw but I had it assinged on my Task List.,Completed
+12/5/2024 1:11 PM,"Fraser, Gregory",60011086362,"Connor, Michael,Allen, Gregory W",Contour Review,Ready for planning. Contours reviewed by Dr. Connor.,Completed
+12/13/2024 1:49 PM,"Ellis, Dawn",60009342002,"Allen, Gregory W,Suszko, Justin W,Connor, Michael,Tinnel, Brent,Werner, Haleigh A",Contour Review,,Completed
+12/16/2024 8:31 AM,"Fucal, Gemiliano",60000937504,"Allen, Gregory W,Connor, Michael,Suszko, Justin W,Tinnel, Brent,Werner, Haleigh A",Contour Review,Approved -MC,Completed
+12/28/2024 8:52 PM,"Meadors, Margery",60001025322,"Allen, Gregory W,Suszko, Justin W,Tinnel, Brent,Connor, Michael,Werner, Haleigh A",Contour Review,,Completed
+12/30/2024 8:48 AM,"Mankowski, Eva",60011515269,"Allen, Gregory W,Tinnel, Brent,Werner, Haleigh A,Suszko, Justin W,Connor, Michael",Contour Review,Reviewed,Completed
+12/30/2024 8:58 AM,"Funderburg, David",60009982280,"Suszko, Justin W,Allen, Gregory W,Werner, Haleigh A,Tinnel, Brent,Connor, Michael",Contour Review,Contours look good. Proceed with 27Gy/3fx's SRT,Completed
+12/30/2024 4:01 PM,"Davidson, Michelle",60000524533,"Connor, Michael,Suszko, Justin W,Tinnel, Brent,Allen, Gregory W,Werner, Haleigh A",Contour Review,"Contours look good, JS",Completed
+1/8/2025 4:16 PM,"Milligan, Linda",60000554224,"Connor, Michael",Contour Review,Approved,Completed
+1/9/2025 3:51 PM,"Croman, Michael",60001075781,"Ward, Christopher,Allen, Gregory W,Suszko, Justin W,Connor, Michael,Werner, Haleigh A,Tinnel, Brent",Contour Review,Reviewed by JS,Completed
+1/30/2025 2:13 PM,"Hoyt, Leonard",60000585918,"Suszko, Justin W,Connor, Michael,Seering, Shaenna,Allen, Gregory W,Werner, Haleigh A,Tinnel, Brent",Contour Review,Contours reviewed -used thin slice 1mm Stealth series #802. Proceed with planning SRS 22 Gy x1 fx to all 4 lesions,Completed
+2/5/2025 9:31 PM,"Barnes, Diana",60001235649,"Allen, Gregory W,Tinnel, Brent,Werner, Haleigh A,Connor, Michael,Suszko, Justin W",Contour Review,Reviewed,Completed
+2/7/2025 1:56 PM,"Metcalf, David",60001326509,"Tinnel, Brent,Connor, Michael,Suszko, Justin W,Werner, Haleigh A,Allen, Gregory W",Contour Review,"I reviewed and agree GTV/PTV.
+Thanks, bat",Completed
+2/13/2025 7:45 PM,"Hendricks Jr, Kenneth",60006378501,"Tinnel, Brent,Connor, Michael,Allen, Gregory W,Suszko, Justin W,Werner, Haleigh A",Contour Review,"I added GTV and PTV (+ 1.5 mm) for two lesions.  Rx 22 Gy in 1 Fx to the PTV2 (Left temporal) and 27 Gy / 3 Fx to the PTV1.01 (Right frontal).  Thanks, bat
+Contours reviewed and approved. Proceed with SRS/SRT as above. JS",Completed
+2/13/2025 8:19 PM,"Burnett, Harold",60010167680,"Allen, Gregory W,Suszko, Justin W,Tinnel, Brent,Connor, Michael,Werner, Haleigh A",Contour Review,Contours approved. Proceed with SRS 22 Gy x1 fx to PTV01 Rt frontal met.,Completed
+2/15/2025 3:45 PM,"Skans, Dorothy",60005035315,"Suszko, Justin W,Connor, Michael",Contour Review,Contours reviewed and approved. Proceed w/ planning SRS 22 Gy x1 fx to PTV04-PTV09.  (Used 1.5 mm for PTVs).,Completed
+2/21/2025 6:06 PM,"Skans, Dorothy",60005035315,"Tinnel, Brent,Connor, Michael,Allen, Gregory W,Werner, Haleigh A,Suszko, Justin W",Contour Review,"Contours look good (GTV05/06/08/09), proceed with replanning.",Completed
+2/24/2025 12:36 PM,"Layman-Stigar, Edie",60000858020,"Suszko, Justin W,Allen, Gregory W,Connor, Michael,Tinnel, Brent,Werner, Haleigh A",Contour Review,,Cancelled
+2/28/2025 4:29 PM,"Sneed, Connie",60001145638,"Allen, Gregory W,Suszko, Justin W,Tinnel, Brent,Werner, Haleigh A,Connor, Michael",Contour Review,Contours reviewed and approved.,Completed
+3/14/2025 1:01 PM,"Teshera, Don",60000530025,"Tinnel, Brent,Suszko, Justin W,Werner, Haleigh A,Allen, Gregory W,Connor, Michael",Contour Review,,Completed
+3/27/2025 1:20 PM,"Burnett, Harold",60010167680,"Werner, Haleigh A,Allen, Gregory W,Suszko, Justin W,Tinnel, Brent,Connor, Michael",Contour Review,approved -MC,Completed
+3/28/2025 7:10 AM,"Gilbert, Leslie",60011085221,"Werner, Haleigh A,Allen, Gregory W,Connor, Michael,Suszko, Justin W,Tinnel, Brent",Contour Review,,Completed
+3/31/2025 2:52 PM,"Lewis, Wanda",60000624012,"Tinnel, Brent,Boyd, Wendy A,Allen, Gregory W,Suszko, Justin W,Werner, Haleigh A,Connor, Michael",Contour Review,Contours reviewed and look good. Proceed w/ planning 27 Gy/3 fx to R frontal brain met PTV,Completed
+4/1/2025 4:39 PM,"Clark, Joyce",60001097553,"Allen, Gregory W,Ward, Christopher,Connor, Michael,Suszko, Justin W,Werner, Haleigh A,Tinnel, Brent",Contour Review,approved,Completed
+4/10/2025 5:10 PM,"Wolfhagen, Ellen",60000882999,"Connor, Michael,Allen, Gregory W,Werner, Haleigh A,Suszko, Justin W,Tinnel, Brent",Contour Review,,Completed
+4/28/2025 2:20 PM,"Ramsey, Michael",60011946191,"Suszko, Justin W",Contour Review,Contours reviewed and look good. Proceed w/ SRT 27 Gy in 3 fx's to PTV1.01 and SRS 22 Gy in 1 fx to PTV1.02,Completed
+5/19/2025 9:22 AM,"Stewart, Dan",60003075438,"Connor, Michael,Tinnel, Brent,Allen, Gregory W,Suszko, Justin W,Werner, Haleigh A",Contour Review,reviewed,Completed
+5/20/2025 4:35 PM,"Casberg, Sandra",60005385568,"Allen, Gregory W,Werner, Haleigh A,Tinnel, Brent,Connor, Michael,Suszko, Justin W",Contour Review,"reviewed, good",Completed
+5/22/2025 9:08 AM,"Reilly, Gerald",60005539421,"Connor, Michael,Werner, Haleigh A,Suszko, Justin W,Tinnel, Brent,Allen, Gregory W",Contour Review,Reviewed/approved,Completed
+5/23/2025 12:32 PM,"Guggenmos, Gary",60005680143,"Suszko, Justin W,Tinnel, Brent,Connor, Michael,Werner, Haleigh A,Allen, Gregory W",Contour Review,Contours reviewed and approved - proceed with planning.,Completed
+6/3/2025 3:56 PM,"Hancock, Mary",60011252422,"Connor, Michael,Werner, Haleigh A,Tinnel, Brent,Suszko, Justin W,Allen, Gregory W",Contour Review,Contours approved.,Completed
+6/10/2025 11:53 AM,"Baker, Angela",60000623283,"Connor, Michael,Suszko, Justin W,Tinnel, Brent,Werner, Haleigh A,Allen, Gregory W",Contour Review,Contours look great - proceed with SRS 22 Gy x1 fx to PTV,Completed
+6/16/2025 1:53 PM,"Rolland, Susan",60000904579,"Tinnel, Brent,Connor, Michael,Suszko, Justin W",Contour Review,reviewed/approved,Completed
+6/17/2025 12:53 PM,"Pentt, Carol",60009346844,"Tinnel, Brent,Suszko, Justin W,Connor, Michael",Contour Review,approved,Completed
+6/20/2025 10:20 AM,"Sheets, Millard",60010029433,"Allen, Gregory W,Tinnel, Brent,Suszko, Justin W",Contour Review,"Contours look great - proceed with SRS planning, 22 Gy in 1 fx",Completed
+6/30/2025 1:18 PM,"Sneed, Connie",60001145638,"Connor, Michael,Allen, Gregory W,Tinnel, Brent,Suszko, Justin W,Werner, Haleigh A",Contour Review,Contours look good. Proceed with SRS 20 Gy x1 fx to the 4 PTVs,Completed
+8/4/2025 9:25 AM,"Okrasinski, Gregory",60001410054,"Allen, Gregory W,Tinnel, Brent,Suszko, Justin W",Contour Review,Contours GTV/PTV look good.  Approved.,Completed
+8/6/2025 3:50 PM,"Mills, Lee",60000876862,"Suszko, Justin W,Tinnel, Brent,Connor, Michael,Werner, Haleigh A,Allen, Gregory W",Contour Review,"Contours reviewed and approved, proceed with planning",Completed
+8/12/2025 3:57 PM,"Cron, David",60000905039,"Suszko, Justin W,Connor, Michael,Tinnel, Brent",Contour Review,reviewed/approved,Completed
+8/18/2025 10:47 AM,"Remington, Cheryl",60004130050,"Suszko, Justin W",Contour Review,"Contours look good, proceed with planning",Completed
+8/26/2025 12:13 PM,"Bien, Titus",60001344914,"Suszko, Justin W,Allen, Gregory W,Werner, Haleigh A,Connor, Michael,Tinnel, Brent",Contour Review,Contours approved. Proceed with SRS planning.,Completed
+9/3/2025 9:38 AM,"Droese, Tamara",60011247146,"Werner, Haleigh A,Tinnel, Brent,Allen, Gregory W,Suszko, Justin W,Connor, Michael",Contour Review,Review/approved. Use brainstem PRV for max constraint,Completed
+9/5/2025 4:57 PM,"Hyatt, Patricia",60002644797,"Connor, Michael,Allen, Gregory W,Tinnel, Brent,Seering, Shaenna,Suszko, Justin W,Werner, Haleigh A",Contour Review,Contours reviewed and approved. OK to proceed with SRS planning.,Completed
+9/22/2025 3:47 PM,"Hoyt, Leonard",60000585918,"Suszko, Justin W,Allen, Gregory W,Tinnel, Brent,Connor, Michael",Contour Review,"Contours reviewed and approved, proceed with SRS planning.",Completed
+9/30/2025 1:58 PM,"Sheets, Millard",60010029433,"Suszko, Justin W",Contour Review,Contours approved. Proceed with planning,Completed
+10/14/2025 9:11 AM,"Crawford, Dennis",60001208811,"Suszko, Justin W,Tinnel, Brent,Werner, Haleigh A,Allen, Gregory W,Connor, Michael",Contour Review,,Completed
+10/15/2025 8:36 AM,"Craddock, Pamela",60000596485,"Suszko, Justin W,Connor, Michael,Allen, Gregory W,Werner, Haleigh A,Tinnel, Brent",Contour Review,,Completed
+10/16/2025 10:18 AM,"Sneed, Connie",60001145638,"Allen, Gregory W,Tinnel, Brent,Werner, Haleigh A,Suszko, Justin W,Connor, Michael",Contour Review,,Completed
+10/27/2025 11:43 AM,"Stutsman, Rickie",60008692310,"Allen, Gregory W,Suszko, Justin W,Werner, Haleigh A,Seering, Shaenna,Connor, Michael,Tinnel, Brent",Contour Review,reviewed by JS,Completed
+10/28/2025 4:26 PM,"Fagnant, Jeffrey",60010476496,"Connor, Michael,Suszko, Justin W",Contour Review,Approved,Completed
+
+txt658881d5e38243149499e06e41546975,txt2bddabfcf3f64aed8442691b3888676a,txt3b9c0dba19494d9baf7d39fd62bc6958,txte798606a6e9a431ca4fe4208565db51c
+,ActivityName,contains,Contour Review
+
