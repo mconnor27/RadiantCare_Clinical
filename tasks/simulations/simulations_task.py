@@ -41,7 +41,13 @@ class SimulationsTask(BaseTask):
     def _process_locations(self, df):
         """
         Process ResourceName column to extract and map locations.
-        Expands comma-separated values and maps to friendly names.
+        Apply simulation type filters and consolidations.
+
+        Data Processing Notes (displayed to user via help icon):
+        - Location Mapping: CT_RC_LACEY → "Lacey", CT_CENTRALIA → "Centralia", 21iX_AB → "Aberdeen"
+        - Filtered Out: Any simulation type containing "Bite Block"
+        - Combined Types: "Treatment Device Fabrication" + "initial simulation on PET/CT table" → "PET/CT Sim"
+        - Rows with unmapped locations are excluded from analysis
 
         Args:
             df: Original DataFrame
@@ -55,20 +61,30 @@ class SimulationsTask(BaseTask):
         # Rename ActivityName to SimulationType
         df['SimulationType'] = df['ActivityName']
 
-        # Process ResourceName to Location
-        # Map CT_RC_LACEY to "Lacey" and CT_CENTRALIA to "Centralia"
+        # FILTER: Exclude any simulation type containing "Bite Block"
+        df = df[~df['SimulationType'].str.contains('Bite Block', case=False, na=False)]
+
+        # CONSOLIDATE: Combine PET/CT related simulation types
+        pet_ct_types = ['Treatment Device Fabrication', 'initial simulation on PET/CT table']
+        df.loc[df['SimulationType'].isin(pet_ct_types), 'SimulationType'] = 'PET/CT Sim'
+
+        # MAP: Process ResourceName to Location
+        # CT_RC_LACEY → "Lacey", CT_CENTRALIA → "Centralia", 21iX_AB → "Aberdeen"
         def map_location(resource_name):
             if pd.isna(resource_name):
                 return None
-            if 'CT_RC_LACEY' in resource_name:
+            resource_str = str(resource_name).upper()  # Convert to uppercase for case-insensitive matching
+            if 'CT_RC_LACEY' in resource_str:
                 return 'Lacey'
-            elif 'CT_CENTRALIA' in resource_name:
+            elif 'CT_CENTRALIA' in resource_str:
                 return 'Centralia'
+            elif '21IX_AB' in resource_str:
+                return 'Aberdeen'
             return None
 
         df['Location'] = df['ResourceName'].apply(map_location)
 
-        # Drop rows with no valid location
+        # FILTER: Drop rows with no valid location
         df = df[df['Location'].notna()]
 
         return df
@@ -132,6 +148,259 @@ class SimulationsTask(BaseTask):
             'avg_per_day': avg_per_day
         }
 
+    def _create_previous_periods_chart(self, filtered_df, chart_type, smoothing, year_range, stats_options):
+        """Create chart comparing YTD cumulative data across multiple years."""
+        fig = go.Figure()
+        current_year = year_range[1]
+        years = range(year_range[0], year_range[1] + 1)
+        historical_years = [y for y in years if y < current_year]
+        colors = ['#d3d3d3'] * (len(years) - 1) + ['#8B5CF6']
+        all_year_data = {}
+        hide_historical = stats_options.get('show_mean') or stats_options.get('show_median')
+
+        for idx, year in enumerate(years):
+            year_data = filtered_df[filtered_df['AppointmentTime'].dt.year == year].copy()
+            if year_data.empty:
+                continue
+
+            year_data['day_of_year'] = year_data['AppointmentTime'].dt.dayofyear
+            import datetime
+            is_leap = datetime.date(year, 1, 1).year % 4 == 0 and (datetime.date(year, 1, 1).year % 100 != 0 or datetime.date(year, 1, 1).year % 400 == 0)
+            if is_leap:
+                year_data.loc[year_data['day_of_year'] > 60, 'day_of_year'] -= 1
+
+            daily_counts = year_data.groupby('day_of_year').size().reset_index(name='count')
+            daily_counts = daily_counts.sort_values('day_of_year')
+            daily_counts['cumulative'] = daily_counts['count'].cumsum()
+            x_values = daily_counts['day_of_year'].values
+            y_values = daily_counts['cumulative'].values
+            all_year_data[year] = {'x': x_values, 'y': y_values}
+
+            is_current_year = (year == current_year)
+            line_width = 3 if is_current_year else 1
+            line_color = colors[idx]
+
+            if hide_historical and not is_current_year:
+                continue
+
+            if chart_type == 'line':
+                if smoothing > 0 and len(y_values) > 2:
+                    frac = 0.01 + (smoothing / 10) * 0.49
+                    x_numeric = np.arange(len(y_values))
+                    smoothed = lowess(y_values, x_numeric, frac=frac, return_sorted=False)
+                    y_values = smoothed
+
+                fig.add_trace(go.Scatter(
+                    x=x_values, y=y_values, mode='lines', name=str(year),
+                    line=dict(width=line_width, color=line_color)
+                ))
+
+                if is_current_year and len(x_values) > 0:
+                    fig.add_annotation(
+                        x=x_values[-1], y=y_values[-1],
+                        text=f"<b>{int(y_values[-1]):,}</b>",
+                        showarrow=False, xanchor='right', yanchor='bottom',
+                        xshift=-10, yshift=5,
+                        font=dict(size=12, color=line_color)
+                    )
+            else:
+                fig.add_trace(go.Bar(x=x_values, y=y_values, name=str(year), marker_color=line_color))
+
+        # Calculate historical statistics
+        if historical_years and any([stats_options.get('show_mean'), stats_options.get('show_median'),
+                                      stats_options.get('show_std_dev'), stats_options.get('show_ci')]):
+            historical_data = {year: data for year, data in all_year_data.items() if year in historical_years}
+            if historical_data:
+                max_day = max(max(data['x']) for data in historical_data.values())
+                all_days = np.arange(1, max_day + 1)
+                data_matrix = np.full((len(historical_data), len(all_days)), np.nan)
+
+                for i, year in enumerate(sorted(historical_data.keys())):
+                    year_data = historical_data[year]
+                    x_days, y_values = year_data['x'], year_data['y']
+                    last_day = x_days[-1]
+                    full_days = np.arange(1, last_day + 1)
+                    interpolated_values = np.interp(full_days, x_days, y_values)
+                    for j, day in enumerate(full_days):
+                        if day <= len(all_days):
+                            data_matrix[i, day - 1] = interpolated_values[j]
+
+                mean_values = np.nanmean(data_matrix, axis=0)
+                median_values = np.nanmedian(data_matrix, axis=0)
+                std_values = np.nanstd(data_matrix, axis=0, ddof=1)
+                ci_95 = 1.96 * std_values
+
+                if stats_options.get('show_mean'):
+                    fig.add_trace(go.Scatter(x=all_days, y=mean_values, mode='lines',
+                        name='Mean (Historical)', line=dict(width=2, color='#FF6B6B', dash='dash')))
+
+                if stats_options.get('show_median'):
+                    fig.add_trace(go.Scatter(x=all_days, y=median_values, mode='lines',
+                        name='Median (Historical)', line=dict(width=2, color='#4ECDC4', dash='dash')))
+
+                if stats_options.get('show_std_dev'):
+                    fig.add_trace(go.Scatter(x=all_days, y=mean_values + std_values, mode='lines',
+                        line=dict(width=0), showlegend=False, hoverinfo='skip'))
+                    fig.add_trace(go.Scatter(x=all_days, y=mean_values - std_values, mode='lines',
+                        line=dict(width=0), fillcolor='rgba(255, 107, 107, 0.2)', fill='tonexty',
+                        name='±1 Std Dev', hoverinfo='skip'))
+
+                if stats_options.get('show_ci'):
+                    fig.add_trace(go.Scatter(x=all_days, y=mean_values + ci_95, mode='lines',
+                        line=dict(width=0), showlegend=False, hoverinfo='skip'))
+                    fig.add_trace(go.Scatter(x=all_days, y=mean_values - ci_95, mode='lines',
+                        line=dict(width=0), fillcolor='rgba(78, 205, 196, 0.2)', fill='tonexty',
+                        name='95% CI', hoverinfo='skip'))
+
+        # Projection for current year
+        if current_year in years:
+            year_data = filtered_df[filtered_df['AppointmentTime'].dt.year == current_year].copy()
+            if not year_data.empty:
+                year_data['day_of_year'] = year_data['AppointmentTime'].dt.dayofyear
+                daily_counts = year_data.groupby('day_of_year').size().reset_index(name='count')
+                daily_counts = daily_counts.sort_values('day_of_year')
+                daily_counts['cumulative'] = daily_counts['count'].cumsum()
+                last_day = daily_counts['day_of_year'].iloc[-1]
+                last_value = daily_counts['cumulative'].iloc[-1]
+                days_in_year = 365
+
+                if last_day < days_in_year - 1:
+                    projected_final = last_value * (days_in_year / last_day) if last_day > 0 else last_value
+                    fig.add_trace(go.Scatter(x=[last_day, days_in_year], y=[last_value, projected_final],
+                        mode='lines', name=f'{current_year} (Projected)',
+                        line=dict(width=3, color='#8B5CF6', dash='dot')))
+                    fig.add_annotation(x=days_in_year, y=projected_final,
+                        text=f"<b>{int(projected_final):,}</b>", showarrow=False,
+                        xanchor='right', yanchor='bottom', xshift=-10, yshift=5,
+                        font=dict(size=12, color='#8B5CF6'))
+
+        fig.update_layout(title="Year-to-Date Cumulative Comparison (Normalized by Day of Year)",
+            xaxis_title="Day of Year", yaxis_title="Cumulative Simulation Count",
+            hovermode='x unified', plot_bgcolor='white', paper_bgcolor='white',
+            font=dict(color='#2C3E50', size=12),
+            xaxis=dict(showgrid=True, gridcolor='#ECF0F1', zeroline=True, zerolinewidth=1, zerolinecolor='#6c757d'),
+            yaxis=dict(showgrid=True, gridcolor='#ECF0F1', showline=True, linewidth=1, linecolor='#6c757d',
+                zeroline=True, zerolinewidth=1, zerolinecolor='#6c757d', rangemode='tozero'),
+            height=500)
+        return fig
+
+    def _create_month_comparison_chart(self, filtered_df, chart_type, smoothing, year_range, stats_options):
+        """Create chart comparing current month against historical months."""
+        import datetime, calendar
+        fig = go.Figure()
+        current_date = filtered_df['AppointmentTime'].max()
+        current_month, current_year = current_date.month, current_date.year
+
+        filtered_df['year'] = filtered_df['AppointmentTime'].dt.year
+        filtered_df['month'] = filtered_df['AppointmentTime'].dt.month
+        filtered_df['day_of_month'] = filtered_df['AppointmentTime'].dt.day
+        month_data = filtered_df[filtered_df['month'] == current_month].copy()
+
+        if month_data.empty:
+            return go.Figure().update_layout(title=f"No data for {datetime.date(1900, current_month, 1).strftime('%B')}")
+
+        years = sorted(month_data['year'].unique())
+        historical_years = [y for y in years if y < current_year]
+        colors = ['#d3d3d3'] * (len(years) - 1) + ['#8B5CF6']
+        all_year_data = {}
+        hide_historical = stats_options.get('show_mean') or stats_options.get('show_median')
+
+        for idx, year in enumerate(years):
+            year_month_data = month_data[month_data['year'] == year].copy()
+            if year_month_data.empty:
+                continue
+
+            daily_counts = year_month_data.groupby('day_of_month').size().reset_index(name='count')
+            daily_counts = daily_counts.sort_values('day_of_month')
+            daily_counts['cumulative'] = daily_counts['count'].cumsum()
+            x_values, y_values = daily_counts['day_of_month'].values, daily_counts['cumulative'].values
+            all_year_data[year] = {'x': x_values, 'y': y_values}
+
+            is_current_year = (year == current_year)
+            line_width, line_color = (3, colors[idx]) if is_current_year else (1, colors[idx])
+
+            if hide_historical and not is_current_year:
+                continue
+
+            if chart_type == 'line':
+                if smoothing > 0 and len(y_values) > 2:
+                    frac = 0.01 + (smoothing / 10) * 0.49
+                    smoothed = lowess(y_values, np.arange(len(y_values)), frac=frac, return_sorted=False)
+                    y_values = smoothed
+                fig.add_trace(go.Scatter(x=x_values, y=y_values, mode='lines', name=str(year),
+                    line=dict(width=line_width, color=line_color)))
+            else:
+                fig.add_trace(go.Bar(x=x_values, y=y_values, name=str(year), marker_color=line_color))
+
+        fig.update_layout(title=f"{datetime.date(1900, current_month, 1).strftime('%B')} Comparison Across Years",
+            xaxis_title="Day of Month", yaxis_title="Cumulative Simulation Count",
+            hovermode='x unified', plot_bgcolor='white', paper_bgcolor='white',
+            font=dict(color='#2C3E50', size=12),
+            xaxis=dict(showgrid=True, gridcolor='#ECF0F1'), yaxis=dict(showgrid=True, gridcolor='#ECF0F1', rangemode='tozero'),
+            height=500)
+        return fig
+
+    def _create_quarter_comparison_chart(self, filtered_df, chart_type, smoothing, year_range, stats_options):
+        """Create chart comparing current quarter against historical quarters."""
+        import datetime
+        fig = go.Figure()
+        current_date = filtered_df['AppointmentTime'].max()
+        current_quarter = (current_date.month - 1) // 3 + 1
+        current_year = current_date.year
+
+        filtered_df['year'] = filtered_df['AppointmentTime'].dt.year
+        filtered_df['quarter'] = filtered_df['AppointmentTime'].dt.quarter
+        filtered_df['day_of_year'] = filtered_df['AppointmentTime'].dt.dayofyear
+        quarter_data = filtered_df[filtered_df['quarter'] == current_quarter].copy()
+
+        if quarter_data.empty:
+            return go.Figure().update_layout(title=f"No data for Q{current_quarter}")
+
+        quarter_start_doy = {1: 1, 2: 91, 3: 182, 4: 274}
+        start_doy = quarter_start_doy[current_quarter]
+        quarter_data['day_of_quarter'] = quarter_data['day_of_year'] - start_doy + 1
+
+        years = sorted(quarter_data['year'].unique())
+        historical_years = [y for y in years if y < current_year]
+        colors = ['#d3d3d3'] * (len(years) - 1) + ['#8B5CF6']
+        all_year_data = {}
+        hide_historical = stats_options.get('show_mean') or stats_options.get('show_median')
+
+        for idx, year in enumerate(years):
+            year_quarter_data = quarter_data[quarter_data['year'] == year].copy()
+            if year_quarter_data.empty:
+                continue
+
+            daily_counts = year_quarter_data.groupby('day_of_quarter').size().reset_index(name='count')
+            daily_counts = daily_counts.sort_values('day_of_quarter')
+            daily_counts['cumulative'] = daily_counts['count'].cumsum()
+            x_values, y_values = daily_counts['day_of_quarter'].values, daily_counts['cumulative'].values
+            all_year_data[year] = {'x': x_values, 'y': y_values}
+
+            is_current_year = (year == current_year)
+            line_width, line_color = (3, colors[idx]) if is_current_year else (1, colors[idx])
+
+            if hide_historical and not is_current_year:
+                continue
+
+            if chart_type == 'line':
+                if smoothing > 0 and len(y_values) > 2:
+                    frac = 0.01 + (smoothing / 10) * 0.49
+                    smoothed = lowess(y_values, np.arange(len(y_values)), frac=frac, return_sorted=False)
+                    y_values = smoothed
+                fig.add_trace(go.Scatter(x=x_values, y=y_values, mode='lines', name=str(year),
+                    line=dict(width=line_width, color=line_color)))
+            else:
+                fig.add_trace(go.Bar(x=x_values, y=y_values, name=str(year), marker_color=line_color))
+
+        fig.update_layout(title=f"Q{current_quarter} Comparison Across Years",
+            xaxis_title="Day of Quarter", yaxis_title="Cumulative Simulation Count",
+            hovermode='x unified', plot_bgcolor='white', paper_bgcolor='white',
+            font=dict(color='#2C3E50', size=12),
+            xaxis=dict(showgrid=True, gridcolor='#ECF0F1'), yaxis=dict(showgrid=True, gridcolor='#ECF0F1', rangemode='tozero'),
+            height=500)
+        return fig
+
     def create_chart(self, filtered_df, aggregation, chart_type, comparison_mode, smoothing=1, year_range=None, stats_options=None, calendar_aligned=False, period_type='year'):
         """
         Create the visualization chart.
@@ -140,7 +409,7 @@ class SimulationsTask(BaseTask):
             filtered_df: Filtered DataFrame
             aggregation: Time aggregation ('Daily', 'Weekly', 'Monthly', 'Quarterly', 'Yearly')
             chart_type: 'line' or 'bar'
-            comparison_mode: 'none' or 'location'
+            comparison_mode: 'none', 'location', or 'previous_periods'
             smoothing: Moving average window size (1 = no smoothing)
             year_range: Tuple of (min_year, max_year)
             stats_options: Dict with keys show_mean, show_std_dev, show_median, show_ci
@@ -157,6 +426,15 @@ class SimulationsTask(BaseTask):
             empty_fig = go.Figure()
             empty_fig.update_layout(title="No data available for selected filters")
             return empty_fig
+
+        # Handle previous_periods comparison mode for Daily aggregation
+        if comparison_mode == 'previous_periods' and aggregation == 'Daily' and year_range:
+            if period_type == 'year':
+                return self._create_previous_periods_chart(filtered_df, chart_type, smoothing, year_range, stats_options)
+            elif period_type == 'month':
+                return self._create_month_comparison_chart(filtered_df, chart_type, smoothing, year_range, stats_options)
+            elif period_type == 'quarter':
+                return self._create_quarter_comparison_chart(filtered_df, chart_type, smoothing, year_range, stats_options)
 
         fig = go.Figure()
 
