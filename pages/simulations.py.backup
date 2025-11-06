@@ -1,0 +1,380 @@
+"""
+Simulations page for Dash multi-page app with subtabs
+"""
+import dash
+from dash import html, dcc, Input, Output, State, callback, dash_table
+import dash_bootstrap_components as dbc
+from pathlib import Path
+import plotly.graph_objects as go
+import plotly.express as px
+import numpy as np
+
+from config.settings import get_data_directory
+from data.loader import load_data
+from tasks.simulations.simulations_task import SimulationsTask
+
+# Register this as a Dash page
+dash.register_page(__name__, path='/simulations', name='Simulations')
+
+# Load simulations data - use pd.read_csv directly instead of load_data()
+# because load_data() filters for MD names which simulations don't have
+data_dir = get_data_directory()
+sim_file = Path(data_dir) / "Department Schedule No Grouping All_sim.csv"
+if sim_file.exists():
+    import pandas as pd
+    sim_df = pd.read_csv(str(sim_file))
+    sim_df['AppointmentTime'] = pd.to_datetime(sim_df['AppointmentTime'], errors='coerce')
+    # Drop rows without appointment time
+    sim_df = sim_df.dropna(subset=['AppointmentTime'])
+else:
+    import pandas as pd
+    sim_df = pd.DataFrame()  # Empty fallback
+
+# Initialize simulations task
+simulations_task = SimulationsTask(sim_df)
+
+# Page layout with subtabs
+layout = dbc.Container([
+    # Store for active subtab
+    dcc.Store(id='sim-active-subtab', data='location-type'),
+
+    dbc.Row([
+        # Sidebar
+        dbc.Col([
+            html.Div(id='sim-sidebar-content')
+        ], width=2, id='sim-sidebar-column', style={'backgroundColor': '#f8f9fa', 'padding': '20px', 'minHeight': '100vh'}),
+
+        # Main content with subtabs
+        dbc.Col([
+            # Subtabs
+            html.Div([
+                dbc.Nav([
+                    dbc.NavItem(dbc.NavLink("Location/Type", id="sim-subtab-location-type", active=True, href="#")),
+                    dbc.NavItem(dbc.NavLink("Duration", id="sim-subtab-duration", active=False, href="#")),
+                ], pills=True, className="nav-pills")
+            ], className="subtabs"),
+
+            # Content area
+            html.Div(id='sim-main-content', className="tab-content-area")
+        ], width=10, style={'padding': '20px'})
+    ], style={'margin': '0'})
+], fluid=True, style={'backgroundColor': '#FFFFFF', 'padding': '0'})
+
+# Callback to update active subtab
+@callback(
+    Output('sim-active-subtab', 'data'),
+    [Input('sim-subtab-location-type', 'n_clicks'),
+     Input('sim-subtab-duration', 'n_clicks')],
+    [State('sim-active-subtab', 'data')]
+)
+def update_sim_active_subtab(loc_clicks, dur_clicks, current_subtab):
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return 'location-type'
+
+    button_id = ctx.triggered[0]['prop_id'].split('.')[0]
+
+    if button_id == 'sim-subtab-location-type':
+        return 'location-type'
+    elif button_id == 'sim-subtab-duration':
+        return 'duration'
+
+    return current_subtab
+
+# Callback to render sidebar and main content based on active subtab
+@callback(
+    [Output('sim-sidebar-content', 'children'),
+     Output('sim-main-content', 'children'),
+     Output('sim-subtab-location-type', 'active'),
+     Output('sim-subtab-duration', 'active')],
+    [Input('sim-active-subtab', 'data')]
+)
+def render_sim_content(active_subtab):
+    if active_subtab == 'location-type':
+        # Original Location/Type view
+        sidebar = simulations_task.get_sidebar_layout()
+        main_panel = simulations_task.get_main_panel_layout()
+        return sidebar, main_panel, True, False
+
+    elif active_subtab == 'duration':
+        # Duration view - simplified sidebar
+        sidebar = create_duration_sidebar()
+        main_panel = create_duration_panel()
+        return sidebar, main_panel, False, True
+
+    return html.Div(), html.Div(), True, False
+
+def create_duration_sidebar():
+    """Create simplified sidebar for Duration subtab"""
+    return html.Div([
+        html.H5("Filters", style={'marginBottom': '20px', 'marginTop': '20px'}),
+
+        # Location Filter
+        html.Div([
+            html.Label("Location", style={'fontWeight': 'bold', 'marginBottom': '10px'}),
+            dbc.Accordion([
+                dbc.AccordionItem([
+                    html.Div([
+                        dbc.Row([
+                            dbc.Col(dbc.Button("All", id="dur-select-all-location", size="sm", color="secondary", className="w-100"), width=6),
+                            dbc.Col(dbc.Button("None", id="dur-clear-all-location", size="sm", color="secondary", className="w-100"), width=6),
+                        ])
+                    ], className="button-panel purple-panel"),
+                    html.Div([
+                        dbc.Checklist(
+                            id="dur-location-checklist",
+                            options=[{"label": loc, "value": loc} for loc in simulations_task.locations],
+                            value=simulations_task.locations,
+                            className="purple-checkbox"
+                        )
+                    ])
+                ], title=f"{len(simulations_task.locations)} of {len(simulations_task.locations)} selected", id="dur-location-accordion-title")
+            ], start_collapsed=True, id="dur-location-accordion")
+        ], className='filter-section'),
+
+        # Simulation Type Filter
+        html.Div([
+            html.Label("Simulation Type", style={'fontWeight': 'bold', 'marginBottom': '10px'}),
+            dbc.Accordion([
+                dbc.AccordionItem([
+                    html.Div([
+                        dbc.Row([
+                            dbc.Col(dbc.Button("All", id="dur-select-all-type", size="sm", color="secondary", className="w-100"), width=6),
+                            dbc.Col(dbc.Button("None", id="dur-clear-all-type", size="sm", color="secondary", className="w-100"), width=6),
+                        ])
+                    ], className="button-panel red-panel"),
+                    html.Div([
+                        dbc.Checklist(
+                            id="dur-type-checklist",
+                            options=[{"label": t, "value": t} for t in simulations_task.simulation_types],
+                            value=simulations_task.simulation_types,
+                            className="red-checkbox"
+                        )
+                    ])
+                ], title=f"{len(simulations_task.simulation_types)} of {len(simulations_task.simulation_types)} selected", id="dur-type-accordion-title")
+            ], start_collapsed=True, id="dur-type-accordion")
+        ], className='filter-section'),
+
+        html.Hr(),
+
+        # Year Range Dropdowns
+        html.Div([
+            html.Label("Year Range", style={'fontWeight': 'bold', 'marginBottom': '10px'}),
+            html.Div([
+                dbc.Button("All", id="dur-year-all", size="sm", className="active"),
+                dbc.Button("YTD", id="dur-year-current", size="sm"),
+                dbc.Button("YTD & Prior", id="dur-year-current-last", size="sm"),
+            ], className='year-select-buttons'),
+            dbc.Row([
+                dbc.Col([
+                    html.Label("From", style={'fontSize': '0.85em', 'marginBottom': '5px', 'color': '#666'}),
+                    dcc.Dropdown(
+                        id='dur-year-start',
+                        options=[{'label': str(y), 'value': y} for y in range(simulations_task.min_year, simulations_task.max_year + 1)],
+                        value=simulations_task.min_year,
+                        clearable=False
+                    )
+                ], width=6),
+                dbc.Col([
+                    html.Label("To", style={'fontSize': '0.85em', 'marginBottom': '5px', 'color': '#666'}),
+                    dcc.Dropdown(
+                        id='dur-year-end',
+                        options=[{'label': str(y), 'value': y} for y in range(simulations_task.min_year, simulations_task.max_year + 1)],
+                        value=simulations_task.max_year,
+                        clearable=False
+                    )
+                ], width=6)
+            ])
+        ], className='filter-section', style={'marginTop': '10px', 'marginBottom': '20px'}),
+    ], className='sidebar')
+
+def create_duration_panel():
+    """Create main panel for Duration subtab"""
+    return html.Div([
+        html.H4("Simulation Duration Distribution", style={'marginBottom': '20px'}),
+        dcc.Graph(id='dur-density-plot', style={
+            'height': '600px',
+            'border': '1px solid #dee2e6',
+            'borderRadius': '4px',
+            'boxShadow': '0 2px 4px rgba(0,0,0,0.1)'
+        })
+    ])
+
+# Duration sidebar callbacks
+@callback(
+    Output('dur-location-checklist', 'value'),
+    [Input('dur-select-all-location', 'n_clicks'),
+     Input('dur-clear-all-location', 'n_clicks')],
+    prevent_initial_call=True
+)
+def update_dur_locations(select_all, clear_all):
+    ctx = dash.callback_context
+    button_id = ctx.triggered[0]['prop_id'].split('.')[0]
+
+    if button_id == 'dur-select-all-location':
+        return simulations_task.locations
+    elif button_id == 'dur-clear-all-location':
+        return []
+    return dash.no_update
+
+@callback(
+    Output('dur-type-checklist', 'value'),
+    [Input('dur-select-all-type', 'n_clicks'),
+     Input('dur-clear-all-type', 'n_clicks')],
+    prevent_initial_call=True
+)
+def update_dur_types(select_all, clear_all):
+    ctx = dash.callback_context
+    button_id = ctx.triggered[0]['prop_id'].split('.')[0]
+
+    if button_id == 'dur-select-all-type':
+        return simulations_task.simulation_types
+    elif button_id == 'dur-clear-all-type':
+        return []
+    return dash.no_update
+
+@callback(
+    Output('dur-location-accordion-title', 'title'),
+    [Input('dur-location-checklist', 'value')]
+)
+def update_dur_location_title(selected):
+    if selected is None:
+        selected = []
+    return f"{len(selected)} of {len(simulations_task.locations)} selected"
+
+@callback(
+    Output('dur-type-accordion-title', 'title'),
+    [Input('dur-type-checklist', 'value')]
+)
+def update_dur_type_title(selected):
+    if selected is None:
+        selected = simulations_task.simulation_types
+    return f"{len(selected)} of {len(simulations_task.simulation_types)} selected"
+
+@callback(
+    [Output('dur-year-start', 'value'),
+     Output('dur-year-end', 'value'),
+     Output('dur-year-all', 'className'),
+     Output('dur-year-current', 'className'),
+     Output('dur-year-current-last', 'className')],
+    [Input('dur-year-all', 'n_clicks'),
+     Input('dur-year-current', 'n_clicks'),
+     Input('dur-year-current-last', 'n_clicks'),
+     Input('dur-year-start', 'value'),
+     Input('dur-year-end', 'value')],
+    prevent_initial_call=True
+)
+def update_dur_year_range_buttons(all_clicks, current_clicks, current_last_clicks, year_start, year_end):
+    ctx = dash.callback_context
+    button_id = ctx.triggered[0]['prop_id'].split('.')[0]
+
+    all_class = ""
+    current_class = ""
+    current_last_class = ""
+
+    if button_id == 'dur-year-all':
+        all_class = "active"
+        return simulations_task.min_year, simulations_task.max_year, all_class, current_class, current_last_class
+    elif button_id == 'dur-year-current':
+        current_class = "active"
+        return simulations_task.max_year, simulations_task.max_year, all_class, current_class, current_last_class
+    elif button_id == 'dur-year-current-last':
+        current_last_class = "active"
+        return max(simulations_task.min_year, simulations_task.max_year - 1), simulations_task.max_year, all_class, current_class, current_last_class
+    elif button_id in ['dur-year-start', 'dur-year-end']:
+        if year_start == simulations_task.min_year and year_end == simulations_task.max_year:
+            all_class = "active"
+        elif year_start == simulations_task.max_year and year_end == simulations_task.max_year:
+            current_class = "active"
+        elif year_start == max(simulations_task.min_year, simulations_task.max_year - 1) and year_end == simulations_task.max_year:
+            current_last_class = "active"
+        return dash.no_update, dash.no_update, all_class, current_class, current_last_class
+
+    return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+
+# Duration density plot callback
+@callback(
+    Output('dur-density-plot', 'figure'),
+    [Input('dur-location-checklist', 'value'),
+     Input('dur-type-checklist', 'value'),
+     Input('dur-year-start', 'value'),
+     Input('dur-year-end', 'value')]
+)
+def update_dur_density_plot(selected_locations, selected_types, year_start, year_end):
+    import pandas as pd
+
+    # Filter data
+    year_range = [year_start, year_end]
+    filtered_df = simulations_task.filter_data(selected_locations, selected_types, year_range)
+
+    if filtered_df.empty:
+        fig = go.Figure()
+        fig.update_layout(title="No data available for selected filters")
+        return fig
+
+    # Get ActivityPlannedLength from original dataframe
+    # Need to merge with original data to get this column
+    df_with_duration = simulations_task.df.merge(
+        filtered_df[['PatientId', 'AppointmentTime', 'Location', 'SimulationType']],
+        on=['PatientId', 'AppointmentTime', 'Location', 'SimulationType'],
+        how='inner'
+    )
+
+    # Convert ActivityPlannedLength to numeric, removing any non-numeric values
+    df_with_duration['Duration'] = pd.to_numeric(df_with_duration.get('ActivityPlannedLength', 0), errors='coerce')
+    df_with_duration = df_with_duration[df_with_duration['Duration'].notna()]
+    df_with_duration = df_with_duration[df_with_duration['Duration'] > 0]
+
+    if df_with_duration.empty:
+        fig = go.Figure()
+        fig.update_layout(title="No duration data available for selected filters")
+        return fig
+
+    # Create density plot
+    fig = go.Figure()
+
+    # Overall density
+    fig.add_trace(go.Violin(
+        y=df_with_duration['Duration'],
+        name='All Locations',
+        box_visible=True,
+        meanline_visible=True,
+        fillcolor='rgba(124, 42, 131, 0.5)',
+        line_color='rgb(124, 42, 131)',
+        opacity=0.6
+    ))
+
+    # Density by location
+    for location in sorted(df_with_duration['Location'].unique()):
+        loc_data = df_with_duration[df_with_duration['Location'] == location]
+        fig.add_trace(go.Violin(
+            y=loc_data['Duration'],
+            name=location,
+            box_visible=True,
+            meanline_visible=True,
+            opacity=0.6
+        ))
+
+    fig.update_layout(
+        title="Distribution of Planned Simulation Duration (minutes)",
+        yaxis_title="Duration (minutes)",
+        xaxis_title="",
+        showlegend=True,
+        hovermode='closest',
+        plot_bgcolor='white',
+        paper_bgcolor='white',
+        font=dict(color='#2C3E50', size=12),
+        yaxis=dict(
+            showgrid=True,
+            gridcolor='#ECF0F1',
+            zeroline=True,
+            zerolinewidth=1,
+            zerolinecolor='#6c757d'
+        ),
+        height=600
+    )
+
+    return fig
+
+# LOCATION/TYPE SUBTAB CALLBACKS (original callbacks)
+# [Rest of the original callbacks for Location/Type subtab go here...]

@@ -11,11 +11,10 @@ from components.header import create_header
 from tasks.draw_volumes.draw_volumes_task import DrawVolumesTask
 from tasks.review_plan.review_plan_task import ReviewPlanTask
 from tasks.contour_review.contour_review_task import ContourReviewTask
-from tasks.simulations.simulations_task import SimulationsTask
 from utils.styles import CUSTOM_CSS
 
-# Initialize Dash app with Bootstrap theme
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
+# Initialize Dash app with Bootstrap theme and pages support
+app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], use_pages=True, suppress_callback_exceptions=True)
 app.title = APP_TITLE
 
 # Add custom CSS
@@ -70,19 +69,10 @@ else:
     print(f"Warning: Contour data file not found at {contour_file}")
     contour_df = df  # Fallback to main data
 
-# Load simulations data
-sim_file = Path(data_dir) / "Department Schedule No Grouping All_sim.csv"
-if sim_file.exists():
-    sim_df = load_data(str(sim_file))
-else:
-    print(f"Warning: Simulations data file not found at {sim_file}")
-    sim_df = df  # Fallback to main data
-
-# Initialize tasks
+# Initialize tasks (simulations is now a separate page)
 draw_volumes_task = DrawVolumesTask(df)
 review_plan_task = ReviewPlanTask(review_df)
 contour_review_task = ContourReviewTask(contour_df)
-simulations_task = SimulationsTask(sim_df)
 
 # Define the main layout
 _layout = dbc.Container([
@@ -152,12 +142,11 @@ _layout = dbc.Container([
         ], width=9, id="content-column", style={'padding': '0'})
     ]),
 
-    # Hidden div containing all simulations components for callback registration
-    # This prevents JavaScript errors by ensuring all components exist in the DOM
-    html.Div([
-        simulations_task.get_sidebar_layout(),
-        simulations_task.get_main_panel_layout()
-    ], style={'display': 'none'}, id='simulations-hidden-components')
+    # Location component for URL navigation (required for pages)
+    dcc.Location(id='url', refresh=False, pathname='/'),
+
+    # Dash pages container (hidden when on main app, shown when on /simulations)
+    html.Div(id='page-container', children=dash.page_container, style={'display': 'none'})
 ], fluid=True, style={'backgroundColor': '#FFFFFF'})
 
 # Set the actual app layout
@@ -168,8 +157,21 @@ app.layout = _layout
 # No need to register duplicate callbacks.
 draw_volumes_task.register_callbacks(app)
 
-# Register simulations callbacks - they won't error because validation_layout includes all components
-simulations_task.register_callbacks(app)
+# Simulations is now a separate Dash page - callbacks registered in pages/simulations.py
+
+# Navigate between main app and Simulations page
+@app.callback(
+    Output('url', 'pathname'),
+    [Input('main-tabs', 'active_tab')],
+    prevent_initial_call=True
+)
+def navigate_to_page(active_tab):
+    """Navigate to Simulations page when that tab is selected, back to / for others"""
+    if active_tab == 'simulations':
+        return '/simulations'
+    else:
+        # Navigate back to main app for any other tab
+        return '/'
 
 # Store active task when subtabs are clicked
 @app.callback(
@@ -271,14 +273,23 @@ def update_sidebar_state(physicians, year_start, year_end, aggregation, chart_ty
     [Output("tab-content", "children"),
      Output("sidebar-content", "children"),
      Output("sidebar-column", "width"),
-     Output("content-column", "width")],
+     Output("content-column", "width"),
+     Output("page-container", "style")],
     [Input("main-tabs", "active_tab"),
-     Input('active-task-store', 'data')],
+     Input('active-task-store', 'data'),
+     Input('url', 'pathname')],
     [State('sidebar-state-store', 'data')]
 )
-def render_content(active_tab, active_task_id, sidebar_state):
+def render_content(active_tab, active_task_id, pathname, sidebar_state):
     """Render content and sidebar based on active tab and subtab"""
 
+    # If on the Simulations page route, show page container
+    if pathname == '/simulations':
+        # Keep the main layout visible but empty out the task content
+        # Page container will show the simulations page
+        return (html.Div(), html.Div(), 0, 12, {'display': 'block'})
+
+    # For all other paths (/, or anything else), show main content and hide page container
     if active_tab == "tasks":
         # Get the active task and update the current task reference for callbacks
         if active_task_id == "review-plan":
@@ -318,17 +329,9 @@ def render_content(active_tab, active_task_id, sidebar_state):
 
         sidebar = task.get_sidebar_layout(state=sidebar_state_copy)
 
-        return content, sidebar, 2, 9
+        return content, sidebar, 2, 9, {'display': 'none'}
 
-    elif active_tab == "simulations":
-        # Simulations tab - uses sidebar like Tasks
-        content = simulations_task.get_main_panel_layout()
-
-        # Use sidebar state if available
-        sidebar_state_copy = sidebar_state.copy() if sidebar_state else {}
-        sidebar = simulations_task.get_sidebar_layout(state=sidebar_state_copy)
-
-        return content, sidebar, 2, 9
+    # Simulations is now handled as a separate Dash page
 
     # Placeholder for other tabs
     content = html.Div([
@@ -339,7 +342,20 @@ def render_content(active_tab, active_task_id, sidebar_state):
 
     sidebar = html.Div()
 
-    return content, sidebar, 2, 9
+    return content, sidebar, 2, 9, {'display': 'none'}
+
+# Help modal toggle callback
+@app.callback(
+    Output("help-modal", "is_open"),
+    [Input("help-icon", "n_clicks"),
+     Input("close-help-modal", "n_clicks")],
+    [State("help-modal", "is_open")],
+)
+def toggle_help_modal(help_clicks, close_clicks, is_open):
+    """Toggle the help modal when icon is clicked or close button is pressed"""
+    if help_clicks or close_clicks:
+        return not is_open
+    return is_open
 
 if __name__ == '__main__':
     app.run(debug=True, port=8050)

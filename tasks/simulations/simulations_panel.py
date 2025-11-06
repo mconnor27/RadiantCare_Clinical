@@ -14,49 +14,48 @@ def create_main_panel_layout():
                 dbc.Card([
                     dbc.CardBody([
                         html.H6("Total Simulations", className="text-muted"),
-                        html.H3(id='metric-total-tasks', children='0')
+                        html.H3(id='sim-metric-total-tasks', children='0')
                     ])
-                ], className='metric-card')
+                ])
             ], width=3),
             dbc.Col([
                 dbc.Card([
                     dbc.CardBody([
                         html.H6("Date Range (Days)", className="text-muted"),
-                        html.H3(id='metric-date-range', children='0')
+                        html.H3(id='sim-metric-date-range', children='0')
                     ])
-                ], className='metric-card')
+                ])
             ], width=3),
             dbc.Col([
                 dbc.Card([
                     dbc.CardBody([
                         html.H6("Avg per Location", className="text-muted"),
-                        html.H3(id='metric-avg-physician', children='0')
+                        html.H3(id='sim-metric-avg-physician', children='0')
                     ])
-                ], className='metric-card')
+                ])
             ], width=3),
             dbc.Col([
                 dbc.Card([
                     dbc.CardBody([
                         html.H6("Avg per Day", className="text-muted"),
-                        html.H3(id='metric-avg-day', children='0.0')
+                        html.H3(id='sim-metric-avg-day', children='0.0')
                     ])
-                ], className='metric-card')
+                ])
             ], width=3),
-        ], className='mb-3'),
+        ], style={'marginBottom': '20px'}),
 
         # Chart
-        dbc.Row([
-            dbc.Col([
-                dcc.Graph(id='main-chart', config={'displayModeBar': True})
-            ], width=12)
-        ]),
+        dcc.Graph(id='sim-main-chart', style={
+            'height': '500px',
+            'border': '1px solid #dee2e6',
+            'borderRadius': '4px',
+            'boxShadow': '0 2px 4px rgba(0,0,0,0.1)'
+        }),
 
         # Data table
-        dbc.Row([
-            dbc.Col([
-                html.H5("Simulation Data Summary", style={'marginTop': '30px', 'marginBottom': '15px'}),
-                dbc.Table(id='data-table')
-            ], width=12)
+        html.Div([
+            html.H5("Simulation Data Summary", style={'marginTop': '30px', 'marginBottom': '15px'}),
+            html.Div(id='sim-data-table')
         ])
     ])
 
