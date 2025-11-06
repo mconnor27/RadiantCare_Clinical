@@ -102,6 +102,38 @@ def create_header():
 
                 html.Hr(),
 
+                html.H5("Scheduling"),
+                html.Ul([
+                    html.Li("Data source: Appointment Status per Activity (Mike).csv"),
+                    html.Li("CSV footer rows (filter metadata) automatically excluded during import"),
+                    html.Li("Department names cleaned (asterisks removed): '*Lacey' → 'Lacey'"),
+                    html.Li("Appointment date/time parsed from format: MM/DD/YYYY HH:MM:SS AM/PM"),
+                    html.Li([
+                        html.Strong("Filters: "),
+                        "Department, Physician (ResourceName), Appointment Type (ActivityName), and Time of Day (8am-5pm hourly range)"
+                    ]),
+                    html.Li([
+                        html.Strong("Department List (Reverse Alpha): "),
+                        html.Span("Lacey", style={'backgroundColor': '#e3f2fd', 'border': '1px solid #2196f3', 'padding': '2px 6px', 'borderRadius': '3px', 'marginLeft': '5px', 'fontSize': '11px'}),
+                        html.Span(", ", style={'marginRight': '3px'}),
+                        html.Span("Centralia", style={'backgroundColor': '#f3e5f5', 'border': '1px solid #9c27b0', 'padding': '2px 6px', 'borderRadius': '3px', 'fontSize': '11px'}),
+                        html.Span(", ", style={'marginRight': '3px'}),
+                        html.Span("Aberdeen", style={'backgroundColor': '#e8f5e9', 'border': '1px solid #4caf50', 'padding': '2px 6px', 'borderRadius': '3px', 'fontSize': '11px'})
+                    ]),
+                    html.Li("Time range filter applies to appointment start time (hour component)"),
+                    html.Li([
+                        html.Strong("List View: "),
+                        "Shows chronologically sorted appointments with pagination (10 per page)"
+                    ]),
+                    html.Li([
+                        html.Strong("Calendar View: "),
+                        "Time-scale weekly view (Monday-Friday, 8am-5pm) with color-coded department badges. Appointments positioned at their actual time slots with heights proportional to duration (60 pixels per hour). Navigate between weeks using the controls."
+                    ]),
+                    html.Li("All appointments shown include activity type, location, physician, and duration"),
+                ]),
+
+                html.Hr(),
+
                 html.H5("General Notes"),
                 html.Ul([
                     html.Li("All cumulative charts normalize leap years (Feb 29 combined with Feb 28)"),
