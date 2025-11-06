@@ -11,6 +11,7 @@ from components.header import create_header
 from tasks.draw_volumes.draw_volumes_task import DrawVolumesTask
 from tasks.review_plan.review_plan_task import ReviewPlanTask
 from tasks.contour_review.contour_review_task import ContourReviewTask
+from tasks.scheduling.scheduling_task import SchedulingTask
 from utils.styles import CUSTOM_CSS
 
 # Initialize Dash app with Bootstrap theme and pages support
@@ -69,10 +70,34 @@ else:
     print(f"Warning: Contour data file not found at {contour_file}")
     contour_df = df  # Fallback to main data
 
+# Load scheduling data
+scheduling_file = Path(data_dir) / "Appointment Status per Activity (Mike).csv"
+if scheduling_file.exists():
+    # Read CSV with special handling - skip footer rows with filter metadata
+    import pandas as pd
+    # First read to find the actual data rows (stop at empty line)
+    with open(scheduling_file, 'r') as f:
+        lines = f.readlines()
+        # Find first empty line (marks end of data)
+        data_end = len(lines)
+        for i, line in enumerate(lines):
+            if line.strip() == '':
+                data_end = i
+                break
+    # Now read only the data rows
+    scheduling_df = pd.read_csv(str(scheduling_file), nrows=data_end-1)
+else:
+    print(f"Warning: Scheduling data file not found at {scheduling_file}")
+    scheduling_df = None
+
 # Initialize tasks (simulations is now a separate page)
 draw_volumes_task = DrawVolumesTask(df)
 review_plan_task = ReviewPlanTask(review_df)
 contour_review_task = ContourReviewTask(contour_df)
+if scheduling_df is not None:
+    scheduling_task = SchedulingTask(scheduling_df)
+else:
+    scheduling_task = None
 
 # Define the main layout
 _layout = dbc.Container([
@@ -115,6 +140,7 @@ _layout = dbc.Container([
                     dbc.Tab(label="Tasks", tab_id="tasks"),
                     dbc.Tab(label="Clinic Visits", tab_id="clinic_visits", disabled=True),
                     dbc.Tab(label="Simulations", tab_id="simulations"),
+                    dbc.Tab(label="Scheduling", tab_id="scheduling", disabled=(scheduling_task is None)),
                     dbc.Tab(label="Billing", tab_id="billing", disabled=True),
                     dbc.Tab(label="Treatment", tab_id="treatment", disabled=True),
                 ]
@@ -129,24 +155,11 @@ _layout = dbc.Container([
         ], width=12, style={'padding': '0'})
     ], style={'margin': '0', 'position': 'relative'}),
 
-    # Main content with sidebar and panel
-    dbc.Row([
-        # Sidebar (only visible for Tasks tab)
-        dbc.Col([
-            html.Div(id="sidebar-content")
-        ], width=2, id="sidebar-column"),
-
-        # Main panel content
-        dbc.Col([
-            html.Div(id="tab-content")
-        ], width=9, id="content-column", style={'padding': '0'})
-    ]),
-
     # Location component for URL navigation (required for pages)
-    dcc.Location(id='url', refresh=False, pathname='/'),
+    dcc.Location(id='url', refresh=False),
 
-    # Dash pages container (hidden when on main app, shown when on /simulations)
-    html.Div(id='page-container', children=dash.page_container, style={'display': 'none'})
+    # Main content area - show either Tasks content OR page container
+    html.Div(id='main-content-area')
 ], fluid=True, style={'backgroundColor': '#FFFFFF'})
 
 # Set the actual app layout
@@ -157,21 +170,38 @@ app.layout = _layout
 # No need to register duplicate callbacks.
 draw_volumes_task.register_callbacks(app)
 
+# Register scheduling callbacks if available
+if scheduling_task is not None:
+    scheduling_task.register_callbacks(app)
+
 # Simulations is now a separate Dash page - callbacks registered in pages/simulations.py
 
-# Navigate between main app and Simulations page
+# Sync URL and tabs
 @app.callback(
-    Output('url', 'pathname'),
-    [Input('main-tabs', 'active_tab')],
+    Output('url', 'pathname', allow_duplicate=True),
+    Input('main-tabs', 'active_tab'),
     prevent_initial_call=True
 )
-def navigate_to_page(active_tab):
-    """Navigate to Simulations page when that tab is selected, back to / for others"""
+def navigate_from_tabs(active_tab):
+    """Update URL when tabs are clicked"""
     if active_tab == 'simulations':
         return '/simulations'
-    else:
-        # Navigate back to main app for any other tab
-        return '/'
+    elif active_tab == 'scheduling':
+        return '/scheduling'
+    return '/'
+
+@app.callback(
+    Output('main-tabs', 'active_tab'),
+    Input('url', 'pathname'),
+    prevent_initial_call=True
+)
+def sync_tabs_from_url(pathname):
+    """Update active tab when URL changes"""
+    if pathname == '/simulations':
+        return 'simulations'
+    elif pathname == '/scheduling':
+        return 'scheduling'
+    return 'tasks'
 
 # Store active task when subtabs are clicked
 @app.callback(
@@ -270,79 +300,88 @@ def update_sidebar_state(physicians, year_start, year_end, aggregation, chart_ty
 
 # Tab and subtab content callbacks
 @app.callback(
-    [Output("tab-content", "children"),
-     Output("sidebar-content", "children"),
-     Output("sidebar-column", "width"),
-     Output("content-column", "width"),
-     Output("page-container", "style")],
-    [Input("main-tabs", "active_tab"),
-     Input('active-task-store', 'data'),
-     Input('url', 'pathname')],
+    Output('main-content-area', 'children'),
+    [Input('url', 'pathname'),
+     Input('active-task-store', 'data')],
     [State('sidebar-state-store', 'data')]
 )
-def render_content(active_tab, active_task_id, pathname, sidebar_state):
-    """Render content and sidebar based on active tab and subtab"""
+def render_main_content(pathname, active_task_id, sidebar_state):
+    """Render either Tasks content, Scheduling, or Simulations page based on URL"""
 
     # If on the Simulations page route, show page container
     if pathname == '/simulations':
-        # Keep the main layout visible but empty out the task content
-        # Page container will show the simulations page
-        return (html.Div(), html.Div(), 0, 12, {'display': 'block'})
+        return dash.page_container
 
-    # For all other paths (/, or anything else), show main content and hide page container
-    if active_tab == "tasks":
-        # Get the active task and update the current task reference for callbacks
-        if active_task_id == "review-plan":
-            task = review_plan_task
-        elif active_task_id == "contour-review":
-            task = contour_review_task
-        else:
-            task = draw_volumes_task
-
-        # Update the current task that callbacks will use
-        app._current_task = task
-
+    # If on the Scheduling page route, show Scheduling content
+    if pathname == '/scheduling' and scheduling_task is not None:
+        sidebar = scheduling_task.get_sidebar_layout()
         content = html.Div([
-            # Subtabs for Tasks
-            html.Div([
-                dbc.Nav(
-                    [
-                        dbc.NavItem(dbc.NavLink("Draw Volumes", id="subtab-draw-volumes", active=(active_task_id == "draw-volumes"), href="#")),
-                        dbc.NavItem(dbc.NavLink("Review Plan", id="subtab-review-plan", active=(active_task_id == "review-plan"), href="#")),
-                        dbc.NavItem(dbc.NavLink("Contour Review", id="subtab-contour-review", active=(active_task_id == "contour-review"), href="#")),
-                    ],
-                    pills=True,
-                    className="nav-pills"
-                )
-            ], className="subtabs"),
+            scheduling_task.get_main_panel_layout()
+        ], className="tab-content-area")
 
-            # Content area
-            html.Div([
-                task.get_main_panel_layout()
-            ], className="tab-content-area")
+        return dbc.Row([
+            # Sidebar
+            dbc.Col([
+                html.Div(sidebar)
+            ], width=2, id="sidebar-column"),
+
+            # Main panel content
+            dbc.Col([
+                html.Div(content)
+            ], width=9, id="content-column", style={'padding': '0'})
         ])
 
-        # Use persisted state but reset activity_names (will be set to task defaults in sidebar)
-        # Make a copy of state to avoid mutating the store
-        sidebar_state_copy = sidebar_state.copy() if sidebar_state else {}
-        sidebar_state_copy['activity_names'] = None  # Force reset to task defaults
+    # Otherwise show Tasks content
+    # Get the active task and update the current task reference for callbacks
+    if active_task_id == "review-plan":
+        task = review_plan_task
+    elif active_task_id == "contour-review":
+        task = contour_review_task
+    else:
+        task = draw_volumes_task
 
-        sidebar = task.get_sidebar_layout(state=sidebar_state_copy)
+    # Update the current task that callbacks will use
+    app._current_task = task
 
-        return content, sidebar, 2, 9, {'display': 'none'}
+    # Use persisted state but reset activity_names (will be set to task defaults in sidebar)
+    # Make a copy of state to avoid mutating the store
+    sidebar_state_copy = sidebar_state.copy() if sidebar_state else {}
+    sidebar_state_copy['activity_names'] = None  # Force reset to task defaults
 
-    # Simulations is now handled as a separate Dash page
+    sidebar = task.get_sidebar_layout(state=sidebar_state_copy)
 
-    # Placeholder for other tabs
     content = html.Div([
+        # Subtabs for Tasks
         html.Div([
-            html.H4("Coming Soon", style={'textAlign': 'center', 'marginTop': '50px', 'color': '#6c757d'})
+            dbc.Nav(
+                [
+                    dbc.NavItem(dbc.NavLink("Draw Volumes", id="subtab-draw-volumes", active=(active_task_id == "draw-volumes"), href="#")),
+                    dbc.NavItem(dbc.NavLink("Review Plan", id="subtab-review-plan", active=(active_task_id == "review-plan"), href="#")),
+                    dbc.NavItem(dbc.NavLink("Contour Review", id="subtab-contour-review", active=(active_task_id == "contour-review"), href="#")),
+                ],
+                pills=True,
+                className="nav-pills"
+            )
+        ], className="subtabs"),
+
+        # Content area
+        html.Div([
+            task.get_main_panel_layout()
         ], className="tab-content-area")
     ])
 
-    sidebar = html.Div()
+    # Return Tasks content with sidebar
+    return dbc.Row([
+        # Sidebar
+        dbc.Col([
+            html.Div(sidebar)
+        ], width=2, id="sidebar-column"),
 
-    return content, sidebar, 2, 9, {'display': 'none'}
+        # Main panel content
+        dbc.Col([
+            html.Div(content)
+        ], width=9, id="content-column", style={'padding': '0'})
+    ], id='tasks-content-row')
 
 # Help modal toggle callback
 @app.callback(

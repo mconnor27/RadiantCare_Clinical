@@ -254,4 +254,231 @@ CUSTOM_CSS = """
     .tab-content-area > div > .row {
         max-width: 1000px;
     }
+    /* Department filter buttons (3D appearance with color accents) */
+    .dept-filter-btn {
+        flex: 0 0 auto;
+        padding: 6px 12px;
+        font-size: 13px;
+        font-weight: 600;
+        border: 2px solid #dee2e6;
+        border-radius: 8px;
+        background: linear-gradient(180deg, #ffffff 0%, #f8f9fa 100%);
+        color: #495057;
+        transition: all 0.2s ease;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1), 
+                    0 1px 2px rgba(0, 0, 0, 0.08),
+                    inset 0 -1px 2px rgba(0, 0, 0, 0.05);
+        position: relative;
+        cursor: pointer;
+        margin: 0 3px;
+    }
+    .dept-filter-btn:first-child {
+        margin-left: 0;
+    }
+    .dept-filter-btn:last-child {
+        margin-right: 0;
+    }
+    .dept-filter-btn:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 3px 5px rgba(0, 0, 0, 0.15), 
+                    0 1px 2px rgba(0, 0, 0, 0.1),
+                    inset 0 -1px 2px rgba(0, 0, 0, 0.05);
+        color: #495057;
+    }
+    .dept-filter-btn:active {
+        transform: translateY(1px);
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1), 
+                    inset 0 1px 3px rgba(0, 0, 0, 0.1);
+    }
+    /* Lacey - Blue */
+    .dept-filter-btn-lacey {
+        border-color: #2196f3;
+    }
+    .dept-filter-btn-lacey:hover {
+        border-color: #1976d2;
+        background: linear-gradient(180deg, #e3f2fd 0%, #bbdefb 100%);
+        color: #0d47a1;
+    }
+    .dept-filter-btn-lacey.dept-filter-btn-active {
+        background: linear-gradient(180deg, #64b5f6 0%, #2196f3 100%);
+        color: white;
+        border-color: #1976d2;
+        box-shadow: 0 2px 4px rgba(33, 150, 243, 0.3), 
+                    0 1px 2px rgba(33, 150, 243, 0.2),
+                    inset 0 -1px 2px rgba(0, 0, 0, 0.1),
+                    inset 0 1px 1px rgba(255, 255, 255, 0.3);
+    }
+    .dept-filter-btn-lacey.dept-filter-btn-active:hover {
+        background: linear-gradient(180deg, #90caf9 0%, #42a5f5 100%);
+        box-shadow: 0 3px 5px rgba(33, 150, 243, 0.4), 
+                    0 1px 2px rgba(33, 150, 243, 0.25),
+                    inset 0 -1px 2px rgba(0, 0, 0, 0.1),
+                    inset 0 1px 1px rgba(255, 255, 255, 0.3);
+        color: white;
+    }
+    /* Centralia - Red */
+    .dept-filter-btn-centralia {
+        border-color: #f44336 !important;
+    }
+    .dept-filter-btn-centralia:hover {
+        border-color: #d32f2f !important;
+        background: linear-gradient(180deg, #ffebee 0%, #ffcdd2 100%) !important;
+        color: #b71c1c !important;
+    }
+    .dept-filter-btn-centralia.dept-filter-btn-active {
+        background: linear-gradient(180deg, #ef5350 0%, #f44336 100%) !important;
+        color: white !important;
+        border-color: #d32f2f !important;
+        box-shadow: 0 2px 4px rgba(244, 67, 54, 0.3), 
+                    0 1px 2px rgba(244, 67, 54, 0.2),
+                    inset 0 -1px 2px rgba(0, 0, 0, 0.1),
+                    inset 0 1px 1px rgba(255, 255, 255, 0.3) !important;
+    }
+    .dept-filter-btn-centralia.dept-filter-btn-active:hover {
+        background: linear-gradient(180deg, #e57373 0%, #ef5350 100%) !important;
+        box-shadow: 0 3px 5px rgba(244, 67, 54, 0.4), 
+                    0 1px 2px rgba(244, 67, 54, 0.25),
+                    inset 0 -1px 2px rgba(0, 0, 0, 0.1),
+                    inset 0 1px 1px rgba(255, 255, 255, 0.3) !important;
+        color: white !important;
+    }
+    /* Aberdeen - Green */
+    .dept-filter-btn-aberdeen {
+        border-color: #4caf50;
+    }
+    .dept-filter-btn-aberdeen:hover {
+        border-color: #388e3c;
+        background: linear-gradient(180deg, #e8f5e9 0%, #c8e6c9 100%);
+        color: #1b5e20;
+    }
+    .dept-filter-btn-aberdeen.dept-filter-btn-active {
+        background: linear-gradient(180deg, #81c784 0%, #4caf50 100%);
+        color: white;
+        border-color: #388e3c;
+        box-shadow: 0 2px 4px rgba(76, 175, 80, 0.3), 
+                    0 1px 2px rgba(76, 175, 80, 0.2),
+                    inset 0 -1px 2px rgba(0, 0, 0, 0.1),
+                    inset 0 1px 1px rgba(255, 255, 255, 0.3);
+    }
+    .dept-filter-btn-aberdeen.dept-filter-btn-active:hover {
+        background: linear-gradient(180deg, #a5d6a7 0%, #66bb6a 100%);
+        box-shadow: 0 3px 5px rgba(76, 175, 80, 0.4), 
+                    0 1px 2px rgba(76, 175, 80, 0.25),
+                    inset 0 -1px 2px rgba(0, 0, 0, 0.1),
+                    inset 0 1px 1px rgba(255, 255, 255, 0.3);
+        color: white;
+    }
+    /* Physician filter buttons (Purple) */
+    .phys-filter-btn {
+        flex: 0 0 auto !important;
+        padding: 6px 12px !important;
+        font-size: 13px !important;
+        font-weight: 600 !important;
+        border: 2px solid #9c27b0 !important;
+        border-radius: 8px !important;
+        background: linear-gradient(180deg, #ffffff 0%, #f8f9fa 100%) !important;
+        color: #495057 !important;
+        transition: all 0.2s ease !important;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1), 
+                    0 1px 2px rgba(0, 0, 0, 0.08),
+                    inset 0 -1px 2px rgba(0, 0, 0, 0.05) !important;
+        position: relative !important;
+        cursor: pointer !important;
+    }
+    .phys-filter-btn:hover {
+        transform: translateY(-1px) !important;
+        box-shadow: 0 3px 5px rgba(0, 0, 0, 0.15), 
+                    0 1px 2px rgba(0, 0, 0, 0.1),
+                    inset 0 -1px 2px rgba(0, 0, 0, 0.05) !important;
+        border-color: #7b1fa2 !important;
+        background: linear-gradient(180deg, #f3e5f5 0%, #e1bee7 100%) !important;
+        color: #4a148c !important;
+    }
+    .phys-filter-btn:active {
+        transform: translateY(1px) !important;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1), 
+                    inset 0 1px 3px rgba(0, 0, 0, 0.1) !important;
+    }
+    .phys-filter-btn.phys-filter-btn-active {
+        background: linear-gradient(180deg, #ba68c8 0%, #9c27b0 100%) !important;
+        color: white !important;
+        border-color: #7b1fa2 !important;
+        box-shadow: 0 2px 4px rgba(156, 39, 176, 0.3), 
+                    0 1px 2px rgba(156, 39, 176, 0.2),
+                    inset 0 -1px 2px rgba(0, 0, 0, 0.1),
+                    inset 0 1px 1px rgba(255, 255, 255, 0.3) !important;
+    }
+    .phys-filter-btn.phys-filter-btn-active:hover {
+        background: linear-gradient(180deg, #ce93d8 0%, #ab47bc 100%) !important;
+        box-shadow: 0 3px 5px rgba(156, 39, 176, 0.4), 
+                    0 1px 2px rgba(156, 39, 176, 0.25),
+                    inset 0 -1px 2px rgba(0, 0, 0, 0.1),
+                    inset 0 1px 1px rgba(255, 255, 255, 0.3) !important;
+        color: white !important;
+    }
+    /* Appointment type filter buttons (Neutral Blue) */
+    .appt-filter-btn {
+        flex: 0 0 auto !important;
+        padding: 6px 12px !important;
+        font-size: 13px !important;
+        font-weight: 600 !important;
+        border: 2px solid #2196f3 !important;
+        border-radius: 8px !important;
+        background: linear-gradient(180deg, #ffffff 0%, #f8f9fa 100%) !important;
+        color: #495057 !important;
+        transition: all 0.2s ease !important;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1), 
+                    0 1px 2px rgba(0, 0, 0, 0.08),
+                    inset 0 -1px 2px rgba(0, 0, 0, 0.05) !important;
+        position: relative !important;
+        cursor: pointer !important;
+    }
+    .appt-filter-btn:hover {
+        transform: translateY(-1px) !important;
+        box-shadow: 0 3px 5px rgba(0, 0, 0, 0.15), 
+                    0 1px 2px rgba(0, 0, 0, 0.1),
+                    inset 0 -1px 2px rgba(0, 0, 0, 0.05) !important;
+        border-color: #1976d2 !important;
+        background: linear-gradient(180deg, #e3f2fd 0%, #bbdefb 100%) !important;
+        color: #0d47a1 !important;
+    }
+    .appt-filter-btn:active {
+        transform: translateY(1px) !important;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1), 
+                    inset 0 1px 3px rgba(0, 0, 0, 0.1) !important;
+    }
+    .appt-filter-btn.appt-filter-btn-active {
+        background: linear-gradient(180deg, #64b5f6 0%, #2196f3 100%) !important;
+        color: white !important;
+        border-color: #1976d2 !important;
+        box-shadow: 0 2px 4px rgba(33, 150, 243, 0.3), 
+                    0 1px 2px rgba(33, 150, 243, 0.2),
+                    inset 0 -1px 2px rgba(0, 0, 0, 0.1),
+                    inset 0 1px 1px rgba(255, 255, 255, 0.3) !important;
+    }
+    .appt-filter-btn.appt-filter-btn-active:hover {
+        background: linear-gradient(180deg, #90caf9 0%, #42a5f5 100%) !important;
+        box-shadow: 0 3px 5px rgba(33, 150, 243, 0.4), 
+                    0 1px 2px rgba(33, 150, 243, 0.25),
+                    inset 0 -1px 2px rgba(0, 0, 0, 0.1),
+                    inset 0 1px 1px rgba(255, 255, 255, 0.3) !important;
+        color: white !important;
+    }
+    /* Time range slider styling */
+    .time-range-slider .rc-slider-rail {
+        height: 8px !important;
+    }
+    .time-range-slider .rc-slider-track {
+        height: 8px !important;
+    }
+    .time-range-slider .rc-slider-handle {
+        width: 20px !important;
+        height: 20px !important;
+        margin-top: -6px !important;
+        border-width: 3px !important;
+    }
+    .time-range-slider .rc-slider-mark-text {
+        font-size: 14px !important;
+        font-weight: 500 !important;
+    }
 """

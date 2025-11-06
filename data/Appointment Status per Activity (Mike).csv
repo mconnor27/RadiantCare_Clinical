@@ -1,0 +1,87 @@
+﻿AppointmentDateTime,ActivityPlannedLength,DepartmentName,ActivityName,ResourceName,ResourceType
+11/5/2025 8:30:00 AM,30,*Lacey,HOLD RE EVAL/2 FOLLOW UPS,"Tinnel, Brent",Doctor
+11/5/2025 9:00:00 AM,90,Centralia,HOLD CONSULT,"Suszko, Justin W",Doctor
+11/6/2025 2:30:00 PM,60,Aberdeen,HOLD RE EVAL/2 FOLLOW UPS,"Connor, Michael",Doctor
+11/7/2025 9:00:00 AM,90,Centralia,HOLD CONSULT,"Suszko, Justin W",Doctor
+11/7/2025 10:30:00 AM,90,Centralia,HOLD CONSULT,"Suszko, Justin W",Doctor
+11/7/2025 2:30:00 PM,60,Centralia,HOLD RE EVAL/2 FOLLOW UPS,"Suszko, Justin W",Doctor
+11/7/2025 4:00:00 PM,30,*Lacey,HOLD SIM TIME,"Connor, Michael",Doctor
+11/7/2025 4:00:00 PM,60,*Lacey,HOLD RE EVAL/2 FOLLOW UPS,"Connor, Michael",Doctor
+11/10/2025 9:00:00 AM,90,Centralia,HOLD CONSULT,"Allen, Gregory W",Doctor
+11/10/2025 10:30:00 AM,90,Centralia,HOLD CONSULT,"Allen, Gregory W",Doctor
+11/10/2025 1:00:00 PM,90,Aberdeen,HOLD CONSULT,"Connor, Michael",Doctor
+11/10/2025 1:00:00 PM,90,Centralia,HOLD CONSULT,"Allen, Gregory W",Doctor
+11/10/2025 2:30:00 PM,60,Aberdeen,HOLD RE EVAL/2 FOLLOW UPS,"Connor, Michael",Doctor
+11/10/2025 2:30:00 PM,60,Centralia,HOLD RE EVAL/2 FOLLOW UPS,"Allen, Gregory W",Doctor
+11/11/2025 9:00:00 AM,90,Aberdeen,HOLD CONSULT,"Tinnel, Brent",Doctor
+11/11/2025 9:00:00 AM,90,Centralia,HOLD CONSULT,"Connor, Michael",Doctor
+11/11/2025 10:30:00 AM,90,Aberdeen,HOLD CONSULT,"Tinnel, Brent",Doctor
+11/11/2025 10:30:00 AM,90,Centralia,HOLD CONSULT,"Connor, Michael",Doctor
+11/11/2025 2:30:00 PM,60,Aberdeen,HOLD RE EVAL/2 FOLLOW UPS,"Tinnel, Brent",Doctor
+11/12/2025 9:00:00 AM,90,Centralia,HOLD CONSULT,"Allen, Gregory W",Doctor
+11/12/2025 10:30:00 AM,90,Centralia,HOLD CONSULT,"Allen, Gregory W",Doctor
+11/12/2025 2:30:00 PM,60,Centralia,HOLD RE EVAL/2 FOLLOW UPS,"Allen, Gregory W",Doctor
+11/12/2025 4:00:00 PM,60,*Lacey,HOLD RE EVAL/2 FOLLOW UPS,"Connor, Michael",Doctor
+11/13/2025 9:00:00 AM,90,Aberdeen,HOLD CONSULT,"Tinnel, Brent",Doctor
+11/13/2025 10:30:00 AM,90,Aberdeen,HOLD CONSULT,"Tinnel, Brent",Doctor
+11/13/2025 1:00:00 PM,90,Aberdeen,HOLD CONSULT,"Tinnel, Brent",Doctor
+11/13/2025 2:30:00 PM,60,Aberdeen,HOLD RE EVAL/2 FOLLOW UPS,"Tinnel, Brent",Doctor
+11/14/2025 8:00:00 AM,30,*Lacey,HOLD RE EVAL/2 FOLLOW UPS,"Tinnel, Brent",Doctor
+11/14/2025 9:30:00 AM,90,Centralia,HOLD CONSULT,"Allen, Gregory W",Doctor
+11/14/2025 2:30:00 PM,60,Centralia,HOLD RE EVAL/2 FOLLOW UPS,"Allen, Gregory W",Doctor
+11/17/2025 9:00:00 AM,90,Centralia,HOLD CONSULT,"Suszko, Justin W",Doctor
+11/17/2025 10:30:00 AM,90,Aberdeen,HOLD CONSULT,"Tinnel, Brent",Doctor
+11/17/2025 1:00:00 PM,90,Aberdeen,HOLD CONSULT,"Tinnel, Brent",Doctor
+11/17/2025 1:00:00 PM,90,Centralia,HOLD CONSULT,"Suszko, Justin W",Doctor
+11/17/2025 2:30:00 PM,60,Aberdeen,HOLD RE EVAL/2 FOLLOW UPS,"Tinnel, Brent",Doctor
+11/17/2025 2:30:00 PM,60,Centralia,HOLD RE EVAL/2 FOLLOW UPS,"Suszko, Justin W",Doctor
+11/18/2025 9:00:00 AM,90,Centralia,HOLD CONSULT,"Allen, Gregory W",Doctor
+11/18/2025 9:00:00 AM,90,Aberdeen,HOLD CONSULT,"Tinnel, Brent",Doctor
+11/18/2025 10:30:00 AM,90,Aberdeen,HOLD CONSULT,"Tinnel, Brent",Doctor
+11/18/2025 1:00:00 PM,90,Aberdeen,HOLD CONSULT,"Tinnel, Brent",Doctor
+11/18/2025 2:30:00 PM,60,Aberdeen,HOLD RE EVAL/2 FOLLOW UPS,"Tinnel, Brent",Doctor
+11/19/2025 8:00:00 AM,60,*Lacey,HOLD RE EVAL/2 FOLLOW UPS,"Allen, Gregory W",Doctor
+11/19/2025 9:00:00 AM,90,Centralia,HOLD CONSULT,"Suszko, Justin W",Doctor
+11/19/2025 10:30:00 AM,90,Centralia,HOLD CONSULT,"Suszko, Justin W",Doctor
+11/19/2025 1:00:00 PM,90,Centralia,HOLD CONSULT,"Suszko, Justin W",Doctor
+11/19/2025 2:30:00 PM,60,Centralia,HOLD RE EVAL/2 FOLLOW UPS,"Suszko, Justin W",Doctor
+11/19/2025 4:00:00 PM,60,*Lacey,HOLD RE EVAL/2 FOLLOW UPS,"Allen, Gregory W",Doctor
+11/20/2025 9:00:00 AM,90,Aberdeen,HOLD CONSULT,"Allen, Gregory W",Doctor
+11/20/2025 10:30:00 AM,90,Aberdeen,HOLD CONSULT,"Allen, Gregory W",Doctor
+11/20/2025 1:00:00 PM,30,Centralia,HOLD TIME,"Suszko, Justin W",Doctor
+11/20/2025 1:00:00 PM,90,Aberdeen,HOLD CONSULT,"Allen, Gregory W",Doctor
+11/20/2025 2:30:00 PM,60,Aberdeen,HOLD RE EVAL/2 FOLLOW UPS,"Allen, Gregory W",Doctor
+11/21/2025 8:00:00 AM,60,*Lacey,HOLD RE EVAL/2 FOLLOW UPS,"Allen, Gregory W",Doctor
+11/21/2025 8:45:00 AM,90,Centralia,HOLD CONSULT,"Tinnel, Brent",Doctor
+11/21/2025 10:15:00 AM,90,Centralia,HOLD CONSULT,"Tinnel, Brent",Doctor
+11/21/2025 1:00:00 PM,90,Centralia,HOLD CONSULT,"Tinnel, Brent",Doctor
+11/21/2025 2:30:00 PM,60,Centralia,HOLD RE EVAL/2 FOLLOW UPS,"Tinnel, Brent",Doctor
+11/24/2025 8:00:00 AM,90,*Lacey,HOLD CONSULT,"Suszko, Justin W",Doctor
+11/24/2025 9:00:00 AM,90,Aberdeen,HOLD CONSULT,"Connor, Michael",Doctor
+11/24/2025 9:00:00 AM,90,Centralia,HOLD CONSULT,"Allen, Gregory W",Doctor
+11/24/2025 10:30:00 AM,90,*Lacey,HOLD CONSULT,"Suszko, Justin W",Doctor
+11/24/2025 10:30:00 AM,90,Aberdeen,HOLD CONSULT,"Connor, Michael",Doctor
+11/24/2025 10:30:00 AM,90,Centralia,HOLD CONSULT,"Allen, Gregory W",Doctor
+11/24/2025 10:30:00 AM,90,Aberdeen,HOLD TIME,"Connor, Michael",Doctor
+11/24/2025 1:00:00 PM,90,Aberdeen,HOLD CONSULT,"Connor, Michael",Doctor
+11/24/2025 2:30:00 PM,60,Aberdeen,HOLD RE EVAL/2 FOLLOW UPS,"Connor, Michael",Doctor
+11/24/2025 2:30:00 PM,60,Centralia,HOLD RE EVAL/2 FOLLOW UPS,"Allen, Gregory W",Doctor
+11/24/2025 3:30:00 PM,90,*Lacey,HOLD CONSULT,"Suszko, Justin W",Doctor
+11/25/2025 9:00:00 AM,90,Aberdeen,HOLD CONSULT,"Connor, Michael",Doctor
+11/25/2025 9:00:00 AM,90,Centralia,HOLD CONSULT,"Allen, Gregory W",Doctor
+11/25/2025 10:30:00 AM,90,Aberdeen,HOLD CONSULT,"Connor, Michael",Doctor
+11/25/2025 10:30:00 AM,90,Centralia,HOLD CONSULT,"Allen, Gregory W",Doctor
+11/25/2025 1:00:00 PM,90,Aberdeen,HOLD CONSULT,"Connor, Michael",Doctor
+11/25/2025 1:00:00 PM,90,Centralia,HOLD CONSULT,"Allen, Gregory W",Doctor
+11/25/2025 2:30:00 PM,60,Aberdeen,HOLD RE EVAL/2 FOLLOW UPS,"Connor, Michael",Doctor
+11/25/2025 2:30:00 PM,60,Centralia,HOLD RE EVAL/2 FOLLOW UPS,"Allen, Gregory W",Doctor
+11/26/2025 8:00:00 AM,30,*Lacey,HOLD RE EVAL/2 FOLLOW UPS,"Allen, Gregory W",Doctor
+11/26/2025 10:30:00 AM,90,*Lacey,HOLD CONSULT,"Allen, Gregory W",Doctor
+11/26/2025 1:00:00 PM,90,*Lacey,HOLD CONSULT,"Allen, Gregory W",Doctor
+11/28/2025 9:00:00 AM,90,Centralia,HOLD CONSULT,"Allen, Gregory W",Doctor
+11/28/2025 10:30:00 AM,90,Centralia,HOLD CONSULT,"Allen, Gregory W",Doctor
+11/28/2025 1:00:00 PM,90,Centralia,HOLD CONSULT,"Allen, Gregory W",Doctor
+
+txt0755e7a50b854f7c9c9b51744a462af8,txt9c03511c214a428799a91b8d41b5873d,txt13475bf740ee4cbd9a33365e6e4c812f,txtf0626f0482ad49d79b6fdbc0fa89dcc7,txt368779a894a745e0be8070412009b0f2,txtd95ece215dc543d4b3ee65d1b5598c2c,txte2c852c3c96d45619f49f90ecf798b5a,txt514f412fa87741c9841f16b3447424d3
+,ActivityName,contains,HOLD *,,ResourceType,equals,Doctor
+
