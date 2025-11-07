@@ -354,11 +354,26 @@ def create_calendar_view(weekly_df, week_start, week_end, department_colors):
                 
                 appt_type_display = get_appointment_type_display(appt['ActivityName'])
                 
+                # Darken the border color while retaining its hue (mix 75% black with 25% original color)
+                def darken_color(hex_color, black_ratio=0.75):
+                    """Darken a hex color by mixing with black"""
+                    hex_color = hex_color.lstrip('#')
+                    r = int(hex_color[0:2], 16)
+                    g = int(hex_color[2:4], 16)
+                    b = int(hex_color[4:6], 16)
+                    # Mix with black
+                    r = int(r * (1 - black_ratio))
+                    g = int(g * (1 - black_ratio))
+                    b = int(b * (1 - black_ratio))
+                    return f'#{r:02x}{g:02x}{b:02x}'
+                
+                darkened_color = darken_color(colors['border'], black_ratio=0.75)
+                
                 # Badge styling
                 badge_style = {
                     'fontSize': '8px',
                     'fontWeight': 'bold',
-                    'color': colors['border'],
+                    'color': darkened_color,  # Darkened version of original color
                     'backgroundColor': f'rgba({int(colors["border"][1:3], 16)}, {int(colors["border"][3:5], 16)}, {int(colors["border"][5:7], 16)}, 0.25)',
                     'padding': '2px 6px',
                     'borderRadius': '3px',

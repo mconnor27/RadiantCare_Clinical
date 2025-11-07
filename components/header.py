@@ -134,6 +134,72 @@ def create_header():
 
                 html.Hr(),
 
+                html.H5("Clinic Visits (Consults)"),
+                html.Ul([
+                    html.Li("Data source: Department Schedule No Grouping All (Mike)_exam.csv"),
+                    html.Li("Cancelled appointments are excluded"),
+                    html.Li("Only activities containing 'Consult' in ActivityName are included"),
+                    html.Li([
+                        html.Strong("Date/Time: "),
+                        "Uses ScheduledEndTime if available, otherwise falls back to ActivityStartDateTime"
+                    ]),
+                    html.Li("Only consults with a Primary Oncologist (FirstMD extracted from ResourceName) are included"),
+                    html.Li([
+                        html.Strong("Appointment Type Classification: ")
+                    ]),
+                    html.Ul([
+                        html.Li([
+                            html.Strong(">60 minutes: "),
+                            "Classified as ",
+                            html.Span("Consult", style={'fontWeight': 'bold', 'color': '#2196f3'}),
+                            " (new patient)"
+                        ]),
+                        html.Li([
+                            html.Strong("≤60 minutes with ActivityName 'Consult', 'Consult - Special request', or 'Consult- ADD ON': ")
+                        ]),
+                        html.Ul([
+                            html.Li([
+                                "Default: ",
+                                html.Span("Consult", style={'fontWeight': 'bold', 'color': '#2196f3'}),
+                                " (new patient)"
+                            ]),
+                            html.Li([
+                                "Exception: If ActivityNote contains 'follow-up', 'follow up', 'followup', 're-eval', 're eval', 'reeeval', or 'reeval' (case-insensitive, any spacing/hyphenation) → ",
+                                html.Span("Follow-Up", style={'fontWeight': 'bold', 'color': '#4caf50'})
+                            ])
+                        ]),
+                        html.Li([
+                            html.Strong("≤60 minutes with ActivityName 'Virtual Consult/Follow Up': ")
+                        ]),
+                        html.Ul([
+                            html.Li([
+                                "If duration <60 minutes → ",
+                                html.Span("Follow-Up", style={'fontWeight': 'bold', 'color': '#4caf50'})
+                            ]),
+                            html.Li([
+                                "If duration =60 minutes:"
+                            ]),
+                            html.Ul([
+                                html.Li([
+                                    "If note contains follow-up/re-eval indicators → ",
+                                    html.Span("Follow-Up", style={'fontWeight': 'bold', 'color': '#4caf50'})
+                                ]),
+                                html.Li([
+                                    "If note mentions 'new' or no clear indicator → ",
+                                    html.Span("Consult", style={'fontWeight': 'bold', 'color': '#2196f3'}),
+                                    " (new patient)"
+                                ])
+                            ])
+                        ])
+                    ]),
+                    html.Li([
+                        html.Strong("Duration Histogram: "),
+                        "Shows distribution of appointment durations using ActivityPlannedLength (in minutes). Mean and median lines are displayed for reference."
+                    ])
+                ]),
+
+                html.Hr(),
+
                 html.H5("General Notes"),
                 html.Ul([
                     html.Li("All cumulative charts normalize leap years (Feb 29 combined with Feb 28)"),

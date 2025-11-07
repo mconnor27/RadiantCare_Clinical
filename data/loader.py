@@ -101,3 +101,116 @@ def load_data(file_path):
     df['ActivityName'] = df['ActivityName'].apply(consolidate_activity)
 
     return df
+
+
+def classify_appointment_type(row):
+    """
+    Classify appointment as 'Consult' (new patient) or 'Follow-Up' based on duration and notes.
+
+    Rules:
+    1. >60 minutes → Consult
+    2. ≤60 minutes:
+       - ActivityName in ["Consult", "Consult - Special request", "Consult- ADD ON"]:
+         → Consult (default), unless notes mention follow-up/re-eval
+       - ActivityName = "Virtual Consult/Follow Up":
+         → If <60min: Follow-Up
+         → If =60min: Check notes (follow-up indicators → Follow-Up, else → Consult)
+
+    Args:
+        row: DataFrame row with ActivityPlannedLength, ActivityName, ActivityNote
+
+    Returns:
+        str: 'Consult' or 'Follow-Up'
+    """
+    import re
+
+    # Get duration (convert to numeric)
+    duration = pd.to_numeric(row.get('ActivityPlannedLength'), errors='coerce')
+    activity_name = str(row.get('ActivityName', '')).strip()
+    activity_note = str(row.get('ActivityNote', ''))
+
+    # Pattern matching for follow-up indicators (case-insensitive)
+    followup_pattern = re.compile(r'follow[\s-]?up|re[\s-]?eval|followup|reeval', re.IGNORECASE)
+    new_pattern = re.compile(r'\bnew\b', re.IGNORECASE)
+
+    # Rule 1: >60 minutes → Consult
+    if pd.notna(duration) and duration > 60:
+        return 'Consult'
+
+    # Rule 2: ≤60 minutes or duration unknown
+    # Check if it's a standard consult type
+    standard_consult_types = ['Consult', 'Consult - Special request', 'Consult- ADD ON']
+
+    if activity_name in standard_consult_types:
+        # Default to Consult, unless notes indicate follow-up
+        if followup_pattern.search(activity_note):
+            return 'Follow-Up'
+        else:
+            return 'Consult'
+
+    # Virtual Consult/Follow Up type
+    elif 'Virtual Consult/Follow Up' in activity_name:
+        if pd.notna(duration) and duration < 60:
+            # <60 minutes → Follow-Up
+            return 'Follow-Up'
+        elif pd.notna(duration) and duration == 60:
+            # =60 minutes: check notes
+            if followup_pattern.search(activity_note):
+                return 'Follow-Up'
+            else:
+                # No follow-up indicator or mentions "new" → Consult
+                return 'Consult'
+        else:
+            # Duration unknown, check notes
+            if followup_pattern.search(activity_note):
+                return 'Follow-Up'
+            else:
+                return 'Consult'
+
+    # Default fallback for any other type
+    return 'Consult'
+
+
+def load_consults_data(file_path):
+    """
+    Load and preprocess consults data from exam CSV file.
+
+    Args:
+        file_path: Path to exam CSV file
+
+    Returns:
+        DataFrame with processed consults data
+    """
+    # Read CSV with error handling - on_bad_lines='skip' will skip problematic rows
+    df = pd.read_csv(file_path, encoding='utf-8-sig', on_bad_lines='skip', engine='python')
+
+    # Filter out cancelled appointments
+    df = df[df['AppointmentStatus'] != 'Cancelled'].copy()
+
+    # Parse date columns - use ScheduledEndTime or ActivityStartDateTime as AppointmentTime
+    df['ScheduledEndTime'] = pd.to_datetime(df['ScheduledEndTime'], errors='coerce')
+    df['ActivityStartDateTime'] = pd.to_datetime(df['ActivityStartDateTime'], errors='coerce')
+    df['ActivityEndDateTime'] = pd.to_datetime(df['ActivityEndDateTime'], errors='coerce')
+
+    # Use ScheduledEndTime if available, otherwise ActivityStartDateTime
+    df['AppointmentTime'] = df['ScheduledEndTime'].fillna(df['ActivityStartDateTime'])
+
+    # Drop rows without appointment time
+    df = df.dropna(subset=['AppointmentTime'])
+
+    # Filter for activities containing "Consult" (case-insensitive)
+    df = df[df['ActivityName'].str.contains('Consult', case=False, na=False)].copy()
+
+    # Extract first MD for each row
+    df['FirstMD'] = df['ResourceName'].apply(extract_first_md)
+
+    # Filter out rows with no MD
+    df = df[df['FirstMD'].notna()].copy()
+
+    # Filter to MIN_YEAR onwards
+    df = df[df['AppointmentTime'].dt.year >= MIN_YEAR].copy()
+
+    # Classify appointment type (Consult vs Follow-Up)
+    df['AppointmentType'] = df.apply(classify_appointment_type, axis=1)
+
+    return df
