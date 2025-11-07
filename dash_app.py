@@ -6,12 +6,13 @@ import dash_bootstrap_components as dbc
 from dash import html, Input, Output, State, dcc
 
 from config.settings import APP_TITLE, get_data_directory
-from data.loader import find_task_file, load_data
+from data.loader import find_task_file, load_data, load_consults_data
 from components.header import create_header
 from tasks.draw_volumes.draw_volumes_task import DrawVolumesTask
 from tasks.review_plan.review_plan_task import ReviewPlanTask
 from tasks.contour_review.contour_review_task import ContourReviewTask
 from tasks.scheduling.scheduling_task import SchedulingTask
+from clinic_visits.consults.consults_task import ConsultsTask
 from utils.styles import CUSTOM_CSS
 
 # Initialize Dash app with Bootstrap theme and pages support
@@ -102,6 +103,14 @@ else:
     print(f"Warning: Scheduling data file not found at {scheduling_file}")
     scheduling_df = None
 
+# Load consults data
+consults_file = Path(data_dir) / "Department Schedule No Grouping All (Mike)_exam.csv"
+if consults_file.exists():
+    consults_df = load_consults_data(str(consults_file))
+else:
+    print(f"Warning: Consults data file not found at {consults_file}")
+    consults_df = None
+
 # Initialize tasks (simulations is now a separate page)
 draw_volumes_task = DrawVolumesTask(df)
 review_plan_task = ReviewPlanTask(review_df)
@@ -110,11 +119,17 @@ if scheduling_df is not None:
     scheduling_task = SchedulingTask(scheduling_df)
 else:
     scheduling_task = None
+if consults_df is not None:
+    consults_task = ConsultsTask(consults_df)
+else:
+    consults_task = None
 
 # Define the main layout
 _layout = dbc.Container([
     # Store component to track active task
     dcc.Store(id='active-task-store', data='draw-volumes'),
+    # Store component to track active clinic visits subtab
+    dcc.Store(id='clinic-visits-subtab-store', data='consults'),
     # Store component to persist sidebar state across task switches
     dcc.Store(id='sidebar-state-store', data={
         'physicians': None,
@@ -150,7 +165,7 @@ _layout = dbc.Container([
                 className="main-tabs",
                 children=[
                     dbc.Tab(label="Tasks", tab_id="tasks"),
-                    dbc.Tab(label="Clinic Visits", tab_id="clinic_visits", disabled=True),
+                    dbc.Tab(label="Clinic Visits", tab_id="clinic_visits", disabled=(consults_task is None)),
                     dbc.Tab(label="Simulations", tab_id="simulations"),
                     dbc.Tab(label="Scheduling", tab_id="scheduling", disabled=(scheduling_task is None)),
                     dbc.Tab(label="Billing", tab_id="billing", disabled=True),
@@ -186,6 +201,10 @@ draw_volumes_task.register_callbacks(app)
 if scheduling_task is not None:
     scheduling_task.register_callbacks(app)
 
+# Register consults callbacks if available
+if consults_task is not None:
+    consults_task.register_callbacks(app)
+
 # Simulations is now a separate Dash page - callbacks registered in pages/simulations.py
 
 # Sync URL and tabs
@@ -200,6 +219,8 @@ def navigate_from_tabs(active_tab):
         return '/simulations'
     elif active_tab == 'scheduling':
         return '/scheduling'
+    elif active_tab == 'clinic_visits':
+        return '/clinic_visits'
     return '/'
 
 @app.callback(
@@ -213,6 +234,8 @@ def sync_tabs_from_url(pathname):
         return 'simulations'
     elif pathname == '/scheduling':
         return 'scheduling'
+    elif pathname == '/clinic_visits':
+        return 'clinic_visits'
     return 'tasks'
 
 # Store active task when subtabs are clicked
@@ -239,6 +262,25 @@ def update_active_task(draw_clicks, review_clicks, contour_clicks, current_task)
         return 'contour-review'
 
     return current_task
+
+# Store active clinic visits subtab when subtabs are clicked
+@app.callback(
+    Output('clinic-visits-subtab-store', 'data'),
+    [Input("clinic-visits-subtab-consults", "n_clicks")],
+    [State('clinic-visits-subtab-store', 'data')]
+)
+def update_clinic_visits_subtab(consults_clicks, current_subtab):
+    """Update which clinic visits subtab is active in the store"""
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return 'consults'
+
+    button_id = ctx.triggered[0]["prop_id"].split(".")[0]
+
+    if button_id == "clinic-visits-subtab-consults":
+        return 'consults'
+
+    return current_subtab
 
 # Update sidebar state store when sidebar values change
 @app.callback(
@@ -314,15 +356,53 @@ def update_sidebar_state(physicians, year_start, year_end, aggregation, chart_ty
 @app.callback(
     Output('main-content-area', 'children'),
     [Input('url', 'pathname'),
-     Input('active-task-store', 'data')],
+     Input('active-task-store', 'data'),
+     Input('clinic-visits-subtab-store', 'data')],
     [State('sidebar-state-store', 'data')]
 )
-def render_main_content(pathname, active_task_id, sidebar_state):
-    """Render either Tasks content, Scheduling, or Simulations page based on URL"""
+def render_main_content(pathname, active_task_id, clinic_visits_subtab_id, sidebar_state):
+    """Render either Tasks content, Scheduling, Clinic Visits, or Simulations page based on URL"""
 
     # If on the Simulations page route, show page container
     if pathname == '/simulations':
         return dash.page_container
+
+    # If on the Clinic Visits page route, show Clinic Visits content
+    if pathname == '/clinic_visits' and consults_task is not None:
+        # For now, only Consults subtab exists
+        task = consults_task
+        app._current_consults_task = task
+
+        sidebar = task.get_sidebar_layout()
+        content = html.Div([
+            # Subtabs for Clinic Visits
+            html.Div([
+                dbc.Nav(
+                    [
+                        dbc.NavItem(dbc.NavLink("Consults", id="clinic-visits-subtab-consults", active=(clinic_visits_subtab_id == "consults"), href="#")),
+                    ],
+                    pills=True,
+                    className="nav-pills"
+                )
+            ], className="subtabs"),
+
+            # Content area
+            html.Div([
+                task.get_main_panel_layout()
+            ], className="tab-content-area")
+        ])
+
+        return dbc.Row([
+            # Sidebar
+            dbc.Col([
+                html.Div(sidebar)
+            ], width=2, id="sidebar-column"),
+
+            # Main panel content
+            dbc.Col([
+                html.Div(content)
+            ], width=9, id="content-column", style={'padding': '0'})
+        ])
 
     # If on the Scheduling page route, show Scheduling content
     if pathname == '/scheduling' and scheduling_task is not None:
