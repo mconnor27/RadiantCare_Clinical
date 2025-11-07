@@ -6,6 +6,26 @@ import dash_bootstrap_components as dbc
 from datetime import datetime
 
 
+# Appointment type mapping
+APPOINTMENT_TYPE_MAP = {
+    'HOLD CONSULT': 'Consult',
+    'HOLD RE EVAL/2 FOLLOW UPS': 'Follow-up'
+}
+
+
+def get_appointment_type_display(activity_name):
+    """
+    Convert appointment activity name to display name.
+    
+    Args:
+        activity_name: The ActivityName from the data
+        
+    Returns:
+        Display name (Consult or Follow-up)
+    """
+    return APPOINTMENT_TYPE_MAP.get(activity_name, activity_name)
+
+
 def create_main_panel_layout():
     """
     Create main panel layout for Scheduling task.
@@ -16,10 +36,13 @@ def create_main_panel_layout():
     return html.Div([
         # List view container
         html.Div(id='sched-list-view-container', style={'display': 'none'}, children=[
-            html.H5("Appointments", style={'marginTop': '20px', 'marginBottom': '15px'}),
+            html.H5("Open Appointments", style={'marginTop': '20px', 'marginBottom': '15px'}),
             
-            # Appointments list
-            html.Div(id='sched-appointments-list'),
+            # Appointments list with max width and left aligned
+            html.Div(id='sched-appointments-list', style={
+                'maxWidth': '700px',
+                'margin': '0'
+            }),
             
             # Pagination controls - bottom
             html.Div([
@@ -53,12 +76,22 @@ def create_main_panel_layout():
                 html.H5(id='sched-calendar-title', children="Week of", style={
                     'display': 'inline-block',
                     'marginRight': '10px',
-                    'marginBottom': '0'
+                    'marginBottom': '0',
+                    'marginTop': '0',
+                    'verticalAlign': 'middle'
                 }),
                 dbc.Button("Today", id="sched-current-week-top", size="sm", color="primary", style={
                     'verticalAlign': 'middle'
                 }),
-            ], style={'textAlign': 'center', 'marginTop': '20px', 'marginBottom': '15px'}),
+            ], style={
+                'textAlign': 'center', 
+                'marginTop': '20px', 
+                'marginBottom': '15px',
+                'display': 'flex',
+                'justifyContent': 'center',
+                'alignItems': 'center',
+                'gap': '10px'
+            }),
             
             # Calendar grid with navigation arrows overlaid
             html.Div([
@@ -107,12 +140,13 @@ def create_main_panel_layout():
     ])
 
 
-def create_appointment_card(appointment):
+def create_appointment_card(appointment, department_colors):
     """
     Create a card for a single appointment.
 
     Args:
         appointment: Series with appointment data
+        department_colors: Dict mapping department names to color schemes
 
     Returns:
         Dash component for appointment card
@@ -121,6 +155,48 @@ def create_appointment_card(appointment):
     date_str = appt_datetime.strftime('%A, %B %d, %Y')
     time_str = appt_datetime.strftime('%I:%M %p')
     end_time = appointment['EndTime'].strftime('%I:%M %p')
+    appt_type_display = get_appointment_type_display(appointment['ActivityName'])
+    
+    # Get department color
+    dept_name = appointment['DepartmentName']
+    colors = department_colors.get(dept_name, {'bg': '#e3f2fd', 'border': '#2196f3'})
+    
+    # Convert hex color to RGB for badge background and card background
+    def hex_to_rgb(hex_color):
+        hex_color = hex_color.lstrip('#')
+        return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+    
+    rgb_border = hex_to_rgb(colors['border'])
+    rgb_bg = hex_to_rgb(colors['bg'])
+    
+    # Create more subtle background color with reduced opacity
+    subtle_bg = f'rgba({rgb_bg[0]}, {rgb_bg[1]}, {rgb_bg[2]}, 0.3)'
+    
+    # Create badge styles
+    dept_badge_style = {
+        'display': 'inline-block',
+        'fontSize': '11px',
+        'fontWeight': '600',
+        'color': colors['border'],
+        'backgroundColor': f'rgba({rgb_border[0]}, {rgb_border[1]}, {rgb_border[2]}, 0.15)',
+        'padding': '4px 10px',
+        'borderRadius': '6px',
+        'border': f'1px solid {colors["border"]}',
+        'whiteSpace': 'nowrap'
+    }
+    
+    # Physician badge style (purple theme)
+    phys_badge_style = {
+        'display': 'inline-block',
+        'fontSize': '11px',
+        'fontWeight': '600',
+        'color': '#7b1fa2',
+        'backgroundColor': 'rgba(156, 39, 176, 0.15)',
+        'padding': '4px 10px',
+        'borderRadius': '6px',
+        'border': '1px solid #9c27b0',
+        'whiteSpace': 'nowrap'
+    }
 
     return dbc.Card([
         dbc.CardBody([
@@ -128,38 +204,46 @@ def create_appointment_card(appointment):
                 dbc.Col([
                     html.Div([
                         html.I(className="fas fa-calendar-day", style={'marginRight': '8px', 'color': '#6c757d'}),
-                        html.Strong(date_str)
-                    ], style={'marginBottom': '5px'}),
+                        html.Strong(date_str, style={'fontSize': '15px'})
+                    ], style={'marginBottom': '8px'}),
                     html.Div([
                         html.I(className="fas fa-clock", style={'marginRight': '8px', 'color': '#6c757d'}),
-                        html.Span(f"{time_str} - {end_time} ({int(appointment['ActivityPlannedLength'])} min)")
-                    ], style={'marginBottom': '5px'}),
+                        html.Span(f"{time_str} - {end_time} ({int(appointment['ActivityPlannedLength'])} min)", 
+                                 style={'fontSize': '14px', 'color': '#495057'})
+                    ], style={'marginBottom': '8px'}),
+                    html.Div([
+                        html.I(className="fas fa-notes-medical", style={'marginRight': '8px', 'color': '#6c757d'}),
+                        html.Span(appt_type_display, style={'fontSize': '13px', 'color': '#6c757d'})
+                    ]),
                 ], width=6),
                 dbc.Col([
                     html.Div([
-                        html.I(className="fas fa-user-md", style={'marginRight': '8px', 'color': '#6c757d'}),
-                        html.Span(appointment['ResourceName'])
-                    ], style={'marginBottom': '5px'}),
+                        html.Span(appointment['ResourceName'], style=phys_badge_style)
+                    ], style={'marginBottom': '8px', 'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-end'}),
                     html.Div([
-                        html.I(className="fas fa-hospital", style={'marginRight': '8px', 'color': '#6c757d'}),
-                        html.Span(appointment['DepartmentName'])
-                    ], style={'marginBottom': '5px'}),
+                        html.Span(dept_name, style=dept_badge_style)
+                    ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'flex-end'}),
                 ], width=6),
             ]),
-            html.Div([
-                html.I(className="fas fa-notes-medical", style={'marginRight': '8px', 'color': '#6c757d'}),
-                html.Span(appointment['ActivityName'])
-            ], style={'marginTop': '10px', 'paddingTop': '10px', 'borderTop': '1px solid #dee2e6'})
         ])
-    ], style={'marginBottom': '10px', 'boxShadow': '0 2px 4px rgba(0,0,0,0.1)'})
+    ], style={
+        'marginBottom': '12px', 
+        'boxShadow': '0 2px 6px rgba(0,0,0,0.08)',
+        'border': f'1px solid {colors["border"]}',
+        'borderLeft': f'4px solid {colors["border"]}',
+        'borderRadius': '8px',
+        'backgroundColor': subtle_bg,
+        'transition': 'all 0.2s ease'
+    })
 
 
-def create_list_view(appointments_df):
+def create_list_view(appointments_df, department_colors):
     """
     Create list view of appointments.
 
     Args:
         appointments_df: DataFrame with appointments for current page
+        department_colors: Dict mapping department names to color schemes
 
     Returns:
         List of appointment card components
@@ -168,7 +252,7 @@ def create_list_view(appointments_df):
         return [html.Div("No appointments found for the selected filters.",
                         style={'textAlign': 'center', 'padding': '40px', 'color': '#6c757d'})]
 
-    return [create_appointment_card(row) for _, row in appointments_df.iterrows()]
+    return [create_appointment_card(row, department_colors) for _, row in appointments_df.iterrows()]
 
 
 def create_calendar_view(weekly_df, week_start, week_end, department_colors):
@@ -184,8 +268,10 @@ def create_calendar_view(weekly_df, week_start, week_end, department_colors):
     Returns:
         Calendar grid component
     """
+    from datetime import date as date_class, timedelta
+    
     weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-    dates = [(week_start + __import__('datetime').timedelta(days=i)) for i in range(5)]
+    dates = [(week_start + timedelta(days=i)) for i in range(5)]
 
     # Time scale parameters (8am - 5pm = 10 hours including 5pm)
     start_hour = 8
@@ -236,6 +322,10 @@ def create_calendar_view(weekly_df, week_start, week_end, department_colors):
     for i, (day, date) in enumerate(zip(weekdays, dates)):
         day_appointments = appointments_by_day[day]
         date_str = date.strftime('%b %d')
+        
+        # Check if this date is today
+        today = date_class.today()
+        is_today = date.date() == today
 
         # Create appointment items positioned by time
         appt_items = []
@@ -261,29 +351,87 @@ def create_calendar_view(weekly_df, week_start, week_end, department_colors):
                 # Get department color
                 dept_name = appt['DepartmentName']
                 colors = department_colors.get(dept_name, {'bg': '#e3f2fd', 'border': '#2196f3'})
-
-                appt_items.append(
-                    html.Div([
+                
+                appt_type_display = get_appointment_type_display(appt['ActivityName'])
+                
+                # Badge styling
+                badge_style = {
+                    'fontSize': '8px',
+                    'fontWeight': 'bold',
+                    'color': colors['border'],
+                    'backgroundColor': f'rgba({int(colors["border"][1:3], 16)}, {int(colors["border"][3:5], 16)}, {int(colors["border"][5:7], 16)}, 0.25)',
+                    'padding': '2px 6px',
+                    'borderRadius': '3px',
+                    'textAlign': 'center',
+                    'whiteSpace': 'nowrap',
+                    'width': 'fit-content'
+                }
+                
+                # Create badge element
+                badge_element = html.Div(appt['DepartmentName'], style=badge_style)
+                
+                # Check if this is a 30-minute appointment
+                is_30_min = duration_minutes == 30
+                
+                if is_30_min:
+                    # 30-minute appointments: single line with time, physician, location
+                    appt_items.append(
+                        html.Div([
+                            html.Div(time_str, style={'fontWeight': 'bold', 'fontSize': '10px', 'marginRight': '8px', 'whiteSpace': 'nowrap'}),
+                            html.Div(appt['ResourceName'], style={'fontSize': '11px', 'marginRight': '8px', 'overflow': 'hidden', 'textOverflow': 'ellipsis', 'whiteSpace': 'nowrap', 'flex': '1', 'minWidth': '0'}),
+                            badge_element
+                        ], style={
+                            'position': 'absolute',
+                            'top': f'{top_position}px',
+                            'left': '2px',
+                            'right': '2px',
+                            'height': f'{badge_height}px',
+                            'backgroundColor': colors['bg'],
+                            'border': f"2px solid {colors['border']}",
+                            'borderRadius': '4px',
+                            'padding': '4px',
+                            'fontSize': '10px',
+                            'boxSizing': 'border-box',
+                            'overflow': 'hidden',
+                            'zIndex': '1',
+                            'display': 'flex',
+                            'flexDirection': 'row',
+                            'alignItems': 'center',
+                            'gap': '4px'
+                        })
+                    )
+                else:
+                    # Longer appointments: vertical layout with time, name, type, and badge in top right
+                    content_section = html.Div([
                         html.Div(time_str, style={'fontWeight': 'bold', 'fontSize': '10px', 'marginBottom': '2px'}),
-                        html.Div(appt['ResourceName'], style={'fontSize': '9px', 'marginBottom': '1px', 'overflow': 'hidden', 'textOverflow': 'ellipsis', 'whiteSpace': 'nowrap'}),
-                        html.Div(appt['ActivityName'], style={'fontSize': '8px', 'color': '#6c757d', 'marginBottom': '1px', 'overflow': 'hidden', 'textOverflow': 'ellipsis', 'whiteSpace': 'nowrap'}),
-                        html.Div(appt['DepartmentName'], style={'fontSize': '8px', 'fontWeight': 'bold', 'color': colors['border']}),
-                    ], style={
-                        'position': 'absolute',
-                        'top': f'{top_position}px',
-                        'left': '2px',
-                        'right': '2px',
-                        'height': f'{badge_height}px',
-                        'backgroundColor': colors['bg'],
-                        'border': f"2px solid {colors['border']}",
-                        'borderRadius': '4px',
-                        'padding': '4px',
-                        'fontSize': '10px',
-                        'boxSizing': 'border-box',
-                        'overflow': 'hidden',
-                        'zIndex': '1'
-                    })
-                )
+                        html.Div(appt['ResourceName'], style={'fontSize': '11px', 'marginBottom': '1px', 'overflow': 'hidden', 'textOverflow': 'ellipsis', 'whiteSpace': 'nowrap'}),
+                        html.Div(appt_type_display, style={'fontSize': '10px', 'color': '#6c757d', 'marginBottom': '1px', 'overflow': 'hidden', 'textOverflow': 'ellipsis', 'whiteSpace': 'nowrap'}),
+                    ], style={'flex': '1', 'display': 'flex', 'flexDirection': 'column', 'minWidth': '0'})
+
+                    appt_items.append(
+                        html.Div([
+                            content_section,
+                            badge_element
+                        ], style={
+                            'position': 'absolute',
+                            'top': f'{top_position}px',
+                            'left': '2px',
+                            'right': '2px',
+                            'height': f'{badge_height}px',
+                            'backgroundColor': colors['bg'],
+                            'border': f"2px solid {colors['border']}",
+                            'borderRadius': '4px',
+                            'padding': '4px',
+                            'fontSize': '10px',
+                            'boxSizing': 'border-box',
+                            'overflow': 'hidden',
+                            'zIndex': '1',
+                            'display': 'flex',
+                            'flexDirection': 'row',
+                            'justifyContent': 'space-between',
+                            'alignItems': 'flex-start'
+                        })
+                    )
 
         # Create the day column with time grid
         time_grid = []
@@ -297,13 +445,27 @@ def create_calendar_view(weekly_df, week_start, week_end, department_colors):
                 })
             )
 
+        # Style for today's column
+        header_style = {'textAlign': 'center', 'padding': '8px', 'height': '50px'}
+        card_style = {'border': '1px solid #dee2e6'}
+        
+        if is_today:
+            header_style.update({
+                'backgroundColor': 'rgba(33, 150, 243, 0.15)',  # Light blue highlight
+                'borderBottom': '2px solid #2196f3'
+            })
+            card_style.update({
+                'border': '2px solid #2196f3',
+                'boxShadow': '0 2px 8px rgba(33, 150, 243, 0.2)'
+            })
+        
         calendar_cols.append(
             dbc.Col([
                 dbc.Card([
                     dbc.CardHeader([
                         html.Div(day, style={'fontWeight': 'bold', 'fontSize': '12px'}),
                         html.Div(date_str, style={'fontSize': '11px', 'color': '#6c757d'})
-                    ], style={'textAlign': 'center', 'padding': '8px', 'height': '50px'}),
+                    ], style=header_style),
                     html.Div([
                         html.Div(time_grid),
                         html.Div(appt_items, style={'position': 'relative', 'top': f'-{total_height}px', 'pointerEvents': 'none'})
@@ -312,7 +474,7 @@ def create_calendar_view(weekly_df, week_start, week_end, department_colors):
                         'height': f'{total_height}px',
                         'overflowY': 'visible'
                     })
-                ], style={'border': '1px solid #dee2e6'})
+                ], style=card_style)
             ], width=12, lg=2, style={'marginBottom': '10px', 'paddingLeft': '2px', 'paddingRight': '2px'})
         )
 
@@ -326,12 +488,15 @@ def create_calendar_view(weekly_df, week_start, week_end, department_colors):
         ], width=1, style={'paddingLeft': '0'})
     )
     
-    return dbc.Row(calendar_cols)
+    return html.Div(
+        dbc.Row(calendar_cols),
+        style={'width': '1200px', 'margin': '0 auto'}
+    )
 
 
 def register_callbacks(app, task):
     """Register callbacks for scheduling panel"""
-    from dash import Input, Output, State, callback_context
+    from dash import Input, Output, State, callback_context, clientside_callback
 
     # Department filter button callbacks (for calendar view)
     @app.callback(
@@ -466,22 +631,25 @@ def register_callbacks(app, task):
         
         return current_appts, consult_class, followup_class
 
-    # Time range display callback
-    @app.callback(
+    # Time range display callback - clientside for real-time updates during drag
+    clientside_callback(
+        """
+        function(time_range) {
+            if (!time_range || time_range.length !== 2) {
+                return "8:00 AM - 5:00 PM";
+            }
+            const start_hour = time_range[0];
+            const end_hour = time_range[1];
+            const start_suffix = start_hour < 12 ? "AM" : "PM";
+            const end_suffix = end_hour < 12 ? "AM" : "PM";
+            const start_display = start_hour <= 12 ? start_hour : start_hour - 12;
+            const end_display = end_hour <= 12 ? end_hour : end_hour - 12;
+            return start_display + ":00 " + start_suffix + " - " + end_display + ":00 " + end_suffix;
+        }
+        """,
         Output('sched-time-range-display', 'children'),
-        [Input('sched-time-range-slider', 'value')]
+        Input('sched-time-range-slider', 'value')
     )
-    def update_time_range_display(time_range):
-        """Update time range display text"""
-        if time_range:
-            start_hour = time_range[0]
-            end_hour = time_range[1]
-            start_suffix = "AM" if start_hour < 12 else "PM"
-            end_suffix = "AM" if end_hour < 12 else "PM"
-            start_display = start_hour if start_hour <= 12 else start_hour - 12
-            end_display = end_hour if end_hour <= 12 else end_hour - 12
-            return f"{start_display}:00 {start_suffix} - {end_display}:00 {end_suffix}"
-        return "8:00 AM - 5:00 PM"
 
     # View mode toggle - show/hide pagination or week controls
     # Pagination callbacks
@@ -522,11 +690,15 @@ def register_callbacks(app, task):
         [Input('sched-prev-week-top', 'n_clicks'),
          Input('sched-next-week-top', 'n_clicks'),
          Input('sched-current-week-top', 'n_clicks')],
-        [State('sched-week-offset', 'data')],
+        [State('sched-week-offset', 'data'),
+         State('sched-prev-week-top', 'disabled'),
+         State('sched-current-week-top', 'disabled')],
         prevent_initial_call=True
     )
-    def update_week_offset(prev_top_clicks, next_top_clicks, current_top_clicks, current_offset):
+    def update_week_offset(prev_top_clicks, next_top_clicks, current_top_clicks, current_offset, prev_disabled, today_disabled):
         """Update week offset based on navigation buttons"""
+        from dash.exceptions import PreventUpdate
+        
         ctx = callback_context
         if not ctx.triggered:
             return 0
@@ -534,13 +706,65 @@ def register_callbacks(app, task):
         button_id = ctx.triggered[0]['prop_id'].split('.')[0]
 
         if button_id == 'sched-prev-week-top':
+            # Prevent navigation if button is disabled
+            if prev_disabled:
+                raise PreventUpdate
             return current_offset - 1
         elif button_id == 'sched-next-week-top':
             return current_offset + 1
         elif button_id == 'sched-current-week-top':
+            # Prevent navigation if button is disabled
+            if today_disabled:
+                raise PreventUpdate
             return 0
 
         return current_offset
+
+    # Disable Prev button when today is in the displayed week
+    @app.callback(
+        Output('sched-prev-week-top', 'disabled'),
+        Input('sched-week-offset', 'data')
+    )
+    def update_prev_button_state(week_offset):
+        """Disable Prev button when today is in the displayed week"""
+        from datetime import datetime, timedelta, date as date_class
+        
+        # Calculate the displayed week start (Monday)
+        today = datetime.now()
+        week_start = today - timedelta(days=today.weekday())
+        week_start = week_start + timedelta(weeks=week_offset)
+        week_end = week_start + timedelta(days=4)  # M-F only
+        
+        # Check if today's date is within the displayed week
+        today_date = date_class.today()
+        week_start_date = week_start.date()
+        week_end_date = week_end.date()
+        
+        # Disable if today is in the displayed week
+        return week_start_date <= today_date <= week_end_date
+
+    # Disable Today button when today is already in the displayed week
+    @app.callback(
+        Output('sched-current-week-top', 'disabled'),
+        Input('sched-week-offset', 'data')
+    )
+    def update_today_button_state(week_offset):
+        """Disable Today button when today is already in the displayed week"""
+        from datetime import datetime, timedelta, date as date_class
+        
+        # Calculate the displayed week start (Monday)
+        today = datetime.now()
+        week_start = today - timedelta(days=today.weekday())
+        week_start = week_start + timedelta(weeks=week_offset)
+        week_end = week_start + timedelta(days=4)  # M-F only
+        
+        # Check if today's date is within the displayed week
+        today_date = date_class.today()
+        week_start_date = week_start.date()
+        week_end_date = week_end.date()
+        
+        # Disable if today is already in the displayed week
+        return week_start_date <= today_date <= week_end_date
 
     # Main update callback - updates all content
     @app.callback(
@@ -571,7 +795,7 @@ def register_callbacks(app, task):
         if view_mode == 'list':
             # List view
             paginated_df, total_pages = task.get_paginated_appointments(filtered_df, current_page, page_size=10)
-            appointments_list = create_list_view(paginated_df)
+            appointments_list = create_list_view(paginated_df, task.department_colors)
             page_display = f"Page {current_page} of {total_pages}" if total_pages > 0 else "No data"
 
             return (

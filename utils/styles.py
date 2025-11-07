@@ -464,7 +464,19 @@ CUSTOM_CSS = """
                     inset 0 1px 1px rgba(255, 255, 255, 0.3) !important;
         color: white !important;
     }
-    /* Time range slider styling */
+    /* Scheduling sidebar fixed width */
+    .scheduling-sidebar {
+        width: 280px !important;
+        min-width: 300px !important;
+        max-width: 3000px !important;
+        background-color: #F8F9FA;
+        padding: 20px;
+        padding-top: 0;
+        border-right: 2px solid #E8E8E8;
+        height: 100vh;
+        overflow-y: auto;
+    }
+    /* Time range slider styling - clean and simple */
     .time-range-slider .rc-slider-rail {
         height: 8px !important;
     }
@@ -477,8 +489,15 @@ CUSTOM_CSS = """
         margin-top: -6px !important;
         border-width: 3px !important;
     }
+    /* Small fixed markers (dots) - move down 2px */
+    .time-range-slider .rc-slider-dot {
+        transform: translate(-50%, calc(-50% + 6px)) !important;
+    }
     .time-range-slider .rc-slider-mark-text {
         font-size: 14px !important;
         font-weight: 500 !important;
+        white-space: nowrap !important;
+        width: auto !important;
+        min-width: auto !important;
     }
 """

@@ -31,6 +31,18 @@ app.index_string = '''
         <style>
 ''' + CUSTOM_CSS + '''
         </style>
+        <script>
+            window.formatTimeTooltip = function(value) {
+                const hour = parseInt(value);
+                if (hour === 12) {
+                    return hour + ' PM';
+                } else if (hour < 12) {
+                    return hour + ' AM';
+                } else {
+                    return (hour - 12) + ' PM';
+                }
+            };
+        </script>
     </head>
     <body>
         {%app_entry%}
@@ -323,7 +335,7 @@ def render_main_content(pathname, active_task_id, sidebar_state):
             # Sidebar
             dbc.Col([
                 html.Div(sidebar)
-            ], width=2, id="sidebar-column"),
+            ], width=2, id="sidebar-column", style={'flex': '0 0 auto', 'width': 'auto'}),
 
             # Main panel content
             dbc.Col([
