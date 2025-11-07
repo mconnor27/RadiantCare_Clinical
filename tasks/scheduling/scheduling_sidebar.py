@@ -147,13 +147,13 @@ def create_sidebar_layout(task, state=None):
                 step=1,
                 value=time_range_value,
                 marks={
-                    8: '8a',
-                    12: '12p',
-                    17: '5p'
+                    8: '8 AM',
+                    12: '12 PM',
+                    17: '5 PM'
                 },
-                tooltip={"placement": "bottom", "always_visible": False},
+                updatemode='drag',
                 className='time-range-slider'
             )
         ], className='filter-section'),
 
-    ])
+    ], className='scheduling-sidebar')
