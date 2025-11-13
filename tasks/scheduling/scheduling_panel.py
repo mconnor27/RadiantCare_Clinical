@@ -456,17 +456,23 @@ def create_calendar_view(weekly_df, week_start, week_end, department_colors):
                     'height': f'{pixels_per_hour}px',
                     'borderTop': '1px solid #dee2e6',
                     'borderLeft': '1px solid #dee2e6',
-                    'borderRight': '1px solid #dee2e6'
+                    'borderRight': '1px solid #dee2e6',
+                    'backgroundColor': '#fdfdfd'  # Very faint shading for time cells
                 })
             )
 
         # Style for today's column
-        header_style = {'textAlign': 'center', 'padding': '8px', 'height': '50px'}
+        header_style = {
+            'textAlign': 'center', 
+            'padding': '8px', 
+            'height': '50px',
+            'backgroundColor': '#e9ecef'  # Darker background for headers
+        }
         card_style = {'border': '1px solid #dee2e6'}
         
         if is_today:
             header_style.update({
-                'backgroundColor': 'rgba(33, 150, 243, 0.15)',  # Light blue highlight
+                'backgroundColor': 'rgba(33, 150, 243, 0.25)',  # Darker blue highlight for today
                 'borderBottom': '2px solid #2196f3'
             })
             card_style.update({
@@ -478,8 +484,8 @@ def create_calendar_view(weekly_df, week_start, week_end, department_colors):
             dbc.Col([
                 dbc.Card([
                     dbc.CardHeader([
-                        html.Div(day, style={'fontWeight': 'bold', 'fontSize': '12px'}),
-                        html.Div(date_str, style={'fontSize': '11px', 'color': '#6c757d'})
+                        html.Div(day, style={'fontWeight': 'bold', 'fontSize': '12px', 'color': '#212529'}),
+                        html.Div(date_str, style={'fontSize': '11px', 'color': '#495057'})
                     ], style=header_style),
                     html.Div([
                         html.Div(time_grid),

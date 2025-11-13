@@ -138,10 +138,18 @@ def create_header():
                 html.Ul([
                     html.Li("Data source: Department Schedule No Grouping All (Mike)_exam.csv"),
                     html.Li("Cancelled appointments are excluded"),
+                    html.Li([
+                        html.Strong("Test patients excluded: "),
+                        "PatientId contains 'astro' or 'test', OR PatientFullName starts with 'Zzz' or 'Test,' (filters out 12 test appointments)"
+                    ]),
+                    html.Li([
+                        html.Strong("Invalid durations excluded: "),
+                        "Appointments with duration ≤0 minutes are filtered out (removes 4 data errors)"
+                    ]),
                     html.Li("Only activities containing 'Consult' in ActivityName are included"),
                     html.Li([
                         html.Strong("Date/Time: "),
-                        "Uses ScheduledEndTime if available, otherwise falls back to ActivityStartDateTime"
+                        "Uses ScheduledEndTime as the appointment time"
                     ]),
                     html.Li("Only consults with a Primary Oncologist (FirstMD extracted from ResourceName) are included"),
                     html.Li([
@@ -173,8 +181,27 @@ def create_header():
                         ]),
                         html.Ul([
                             html.Li([
-                                "If duration <60 minutes → ",
-                                html.Span("Follow-Up", style={'fontWeight': 'bold', 'color': '#4caf50'})
+                                "If duration 0 < duration < 60 minutes (priority-based classification):"
+                            ]),
+                            html.Ul([
+                                html.Li([
+                                    "Priority 1: If note contains 'phone', 'telephone', 'follow-up', 'f/u', 're-eval', or 'reeval' → ",
+                                    html.Span("Follow-Up", style={'fontWeight': 'bold', 'color': '#4caf50'})
+                                ]),
+                                html.Li([
+                                    "Priority 2: If note contains 'review', 'discuss', or 'go over' → ",
+                                    html.Span("Follow-Up", style={'fontWeight': 'bold', 'color': '#4caf50'})
+                                ]),
+                                html.Li([
+                                    "Priority 3: If note contains 'working chart' or 'bookmarked' → ",
+                                    html.Span("Consult", style={'fontWeight': 'bold', 'color': '#2196f3'}),
+                                    " (new patient setup)"
+                                ]),
+                                html.Li([
+                                    "Default: ",
+                                    html.Span("Follow-Up", style={'fontWeight': 'bold', 'color': '#4caf50'}),
+                                    " (conservative default)"
+                                ])
                             ]),
                             html.Li([
                                 "If duration =60 minutes:"
