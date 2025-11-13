@@ -150,8 +150,28 @@ def classify_appointment_type(row):
 
     # Virtual Consult/Follow Up type
     elif 'Virtual Consult/Follow Up' in activity_name:
-        if pd.notna(duration) and duration < 60:
-            # <60 minutes → Follow-Up
+        # Special handling for appointments with valid duration <60 min
+        if pd.notna(duration) and 0 < duration < 60:
+            # Priority-based classification:
+            # 1. Check for explicit follow-up keywords
+            explicit_followup = re.compile(
+                r'\bphone\b|\btelephone\b|follow[\s-]?up|f/u|re[\s-]?eval|reeval',
+                re.IGNORECASE
+            )
+            if explicit_followup.search(activity_note):
+                return 'Follow-Up'
+
+            # 2. Check for strong follow-up context words
+            context_followup = re.compile(r'review|discuss|go\s+over', re.IGNORECASE)
+            if context_followup.search(activity_note):
+                return 'Follow-Up'
+
+            # 3. Check for new patient setup indicators
+            new_patient_setup = re.compile(r'working\s+chart|bookmarked', re.IGNORECASE)
+            if new_patient_setup.search(activity_note):
+                return 'Consult'
+
+            # 4. Default to Follow-Up (conservative)
             return 'Follow-Up'
         elif pd.notna(duration) and duration == 60:
             # =60 minutes: check notes
@@ -187,16 +207,29 @@ def load_consults_data(file_path):
     # Filter out cancelled appointments
     df = df[df['AppointmentStatus'] != 'Cancelled'].copy()
 
-    # Parse date columns - use ScheduledEndTime or ActivityStartDateTime as AppointmentTime
+    # Filter out test patients
+    # Exclude: PatientId contains 'astro' or 'test', OR PatientFullName starts with 'Zzz' or 'Test,'
+    test_filter = (
+        df['PatientId'].astype(str).str.contains('astro|test', case=False, na=False) |
+        df['PatientFullName'].str.lower().str.startswith('zzz', na=False) |
+        df['PatientFullName'].str.startswith('Test,', na=False)
+    )
+    df = df[~test_filter].copy()
+
+    # Parse date columns - use ScheduledEndTime as AppointmentTime
     df['ScheduledEndTime'] = pd.to_datetime(df['ScheduledEndTime'], errors='coerce')
     df['ActivityStartDateTime'] = pd.to_datetime(df['ActivityStartDateTime'], errors='coerce')
     df['ActivityEndDateTime'] = pd.to_datetime(df['ActivityEndDateTime'], errors='coerce')
 
-    # Use ScheduledEndTime if available, otherwise ActivityStartDateTime
-    df['AppointmentTime'] = df['ScheduledEndTime'].fillna(df['ActivityStartDateTime'])
+    # Use ScheduledEndTime as the appointment time
+    df['AppointmentTime'] = df['ScheduledEndTime']
 
     # Drop rows without appointment time
     df = df.dropna(subset=['AppointmentTime'])
+
+    # Filter out invalid durations (negative or zero)
+    df['Duration'] = pd.to_numeric(df['ActivityPlannedLength'], errors='coerce')
+    df = df[~((df['Duration'].notna()) & (df['Duration'] <= 0))].copy()
 
     # Filter for activities containing "Consult" (case-insensitive)
     df = df[df['ActivityName'].str.contains('Consult', case=False, na=False)].copy()
