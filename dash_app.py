@@ -12,6 +12,7 @@ from tasks.draw_volumes.draw_volumes_task import DrawVolumesTask
 from tasks.review_plan.review_plan_task import ReviewPlanTask
 from tasks.contour_review.contour_review_task import ContourReviewTask
 from tasks.scheduling.scheduling_task import SchedulingTask
+from tasks.cpt_billing.cpt_billing_task import CPTBillingTask
 from clinic_visits.consults.consults_task import ConsultsTask
 from utils.styles import CUSTOM_CSS
 
@@ -111,6 +112,14 @@ else:
     print(f"Warning: Consults data file not found at {consults_file}")
     consults_df = None
 
+# Load CPT billing data
+cpt_file = Path(data_dir) / "2026_CPT.csv"
+if cpt_file.exists():
+    cpt_df = pd.read_csv(str(cpt_file))
+else:
+    print(f"Warning: CPT billing data file not found at {cpt_file}")
+    cpt_df = None
+
 # Initialize tasks (simulations is now a separate page)
 draw_volumes_task = DrawVolumesTask(df)
 review_plan_task = ReviewPlanTask(review_df)
@@ -123,6 +132,10 @@ if consults_df is not None:
     consults_task = ConsultsTask(consults_df)
 else:
     consults_task = None
+if cpt_df is not None:
+    cpt_billing_task = CPTBillingTask(cpt_df)
+else:
+    cpt_billing_task = None
 
 # Define the main layout
 _layout = dbc.Container([
@@ -168,7 +181,7 @@ _layout = dbc.Container([
                     dbc.Tab(label="Clinic Visits", tab_id="clinic_visits", disabled=(consults_task is None)),
                     dbc.Tab(label="Simulations", tab_id="simulations"),
                     dbc.Tab(label="Scheduling", tab_id="scheduling", disabled=(scheduling_task is None)),
-                    dbc.Tab(label="Billing", tab_id="billing", disabled=True),
+                    dbc.Tab(label="2026 CPT", tab_id="cpt_billing", disabled=(cpt_billing_task is None)),
                     dbc.Tab(label="Treatment", tab_id="treatment", disabled=True),
                 ]
             )
@@ -205,6 +218,10 @@ if scheduling_task is not None:
 if consults_task is not None:
     consults_task.register_callbacks(app)
 
+# Register CPT billing callbacks if available
+if cpt_billing_task is not None:
+    cpt_billing_task.register_callbacks(app)
+
 # Simulations is now a separate Dash page - callbacks registered in pages/simulations.py
 
 # Sync URL and tabs
@@ -221,6 +238,8 @@ def navigate_from_tabs(active_tab):
         return '/scheduling'
     elif active_tab == 'clinic_visits':
         return '/clinic_visits'
+    elif active_tab == 'cpt_billing':
+        return '/cpt_billing'
     return '/'
 
 @app.callback(
@@ -236,6 +255,8 @@ def sync_tabs_from_url(pathname):
         return 'scheduling'
     elif pathname == '/clinic_visits':
         return 'clinic_visits'
+    elif pathname == '/cpt_billing':
+        return 'cpt_billing'
     return 'tasks'
 
 # Store active task when subtabs are clicked
@@ -416,6 +437,25 @@ def render_main_content(pathname, active_task_id, clinic_visits_subtab_id, sideb
             dbc.Col([
                 html.Div(sidebar)
             ], width=2, id="sidebar-column", style={'flex': '0 0 auto', 'width': 'auto'}),
+
+            # Main panel content
+            dbc.Col([
+                html.Div(content)
+            ], width=9, id="content-column", style={'padding': '0'})
+        ])
+
+    # If on the CPT Billing page route, show CPT Billing content
+    if pathname == '/cpt_billing' and cpt_billing_task is not None:
+        sidebar = cpt_billing_task.get_sidebar_layout()
+        content = html.Div([
+            cpt_billing_task.get_main_panel_layout()
+        ], className="tab-content-area")
+
+        return dbc.Row([
+            # Sidebar
+            dbc.Col([
+                html.Div(sidebar)
+            ], width=2, id="sidebar-column"),
 
             # Main panel content
             dbc.Col([
