@@ -479,4 +479,4 @@ def register_callbacks(app, task):
         # Calculate code summary
         summary_df = task.calculate_code_summary(filtered_df)
 
-        return dcc.send_data_frame(summary_df.to_excel, "cpt_billing_summary.xlsx", index=False)
+        return dcc.send_data_frame(summary_df.to_excel, "cpt_billing_summary.xlsx", index=False, engine='openpyxl')
