@@ -224,10 +224,12 @@ class CPTBillingTask(BaseTask):
         ].copy()
 
         # Apply date range filter if provided
+        print(f"DEBUG filter_data: start_date={start_date}, end_date={end_date}, rows before date filter={len(filtered_df)}")
         if start_date is not None:
             filtered_df = filtered_df[filtered_df['TreatmentDate'] >= start_date]
         if end_date is not None:
             filtered_df = filtered_df[filtered_df['TreatmentDate'] <= end_date]
+        print(f"DEBUG filter_data: rows after date filter={len(filtered_df)}")
 
         # Filter by techniques if specified (check if any selected technique is in the comma-separated list)
         if selected_techniques is not None and selected_techniques != self.techniques:
@@ -432,6 +434,17 @@ class CPTBillingTask(BaseTask):
             # Avoid empty categories
             return s.replace("", "Unknown")
 
+        # Calculate 2026 code stats from ORIGINAL data (before any expansion)
+        # This ensures 2026 totals match the table
+        # Use string keys to match later lookups
+        original_2026_counts = df_valid['ID2026Code'].value_counts()
+        original_2026_total = original_2026_counts.sum()
+        code_2026_stats_original = {}
+        for code, count in original_2026_counts.items():
+            percentage = (count / original_2026_total * 100) if original_2026_total > 0 else 0
+            code_2026_stats_original[str(code)] = {'count': int(count), 'percentage': percentage}
+        print(f"DEBUG: 2026 stats keys: {list(code_2026_stats_original.keys())}")
+        
         # For actual codes, we need to expand the dataframe FIRST
         # This must happen before building dimensions
         if 'actual_codes' in selected_dimensions:
@@ -439,14 +452,13 @@ class CPTBillingTask(BaseTask):
             import time
             start = time.time()
 
-            # Use pandas explode for much faster expansion
-            # First, split the BilledCodes into lists - use str.split for better performance
             df_valid = df_valid.copy()
+            # Split the BilledCodes into lists
             df_valid['ActualCode'] = df_valid['BilledCodes'].str.split(',').apply(
                 lambda x: [c.strip() for c in x] if isinstance(x, list) else ['Unknown']
             )
 
-            # Explode the ActualCode column
+            # Explode the ActualCode column (no weighting)
             df_valid = df_valid.explode('ActualCode', ignore_index=True)
 
             # Normalize to avoid duplicate-looking categories (e.g., "77407" vs 77407)
@@ -460,14 +472,39 @@ class CPTBillingTask(BaseTask):
         else:
             print("DEBUG: Not expanding - actual_codes not in selected dimensions")
 
+        # Expand technique if it's in selected dimensions (split comma-separated techniques)
+        if 'technique' in selected_dimensions:
+            print("DEBUG: Expanding dataframe for techniques...")
+            import time
+            start = time.time()
+            
+            df_valid = df_valid.copy()
+            df_valid['TechniqueExpanded'] = df_valid['Technique'].str.split(',').apply(
+                lambda x: [t.strip() for t in x] if isinstance(x, list) else ['Unknown']
+            )
+            
+            # Explode the TechniqueExpanded column (no weighting)
+            df_valid = df_valid.explode('TechniqueExpanded', ignore_index=True)
+            
+            # Normalize
+            df_valid['TechniqueExpanded'] = _normalize_category_series(df_valid['TechniqueExpanded'])
+            
+            # Remove empty techniques
+            df_valid = df_valid[df_valid['TechniqueExpanded'].str.len() > 0]
+            
+            print(f"DEBUG: Expanded to {len(df_valid)} rows with TechniqueExpanded in {time.time()-start:.2f}s")
+            print(f"DEBUG: Sample Technique values: {list(df_valid['TechniqueExpanded'].unique()[:10])}")
+
         # Build dimensions based on selection
+        # Use expanded columns when available
+        technique_col = 'TechniqueExpanded' if 'technique' in selected_dimensions else 'Technique'
         dimension_map = {
-            'actual_codes': ('Actual Billed Codes (Detected)', 'ActualCode'),
+            'actual_codes': ('Actual Billed Codes', 'ActualCode'),
             '2026_codes': ('2026 Code', 'ID2026Code'),
             'department': ('Department', 'Department'),
             'machine': ('Machine', 'Machine'),
             'insurer_category': ('Insurer Category', 'InsurerCategory'),
-            'technique': ('Technique', 'Technique'),
+            'technique': ('Technique', technique_col),
             'radiation_type': ('Radiation Type', 'RadiationType')
         }
 
@@ -507,21 +544,15 @@ class CPTBillingTask(BaseTask):
                 ))
                 groupby_cols.append(col)
 
-        # Count occurrences - use observed=True for faster groupby with categories
+        # Count occurrences (each expanded row counts as 1)
         import time
         start = time.time()
         counts = df_valid.groupby(groupby_cols, observed=True).size().reset_index(name='count')
         print(f"DEBUG: Groupby completed in {time.time()-start:.2f}s")
 
-        # Calculate 2026 code counts and percentages for labels
-        code_2026_counts = df_valid.groupby('ID2026Code', observed=True).size()
-        total_2026 = code_2026_counts.sum()
-        code_2026_stats = {}
-        for code, count in code_2026_counts.items():
-            percentage = (count / total_2026 * 100) if total_2026 > 0 else 0
-            code_2026_stats[code] = {'count': count, 'percentage': percentage}
-
-        return dimensions, counts, df_valid, code_2026_stats
+        # Use the original 2026 code stats calculated BEFORE expansion
+        # This ensures labels match the table totals
+        return dimensions, counts, df_valid, code_2026_stats_original
 
     def get_sidebar_layout(self, state=None):
         """Implemented in cpt_billing_sidebar.py"""

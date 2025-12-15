@@ -85,19 +85,18 @@ def create_main_panel_layout():
         html.Div([
             html.H6("Treatment Flow Analysis", style={'marginTop': '30px', 'marginBottom': '15px', 'textAlign': 'center'}),
             html.Div([
-                html.Label("Select dimensions to include (in order):", style={'fontWeight': 'bold', 'marginRight': '15px'}),
+                html.Label("Select dimensions to include (2026 Codes always shown on right):", style={'fontWeight': 'bold', 'marginRight': '15px'}),
                 dcc.Checklist(
                     id='cpt-parallel-dimensions',
                     options=[
                         {'label': ' Actual Billing Codes', 'value': 'actual_codes'},
-                        {'label': ' 2026 Codes', 'value': '2026_codes'},
                         {'label': ' Department', 'value': 'department'},
                         {'label': ' Machine', 'value': 'machine'},
                         {'label': ' Insurer Category', 'value': 'insurer_category'},
                         {'label': ' Technique', 'value': 'technique'},
                         {'label': ' Radiation Type', 'value': 'radiation_type'}
                     ],
-                    value=['actual_codes', '2026_codes'],
+                    value=['actual_codes'],
                     inline=True,
                     labelStyle={'marginRight': '15px'},
                     inputStyle={'marginRight': '5px'}
@@ -242,6 +241,8 @@ def register_callbacks(app, task):
         Returns:
             Plotly figure object
         """
+        print(f"DEBUG PARALLEL CALLBACK: start_date={start_date}, end_date={end_date}")
+        
         # Filter data
         filtered_df = task.filter_data(
             selected_departments,
@@ -255,10 +256,13 @@ def register_callbacks(app, task):
             selected_radiation_types,
             selected_actual_codes
         )
+        print(f"DEBUG PARALLEL: filtered_df has {len(filtered_df)} rows after filter_data")
 
         # Calculate parallel categories data with selected dimensions
-        print(f"DEBUG CALLBACK: parallel_dimensions = {parallel_dimensions}")
-        dimensions, counts, df_valid, code_2026_stats = task.calculate_parallel_categories_data(filtered_df, parallel_dimensions)
+        # Always append 2026_codes at the end (rightmost position)
+        dimensions_with_2026 = [d for d in (parallel_dimensions or []) if d != '2026_codes'] + ['2026_codes']
+        print(f"DEBUG CALLBACK: parallel_dimensions = {dimensions_with_2026}")
+        dimensions, counts, df_valid, code_2026_stats = task.calculate_parallel_categories_data(filtered_df, dimensions_with_2026)
 
         # Create parallel categories diagram
         if not dimensions or df_valid is None or df_valid.empty:
@@ -291,7 +295,7 @@ def register_callbacks(app, task):
         actual_code_stats = {}
         if 'ActualCode' in df_valid.columns:
             actual_counts = df_valid['ActualCode'].value_counts()
-            total_actual = int(actual_counts.sum())
+            total_actual = actual_counts.sum()
             for code, count in actual_counts.items():
                 pct = (count / total_actual * 100) if total_actual else 0
                 actual_code_stats[str(code)] = {"count": int(count), "percentage": float(pct)}
@@ -370,11 +374,10 @@ def register_callbacks(app, task):
 
         print(f"DEBUG: Figure created in {time.time()-start:.2f}s with height={calculated_height}")
 
-        # Build dynamic title based on selected dimensions
+        # Build dynamic title based on selected dimensions (2026 Code always at end)
         dim_labels = []
         dim_map = {
             'actual_codes': 'Actual Billing Code',
-            '2026_codes': '2026 Code',
             'department': 'Department',
             'machine': 'Machine',
             'insurer_category': 'Insurer Category',
@@ -385,8 +388,10 @@ def register_callbacks(app, task):
             for dim in parallel_dimensions:
                 if dim in dim_map:
                     dim_labels.append(dim_map[dim])
+        # Always append 2026 Code at the end
+        dim_labels.append('2026 Code')
 
-        title = "Treatment Flow: " + " → ".join(dim_labels) if dim_labels else "Treatment Flow"
+        title = "Treatment Flow: " + " → ".join(dim_labels)
 
         fig.update_layout(
             title_text=title,
