@@ -2,6 +2,7 @@
  * Enhanced hover for Parcats charts
  * - Replaces placeholder percentages with computed values
  * - Adds CPT code explanations below codes in tooltips
+ * - Resizes tooltip box after text modifications
  */
 
 // CPT code explanations for actual billed codes
@@ -34,6 +35,7 @@ const ACTUAL_CODE_EXPLANATIONS = {
 
 // Track processed elements
 const processedElements = new WeakSet();
+const processedPaths = new WeakSet();
 
 document.addEventListener('DOMContentLoaded', function() {
     const observer = new MutationObserver(function(mutations) {
@@ -50,12 +52,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
 function enhanceHoverText(element) {
     const textElements = element.querySelectorAll ? element.querySelectorAll('tspan') : [];
+    let modified = false;
     
     textElements.forEach(function(textEl) {
         if (processedElements.has(textEl)) return;
         
         const text = textEl.textContent || '';
-        let modified = false;
+        let wasModified = false;
         
         // 1. Replace percentage placeholders: "X of Y (---.--%)" -> "X of Y (Z%)"
         const percentPattern = /(\d[\d,]*)\s+of\s+(\d[\d,]*)\s+\(---\.--?%\)/;
@@ -66,24 +69,69 @@ function enhanceHoverText(element) {
             if (denominator > 0) {
                 const percentage = ((numerator / denominator) * 100).toFixed(1);
                 textEl.textContent = text.replace(percentMatch[0], `${percentMatch[1]} of ${percentMatch[2]} (${percentage}%)`);
-                modified = true;
+                wasModified = true;
             }
         }
         
         // 2. Add explanation for CPT codes (first bold line in tooltip)
-        // Look for codes that match our dictionary and are standalone (the category line)
-        if (!modified) {
+        if (!wasModified) {
             const trimmedText = text.trim();
             const explanation = ACTUAL_CODE_EXPLANATIONS[trimmedText];
             if (explanation) {
-                // This is a CPT code - add explanation
                 textEl.textContent = `${trimmedText} - ${explanation}`;
-                modified = true;
+                wasModified = true;
             }
         }
         
-        if (modified) {
+        if (wasModified) {
             processedElements.add(textEl);
+            modified = true;
+        }
+    });
+    
+    // After modifying text, resize the tooltip background
+    if (modified) {
+        requestAnimationFrame(function() {
+            resizeTooltipBox(element);
+        });
+    }
+}
+
+function resizeTooltipBox(element) {
+    // Find hovertext groups
+    const hoverGroups = element.classList && element.classList.contains('hovertext') 
+        ? [element] 
+        : (element.querySelectorAll ? element.querySelectorAll('.hovertext') : []);
+    
+    hoverGroups.forEach(function(group) {
+        const path = group.querySelector('path');
+        const textEl = group.querySelector('text');
+        
+        if (!path || !textEl || processedPaths.has(path)) return;
+        
+        try {
+            // Get the text bounding box
+            const textBBox = textEl.getBBox();
+            // Get the path bounding box  
+            const pathBBox = path.getBBox();
+            
+            // Calculate how much wider the text is than the path
+            const extraWidth = Math.max(0, (textBBox.width + 20) - pathBBox.width);
+            
+            if (extraWidth > 5) {
+                // Need to widen the path
+                const d = path.getAttribute('d');
+                if (d) {
+                    // Simple approach: scale the path horizontally
+                    const currentTransform = path.getAttribute('transform') || '';
+                    // Apply a small scale to widen
+                    const scale = (pathBBox.width + extraWidth) / pathBBox.width;
+                    path.setAttribute('transform', currentTransform + ` scale(${scale}, 1)`);
+                    processedPaths.add(path);
+                }
+            }
+        } catch (e) {
+            // getBBox can fail if element not rendered
         }
     });
 }
