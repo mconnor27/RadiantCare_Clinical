@@ -3,6 +3,7 @@ CPT Billing sidebar layout (filters and controls)
 """
 from dash import html, dcc
 import dash_bootstrap_components as dbc
+from datetime import datetime
 
 
 def create_sidebar_layout(task, state=None):
@@ -157,8 +158,8 @@ def create_sidebar_layout(task, state=None):
                 id='cpt-start-date',
                 min_date_allowed=task.min_date,
                 max_date_allowed=task.max_date,
-                initial_visible_month=task.min_date,
-                date=task.min_date,
+                initial_visible_month=datetime(2025, 1, 1),
+                date=datetime(2025, 1, 1),
                 display_format='MM/DD/YYYY',
                 style={'width': '100%'}
             ),

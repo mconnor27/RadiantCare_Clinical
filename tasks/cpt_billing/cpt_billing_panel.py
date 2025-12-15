@@ -6,6 +6,65 @@ import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 
 
+# 2026 CPT code explanations (new consolidated codes)
+_2026_CODE_EXPLANATIONS = {
+    "77402": "Simple",
+    "77407": "Intermediate",
+    "77412": "Complex",
+    "77372": "SRS",
+    "77373": "SBRT",
+}
+
+# Actual billed code explanations (current codes being billed)
+_ACTUAL_CODE_EXPLANATIONS = {
+    # IMRT codes that map to Simple (77402)
+    "77402": "IMRT (Simple)",
+    "G6003": "IMRT (Simple)",
+    "G6004": "IMRT (Simple)",
+    "G6005": "IMRT (Simple)",
+    "G6006": "IMRT (Simple)",
+    # IMRT codes that map to Intermediate (77407)
+    "77407": "IMRT (Intermediate)",
+    "G6007": "IMRT (Intermediate)",
+    "G6008": "IMRT (Intermediate)",
+    "G6009": "IMRT (Intermediate)",
+    "G6010": "IMRT (Intermediate)",
+    # IMRT codes that map to Complex (77412)
+    "77412": "IMRT (Complex)",
+    "G6011": "IMRT (Complex)",
+    "G6012": "IMRT (Complex)",
+    "G6013": "IMRT (Complex)",
+    "G6014": "IMRT (Complex)",
+    # Other IMRT delivery codes
+    "77385": "IMRT (Simple)",
+    "77386": "IMRT (Complex)",
+    "G6015": "IMRT (Simple)",
+    "G6016": "IMRT (Complex)",
+    # Guidance (IGRT)
+    "77014": "CBCT",
+    "77387": "IGRT",
+    "G6002": "IGRT",
+    # SRS/SBRT
+    "77372": "SRS",
+    "77373": "SBRT",
+}
+
+
+def _format_code_label(code: str, code_type: str = "2026") -> str:
+    """Return `CODE: Description` when known; otherwise just `CODE`.
+    
+    Args:
+        code: The CPT code
+        code_type: Either "2026" or "actual" to select the appropriate dictionary
+    """
+    code = ("" if code is None else str(code)).strip()
+    if code_type == "actual":
+        desc = _ACTUAL_CODE_EXPLANATIONS.get(code)
+    else:
+        desc = _2026_CODE_EXPLANATIONS.get(code)
+    return f"{code}: {desc}" if desc else code
+
+
 def create_main_panel_layout():
     """
     Create main panel layout for CPT Billing task.
@@ -38,13 +97,13 @@ def create_main_panel_layout():
                         {'label': ' Technique', 'value': 'technique'},
                         {'label': ' Radiation Type', 'value': 'radiation_type'}
                     ],
-                    value=['machine', 'insurer_category'],
+                    value=['actual_codes', '2026_codes'],
                     inline=True,
                     labelStyle={'marginRight': '15px'},
                     inputStyle={'marginRight': '5px'}
                 )
             ], style={'textAlign': 'center', 'marginBottom': '15px'}),
-            dcc.Graph(id='cpt-parallel-diagram', style={'height': '700px'})
+            dcc.Graph(id='cpt-parallel-diagram', style={'height': '700px'}),
         ], style={'marginBottom': '40px'}),
 
         # Summary table
@@ -228,44 +287,54 @@ def register_callbacks(app, task):
 
         # Set categoryarray and ticktext for each dimension to prevent label wrapping/repetition
         start = time.time()
+        # If Actual Billing Code is present (df_valid was expanded), build stats for label enrichment
+        actual_code_stats = {}
+        if 'ActualCode' in df_valid.columns:
+            actual_counts = df_valid['ActualCode'].value_counts()
+            total_actual = int(actual_counts.sum())
+            for code, count in actual_counts.items():
+                pct = (count / total_actual * 100) if total_actual else 0
+                actual_code_stats[str(code)] = {"count": int(count), "percentage": float(pct)}
+
         for dim in dimensions:
             col_data = dim['values']
-            # Use category attributes if available for speed
-            if hasattr(col_data, 'cat'):
-                # Get categories
-                unique_vals = col_data.cat.categories.tolist()
-            else:
-                # Get unique values
-                unique_vals = col_data.unique().tolist()
+            dim_label = dim.get('label') or ""
+            
+            # Convert values to strings (don't remap, keep original)
+            dim['values'] = dim['values'].astype(str).fillna("Unknown")
+            
+            # Get unique values after string conversion
+            unique_vals = dim['values'].unique().tolist()
 
             # Apply custom ordering for 2026 codes
             if dim.get('label') == '2026 Code':
                 codes_2026_order = task.codes_2026_order
-                # Order according to custom order
                 ordered_vals = [code for code in codes_2026_order if code in unique_vals]
-                # Add any codes not in the predefined order at the end (sorted)
                 other_vals = sorted([code for code in unique_vals if code not in codes_2026_order])
                 ordered_vals.extend(other_vals)
                 unique_vals = ordered_vals
 
-                # Create ticktext with count and percentage
+                # Labels with explanation + stats
                 ticktext = []
                 for code in unique_vals:
                     stats = code_2026_stats.get(code, {'count': 0, 'percentage': 0})
-                    count = stats['count']
-                    percentage = stats['percentage']
-                    ticktext.append(f"{code} ({count:,}, {percentage:.1f}%)")
+                    label = _format_code_label(code, "2026")
+                    ticktext.append(f"{label} ({stats['count']:,}, {stats['percentage']:.1f}%)")
+                dim['categoryarray'] = unique_vals
                 dim['ticktext'] = ticktext
+            elif "Actual" in dim.get('label', '') and "Code" in dim.get('label', ''):
+                # Labels: just the code (explanation added by JavaScript in tooltip)
+                dim['categoryarray'] = unique_vals
+                dim['ticktext'] = unique_vals
             else:
-                # Sort all other dimensions
+                # Sort other dimensions
                 unique_vals = sorted(unique_vals)
-
-            dim['categoryarray'] = unique_vals
-            # Plotly parcats doesn't have a "label standoff" control; adding a <br>
-            # increases label box height and creates space before the category blocks.
+                dim['categoryarray'] = unique_vals
+                dim['ticktext'] = unique_vals
+            
+            # Plotly parcats doesn't have a "label standoff" control
             if isinstance(dim.get('label'), str) and '<br>' not in dim['label']:
                 dim['label'] = f"{dim['label']}"
-            print(f"DEBUG: Dimension '{dim['label']}' has {len(unique_vals)} unique values")
 
         print(f"DEBUG: Category arrays set in {time.time()-start:.2f}s")
 
@@ -282,10 +351,18 @@ def register_callbacks(app, task):
             line=dict(
                 color=colors,
                 colorscale='Viridis',
-                shape='hspline'
+                shape='hspline',
+                hovertemplate='<b>Flow Count:</b> %{count:,}<br><b>Share of All Records:</b> %{probability:.1%}<extra></extra>'
             ),
             hoveron='color',
             hoverinfo='count+probability',
+            hovertemplate=(
+                "<b>%{category}</b><br>"
+                "Count: %{bandcolorcount:,} (%{probability:.1%} of total)<br>"
+                "Color share: %{bandcolorcount:,} of %{colorcount:,} (---.--%)<br>"
+                "Category share: %{bandcolorcount:,} of %{categorycount:,} (---.--%)"
+                "<extra></extra>"
+            ),
             labelfont=dict(size=12, family='Arial'),
             tickfont=dict(size=10, family='Arial'),
             arrangement='freeform'
@@ -315,7 +392,15 @@ def register_callbacks(app, task):
             title_text=title,
             font_size=11,
             height=calculated_height,
-            margin=dict(l=100, r=100, t=80, b=50)
+            margin=dict(l=100, r=200, t=80, b=50),
+            # Widen hover tooltip and improve formatting
+            hoverlabel=dict(
+                bgcolor='white',
+                bordercolor='#888',
+                font=dict(size=13, family='Arial'),
+                namelength=-1,  # Show full text, don't truncate
+                align='left'
+            )
         )
 
         return fig

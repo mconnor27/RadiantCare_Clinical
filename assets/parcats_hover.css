@@ -1,0 +1,14 @@
+/**
+ * Custom styling for Plotly hover tooltips
+ */
+
+/* Ensure hover tooltips have enough space */
+.hoverlayer .hovertext text {
+    font-family: Arial, sans-serif !important;
+}
+
+/* Increase line spacing in tooltips */
+.hoverlayer .hovertext tspan {
+    font-size: 13px !important;
+}
+

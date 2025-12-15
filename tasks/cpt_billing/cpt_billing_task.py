@@ -462,7 +462,7 @@ class CPTBillingTask(BaseTask):
 
         # Build dimensions based on selection
         dimension_map = {
-            'actual_codes': ('Actual Billing Code', 'ActualCode'),
+            'actual_codes': ('Actual Billed Codes (Detected)', 'ActualCode'),
             '2026_codes': ('2026 Code', 'ID2026Code'),
             'department': ('Department', 'Department'),
             'machine': ('Machine', 'Machine'),
