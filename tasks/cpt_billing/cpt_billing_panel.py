@@ -1,6 +1,7 @@
 """
 CPT Billing main panel layout (summary table display)
 """
+import dash
 from dash import html, dcc, dash_table, Input, Output, State
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
@@ -43,10 +44,46 @@ _ACTUAL_CODE_EXPLANATIONS = {
     # Guidance (IGRT)
     "77014": "CBCT",
     "77387": "IGRT",
+    "77417": "Port Films",
     "G6002": "IGRT",
     # SRS/SBRT
     "77372": "SRS",
     "77373": "SBRT",
+    # With modifiers - Professional Component (26)
+    "77402-26": "IMRT (Simple) - Professional",
+    "77407-26": "IMRT (Intermediate) - Professional",
+    "77412-26": "IMRT (Complex) - Professional",
+    "77385-26": "IMRT (Simple) - Professional",
+    "77386-26": "IMRT (Complex) - Professional",
+    "77014-26": "CBCT - Professional",
+    "77387-26": "IGRT - Professional",
+    "77417-26": "Port Films - Professional",
+    "77372-26": "SRS - Professional",
+    "77373-26": "SBRT - Professional",
+    # With modifiers - Technical Component (TC)
+    "77402-TC": "IMRT (Simple) - Technical",
+    "77407-TC": "IMRT (Intermediate) - Technical",
+    "77412-TC": "IMRT (Complex) - Technical",
+    "77385-TC": "IMRT (Simple) - Technical",
+    "77386-TC": "IMRT (Complex) - Technical",
+    "77014-TC": "CBCT - Technical",
+    "77387-TC": "IGRT - Technical",
+    "77417-TC": "Port Films - Technical",
+    "77372-TC": "SRS - Technical",
+    "77373-TC": "SBRT - Technical",
+    # G-codes with modifiers
+    "G6003-26": "IMRT (Simple) - Professional",
+    "G6007-26": "IMRT (Intermediate) - Professional",
+    "G6011-26": "IMRT (Complex) - Professional",
+    "G6015-26": "IMRT (Simple) - Professional",
+    "G6016-26": "IMRT (Complex) - Professional",
+    "G6002-26": "IGRT - Professional",
+    "G6003-TC": "IMRT (Simple) - Technical",
+    "G6007-TC": "IMRT (Intermediate) - Technical",
+    "G6011-TC": "IMRT (Complex) - Technical",
+    "G6015-TC": "IMRT (Simple) - Technical",
+    "G6016-TC": "IMRT (Complex) - Technical",
+    "G6002-TC": "IGRT - Technical",
 }
 
 
@@ -74,12 +111,39 @@ def create_main_panel_layout():
     """
     return html.Div([
         html.Div([
-            html.H5("2026 CPT Code Analysis", style={'marginTop': '20px', 'marginBottom': '20px', 'display': 'inline-block'}),
+            html.Div([
+                html.H5("2026 CPT Code Analysis", style={'marginBottom': '5px'}),
+                html.Div(id="cpt-record-count", style={'fontSize': '14px', 'color': '#666', 'marginBottom': '10px'}),
+            ], style={'display': 'inline-block'}),
             html.Div([
                 dbc.Button("Export to CSV", id="cpt-export-csv", color="primary", size="sm", style={'marginRight': '10px'}),
                 dbc.Button("Export to Excel", id="cpt-export-excel", color="success", size="sm"),
             ], style={'display': 'inline-block', 'float': 'right', 'marginTop': '20px'})
-        ], style={'overflow': 'hidden'}),
+        ], style={'overflow': 'hidden', 'marginTop': '20px', 'marginBottom': '20px'}),
+
+        # Sankey diagram
+        html.Div([
+            html.H6("Sankey Flow Analysis", style={'marginTop': '30px', 'marginBottom': '15px', 'textAlign': 'center'}),
+            html.Div([
+                html.Label("Select dimensions to include (flows from left to right, ending with 2026 Codes):", style={'fontWeight': 'bold', 'marginRight': '15px'}),
+                dcc.Checklist(
+                    id='cpt-sankey-dimensions',
+                    options=[
+                        {'label': ' Actual Billing Codes', 'value': 'actual_codes'},
+                        {'label': ' Department', 'value': 'department'},
+                        {'label': ' Machine', 'value': 'machine'},
+                        {'label': ' Insurer Category', 'value': 'insurer_category'},
+                        {'label': ' Technique', 'value': 'technique'},
+                        {'label': ' Radiation Type', 'value': 'radiation_type'}
+                    ],
+                    value=['actual_codes'],
+                    inline=True,
+                    labelStyle={'marginRight': '15px'},
+                    inputStyle={'marginRight': '5px'}
+                )
+            ], style={'textAlign': 'center', 'marginBottom': '15px'}),
+            dcc.Graph(id='cpt-sankey-diagram', style={'height': '700px'}),
+        ], style={'marginBottom': '40px'}),
 
         # Parallel categories diagram
         html.Div([
@@ -158,6 +222,37 @@ def register_callbacks(app, task):
         app: Dash app instance
         task: CPTBillingTask instance
     """
+
+    @app.callback(
+        Output('cpt-record-count', 'children'),
+        [Input('cpt-department-checklist', 'value'),
+         Input('cpt-machine-checklist', 'value'),
+         Input('cpt-insurer-category-checklist', 'value'),
+         Input('cpt-insurer-checklist', 'value'),
+         Input('cpt-start-date', 'date'),
+         Input('cpt-end-date', 'date'),
+         Input('cpt-technique-checklist', 'value'),
+         Input('cpt-2026code-checklist', 'value'),
+         Input('cpt-radiation-type-checklist', 'value'),
+         Input('cpt-actual-code-checklist', 'value')]
+    )
+    def update_record_count(selected_departments, selected_machines, selected_insurer_categories, selected_insurers,
+                           start_date, end_date, selected_techniques, selected_codes_2026,
+                           selected_radiation_types, selected_actual_codes):
+        """Update the record count display."""
+        filtered_df = task.filter_data(
+            selected_departments,
+            selected_machines,
+            selected_insurer_categories,
+            selected_insurers,
+            start_date,
+            end_date,
+            selected_techniques,
+            selected_codes_2026,
+            selected_radiation_types,
+            selected_actual_codes
+        )
+        return f"Showing {len(filtered_df):,} records"
 
     @app.callback(
         Output('cpt-summary-table', 'data'),
@@ -411,6 +506,234 @@ def register_callbacks(app, task):
         return fig
 
     @app.callback(
+        Output('cpt-sankey-diagram', 'figure'),
+        [Input('cpt-department-checklist', 'value'),
+         Input('cpt-machine-checklist', 'value'),
+         Input('cpt-insurer-category-checklist', 'value'),
+         Input('cpt-insurer-checklist', 'value'),
+         Input('cpt-start-date', 'date'),
+         Input('cpt-end-date', 'date'),
+         Input('cpt-technique-checklist', 'value'),
+         Input('cpt-2026code-checklist', 'value'),
+         Input('cpt-radiation-type-checklist', 'value'),
+         Input('cpt-actual-code-checklist', 'value'),
+         Input('cpt-sankey-dimensions', 'value')]
+    )
+    def update_sankey_diagram(selected_departments, selected_machines, selected_insurer_categories, selected_insurers,
+                             start_date, end_date, selected_techniques, selected_codes_2026,
+                             selected_radiation_types, selected_actual_codes, selected_dimensions):
+        """
+        Update the Sankey diagram based on filter selections and dimensions.
+
+        Args:
+            selected_departments: List of selected departments
+            selected_machines: List of selected machines
+            selected_insurer_categories: List of selected insurer categories
+            selected_insurers: List of selected insurers
+            start_date: Start date string
+            end_date: End date string
+            selected_techniques: List of selected techniques
+            selected_codes_2026: List of selected 2026 codes
+            selected_radiation_types: List of selected radiation types
+            selected_actual_codes: List of selected actual billing codes
+            selected_dimensions: List of dimension keys for Sankey layers
+
+        Returns:
+            Plotly figure object
+        """
+        # Filter data
+        filtered_df = task.filter_data(
+            selected_departments,
+            selected_machines,
+            selected_insurer_categories,
+            selected_insurers,
+            start_date,
+            end_date,
+            selected_techniques,
+            selected_codes_2026,
+            selected_radiation_types,
+            selected_actual_codes
+        )
+
+        # Calculate Sankey data with selected dimensions
+        source, target, value, labels, dimension_labels, original_treatment_count, dimension_totals, node_treatment_counts = task.calculate_sankey_data(filtered_df, selected_dimensions)
+
+        # Create Sankey diagram
+        if not source or not labels:
+            # Empty diagram
+            fig = go.Figure()
+            fig.update_layout(
+                title="No data available for selected filters",
+                height=700
+            )
+            return fig
+
+        # Add descriptions for actual billing codes
+        labels_with_desc = []
+        for i, label in enumerate(labels):
+            # Check if this is a 2026 code (contains parentheses with count/percentage)
+            if '(' in label and '%' in label:
+                # Already has stats, keep as is
+                labels_with_desc.append(label)
+            else:
+                # Check if it's an actual billing code (first dimension when actual_codes is selected)
+                if dimension_labels and dimension_labels[i] == 0 and selected_dimensions and selected_dimensions[0] == 'actual_codes':
+                    desc = _ACTUAL_CODE_EXPLANATIONS.get(label, "")
+                    if desc:
+                        labels_with_desc.append(f"{label}: {desc}")
+                    else:
+                        labels_with_desc.append(label)
+                else:
+                    labels_with_desc.append(label)
+
+        # Sort links to influence Plotly's automatic ordering
+        # Group links by their target node and sort by target index
+        link_data = list(zip(source, target, value))
+        link_data.sort(key=lambda x: (x[1], x[0]))  # Sort by target, then source
+        source = [x[0] for x in link_data]
+        target = [x[1] for x in link_data]
+        value = [x[2] for x in link_data]
+
+        # Generate default Plotly colors for nodes
+        import plotly.express as px
+        num_nodes = len(labels)
+        default_colors = px.colors.qualitative.Plotly
+        node_colors = [default_colors[i % len(default_colors)] for i in range(num_nodes)]
+
+        # Color links based on their target node with some transparency
+        link_colors = []
+        for tgt in target:
+            color = node_colors[tgt]
+            # Add transparency to the color
+            if color.startswith('#'):
+                # Convert hex to rgba
+                h = color.lstrip('#')
+                r, g, b = tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+                rgba = f'rgba({r},{g},{b},0.4)'
+            elif color.startswith('rgb('):
+                # Convert rgb to rgba
+                rgba = color.replace('rgb(', 'rgba(').replace(')', ',0.4)')
+            else:
+                rgba = color
+            link_colors.append(rgba)
+
+        # Calculate statistics for hover templates
+        # Use the original treatment count, not the sum of expanded flows
+        total_count = original_treatment_count
+
+        # We need to calculate actual treatment counts per node from the original filtered data
+        # NOT from the expanded flow values which are inflated
+        # For now, use the flow values but this needs to be fixed to count actual treatments
+        # matching each node's criteria
+
+        # Calculate flow-based node values (this is what flows through, not treatment count)
+        node_values_incoming = {}
+        node_values_outgoing = {}
+        for src, tgt, val in zip(source, target, value):
+            node_values_incoming[tgt] = node_values_incoming.get(tgt, 0) + val
+            node_values_outgoing[src] = node_values_outgoing.get(src, 0) + val
+
+        # For each node, use outgoing if available, otherwise incoming
+        # NOTE: These are FLOW counts, not treatment counts - they will be inflated
+        # when multiple dimensions with multi-values are selected
+        node_flow_values = {}
+        for i in range(len(labels)):
+            if i in node_values_outgoing:
+                node_flow_values[i] = node_values_outgoing[i]
+            elif i in node_values_incoming:
+                node_flow_values[i] = node_values_incoming[i]
+            else:
+                node_flow_values[i] = 0
+
+        # Use the dimension_totals from the task (calculated from original data)
+        # NOT the inflated flow-based category totals
+
+        # Build custom hover text for nodes
+        # For 2026 codes, extract the actual count from the label (which is correct)
+        # For other nodes, use flow values
+        node_customdata = []
+        max_dim = max(dimension_labels) if dimension_labels else 0
+
+        for i, label in enumerate(labels):
+            dim = dimension_labels[i]
+            # Get the correct total for this dimension from the task
+            dim_total = dimension_totals.get(dim, 1)
+
+            # Use actual treatment counts from the task calculation
+            count = node_treatment_counts.get(i, 0)
+
+            # Percentage within this category/dimension
+            pct_of_category = (count / dim_total * 100) if dim_total > 0 else 0
+
+            node_customdata.append({
+                'count': count,
+                'cat_total': dim_total,
+                'pct_category': pct_of_category
+            })
+
+        # Create hover template for nodes - show count and percentage of category
+        node_hovertemplate = (
+            '<b>%{label}</b><br>'
+            'Count: %{customdata[0]:,}<br>'
+            'Category share: %{customdata[0]:,} of %{customdata[1]:,} (%{customdata[2]:.1f}%)'
+            '<extra></extra>'
+        )
+
+        # Build custom hover for links - simplified to just show flow count
+        link_hovertemplate = (
+            '<b>%{source.label}</b> → <b>%{target.label}</b><br>'
+            'Flow count: %{value:,}'
+            '<extra></extra>'
+        )
+
+        fig = go.Figure(data=[go.Sankey(
+            node=dict(
+                pad=15,
+                thickness=20,
+                line=dict(color='black', width=0.5),
+                label=labels_with_desc,
+                color=node_colors,
+                customdata=[[cd['count'], cd['cat_total'], cd['pct_category']] for cd in node_customdata],
+                hovertemplate=node_hovertemplate
+            ),
+            link=dict(
+                source=source,
+                target=target,
+                value=value,
+                color=link_colors,
+                hovertemplate=link_hovertemplate
+            ),
+            valueformat=',d',  # Format values as integers with commas
+            valuesuffix=''  # Remove any suffix
+        )])
+
+        # Create dynamic title based on selected dimensions
+        dimension_names = {
+            'actual_codes': 'Actual Codes',
+            'department': 'Department',
+            'machine': 'Machine',
+            'insurer_category': 'Insurer Category',
+            'technique': 'Technique',
+            'radiation_type': 'Radiation Type'
+        }
+
+        if selected_dimensions and len(selected_dimensions) > 0:
+            dim_flow = ' → '.join([dimension_names.get(d, d) for d in selected_dimensions])
+            title = f"Flow: {dim_flow} → 2026 Codes"
+        else:
+            title = "Flow to 2026 CPT Codes"
+
+        fig.update_layout(
+            title_text=title,
+            font_size=11,
+            height=700,
+            margin=dict(l=20, r=20, t=80, b=20),
+            hovermode='closest'
+        )
+
+        return fig
+
+    @app.callback(
         Output('cpt-download-csv', 'data'),
         Input('cpt-export-csv', 'n_clicks'),
         [State('cpt-department-checklist', 'value'),
@@ -485,3 +808,46 @@ def register_callbacks(app, task):
         summary_df = task.calculate_code_summary(filtered_df)
 
         return dcc.send_data_frame(summary_df.to_excel, "cpt_billing_summary.xlsx", index=False, engine='openpyxl')
+
+    # Callbacks for Select All/None buttons
+    @app.callback(
+        Output('cpt-insurer-checklist', 'value'),
+        [Input('cpt-insurer-select-all', 'n_clicks'),
+         Input('cpt-insurer-select-none', 'n_clicks')],
+        [State('cpt-insurer-checklist', 'options')]
+    )
+    def update_insurer_selection(select_all_clicks, select_none_clicks, options):
+        """Handle Select All/None buttons for insurer filter."""
+        ctx = dash.callback_context
+        if not ctx.triggered:
+            return [opt['value'] for opt in options]
+
+        button_id = ctx.triggered[0]['prop_id'].split('.')[0]
+
+        if button_id == 'cpt-insurer-select-all':
+            return [opt['value'] for opt in options]
+        elif button_id == 'cpt-insurer-select-none':
+            return []
+
+        return [opt['value'] for opt in options]
+
+    @app.callback(
+        Output('cpt-actual-code-checklist', 'value'),
+        [Input('cpt-actual-code-select-all', 'n_clicks'),
+         Input('cpt-actual-code-select-none', 'n_clicks')],
+        [State('cpt-actual-code-checklist', 'options')]
+    )
+    def update_actual_code_selection(select_all_clicks, select_none_clicks, options):
+        """Handle Select All/None buttons for actual code filter."""
+        ctx = dash.callback_context
+        if not ctx.triggered:
+            return [opt['value'] for opt in options]
+
+        button_id = ctx.triggered[0]['prop_id'].split('.')[0]
+
+        if button_id == 'cpt-actual-code-select-all':
+            return [opt['value'] for opt in options]
+        elif button_id == 'cpt-actual-code-select-none':
+            return []
+
+        return [opt['value'] for opt in options]

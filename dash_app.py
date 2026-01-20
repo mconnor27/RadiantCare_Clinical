@@ -19,6 +19,7 @@ from utils.styles import CUSTOM_CSS
 # Initialize Dash app with Bootstrap theme and pages support
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], use_pages=True, suppress_callback_exceptions=True)
 app.title = APP_TITLE
+server = app.server  # Expose Flask server for gunicorn
 
 # Add custom CSS
 app.index_string = '''
@@ -529,4 +530,6 @@ def toggle_help_modal(help_clicks, close_clicks, is_open):
     return is_open
 
 if __name__ == '__main__':
-    app.run(debug=True, port=8050)
+    import os
+    port = int(os.environ.get('PORT', 8050))
+    app.run(debug=False, host='0.0.0.0', port=port)

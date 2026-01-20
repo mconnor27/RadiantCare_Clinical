@@ -146,30 +146,30 @@ class CPTBillingTask(BaseTask):
         if pd.isna(billed_codes_str) or billed_codes_str == '':
             return 'Unknown'
 
-        # Parse codes
+        # Parse codes and strip modifiers (everything after '-') for technique matching
         codes = [c.strip() for c in str(billed_codes_str).split(',')]
-        codes_set = set(codes)
+        base_codes_set = {c.split('-')[0] for c in codes}
 
         # Define technique code sets
         conventional_codes = {'77402', 'G6003', 'G6004', 'G6005', 'G6006', '77407', 'G6007', 'G6008', 'G6009', 'G6010', '77412', 'G6011', 'G6012', 'G6013', 'G6014'}
         srs_codes = {'77372'}
         sbrt_codes = {'77373'}
         imrt_codes = {'77385', '77386', 'G6015', 'G6016'}
-        igrt_codes = {'77014', '77387', 'G6002'}
+        igrt_codes = {'77014', '77387', '77417', 'G6002'}
 
         # Collect all applicable techniques in priority order
         techniques = []
 
         # Check in order of specificity (most specific first)
-        if codes_set & sbrt_codes:
+        if base_codes_set & sbrt_codes:
             techniques.append('SBRT')
-        if codes_set & srs_codes:
+        if base_codes_set & srs_codes:
             techniques.append('SRS')
-        if codes_set & imrt_codes:
+        if base_codes_set & imrt_codes:
             techniques.append('IMRT')
-        if codes_set & igrt_codes:
+        if base_codes_set & igrt_codes:
             techniques.append('IGRT')
-        if codes_set & conventional_codes:
+        if base_codes_set & conventional_codes:
             techniques.append('Conventional')
 
         # Return comma-separated techniques or 'Other' if none matched
@@ -305,78 +305,234 @@ class CPTBillingTask(BaseTask):
 
         return summary_df
 
-    def calculate_sankey_data(self, filtered_df):
+    def calculate_sankey_data(self, filtered_df, selected_dimensions=None):
         """
-        Calculate Sankey diagram data showing flow from actual billing codes to 2026 codes.
+        Calculate Sankey diagram data with dynamically selected dimensions ending in 2026 Code.
 
         Args:
             filtered_df: Filtered DataFrame
+            selected_dimensions: List of dimension keys to include (in order)
+                Options: 'actual_codes', 'department', 'machine', 'insurer_category', 'technique', 'radiation_type'
 
         Returns:
-            Tuple of (source_list, target_list, value_list, labels_list)
+            Tuple of (source_list, target_list, value_list, labels_list, dimension_labels)
         """
         if filtered_df.empty:
-            return [], [], [], []
+            return [], [], [], [], []
 
-        # Build mappings from actual codes to 2026 codes
-        code_flows = {}  # {(actual_code, code_2026): count}
+        # Filter to only rows with valid 2026 codes
+        df_valid = filtered_df[filtered_df['ID2026Code'].notna()].copy()
 
-        for _, row in filtered_df.iterrows():
-            code_2026 = row['ID2026Code']
-            billed_codes_str = row['BilledCodes']
+        if df_valid.empty:
+            return [], [], [], [], []
 
-            # Skip if no 2026 code
-            if pd.isna(code_2026) or code_2026 == '':
-                continue
+        # Default dimensions if none selected
+        if not selected_dimensions or len(selected_dimensions) == 0:
+            selected_dimensions = ['actual_codes']
 
-            # Parse billed codes
-            if pd.notna(billed_codes_str):
-                billed_codes = [c.strip() for c in str(billed_codes_str).split(',')]
-                for billed_code in billed_codes:
-                    if billed_code:  # Skip empty strings
-                        key = (billed_code, code_2026)
-                        code_flows[key] = code_flows.get(key, 0) + 1
+        # Add 2026 codes as the final dimension
+        selected_dimensions = list(selected_dimensions) + ['2026_codes']
 
-        if not code_flows:
-            return [], [], [], []
+        # Dimension mapping
+        dimension_map = {
+            'actual_codes': 'BilledCodes',
+            'department': 'Department',
+            'machine': 'Machine',
+            'insurer_category': 'InsurerCategory',
+            'technique': 'Technique',
+            'radiation_type': 'RadiationType',
+            '2026_codes': 'ID2026Code'
+        }
 
-        # Create unique labels for all codes
-        all_actual_codes = sorted(set([k[0] for k in code_flows.keys()]))
-        all_2026_codes = sorted(set([k[1] for k in code_flows.keys()]))
+        # Build dimension columns list
+        dim_cols = []
+        for dim in selected_dimensions:
+            if dim in dimension_map:
+                dim_cols.append(dimension_map[dim])
 
-        # Calculate counts for 2026 codes (right side) - use filtered_df to match table logic
-        code_2026_counts = filtered_df['ID2026Code'].value_counts().to_dict()
+        # Expand rows for multi-valued dimensions (actual codes, technique)
+        df_expanded = df_valid.copy()
 
-        # Calculate total for percentages - use count of treatments, not flow instances
-        total_2026 = len(filtered_df[filtered_df['ID2026Code'].notna()])
+        # Expand actual codes if in dimensions
+        if 'BilledCodes' in dim_cols:
+            df_expanded['_ActualCode'] = df_expanded['BilledCodes'].str.split(',').apply(
+                lambda x: [c.strip() for c in x] if isinstance(x, list) else ['Unknown']
+            )
+            df_expanded = df_expanded.explode('_ActualCode', ignore_index=True)
+            df_expanded['BilledCodes'] = df_expanded['_ActualCode']
+            df_expanded = df_expanded[df_expanded['BilledCodes'].str.len() > 0]
 
-        # Create labels with counts/percentages for 2026 codes
-        labels_actual = all_actual_codes
-        labels_2026 = []
-        for code in all_2026_codes:
-            count = code_2026_counts.get(code, 0)
-            percentage = (count / total_2026 * 100) if total_2026 > 0 else 0
-            labels_2026.append(f"{code} ({count:,}, {percentage:.1f}%)")
+        # Expand technique if in dimensions
+        if 'Technique' in dim_cols:
+            df_expanded['_Technique'] = df_expanded['Technique'].str.split(',').apply(
+                lambda x: [t.strip() for t in x] if isinstance(x, list) else ['Unknown']
+            )
+            df_expanded = df_expanded.explode('_Technique', ignore_index=True)
+            df_expanded['Technique'] = df_expanded['_Technique']
+            df_expanded = df_expanded[df_expanded['Technique'].str.len() > 0]
 
-        # Create label list and index mapping
-        labels = labels_actual + labels_2026
-        label_to_index = {}
-        for idx, code in enumerate(all_actual_codes):
-            label_to_index[code] = idx
-        for idx, code in enumerate(all_2026_codes):
-            label_to_index[code] = len(all_actual_codes) + idx
+        # Count flows through each dimension path
+        flow_counts = df_expanded.groupby(dim_cols, dropna=False).size().reset_index(name='count')
 
-        # Build source, target, value lists for Sankey
+        # Build nodes and links
+        all_nodes = []  # List of (dimension_idx, node_label)
+        node_to_idx = {}  # {(dimension_idx, node_label): node_index}
+        links = []  # List of (source_idx, target_idx, value)
+
+        # Collect unique nodes for each dimension
+        for dim_idx, col in enumerate(dim_cols):
+            unique_vals = flow_counts[col].dropna().unique()
+
+            # For 2026 codes (last dimension), use custom order
+            if dim_idx == len(dim_cols) - 1 and col == 'ID2026Code':
+                # Use the custom order defined in the task
+                unique_vals_set = set(str(v) for v in unique_vals)
+                ordered_vals = []
+
+                # Add codes in the predefined order
+                for code in self.codes_2026_order:
+                    if code in unique_vals_set:
+                        ordered_vals.append(code)
+
+                # Add any remaining codes not in the predefined order (sorted)
+                remaining = sorted([v for v in unique_vals_set if v not in self.codes_2026_order])
+                ordered_vals.extend(remaining)
+
+                unique_vals = ordered_vals
+            else:
+                # For other dimensions, use alphabetical sort
+                unique_vals = sorted(str(v) for v in unique_vals)
+
+            for val in unique_vals:
+                node_key = (dim_idx, str(val))
+                if node_key not in node_to_idx:
+                    node_to_idx[node_key] = len(all_nodes)
+                    all_nodes.append(node_key)
+
+        # Build links between consecutive dimensions
+        for _, row in flow_counts.iterrows():
+            count = row['count']
+            # Create links between each consecutive dimension pair
+            for i in range(len(dim_cols) - 1):
+                source_val = str(row[dim_cols[i]])
+                target_val = str(row[dim_cols[i + 1]])
+
+                source_key = (i, source_val)
+                target_key = (i + 1, target_val)
+
+                source_idx = node_to_idx.get(source_key)
+                target_idx = node_to_idx.get(target_key)
+
+                if source_idx is not None and target_idx is not None:
+                    links.append((source_idx, target_idx, count))
+
+        # Aggregate duplicate links
+        link_dict = {}
+        for src, tgt, val in links:
+            key = (src, tgt)
+            link_dict[key] = link_dict.get(key, 0) + val
+
+        # Convert to lists
         source = []
         target = []
         value = []
+        for (src, tgt), val in link_dict.items():
+            source.append(src)
+            target.append(tgt)
+            value.append(val)
 
-        for (actual_code, code_2026), count in code_flows.items():
-            source.append(label_to_index[actual_code])
-            target.append(label_to_index[code_2026])
-            value.append(count)
+        # Create labels with counts/percentages for 2026 codes (last dimension)
+        # Build a proper count dict with string keys to match node_label
+        code_2026_counts_series = df_valid['ID2026Code'].value_counts()
+        code_2026_counts = {}
+        for code, count in code_2026_counts_series.items():
+            # Store with string key to match node_label
+            code_2026_counts[str(code)] = int(count)
 
-        return source, target, value, labels
+        total_2026 = len(df_valid)
+
+        # Map 2026 codes to their descriptions
+        code_2026_descriptions = {
+            '77402': 'Simple',
+            '77407': 'Intermediate',
+            '77412': 'Complex',
+            '77372': 'SRS',
+            '77373': 'SBRT'
+        }
+
+        labels = []
+        dimension_labels = []
+        for dim_idx, node_label in all_nodes:
+            # Check if this is a 2026 code (last dimension)
+            if dim_idx == len(dim_cols) - 1:
+                # node_label is already a string, look it up directly
+                count = code_2026_counts.get(node_label, 0)
+                percentage = (count / total_2026 * 100) if total_2026 > 0 else 0
+                # Add description to 2026 code label
+                desc = code_2026_descriptions.get(node_label, '')
+                if desc:
+                    labels.append(f"{node_label}: {desc} ({count:,}, {percentage:.1f}%)")
+                else:
+                    labels.append(f"{node_label} ({count:,}, {percentage:.1f}%)")
+            else:
+                labels.append(node_label)
+            dimension_labels.append(dim_idx)
+
+        # Return the original treatment count for accurate percentages
+        original_treatment_count = len(df_valid)
+
+        # Calculate actual totals for each dimension from the ORIGINAL data (not expanded)
+        # This gives us the true counts we should use for percentages
+        dimension_totals = {}
+        for dim_idx, col in enumerate(dim_cols):
+            if col == 'BilledCodes':
+                # For actual codes, count total code instances (expanded)
+                total = 0
+                for codes_str in df_valid['BilledCodes'].dropna():
+                    codes = [c.strip() for c in str(codes_str).split(',')]
+                    total += len([c for c in codes if c])
+                dimension_totals[dim_idx] = total
+            elif col in ['Technique', 'TechniqueExpanded']:
+                # For technique, count total technique instances (expanded)
+                total = 0
+                for tech_str in df_valid['Technique'].dropna():
+                    techs = [t.strip() for t in str(tech_str).split(',')]
+                    total += len([t for t in techs if t])
+                dimension_totals[dim_idx] = total
+            else:
+                # For single-value dimensions, just count treatments
+                dimension_totals[dim_idx] = original_treatment_count
+
+        # Calculate actual treatment counts per node from the ORIGINAL data
+        # This is needed for accurate hover counts (not inflated flow counts)
+        node_treatment_counts = {}
+        for node_idx, (dim_idx, node_label) in enumerate(all_nodes):
+            col = dim_cols[dim_idx]
+
+            if col == 'BilledCodes':
+                # Count treatments that contain this actual code
+                count = 0
+                for codes_str in df_valid['BilledCodes'].dropna():
+                    codes = [c.strip() for c in str(codes_str).split(',')]
+                    if node_label in codes:
+                        count += 1
+                node_treatment_counts[node_idx] = count
+            elif col in ['Technique', 'TechniqueExpanded']:
+                # Count treatments that contain this technique
+                count = 0
+                for tech_str in df_valid['Technique'].dropna():
+                    techs = [t.strip() for t in str(tech_str).split(',')]
+                    if node_label in techs:
+                        count += 1
+                node_treatment_counts[node_idx] = count
+            elif col == 'ID2026Code':
+                # For 2026 codes, count treatments with this code
+                node_treatment_counts[node_idx] = len(df_valid[df_valid['ID2026Code'] == node_label])
+            else:
+                # For other single-value dimensions
+                node_treatment_counts[node_idx] = len(df_valid[df_valid[col] == node_label])
+
+        return source, target, value, labels, dimension_labels, original_treatment_count, dimension_totals, node_treatment_counts
 
     def calculate_parallel_categories_data(self, filtered_df, selected_dimensions=None):
         """

@@ -80,6 +80,16 @@ def create_sidebar_layout(task, state=None):
         # Insurer Filter (Specific insurers)
         html.Div([
             html.Label("Specific Insurer", style={'fontWeight': 'bold', 'marginBottom': '10px'}),
+            html.Div([
+                html.Button("Select All", id='cpt-insurer-select-all', n_clicks=0,
+                           style={'padding': '4px 8px', 'fontSize': '11px', 'marginRight': '5px',
+                                  'backgroundColor': '#6c757d', 'color': 'white', 'border': 'none',
+                                  'borderRadius': '3px', 'cursor': 'pointer'}),
+                html.Button("Select None", id='cpt-insurer-select-none', n_clicks=0,
+                           style={'padding': '4px 8px', 'fontSize': '11px',
+                                  'backgroundColor': '#6c757d', 'color': 'white', 'border': 'none',
+                                  'borderRadius': '3px', 'cursor': 'pointer'})
+            ], style={'marginBottom': '10px'}),
             dcc.Checklist(
                 id='cpt-insurer-checklist',
                 options=[{'label': insurer, 'value': insurer} for insurer in task.insurers],
@@ -138,6 +148,16 @@ def create_sidebar_layout(task, state=None):
         # Actual Billing Code Filter
         html.Div([
             html.Label("Actual Billing Code", style={'fontWeight': 'bold', 'marginBottom': '10px'}),
+            html.Div([
+                html.Button("Select All", id='cpt-actual-code-select-all', n_clicks=0,
+                           style={'padding': '4px 8px', 'fontSize': '11px', 'marginRight': '5px',
+                                  'backgroundColor': '#6c757d', 'color': 'white', 'border': 'none',
+                                  'borderRadius': '3px', 'cursor': 'pointer'}),
+                html.Button("Select None", id='cpt-actual-code-select-none', n_clicks=0,
+                           style={'padding': '4px 8px', 'fontSize': '11px',
+                                  'backgroundColor': '#6c757d', 'color': 'white', 'border': 'none',
+                                  'borderRadius': '3px', 'cursor': 'pointer'})
+            ], style={'marginBottom': '10px'}),
             dcc.Checklist(
                 id='cpt-actual-code-checklist',
                 options=[{'label': code, 'value': code} for code in task.actual_codes],
