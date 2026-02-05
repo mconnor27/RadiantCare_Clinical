@@ -4,7 +4,7 @@ import dash
 import dash_mantine_components as dmc
 from dash import Dash, html, dcc, page_container
 
-from config.settings import DMC_THEME, NEUTRAL, MAPBOX_TOKEN
+from config.settings import DMC_THEME, NEUTRAL, PRIMARY, MAPBOX_TOKEN
 from components.nav import create_sidebar
 
 # ---------------------------------------------------------------------------
@@ -41,8 +41,43 @@ app.layout = dmc.MantineProvider(
                             justify="space-between",
                             mb="md",
                         ),
-                        # Page content (auto-routed by Dash pages)
-                        page_container,
+                        # Page content with loading overlay
+                        dcc.Loading(
+                            id="page-loading",
+                            delay_show=300,
+                            fullscreen=True,
+                            fullscreen_style={
+                                "backgroundColor": NEUTRAL["bg_page"],
+                                "opacity": 1,
+                                "zIndex": 1000,
+                            },
+                            custom_spinner=html.Div(
+                                children=[
+                                    dmc.Loader(
+                                        color=PRIMARY,
+                                        size="xl",
+                                        type="dots",
+                                    ),
+                                    dmc.Text(
+                                        "Loading data\u2026",
+                                        c=NEUTRAL["text_secondary"],
+                                        size="lg",
+                                        mt="md",
+                                        fw=500,
+                                    ),
+                                ],
+                                style={
+                                    "display": "flex",
+                                    "flexDirection": "column",
+                                    "alignItems": "center",
+                                    "padding": "48px 72px",
+                                    "backgroundColor": "white",
+                                    "borderRadius": "16px",
+                                    "boxShadow": "0 8px 32px rgba(0,0,0,0.15)",
+                                },
+                            ),
+                            children=page_container,
+                        ),
                     ],
                     style={
                         "backgroundColor": NEUTRAL["bg_page"],
@@ -60,6 +95,18 @@ app.layout = dmc.MantineProvider(
         ),
     ],
 )
+
+# ---------------------------------------------------------------------------
+# Pre-load heavy datasets in background so the cache is warm before the
+# first page visit.  Treatment Detail is by far the largest (~3 s cold).
+# ---------------------------------------------------------------------------
+import threading
+
+def _preload():
+    from data.loader import load_treatment_detail
+    load_treatment_detail()
+
+threading.Thread(target=_preload, daemon=True).start()
 
 # ---------------------------------------------------------------------------
 # Run

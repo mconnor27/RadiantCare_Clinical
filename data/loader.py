@@ -8,20 +8,28 @@ from config.settings import DATA_COMPLETE, DATA_INCREMENTAL, DATA_LOOKUP
 
 
 def _read_csv_safe(path, **kwargs):
-    """Read a CSV, handling ARIA footer rows.
+    """Read a CSV, trying pyarrow first for speed (~3x faster).
 
-    ARIA reports append metadata footer rows after a blank line separator.
-    We need CSV-aware blank line detection because quoted fields can contain
-    embedded newlines.  Strategy: read with pandas first, then drop any
-    trailing all-NaN rows (footer artifacts).
+    Falls back to the default C engine for files with embedded newlines
+    or other quirks that pyarrow's stricter parser rejects.
+
+    ARIA reports append metadata footer rows after a blank line separator;
+    trailing all-NaN rows are dropped automatically.
     """
     if not path.exists():
         return pd.DataFrame()
 
-    kwargs.setdefault("encoding", "utf-8-sig")
-    kwargs.setdefault("on_bad_lines", "skip")
-    kwargs.setdefault("low_memory", False)
-    df = pd.read_csv(path, **kwargs)
+    encoding = kwargs.pop("encoding", "utf-8-sig")
+
+    # Fast path: pyarrow engine
+    try:
+        df = pd.read_csv(path, encoding=encoding, engine="pyarrow")
+    except Exception:
+        # Fallback for CSVs with embedded newlines, bad rows, etc.
+        df = pd.read_csv(
+            path, encoding=encoding,
+            on_bad_lines="skip", low_memory=False, **kwargs,
+        )
 
     # Drop trailing rows where every value is NaN (ARIA footer artifacts)
     while len(df) > 0 and df.iloc[-1].isna().all():
@@ -42,31 +50,123 @@ def _clean_department(df):
     return df
 
 
-def _filter_test_patients(df):
-    """Exclude test/dummy patients."""
-    id_col = next((c for c in ["PatientId", "PatientMRN"] if c in df.columns), None)
-    name_col = next((c for c in ["PatientFullName", "PatientName"] if c in df.columns), None)
-
-    if id_col is None and name_col is None:
-        return df
-
-    mask = pd.Series(False, index=df.index)
-    if id_col:
-        mask |= df[id_col].astype(str).str.contains(
-            "astro|test", case=False, na=False
-        )
-    if name_col:
-        mask |= df[name_col].str.lower().str.startswith("zzz", na=False)
-        mask |= df[name_col].str.startswith("Test,", na=False)
-    return df[~mask].copy()
-
-
 def _parse_dates(df, cols):
-    """Parse date columns, coercing errors."""
+    """Parse date columns, coercing errors.
+
+    Auto-detects the ARIA date format from the first non-null value so
+    pandas can use its fast C parser instead of falling back to the
+    per-row dateutil path (which is ~17x slower on large datasets).
+    """
+    _FMT_DATE = "%m/%d/%Y"
+    _FMT_DATETIME = "%m/%d/%Y %I:%M:%S %p"
+
     for col in cols:
-        if col in df.columns:
+        if col not in df.columns:
+            continue
+        non_null = df[col].dropna()
+        if non_null.empty:
+            continue
+        sample = non_null.iloc[0]
+        if isinstance(sample, str):
+            fmt = _FMT_DATETIME if " " in sample.strip() else _FMT_DATE
+            df[col] = pd.to_datetime(df[col], format=fmt, errors="coerce")
+        else:
+            # Already parsed or non-string — let pandas handle it
             df[col] = pd.to_datetime(df[col], errors="coerce")
     return df
+
+
+def _load_incremental(folder, base_name, dedup_key):
+    """Load and merge all incremental CSV files from a folder.
+
+    Reads base_name.csv, base_name_1.csv, base_name_2.csv, etc.,
+    concatenates them in numeric order, and deduplicates by *dedup_key*.
+    The row from the highest-numbered file wins, **except** referring-
+    physician columns are preserved: if an earlier file has a non-null
+    referring value and a later file has null, the earlier value is kept.
+
+    Parameters
+    ----------
+    folder : Path
+        Directory containing the incremental CSV files.
+    base_name : str
+        Base filename without extension (e.g., "Treatment", "Clinic Visits").
+    dedup_key : str or list[str]
+        Column name(s) to deduplicate on.
+    """
+    folder = Path(folder)
+    key_cols = [dedup_key] if isinstance(dedup_key, str) else list(dedup_key)
+
+    # Gather base file + numbered increments
+    files = []
+    base_path = folder / f"{base_name}.csv"
+    if base_path.exists():
+        files.append((0, base_path))
+    for f in folder.glob(f"{base_name}_*.csv"):
+        suffix = f.stem[len(base_name) + 1:]
+        try:
+            files.append((int(suffix), f))
+        except ValueError:
+            continue
+
+    if not files:
+        return pd.DataFrame()
+
+    files.sort(key=lambda x: x[0])
+
+    # Read each file, tagging with source order
+    dfs = []
+    for order, fpath in files:
+        df = _read_csv_safe(fpath)
+        if not df.empty:
+            df["_file_order"] = order
+            dfs.append(df)
+
+    if not dfs:
+        return pd.DataFrame()
+
+    combined = pd.concat(dfs, ignore_index=True)
+
+    # If key columns are missing, return as-is (can't deduplicate)
+    if not all(c in combined.columns for c in key_cols):
+        return combined.drop(columns=["_file_order"], errors="ignore")
+
+    combined = combined.sort_values("_file_order")
+
+    # Preserve referring-physician columns: forward-fill within each key
+    # group so a non-null value from an earlier file isn't lost when a
+    # later file has null/blank.
+    ref_cols = [c for c in combined.columns if c.lower().startswith("referring")]
+    if ref_cols:
+        for col in ref_cols:
+            if combined[col].dtype == object:
+                combined[col] = combined[col].replace(
+                    r"^\s*$", pd.NA, regex=True
+                )
+        combined[ref_cols] = combined.groupby(key_cols)[ref_cols].ffill()
+
+    # Keep the newest row per key
+    combined = combined.drop_duplicates(subset=key_cols, keep="last")
+    combined = combined.drop(columns=["_file_order"])
+    return combined
+
+
+@lru_cache(maxsize=1)
+def _patient_department_map():
+    """Build PatientId → Department lookup from Treatment Detail.
+
+    Used to add Department to datasets that lack it (Simulations, Workflow).
+    """
+    td = load_treatment_detail()
+    if td.empty or "PatientId" not in td.columns or "Department" not in td.columns:
+        return pd.DataFrame(columns=["PatientId", "Department"])
+    # Take the most common department per patient
+    dept_map = (
+        td.groupby("PatientId")["Department"]
+        .agg(lambda x: x.value_counts().index[0])
+        .reset_index()
+    )
+    return dept_map
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +180,7 @@ def load_treatment():
     Columns: Location→Department, Date→ScheduledDate, CompletedAppointments,
     UniquePatients, UniquePlans, NewStarts_*, Fields_*, Patients_*, Plans_*
     """
-    df = _read_csv_safe(DATA_INCREMENTAL / "Treatment" / "Treatment.csv")
+    df = _load_incremental(DATA_INCREMENTAL / "Treatment", "Treatment", ["Location", "Date"])
     df = _normalize_columns(df, {"Location": "Department", "Date": "ScheduledDate"})
     df = _clean_department(df)
     df = _parse_dates(df, ["ScheduledDate"])
@@ -94,14 +194,13 @@ def load_treatment_detail():
     Columns: TreatmentDate→ScheduledDateTime, PatientMRN→PatientId,
     PatientName→PatientFullName, Machine, Department, TreatingPhysician, etc.
     """
-    df = _read_csv_safe(DATA_INCREMENTAL / "TreatmentDetail" / "Treatment - Detail.csv")
+    df = _load_incremental(DATA_INCREMENTAL / "TreatmentDetail", "Treatment - Detail", "SessionUniqueID")
     df = _normalize_columns(df, {
         "TreatmentDate": "ScheduledDateTime",
         "PatientMRN": "PatientId",
         "PatientName": "PatientFullName",
     })
     df = _clean_department(df)
-    df = _filter_test_patients(df)
     df = _parse_dates(df, ["ScheduledDateTime", "AppointmentDateTime",
                            "TreatmentStartTime", "TreatmentEndTime"])
     return df
@@ -158,13 +257,12 @@ def load_clinic_visits():
 
     Columns: DepartmentName→Department, ActivityStatus→Status
     """
-    df = _read_csv_safe(DATA_INCREMENTAL / "ClinicVisits" / "Clinic Visits.csv")
+    df = _load_incremental(DATA_INCREMENTAL / "ClinicVisits", "Clinic Visits", "UniqueRowID")
     df = _normalize_columns(df, {
         "DepartmentName": "Department",
         "ActivityStatus": "Status",
     })
     df = _clean_department(df)
-    df = _filter_test_patients(df)
     df = _parse_dates(df, ["ScheduledDateTime", "AppointmentCreatedDate"])
     return df
 
@@ -176,12 +274,16 @@ def load_simulations():
     No Department column in source data.
     Has ActivityStatus (not Status) for filtering.
     """
-    df = _read_csv_safe(DATA_INCREMENTAL / "Simulations" / "Simulations.csv")
+    df = _load_incremental(DATA_INCREMENTAL / "Simulations", "Simulations", "UniqueRowID")
     df = _normalize_columns(df, {"ActivityStatus": "Status"})
-    df = _clean_department(df)
-    df = _filter_test_patients(df)
     df = _parse_dates(df, ["ScheduledDateTime", "AppointmentCreatedDate",
                            "PriorClinicExamAppointmentDate", "FirstTreatmentDate"])
+    # Add Department from Treatment Detail (source CSV has none)
+    if "Department" not in df.columns and "PatientId" in df.columns:
+        dept_map = _patient_department_map()
+        if not dept_map.empty:
+            df = df.merge(dept_map, on="PatientId", how="left")
+    df = _clean_department(df)
     return df
 
 
@@ -195,22 +297,24 @@ def load_workflow():
     ReviewPlanCompletedDateTime→ReviewPlanCompletedDate
     No Department column in source data.
     """
-    df = _read_csv_safe(DATA_INCREMENTAL / "Workflow" / "Workflow.csv")
+    df = _load_incremental(DATA_INCREMENTAL / "Workflow", "Workflow", "UniqueRowID")
     df = _normalize_columns(df, {
         "SimulationDateTime": "SimulationDate",
         "DrawCompletedDateTime": "DrawVolumesCompletedDate",
         "IsodosePlanCompletedDateTime": "IsodosePlanCompletedDate",
         "ReviewPlanCompletedDateTime": "ReviewPlanCompletedDate",
     })
-    df = _clean_department(df)
-    df = _filter_test_patients(df)
     df = _parse_dates(df, [
         "ScheduledDateTime", "SimulationDate",
         "DrawVolumesCompletedDate", "IsodosePlanCompletedDate",
         "ReviewPlanCompletedDate", "FirstTreatmentDate",
     ])
-    if "UniqueRowID" in df.columns:
-        df = df.drop_duplicates(subset=["UniqueRowID"], keep="last")
+    # Add Department from Treatment Detail (source CSV has none)
+    if "Department" not in df.columns and "PatientId" in df.columns:
+        dept_map = _patient_department_map()
+        if not dept_map.empty:
+            df = df.merge(dept_map, on="PatientId", how="left")
+    df = _clean_department(df)
     return df
 
 
@@ -222,7 +326,6 @@ def load_tasks():
     """
     df = _read_csv_safe(DATA_COMPLETE / "Tasks.csv")
     df = _normalize_columns(df, {"PatientName": "PatientFullName"})
-    df = _filter_test_patients(df)
     df = _parse_dates(df, ["StartDateTime", "DueDateTime", "CompletedDateTime"])
     if "UniqueRowID" in df.columns:
         df = df.drop_duplicates(subset=["UniqueRowID"], keep="last")
@@ -234,8 +337,7 @@ def load_otvs():
     """Load OTV Audit.csv."""
     df = _read_csv_safe(DATA_COMPLETE / "OTV Audit.csv")
     df = _clean_department(df)
-    df = _filter_test_patients(df)
-    df = _parse_dates(df, ["OTVDate"])
+    df = _parse_dates(df, ["OTVDate", "FirstTreatmentDate", "LastTreatmentDate"])
     if "UniqueRowID" in df.columns:
         df = df.drop_duplicates(subset=["UniqueRowID"], keep="last")
     return df
@@ -244,12 +346,9 @@ def load_otvs():
 @lru_cache(maxsize=1)
 def load_weekly_visits():
     """Load Weekly Visits.csv."""
-    df = _read_csv_safe(DATA_INCREMENTAL / "WeeklyVisits" / "Weekly Visits.csv")
+    df = _load_incremental(DATA_INCREMENTAL / "WeeklyVisits", "Weekly Visits", "UniqueRowID")
     df = _clean_department(df)
-    df = _filter_test_patients(df)
     df = _parse_dates(df, ["VisitDate"])
-    if "UniqueRowID" in df.columns:
-        df = df.drop_duplicates(subset=["UniqueRowID"], keep="last")
     return df
 
 
@@ -260,7 +359,7 @@ def load_courses():
     Columns: CourseStartDateTime→CourseStartDate, Departments→Department
     (takes first department if comma-separated), PatientName→PatientFullName
     """
-    df = _read_csv_safe(DATA_INCREMENTAL / "Courses" / "Courses.csv")
+    df = _load_incremental(DATA_INCREMENTAL / "Courses", "Courses", "UniqueRowID")
     df = _normalize_columns(df, {
         "CourseStartDateTime": "CourseStartDate",
         "PatientName": "PatientFullName",
@@ -269,7 +368,6 @@ def load_courses():
     if "Departments" in df.columns and "Department" not in df.columns:
         df["Department"] = df["Departments"].str.split(",").str[0].str.strip()
     df = _clean_department(df)
-    df = _filter_test_patients(df)
     df = _parse_dates(df, ["CourseStartDate", "FirstTreatmentDate", "LastTreatmentDate"])
     return df
 
@@ -281,13 +379,12 @@ def load_plans():
     Columns: Departments→Department (comma-separated, take first),
     PatientName→PatientFullName
     """
-    df = _read_csv_safe(DATA_INCREMENTAL / "Plans" / "Plans.csv")
+    df = _load_incremental(DATA_INCREMENTAL / "Plans", "Plans", "UniqueRowID")
     df = _normalize_columns(df, {"PatientName": "PatientFullName"})
     # Departments is sometimes comma-separated; take the first one
     if "Departments" in df.columns and "Department" not in df.columns:
         df["Department"] = df["Departments"].str.split(",").str[0].str.strip()
     df = _clean_department(df)
-    df = _filter_test_patients(df)
     df = _parse_dates(df, ["PlanCreationDate", "CourseStartDateTime",
                            "FirstTreatmentDate", "LastTreatmentDate"])
     return df
@@ -311,10 +408,9 @@ def load_billing():
 
     Columns: DepartmentName→Department
     """
-    df = _read_csv_safe(DATA_INCREMENTAL / "Billing" / "Billing.csv")
+    df = _load_incremental(DATA_INCREMENTAL / "Billing", "Billing", "UniqueRowID")
     df = _normalize_columns(df, {"DepartmentName": "Department"})
     df = _clean_department(df)
-    df = _filter_test_patients(df)
     df = _parse_dates(df, ["DateOfService"])
     return df
 
@@ -323,7 +419,6 @@ def load_billing():
 def load_patients():
     """Load Lookup - Patients.csv."""
     df = _read_csv_safe(DATA_LOOKUP / "Lookup - Patients.csv")
-    df = _filter_test_patients(df)
     return df
 
 
@@ -350,6 +445,7 @@ def load_physician_schedule():
 def clear_cache():
     """Clear all cached data (call after data refresh)."""
     for fn in [
+        _patient_department_map,
         load_treatment, load_treatment_detail, load_daily_volume,
         load_daily_volume_future, load_availability, load_clinic_visits,
         load_simulations, load_workflow, load_tasks, load_otvs,

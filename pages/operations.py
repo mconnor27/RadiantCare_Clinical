@@ -109,8 +109,10 @@ layout = dmc.Stack(
     Input("ops-volume-agg", "value"),
     Input("operations-filter-department", "value"),
     Input("operations-filter-date-preset", "value"),
+    Input("operations-filter-daterange", "value"),
+    Input("operations-filter-physician", "value"),
 )
-def update_operations(_n, agg, departments, date_preset):
+def update_operations(_n, agg, departments, date_preset, daterange, _physicians):
     from data.loader import (
         load_treatment, load_daily_volume, load_daily_volume_future,
         load_availability, load_courses,
@@ -118,13 +120,19 @@ def update_operations(_n, agg, departments, date_preset):
 
     today = pd.Timestamp.now().normalize()
 
-    # Date range from preset
-    if date_preset == "ytd":
+    # Date range — explicit range overrides preset
+    if daterange and len(daterange) == 2 and daterange[0] and daterange[1]:
+        start = pd.Timestamp(daterange[0])
+        end = pd.Timestamp(daterange[1])
+    elif date_preset == "ytd":
         start = pd.Timestamp(today.year, 1, 1)
+        end = today
     elif date_preset == "12mo":
         start = today - timedelta(days=365)
+        end = today
     else:
         start = pd.Timestamp("2020-01-01")
+        end = today
 
     # --- Load aggregated treatment data ---
     try:
@@ -137,7 +145,7 @@ def update_operations(_n, agg, departments, date_preset):
             tx_sites = tx_sites[tx_sites["Department"].isin(departments)]
         tx_period = tx_sites[
             (tx_sites["ScheduledDate"] >= start) &
-            (tx_sites["ScheduledDate"] <= today)
+            (tx_sites["ScheduledDate"] <= end)
         ]
     except Exception:
         tx_sites = pd.DataFrame()
@@ -146,7 +154,7 @@ def update_operations(_n, agg, departments, date_preset):
     # --- KPIs ---
     if not tx_period.empty and "CompletedAppointments" in tx_period.columns:
         total = int(tx_period["CompletedAppointments"].sum())
-        days_in_range = max((today - start).days, 1)
+        days_in_range = max((end - start).days, 1)
         daily_avg = round(total / days_in_range, 1)
     else:
         total = 0

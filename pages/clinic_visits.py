@@ -150,12 +150,7 @@ layout = dmc.Stack(
         dmc.Paper(
             children=[
                 dmc.Text("Visit Details", size="sm", fw=500, c="#6B7280", mb="sm"),
-                dmc.Skeleton(
-                    id="cv-table-container",
-                    height=300,
-                    visible=False,
-                    children=[],
-                ),
+                dmc.Box(id="cv-table-container"),
             ],
             p="md", radius="md", shadow="xs", withBorder=True,
         ),
@@ -209,9 +204,9 @@ def _apply_filters(df, departments, physicians, visit_type, status, start, end):
     if visit_type and visit_type != "All" and "VisitType" in dff.columns:
         dff = dff[dff["VisitType"] == visit_type]
 
-    # Status
+    # Status — ARIA uses "Manually Completed", "Cancelled - Patient No-Show", etc.
     if status and status != "All" and "Status" in dff.columns:
-        dff = dff[dff["Status"].str.lower() == status.lower()]
+        dff = dff[dff["Status"].str.contains(status, case=False, na=False)]
 
     return dff
 

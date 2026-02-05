@@ -91,8 +91,7 @@ layout = dmc.Stack(
                 dmc.Group(justify="space-between", mb="sm", children=[
                     dmc.Text("Patient Pipeline Detail", size="sm", fw=500, c="#6B7280"),
                 ]),
-                dmc.Skeleton(id="wf-table-container", height=300, visible=False,
-                             children=[]),
+                dmc.Box(id="wf-table-container"),
             ],
             p="md", radius="md", shadow="xs", withBorder=True,
         ),
@@ -100,6 +99,23 @@ layout = dmc.Stack(
         dcc.Interval(id="wf-interval", interval=300_000, n_intervals=0),
     ],
 )
+
+
+@callback(
+    Output("workflow-filter-diagnosis", "data"),
+    Input("wf-interval", "n_intervals"),
+)
+def populate_diagnosis_options(_n):
+    """Populate diagnosis filter with unique values from workflow data."""
+    try:
+        from data.loader import load_workflow
+        wf = load_workflow()
+        if "DiagnosisDescriptions" in wf.columns:
+            diags = sorted(wf["DiagnosisDescriptions"].dropna().unique().tolist())
+            return [{"value": d, "label": d} for d in diags[:100]]
+    except Exception:
+        pass
+    return []
 
 
 @callback(
@@ -114,8 +130,11 @@ layout = dmc.Stack(
     Input("wf-interval", "n_intervals"),
     Input("workflow-filter-department", "value"),
     Input("workflow-filter-date-preset", "value"),
+    Input("workflow-filter-daterange", "value"),
+    Input("workflow-filter-physician", "value"),
+    Input("workflow-filter-diagnosis", "value"),
 )
-def update_workflow(_n, departments, date_preset):
+def update_workflow(_n, departments, date_preset, daterange, physicians, diagnosis):
     from data.loader import load_workflow
     import dash_ag_grid as dag
 
@@ -126,18 +145,36 @@ def update_workflow(_n, departments, date_preset):
         na = kpi_card("—", "N/A")
         return na, na, na, na, empty, empty, empty, []
 
+    # Date filtering — explicit range overrides preset
     today = pd.Timestamp.now().normalize()
-    if date_preset == "ytd":
+    if daterange and len(daterange) == 2 and daterange[0] and daterange[1]:
+        start = pd.Timestamp(daterange[0])
+        end = pd.Timestamp(daterange[1])
+    elif date_preset == "ytd":
         start = pd.Timestamp(today.year, 1, 1)
+        end = today
     elif date_preset == "12mo":
         start = today - timedelta(days=365)
+        end = today
     else:
         start = pd.Timestamp("2020-01-01")
+        end = today
 
     if departments and "Department" in wf.columns:
         wf = wf[wf["Department"].isin(departments)]
 
-    wf_period = wf[wf["ScheduledDateTime"] >= start] if "ScheduledDateTime" in wf.columns else wf
+    if physicians:
+        phys_col = next((c for c in ["TreatingPhysician", "AppointmentPhysician"] if c in wf.columns), None)
+        if phys_col:
+            wf = wf[wf[phys_col].isin(physicians)]
+
+    if diagnosis and "DiagnosisDescriptions" in wf.columns:
+        wf = wf[wf["DiagnosisDescriptions"].isin(diagnosis)]
+
+    if "ScheduledDateTime" in wf.columns:
+        wf_period = wf[(wf["ScheduledDateTime"] >= start) & (wf["ScheduledDateTime"] <= end)]
+    else:
+        wf_period = wf
 
     # --- KPIs ---
     def safe_median(col):
@@ -198,7 +235,11 @@ def update_workflow(_n, departments, date_preset):
 
 
 def _build_sankey(wf):
-    """Build a Sankey diagram of the treatment pipeline."""
+    """Build a Sankey diagram of the treatment pipeline.
+
+    All stages flow forward or to a single 'Pending' node (gray).
+    Node labels show the count and percentage of initial consults.
+    """
     if wf.empty:
         return empty_figure("No workflow data")
 
@@ -206,44 +247,50 @@ def _build_sankey(wf):
     if len(stage_cols) < 2:
         return empty_figure("Insufficient workflow columns")
 
-    # Count patients at each stage
-    counts = []
-    for col in stage_cols:
-        counts.append(wf[col].notna().sum())
+    n_stages = len(stage_cols)
+    total_consults = int(wf[stage_cols[0]].notna().sum())
+    if total_consults == 0:
+        return empty_figure("No consult data")
 
-    # Build nodes: each stage + pending nodes
-    node_labels = list(STAGES[:len(stage_cols)])
-    node_colors = [CHART_COLORWAY[i % len(CHART_COLORWAY)] for i in range(len(node_labels))]
+    # Build node labels with counts and percentages
+    node_labels = []
+    node_colors = []
+    for i, col in enumerate(stage_cols):
+        count = int(wf[col].notna().sum())
+        pct = count / total_consults * 100
+        stage_name = STAGES[i] if i < len(STAGES) else f"Stage {i}"
+        node_labels.append(f"{stage_name}\n{count:,} ({pct:.0f}%)")
+        node_colors.append(CHART_COLORWAY[i % len(CHART_COLORWAY)])
 
-    # Add pending nodes
-    for i in range(len(stage_cols) - 1):
-        node_labels.append(f"Pending ({STAGES[i+1]})")
-        node_colors.append("#E0E0E0")
+    # Add single "Pending" node
+    pending_idx = n_stages
+    node_labels.append("Pending")
+    node_colors.append("#D1D5DB")
 
     sources, targets, values, link_colors = [], [], [], []
-    n_stages = len(stage_cols)
 
     for i in range(n_stages - 1):
         reached_current = wf[stage_cols[i]].notna()
         reached_next = wf[stage_cols[i + 1]].notna()
-        progressed = (reached_current & reached_next).sum()
-        pending = (reached_current & ~reached_next).sum()
+        progressed = int((reached_current & reached_next).sum())
+        pending = int((reached_current & ~reached_next).sum())
 
         # Flow to next stage
         if progressed > 0:
             sources.append(i)
             targets.append(i + 1)
-            values.append(int(progressed))
+            values.append(progressed)
             c = CHART_COLORWAY[i % len(CHART_COLORWAY)]
-            link_colors.append(c.replace(")", ", 0.3)").replace("rgb", "rgba") if "rgb" in c else f"rgba({int(c[1:3],16)},{int(c[3:5],16)},{int(c[5:7],16)},0.3)")
+            hex_c = c.lstrip("#")
+            r, g, b = int(hex_c[0:2], 16), int(hex_c[2:4], 16), int(hex_c[4:6], 16)
+            link_colors.append(f"rgba({r},{g},{b},0.3)")
 
-        # Flow to pending
+        # Flow to single Pending node
         if pending > 0:
-            pending_idx = n_stages + i
             sources.append(i)
             targets.append(pending_idx)
-            values.append(int(pending))
-            link_colors.append("rgba(200,200,200,0.3)")
+            values.append(pending)
+            link_colors.append("rgba(209,213,219,0.4)")
 
     fig = go.Figure(go.Sankey(
         node=dict(

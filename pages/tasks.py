@@ -110,7 +110,7 @@ layout = dmc.Stack(
         dmc.Paper(
             children=[
                 dmc.Text("Task Detail", size="sm", fw=500, c="#6B7280", mb="sm"),
-                dmc.Skeleton(id="tasks-table-container", height=300, visible=False, children=[]),
+                dmc.Box(id="tasks-table-container"),
             ],
             p="md", radius="md", shadow="xs", withBorder=True,
         ),

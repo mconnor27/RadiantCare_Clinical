@@ -319,7 +319,7 @@ All incremental files use `UniqueRowID` as the deduplication key. New rows are a
 | `DiagnosisDescriptions` | string | Diagnosis descriptions |
 | `ProcedureCodes` | string | CPT codes (can be comma-separated) |
 | `ProcedureDescriptions` | string | CPT descriptions |
-| `CPT_Types` | string | CPT type classification |
+
 | `HasSimulationWithin180Days` | int (0/1) | Whether patient had a sim within 180 days |
 | `SimulationDateTime` | datetime | Date of linked simulation |
 | `DaysToSimulation` | int | Days from visit to simulation |
