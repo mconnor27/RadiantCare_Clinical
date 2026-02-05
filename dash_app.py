@@ -30,6 +30,45 @@ if MAPBOX_TOKEN:
 app.layout = dmc.MantineProvider(
     theme=DMC_THEME,
     children=[
+        # Global loading overlay — managed by assets/loading.js
+        html.Div(
+            id="global-loading-overlay",
+            children=[
+                html.Div(
+                    children=[
+                        dmc.Loader(color=PRIMARY, size="xl", type="dots"),
+                        dmc.Text(
+                            "Loading data\u2026",
+                            c=NEUTRAL["text_secondary"],
+                            size="lg",
+                            mt="md",
+                            fw=500,
+                        ),
+                    ],
+                    style={
+                        "display": "flex",
+                        "flexDirection": "column",
+                        "alignItems": "center",
+                        "padding": "48px 72px",
+                        "backgroundColor": "white",
+                        "borderRadius": "16px",
+                        "boxShadow": "0 8px 32px rgba(0,0,0,0.15)",
+                    },
+                ),
+            ],
+            style={
+                "position": "fixed",
+                "top": 0,
+                "left": 220,
+                "right": 0,
+                "height": "100vh",
+                "backgroundColor": NEUTRAL["bg_page"],
+                "display": "flex",
+                "alignItems": "center",
+                "justifyContent": "center",
+                "zIndex": 9999,
+            },
+        ),
         dmc.AppShell(
             children=[
                 create_sidebar(),
@@ -41,43 +80,7 @@ app.layout = dmc.MantineProvider(
                             justify="space-between",
                             mb="md",
                         ),
-                        # Page content with loading overlay
-                        dcc.Loading(
-                            id="page-loading",
-                            delay_show=300,
-                            fullscreen=True,
-                            fullscreen_style={
-                                "backgroundColor": NEUTRAL["bg_page"],
-                                "opacity": 1,
-                                "zIndex": 1000,
-                            },
-                            custom_spinner=html.Div(
-                                children=[
-                                    dmc.Loader(
-                                        color=PRIMARY,
-                                        size="xl",
-                                        type="dots",
-                                    ),
-                                    dmc.Text(
-                                        "Loading data\u2026",
-                                        c=NEUTRAL["text_secondary"],
-                                        size="lg",
-                                        mt="md",
-                                        fw=500,
-                                    ),
-                                ],
-                                style={
-                                    "display": "flex",
-                                    "flexDirection": "column",
-                                    "alignItems": "center",
-                                    "padding": "48px 72px",
-                                    "backgroundColor": "white",
-                                    "borderRadius": "16px",
-                                    "boxShadow": "0 8px 32px rgba(0,0,0,0.15)",
-                                },
-                            ),
-                            children=page_container,
-                        ),
+                        page_container,
                     ],
                     style={
                         "backgroundColor": NEUTRAL["bg_page"],
