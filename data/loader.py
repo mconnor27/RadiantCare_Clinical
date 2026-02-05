@@ -188,6 +188,7 @@ def load_treatment():
 
 
 @lru_cache(maxsize=1)
+@lru_cache(maxsize=1)
 def load_treatment_detail():
     """Load Treatment - Detail.csv — per-session treatment records.
 

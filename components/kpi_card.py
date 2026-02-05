@@ -94,6 +94,7 @@ def kpi_card(
     accent_color=None,
     card_id=None,
     value_detail=None,
+    sparkline_id=None,
 ):
     """Create a KPI card.
 
@@ -110,6 +111,7 @@ def kpi_card(
         accent_color: optional left-border accent color
         card_id: optional component ID
         value_detail: optional sub-text displayed inline to the right of value
+        sparkline_id: optional ID for the sparkline Graph (for clientside updates)
     """
     trend_color = None
     trend_icon = ""
@@ -138,15 +140,16 @@ def kpi_card(
         )
     children.append(dmc.Group(gap="xs", align="baseline", children=value_row))
 
-    if sparkline_past:
+    if sparkline_past or sparkline_id:
         children.append(
             dcc.Graph(
+                id=sparkline_id or "",
                 figure=create_sparkline(
                     sparkline_past, sparkline_future,
                     sparkline_past_labels, sparkline_future_labels,
                     accent_color or PRIMARY,
                     hover_fmt=sparkline_hover_fmt,
-                ),
+                ) if sparkline_past else {},
                 config={"displayModeBar": False, "scrollZoom": False},
                 style={"height": "34px", "marginTop": "4px"},
             )
