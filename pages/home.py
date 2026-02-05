@@ -91,76 +91,83 @@ layout = dmc.Stack(
             ],
         ),
 
-        # Physician census chart — full width (~400px)
-        dmc.Paper(
+        # Census charts — side by side
+        dmc.Grid(
+            gutter="md",
             children=[
-                dmc.Group(
-                    justify="space-between", mb="sm",
-                    children=[
-                        dmc.Text("Active Patients by Physician", size="sm", fw=500, c="#6B7280"),
-                        dmc.Group(gap="xs", children=[
-                            dmc.SegmentedControl(
-                                id="home-md-range",
-                                data=[
-                                    {"value": "30", "label": "30d"},
-                                    {"value": "60", "label": "60d"},
-                                    {"value": "90", "label": "90d"},
-                                    {"value": "180", "label": "6mo"},
-                                    {"value": "365", "label": "1y"},
-                                    {"value": "0", "label": "All"},
+                dmc.GridCol(
+                    span={"base": 12, "md": 6},
+                    children=dmc.Paper(
+                        children=[
+                            dmc.Group(
+                                justify="space-between", mb="sm",
+                                children=[
+                                    dmc.Text("Active Patients by Physician", size="sm", fw=500, c="#6B7280"),
+                                    dmc.Group(gap="xs", align="center", children=[
+                                        dmc.SegmentedControl(
+                                            id="home-md-range",
+                                            data=[
+                                                {"value": "30", "label": "30d"},
+                                                {"value": "60", "label": "60d"},
+                                                {"value": "90", "label": "90d"},
+                                                {"value": "180", "label": "6mo"},
+                                                {"value": "365", "label": "1y"},
+                                                {"value": "0", "label": "All"},
+                                            ],
+                                            value="90", size="xs",
+                                        ),
+                                        dmc.Text("Smooth", size="xs", c="#9CA3AF", fw=500),
+                                        dmc.Slider(
+                                            id="home-md-smooth",
+                                            min=0, max=50, step=1, value=15,
+                                            size="xs", w=80,
+                                            showLabelOnHover=False,
+                                        ),
+                                    ]),
                                 ],
-                                value="90", size="xs",
                             ),
-                            dmc.SegmentedControl(
-                                id="home-md-smooth",
-                                data=[
-                                    {"value": "raw", "label": "Raw"},
-                                    {"value": "smooth", "label": "Smoothed"},
-                                ],
-                                value="smooth", size="xs",
-                            ),
-                        ]),
-                    ],
+                            dcc.Graph(id="home-chart-physician", config={"displayModeBar": False}),
+                        ],
+                        p="md", radius="md", shadow="xs", withBorder=True,
+                    ),
                 ),
-                dcc.Graph(id="home-chart-physician", config={"displayModeBar": False}),
-            ],
-            p="md", radius="md", shadow="xs", withBorder=True,
-        ),
-
-        # Site census chart — full width (~350px)
-        dmc.Paper(
-            children=[
-                dmc.Group(
-                    justify="space-between", mb="sm",
-                    children=[
-                        dmc.Text("Active Patients by Site", size="sm", fw=500, c="#6B7280"),
-                        dmc.Group(gap="xs", children=[
-                            dmc.SegmentedControl(
-                                id="home-site-range",
-                                data=[
-                                    {"value": "30", "label": "30d"},
-                                    {"value": "60", "label": "60d"},
-                                    {"value": "90", "label": "90d"},
-                                    {"value": "180", "label": "6mo"},
-                                    {"value": "365", "label": "1y"},
-                                    {"value": "0", "label": "All"},
+                dmc.GridCol(
+                    span={"base": 12, "md": 6},
+                    children=dmc.Paper(
+                        children=[
+                            dmc.Group(
+                                justify="space-between", mb="sm",
+                                children=[
+                                    dmc.Text("Active Patients by Site", size="sm", fw=500, c="#6B7280"),
+                                    dmc.Group(gap="xs", align="center", children=[
+                                        dmc.SegmentedControl(
+                                            id="home-site-range",
+                                            data=[
+                                                {"value": "30", "label": "30d"},
+                                                {"value": "60", "label": "60d"},
+                                                {"value": "90", "label": "90d"},
+                                                {"value": "180", "label": "6mo"},
+                                                {"value": "365", "label": "1y"},
+                                                {"value": "0", "label": "All"},
+                                            ],
+                                            value="90", size="xs",
+                                        ),
+                                        dmc.Text("Smooth", size="xs", c="#9CA3AF", fw=500),
+                                        dmc.Slider(
+                                            id="home-site-smooth",
+                                            min=0, max=50, step=1, value=15,
+                                            size="xs", w=80,
+                                            showLabelOnHover=False,
+                                        ),
+                                    ]),
                                 ],
-                                value="90", size="xs",
                             ),
-                            dmc.SegmentedControl(
-                                id="home-site-smooth",
-                                data=[
-                                    {"value": "raw", "label": "Raw"},
-                                    {"value": "smooth", "label": "Smoothed"},
-                                ],
-                                value="smooth", size="xs",
-                            ),
-                        ]),
-                    ],
+                            dcc.Graph(id="home-chart-site", config={"displayModeBar": False}),
+                        ],
+                        p="md", radius="md", shadow="xs", withBorder=True,
+                    ),
                 ),
-                dcc.Graph(id="home-chart-site", config={"displayModeBar": False}),
             ],
-            p="md", radius="md", shadow="xs", withBorder=True,
         ),
 
         # Interval for periodic refresh
@@ -440,7 +447,7 @@ def update_kpis(_n, date_preset, smoothing, departments):
     Input("home-md-smooth", "value"),
     Input("home-filter-department", "value"),
 )
-def update_physician_chart(_n, range_days, smooth, departments):
+def update_physician_chart(_n, range_days, smooth_pct, departments):
     from data.loader import load_treatment_detail
 
     try:
@@ -455,9 +462,10 @@ def update_physician_chart(_n, range_days, smooth, departments):
         if days:
             td = td[td["ScheduledDateTime"] >= last_date - timedelta(days=days)]
 
+        frac = (smooth_pct or 0) / 100  # slider 0–50 → frac 0.0–0.5
         return _build_census_chart(
             td, "TreatingPhysician", PHYSICIANS, CHART_COLORWAY,
-            smooth == "smooth", height=400,
+            frac, height=380,
         )
     except Exception:
         return empty_figure("Treatment-Detail data unavailable")
@@ -474,7 +482,7 @@ def update_physician_chart(_n, range_days, smooth, departments):
     Input("home-site-smooth", "value"),
     Input("home-filter-department", "value"),
 )
-def update_site_chart(_n, range_days, smooth, departments):
+def update_site_chart(_n, range_days, smooth_pct, departments):
     from data.loader import load_treatment_detail
 
     try:
@@ -491,9 +499,10 @@ def update_site_chart(_n, range_days, smooth, departments):
 
         sites = departments if departments else DEPARTMENTS
         colors = [DEPARTMENT_COLORS.get(d, "#999") for d in sites]
+        frac = (smooth_pct or 0) / 100  # slider 0–50 → frac 0.0–0.5
         return _build_census_chart(
             td, "Department", sites, colors,
-            smooth == "smooth", height=350,
+            frac, height=380,
         )
     except Exception:
         return empty_figure("Treatment-Detail data unavailable")
@@ -503,8 +512,14 @@ def update_site_chart(_n, range_days, smooth, departments):
 # Chart builder
 # ---------------------------------------------------------------------------
 
-def _build_census_chart(df, group_col, groups, colors, apply_smooth=True, height=400):
-    """Build a daily patient census line chart with optional 90-day rolling average."""
+def _hex_to_rgba(hex_color, alpha=0.5):
+    """Convert hex color to rgba string."""
+    h = hex_color.lstrip("#")
+    return f"rgba({int(h[0:2],16)},{int(h[2:4],16)},{int(h[4:6],16)},{alpha})"
+
+
+def _build_census_chart(df, group_col, groups, colors, smooth_frac=0.15, height=380):
+    """Build a stacked area chart of daily patient census."""
     df = df.copy()
     df["Date"] = df["ScheduledDateTime"].dt.normalize()
 
@@ -517,44 +532,38 @@ def _build_census_chart(df, group_col, groups, colors, apply_smooth=True, height
 
     fig = go.Figure()
 
-    # Build complete date range for consistent x-axis
-    date_range = pd.date_range(df["Date"].min(), df["Date"].max())
+    # Business days only (no weekends), excluding days with zero total patients
+    date_range = pd.bdate_range(df["Date"].min(), df["Date"].max())
+    total_per_day = df.groupby("Date")[patient_col].nunique()
+    active_days = total_per_day[total_per_day > 0].index
+    date_range = date_range[date_range.isin(active_days)]
 
-    # Per-group lines
+    # Per-group stacked areas
     daily = df.groupby(["Date", group_col])[patient_col].nunique().reset_index(name="count")
 
     for i, grp in enumerate(groups):
         grp_data = daily[daily[group_col] == grp].set_index("Date")["count"]
         grp_data = grp_data.reindex(date_range, fill_value=0)
 
-        y_vals = grp_data.rolling(90, min_periods=1).mean() if apply_smooth else grp_data
+        y_vals = _apply_loess(grp_data, frac=smooth_frac) if smooth_frac > 0 else grp_data
         display_name = grp.split(",")[0] if "," in grp else grp
+        c = colors[i % len(colors)]
 
         fig.add_trace(go.Scatter(
             x=date_range, y=y_vals,
             name=display_name,
             mode="lines",
-            line=dict(color=colors[i % len(colors)], width=2),
+            line=dict(color=c, width=1.5),
+            fillcolor=_hex_to_rgba(c, 0.5),
+            stackgroup="one",
             hovertemplate=f"{display_name}<br>Date: %{{x|%b %d}}<br>Patients: %{{y:.0f}}<extra></extra>",
         ))
 
-    # Total line
-    total = df.groupby("Date")[patient_col].nunique()
-    total = total.reindex(date_range, fill_value=0)
-    y_total = total.rolling(90, min_periods=1).mean() if apply_smooth else total
-
-    fig.add_trace(go.Scatter(
-        x=date_range, y=y_total,
-        name="Total",
-        mode="lines",
-        line=dict(color="#1A1A2E", width=2.5, dash="dot"),
-        hovertemplate="Total<br>Date: %{x|%b %d}<br>Patients: %{y:.0f}<extra></extra>",
-    ))
-
+    smoothed = smooth_frac > 0
     apply_default_layout(fig, height=height)
     fig.update_layout(
         xaxis_title="Date",
-        yaxis_title="Unique Patients" + (" (90d avg)" if apply_smooth else ""),
+        yaxis_title="Unique Patients" + (" (smoothed)" if smoothed else ""),
         margin=dict(l=48, r=16, t=16, b=48),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
     )
