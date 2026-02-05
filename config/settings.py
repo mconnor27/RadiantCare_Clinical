@@ -1,50 +1,166 @@
-"""
-Application configuration and constants
-"""
+"""Centralized configuration for RadiantCare Clinical Dashboard."""
+
 import os
 from pathlib import Path
 
-# App metadata
-APP_TITLE = "Radiant Care Clinical Dashboard"
-APP_ICON = "🏥"
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-# MD names for identification
-MD_NAMES = [
-    'Allen', 'Connor', 'Deig', 'Hartman', 'Horton', 'Gruhl',
-    'Raymond', 'Reece', 'Suszko', 'Tinnel', 'Vera', 'Werner'
+DATA_DIR = Path(
+    os.environ.get(
+        "DATA_DIR",
+        os.path.expanduser(
+            "~/Library/CloudStorage/OneDrive-ProvidenceSt.JosephHealth/AURA_Reports"
+        ),
+    )
+)
+DATA_COMPLETE = DATA_DIR / "Complete"
+DATA_INCREMENTAL = DATA_DIR / "Incremental"
+DATA_LOOKUP = DATA_DIR / "Lookup"
+
+MAPBOX_TOKEN = os.environ.get("MAPBOX_TOKEN", "")
+
+# ---------------------------------------------------------------------------
+# Colors
+# ---------------------------------------------------------------------------
+PRIMARY = "#7C2A83"
+PRIMARY_LIGHT = "#F3E8F5"
+PRIMARY_DARK = "#5A1D60"
+
+DEPARTMENT_COLORS = {
+    "Lacey": "#2196F3",
+    "Centralia": "#F44336",
+    "Aberdeen": "#4CAF50",
+}
+
+SEMANTIC_COLORS = {
+    "success": "#10B981",
+    "warning": "#F59E0B",
+    "error": "#EF4444",
+    "info": "#3B82F6",
+}
+
+NEUTRAL = {
+    "bg_page": "#F5F6F8",
+    "bg_card": "#FFFFFF",
+    "bg_nav": "#7C2A83",
+    "bg_nav_hover": "#6B2472",
+    "bg_filter_bar": "#FFFFFF",
+    "border": "#E0E0E0",
+    "border_light": "#F0F0F0",
+    "text_primary": "#1A1A2E",
+    "text_secondary": "#6B7280",
+    "text_muted": "#9CA3AF",
+    "text_nav": "#A0A4B8",
+    "text_nav_active": "#FFFFFF",
+}
+
+CHART_COLORWAY = [
+    "#7C2A83", "#2196F3", "#F44336", "#4CAF50",
+    "#FF9800", "#00BCD4", "#9C27B0", "#795548",
 ]
 
-# Data directory configuration
-def get_data_directory():
-    """
-    Gets the data directory from multiple sources in priority order:
-    1. Environment variable DATA_DIR
-    2. config.txt file in app directory
-    3. data/ subdirectory (default)
-    """
-    # Check environment variable
-    if 'DATA_DIR' in os.environ:
-        data_dir = os.environ['DATA_DIR']
-        if os.path.isdir(data_dir):
-            return data_dir
-
-    # Check config file
-    config_file = Path(__file__).parent.parent / 'config.txt'
-    if config_file.exists():
-        with open(config_file, 'r') as f:
-            data_dir = f.read().strip()
-            if os.path.isdir(data_dir):
-                return data_dir
-
-    # Default to data subdirectory
-    return str(Path(__file__).parent.parent / 'data')
-
-# File search patterns
-TASK_FILE_PATTERNS = [
-    "Department Schedule No Grouping All.csv",
-    "department_schedule.csv",
-    "schedule.csv"
+# ---------------------------------------------------------------------------
+# Physicians & Departments
+# ---------------------------------------------------------------------------
+PHYSICIANS = [
+    "Allen, Gregory",
+    "Connor, Michael",
+    "Suszko, Justin",
+    "Tinnel, Brent",
 ]
 
-# Date filtering
-MIN_YEAR = 2015
+DEPARTMENTS = ["Lacey", "Centralia", "Aberdeen"]
+
+MACHINE_MAP = {
+    "Lacey": ["TrueBeamNorth", "21EX"],
+    "Centralia": ["21iX_CEN"],
+    "Aberdeen": ["21iX_AB"],
+}
+
+# ---------------------------------------------------------------------------
+# Font stack
+# ---------------------------------------------------------------------------
+FONT_FAMILY = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+
+# ---------------------------------------------------------------------------
+# DMC Theme
+# ---------------------------------------------------------------------------
+DMC_THEME = {
+    "primaryColor": "violet",
+    "colors": {
+        "violet": [
+            "#F3E8F5", "#E5CCE9", "#D4A9D9", "#C186C9", "#AE63B9",
+            "#9B40A9", "#7C2A83", "#6B2472", "#5A1D60", "#49174F",
+        ],
+    },
+    "fontFamily": FONT_FAMILY,
+    "headings": {"fontFamily": FONT_FAMILY},
+}
+
+# ---------------------------------------------------------------------------
+# Plotly defaults
+# ---------------------------------------------------------------------------
+DEFAULT_LAYOUT = dict(
+    font=dict(family=FONT_FAMILY, size=13),
+    plot_bgcolor="#FFFFFF",
+    paper_bgcolor="#FFFFFF",
+    margin=dict(l=48, r=16, t=32, b=48),
+    xaxis=dict(gridcolor="#F0F0F0", linecolor="#E0E0E0", showgrid=False),
+    yaxis=dict(gridcolor="#F0F0F0", linecolor="#E0E0E0", showgrid=True),
+    legend=dict(
+        orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
+        font=dict(size=12),
+    ),
+    hoverlabel=dict(
+        bgcolor="#FFFFFF", bordercolor="#E0E0E0",
+        font=dict(size=13, color="#1A1A2E"),
+    ),
+    colorway=CHART_COLORWAY,
+)
+
+# ---------------------------------------------------------------------------
+# AG Grid defaults
+# ---------------------------------------------------------------------------
+DEFAULT_COLUMN_DEFS = {
+    "sortable": True,
+    "filter": True,
+    "resizable": True,
+    "floatingFilter": False,
+}
+
+DEFAULT_GRID_OPTIONS = {
+    "pagination": True,
+    "paginationPageSize": 50,
+    "domLayout": "autoHeight",
+    "rowSelection": "single",
+    "animateRows": True,
+}
+
+# ---------------------------------------------------------------------------
+# Mapbox
+# ---------------------------------------------------------------------------
+MAPBOX_CENTER = dict(lat=47.0, lon=-122.9)
+MAPBOX_ZOOM = 7
+MAPBOX_STYLE = "light"
+
+# ---------------------------------------------------------------------------
+# Nav page definitions
+# ---------------------------------------------------------------------------
+NAV_PAGES = [
+    {"label": "Home",          "path": "/",              "icon": "tabler:home"},
+    {"label": "Operations",    "path": "/operations",    "icon": "tabler:chart-bar"},
+    {"label": "Workflow",      "path": "/workflow",      "icon": "tabler:arrows-right-left"},
+    {"label": "Clinic Visits", "path": "/clinic-visits", "icon": "tabler:stethoscope"},
+    {"label": "Simulations",   "path": "/simulations",   "icon": "tabler:scan"},
+    {"label": "Tasks",         "path": "/tasks",         "icon": "tabler:checklist"},
+    {"label": "OTVs",          "path": "/otvs",          "icon": "tabler:clipboard-check"},
+    {"label": "Billing",       "path": "/billing",       "icon": "tabler:receipt"},
+    {"label": "Machines",      "path": "/machines",      "icon": "tabler:cpu"},
+    {"label": "Courses",       "path": "/courses",       "icon": "tabler:package"},
+    {"label": "Plans",         "path": "/plans",         "icon": "tabler:ruler-measure"},
+    {"label": "Patients",      "path": "/patients",      "icon": "tabler:users"},
+    {"label": "Referrals",     "path": "/referrals",     "icon": "tabler:link"},
+]

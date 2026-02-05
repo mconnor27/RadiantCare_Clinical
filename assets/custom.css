@@ -1,0 +1,72 @@
+/* RadiantCare Clinical Dashboard — minimal overrides (DMC handles most styling) */
+
+body {
+    background-color: #F5F6F8;
+    margin: 0;
+}
+
+/* Smooth page transitions */
+.dash-loading {
+    opacity: 0.6;
+    transition: opacity 0.2s ease;
+}
+
+/* AG Grid theme overrides */
+.ag-theme-alpine .ag-header-cell-label {
+    font-weight: 600;
+    color: #6B7280;
+    text-transform: uppercase;
+    font-size: 12px;
+}
+
+.ag-theme-alpine .ag-row-even {
+    background-color: #FFFFFF;
+}
+
+.ag-theme-alpine .ag-row-odd {
+    background-color: #FAFAFA;
+}
+
+.ag-theme-alpine .ag-row:hover {
+    background-color: #F3E8F5 !important;
+}
+
+/* Plotly modebar hide by default, show on hover */
+.js-plotly-plot .plotly .modebar {
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.js-plotly-plot:hover .plotly .modebar {
+    opacity: 1;
+}
+
+/* Nav sidebar text truncation when collapsed */
+.mantine-NavLink-label {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Scrollbar styling for nav */
+.mantine-AppShell-navbar::-webkit-scrollbar {
+    width: 4px;
+}
+
+.mantine-AppShell-navbar::-webkit-scrollbar-thumb {
+    background-color: #6B2472;
+    border-radius: 2px;
+}
+
+/* Fix sidebar overlap — ensure main content offsets for navbar with gap */
+.mantine-AppShell-main {
+    padding-left: 236px !important;
+}
+
+/* Page title styling */
+.page-title {
+    text-align: center;
+    font-weight: 700;
+    color: #7C2A83;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}

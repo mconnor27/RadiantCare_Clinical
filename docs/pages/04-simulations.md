@@ -1,0 +1,70 @@
+# Page: Simulations
+
+## Purpose
+Track simulation volume, types, and timing intervals. Answers: "How many sims are we doing? How long from consult to sim? How long from sim to first treatment?"
+
+## Data Sources
+- `Simulations.csv` — simulation appointment details with timing metrics
+
+## Layout
+Template A (KPI + Charts + Table)
+
+## Filter Bar
+- Date range: based on `ScheduledDateTime`
+- Department: derived from sim type or supervising physician's department
+- Physician: multi-select dropdown (`SupervisingPhysician`)
+- Sim type: multi-select (Initial Simulation, Stereotactic Simulation, Re-Simulation, Initial Centralia-in Lacey, Initial Aberdeen Simulation)
+- Status: pills (Completed / All)
+
+## KPI Cards
+
+| KPI | Source | Calculation |
+|-----|--------|-------------|
+| Total Simulations | Simulations | Count for filtered period |
+| Median Consult-to-Sim (days) | Simulations | Median of `DaysFromClinicExamToSimulation` |
+| Median Sim-to-Treatment (days) | Simulations | Median of `DaysFromSimToTreatment` |
+| Median Consult-to-Treatment (days) | Simulations | Median of `DaysFromClinicExamToTreatment` |
+| Re-Sim Rate | Simulations | % where `ActivityName` contains "Re-Simulation" |
+
+## Charts
+
+### Simulation Volume Trend (half-width)
+- **Type:** Line or bar chart
+- **X-axis:** Month
+- **Y-axis:** Count
+- **Series:** By sim type (stacked or grouped)
+- **Inline controls:** Aggregation (Weekly / Monthly), chart type
+
+### Timing Intervals (half-width)
+- **Type:** Multi-line chart
+- **X-axis:** Month (sim month)
+- **Y-axis:** Median days
+- **Series:** Consult→Sim, Sim→Treatment, Consult→Treatment
+- **Purpose:** Track whether timing is improving or degrading
+
+### Sim Type Distribution (half-width)
+- **Type:** Donut or horizontal bar
+- **Values:** Count per `ActivityName`
+- **Purpose:** Mix of simulation types
+
+### Simulation Schedule Ribbon (half-width)
+- **Type:** Ribbon / area chart showing the daily simulation operating window
+- **X-axis:** Date (spanning full date range of data, potentially multiple years)
+- **Y-axis:** Time of day (e.g., 7:00 AM to 5:00 PM)
+- **Implementation:** For each day that has simulation appointments, plot two `go.Scatter` traces:
+  - Trace 1 (upper bound): earliest `ScheduledDateTime` time-of-day per day — this forms the top edge
+  - Trace 2 (lower bound): latest `ScheduledDateTime` time-of-day + `DurationMinutes` per day — this forms the bottom edge
+  - Use `fill='tonexty'` on the second trace to create a filled ribbon area between the earliest and latest sim times
+- **Color:** Single semi-transparent fill color (e.g., the Simulations page accent color at 0.3 opacity)
+- **Source:** `Simulations.csv` — extract time-of-day from `ScheduledDateTime`. For each unique date, compute:
+  - `earliest_time = min(time_of_day(ScheduledDateTime))`
+  - `latest_time = max(time_of_day(ScheduledDateTime) + DurationMinutes)`
+- **Hover:** Show date, earliest sim time, latest sim end time, number of sims that day
+- **Purpose:** Visualize when simulations are being scheduled across the full history — shows the daily "sim window" as a filled band. Makes it easy to spot schedule compression, expansion, or shifts in sim timing. Replaces the former Duration Analysis bar chart
+
+## Tables
+
+### Simulation Detail (full-width)
+- **Columns:** Date, Patient, Sim Type, Duration (min), Physician, Days from Consult, Days to Treatment, CPT Codes
+- **Sortable, filterable**
+- **Export:** CSV
