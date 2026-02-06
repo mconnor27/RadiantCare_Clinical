@@ -107,7 +107,7 @@ DEFAULT_LAYOUT = dict(
     font=dict(family=FONT_FAMILY, size=13),
     plot_bgcolor="#FFFFFF",
     paper_bgcolor="#FFFFFF",
-    margin=dict(l=48, r=16, t=32, b=48),
+    margin=dict(l=28, r=8, t=8, b=32),
     xaxis=dict(gridcolor="#F0F0F0", linecolor="#E0E0E0", showgrid=False),
     yaxis=dict(gridcolor="#F0F0F0", linecolor="#E0E0E0", showgrid=True),
     legend=dict(
@@ -147,20 +147,55 @@ MAPBOX_ZOOM = 7
 MAPBOX_STYLE = "light"
 
 # ---------------------------------------------------------------------------
-# Nav page definitions
+# Nav page definitions (grouped)
 # ---------------------------------------------------------------------------
-NAV_PAGES = [
-    {"label": "Home",          "path": "/",              "icon": "tabler:home"},
-    {"label": "Operations",    "path": "/operations",    "icon": "tabler:chart-bar"},
-    {"label": "Workflow",      "path": "/workflow",      "icon": "tabler:arrows-right-left"},
-    {"label": "Clinic Visits", "path": "/clinic-visits", "icon": "tabler:stethoscope"},
-    {"label": "Simulations",   "path": "/simulations",   "icon": "tabler:scan"},
-    {"label": "Tasks",         "path": "/tasks",         "icon": "tabler:checklist"},
-    {"label": "OTVs",          "path": "/otvs",          "icon": "tabler:clipboard-check"},
-    {"label": "Billing",       "path": "/billing",       "icon": "tabler:receipt"},
-    {"label": "Machines",      "path": "/machines",      "icon": "tabler:cpu"},
-    {"label": "Courses",       "path": "/courses",       "icon": "tabler:package"},
-    {"label": "Plans",         "path": "/plans",         "icon": "tabler:ruler-measure"},
-    {"label": "Patients",      "path": "/patients",      "icon": "tabler:users"},
-    {"label": "Referrals",     "path": "/referrals",     "icon": "tabler:link"},
+NAV_SECTIONS = [
+    {
+        "section": "OVERVIEW",
+        "pages": [
+            {"label": "Home", "path": "/", "icon": "tabler:home"},
+        ],
+    },
+    {
+        "section": "CLINICAL",
+        "pages": [
+            {"label": "Operations",    "path": "/operations",    "icon": "tabler:chart-bar"},
+            {"label": "Workflow",      "path": "/workflow",      "icon": "tabler:arrows-right-left"},
+            {"label": "Clinic Visits", "path": "/clinic-visits", "icon": "tabler:stethoscope"},
+            {"label": "Simulations",   "path": "/simulations",   "icon": "tabler:scan"},
+            {"label": "Tasks",         "path": "/tasks",         "icon": "tabler:checklist"},
+        ],
+    },
+    {
+        "section": "TREATMENT",
+        "pages": [
+            {"label": "Courses", "path": "/courses", "icon": "tabler:package"},
+            {"label": "Plans",   "path": "/plans",   "icon": "tabler:ruler-measure"},
+        ],
+    },
+    {
+        "section": "RESOURCES",
+        "pages": [
+            {"label": "Machines",   "path": "/machines",   "icon": "tabler:cpu"},
+            {"label": "Physicians", "path": "/physicians", "icon": "tabler:stethoscope-off"},
+        ],
+    },
+    {
+        "section": "FINANCIAL",
+        "pages": [
+            {"label": "Billing",   "path": "/billing",   "icon": "tabler:receipt"},
+            {"label": "OTV Audit", "path": "/otv-audit", "icon": "tabler:clipboard-check"},
+            {"label": "CPT Audit", "path": "/cpt-audit", "icon": "tabler:file-invoice"},
+        ],
+    },
+    {
+        "section": "POPULATION",
+        "pages": [
+            {"label": "Patients",  "path": "/patients",  "icon": "tabler:users"},
+            {"label": "Referrals", "path": "/referrals", "icon": "tabler:link"},
+        ],
+    },
 ]
+
+# Flat list for backward compatibility (used by some components)
+NAV_PAGES = [page for section in NAV_SECTIONS for page in section["pages"]]

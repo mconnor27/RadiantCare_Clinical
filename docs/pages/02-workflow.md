@@ -64,3 +64,71 @@ Template B (full-width feature)
 - **Sortable by any column**
 - **Highlight:** Rows where any stage exceeds 2x the median in `--warning` color
 - **Export:** CSV
+
+---
+
+## Implementation Notes
+
+**Reference file:** `pages/workflow.py` (~390 lines)
+
+### Upgrade Needed
+
+Current implementation uses server-side rendering only. Upgrade to home.py patterns:
+- [ ] Add `dcc.Store` for pipeline trend raw data
+- [ ] Add clientside callback for smoothing on trend chart
+- [ ] Add `chart_settings_popover()` to trend chart
+- [ ] Consider KPI sparklines for median days
+
+### Current Architecture
+
+- **No stores or clientside callbacks** — all server-side rendering
+- Two callbacks: one populates diagnosis dropdown, main callback handles all charts
+- 6 inputs on main callback (interval, dept, date, physician, diagnosis)
+
+### Key Data Loader
+
+```python
+from data.loader import load_workflow
+
+workflow = load_workflow()  # Incremental/Workflow/ — Department pre-merged in loader
+```
+
+### Department Column
+
+Unlike Simulations, Workflow data **already has Department column** (merged in loader from Treatment-Detail via `_patient_department_map()`). No explicit merge needed in page code.
+
+### Sankey Diagram Implementation
+
+Uses single "Pending" node (gray #D1D5DB) for patients stuck at each stage:
+
+```python
+fig = go.Figure(go.Sankey(
+    node=dict(
+        label=[f"{stage}\n{count:,} ({pct:.0f}%)" for stage, count, pct in nodes],
+        color=node_colors,
+    ),
+    link=dict(source=sources, target=targets, value=values, color=link_colors),
+))
+```
+
+Stages: Consult → Simulation → Draw Volumes → Isodose Plan → Review Plan → First Treatment
+
+### Violin Plots
+
+Four inter-stage duration distributions:
+- `DaysToSimulation` (Consult→Sim)
+- `DaysFromSimToIsodose` (Sim→Isodose)
+- `DaysFromSimToReview` (Sim→Review)
+- `DaysFromReviewToTreatment` (Review→Treatment)
+
+```python
+go.Violin(y=stage_days, box_visible=True, meanline_visible=True, points="outliers")
+```
+
+### Physician Filtering
+
+Checks both `TreatingPhysician` and `AppointmentPhysician` columns.
+
+### Diagnosis Filter
+
+Matches against `DiagnosisDescriptions` column (multi-select, up to 100 values).

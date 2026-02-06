@@ -103,5 +103,4 @@ def filter_bar(page_id, children=None):
         radius="md",
         shadow="xs",
         withBorder=True,
-        mb="md",
     )

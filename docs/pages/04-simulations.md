@@ -68,3 +68,84 @@ Template A (KPI + Charts + Table)
 - **Columns:** Date, Patient, Sim Type, Duration (min), Physician, Days from Consult, Days to Treatment, CPT Codes
 - **Sortable, filterable**
 - **Export:** CSV
+
+---
+
+## Implementation Notes
+
+**Reference file:** `pages/simulations.py` (~576 lines)
+
+### Upgrade Needed
+
+Current implementation uses server-side rendering only. Upgrade to home.py patterns:
+- [ ] Add `dcc.Store` for volume/timing/ribbon raw data
+- [ ] Add clientside callbacks for smoothing
+- [ ] Add `chart_settings_popover()` to volume and timing charts
+- [ ] Consider KPI sparklines for interval metrics
+
+### Current Architecture
+
+- **No stores or clientside callbacks** — all server-side rendering
+- Two callbacks: one populates sim type dropdown from `ActivityName`, main callback with 8 inputs
+- Uses all historical data for ribbon chart (ignores date filter for that chart)
+
+### Key Data Loader
+
+```python
+from data.loader import load_simulations
+
+sims = load_simulations()  # Incremental/Simulations/ — Department pre-merged
+```
+
+### Department Column
+
+Simulations data has **Department pre-merged** in loader via `_patient_department_map()` (merges from Treatment-Detail by PatientId).
+
+### Schedule Ribbon Implementation
+
+**Important:** Ribbon spans ALL historical data, not just filtered date range:
+
+```python
+# Uses unfiltered data for ribbon
+df_all_dates = sims.copy()
+
+# Extract time of day as decimal hours
+df_all_dates["start_hour"] = df_all_dates["ScheduledDateTime"].dt.hour + df_all_dates["ScheduledDateTime"].dt.minute / 60
+
+# Duration end = start + duration minutes
+df_all_dates["end_hour"] = df_all_dates["start_hour"] + df_all_dates["Duration"] / 60
+
+# Clip to visible range
+df_all_dates["start_hour"] = df_all_dates["start_hour"].clip(lower=6, upper=20)
+df_all_dates["end_hour"] = df_all_dates["end_hour"].clip(lower=6, upper=20)
+```
+
+Single Scatter with `fill='tonexty'` (no subplots like Operations).
+
+### Key Columns
+
+| Column | Usage |
+|--------|-------|
+| `ScheduledDateTime` | Date filtering, ribbon X-axis |
+| `SupervisingPhysician` | Physician filter |
+| `ActivityName` | Sim type filter, re-sim detection |
+| `Status` | Completed filter |
+| `Duration` | Ribbon end time, detail table |
+| `DaysFromClinicExamToSimulation` | Consult→Sim interval |
+| `DaysFromSimToTreatment` | Sim→Treatment interval |
+| `DaysFromClinicExamToTreatment` | Total pipeline |
+
+### Re-Sim Rate Calculation
+
+```python
+resim_count = sims[sims["ActivityName"].str.contains("Re-Simulation", case=False, na=False)]
+resim_rate = len(resim_count) / len(sims) * 100
+```
+
+### Status Filter
+
+```python
+if status == "completed":
+    sims = sims[sims["Status"].str.lower() == "completed"]
+# else: show all
+```

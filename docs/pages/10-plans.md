@@ -60,3 +60,58 @@ Template A (KPI + Charts + Table)
 - **Highlight:** Plans at > 90% completion in `--success`, plans with 0 delivered in `--warning`
 - **Sortable, filterable**
 - **Export:** CSV
+
+---
+
+## Implementation Guidance
+
+**Complexity:** Medium — similar to Courses, comma-separated Departments
+
+### Data Loading
+
+```python
+from data.loader import load_plans
+
+plans = load_plans()  # Incremental/Plans/
+```
+
+### Key Columns
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `Departments` | string | Comma-separated — take first for filtering |
+| `PatientName` | string | Normalized to `PatientFullName` by loader |
+| `FirstTreatmentDate` | date | Use for date filtering |
+| `PlanCreationDate` | date | Alternative date filter |
+| `ClinicalStatus` | string | For status filter |
+| `TreatmentTechnique` | string | IMRT, VMAT, 3D |
+| `NoFractionsPlanned` | int | Planned fractions |
+| `NoFractionsRemaining` | int | Remaining fractions |
+
+### Department Extraction
+
+Same as Courses:
+
+```python
+plans["Department"] = plans["Departments"].str.split(",").str[0].str.strip()
+```
+
+### Computed Columns
+
+```python
+plans["FractionsDelivered"] = plans["NoFractionsPlanned"] - plans["NoFractionsRemaining"]
+plans["PctComplete"] = (plans["FractionsDelivered"] / plans["NoFractionsPlanned"] * 100).round(1)
+plans["IsActive"] = plans["NoFractionsRemaining"] > 0
+```
+
+### DNU Plan Filtering
+
+Exclude "Do Not Use" plans:
+
+```python
+plans = plans[~plans["PlanName"].str.contains("DNU", case=False, na=False)]
+```
+
+### Filter Wiring
+
+Standard pattern with Status and Technique filters.

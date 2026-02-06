@@ -417,6 +417,15 @@ def load_billing():
 
 
 @lru_cache(maxsize=1)
+def load_cpt_audit():
+    """Load 2026 CPT Delivery Audit.csv."""
+    df = _read_csv_safe(DATA_COMPLETE / "2026 CPT Delivery Audit.csv")
+    df = _clean_department(df)
+    df = _parse_dates(df, ["TreatmentDate"])
+    return df
+
+
+@lru_cache(maxsize=1)
 def load_patients():
     """Load Lookup - Patients.csv."""
     df = _read_csv_safe(DATA_LOOKUP / "Lookup - Patients.csv")
@@ -451,7 +460,7 @@ def clear_cache():
         load_daily_volume_future, load_availability, load_clinic_visits,
         load_simulations, load_workflow, load_tasks, load_otvs,
         load_weekly_visits, load_courses, load_plans, load_machines,
-        load_billing, load_patients, load_referring, load_diagnosis,
-        load_physician_schedule,
+        load_billing, load_cpt_audit, load_patients, load_referring,
+        load_diagnosis, load_physician_schedule,
     ]:
         fn.cache_clear()

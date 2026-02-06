@@ -6,9 +6,10 @@ import dash_mantine_components as dmc
 dash.register_page(__name__, path="/patients", name="Patients", order=11)
 
 layout = dmc.Stack(
-    gap="md",
+    gap=16,
+    className="page-content",
     children=[
-        dmc.Title("Patients", order=2, c="#7C2A83", ta="center", fw=700, py="sm"),
+        dmc.Title("Patients", order=2, className="page-title"),
         dmc.Paper(
             dmc.Text("Patients page — coming soon (requires Mapbox token)", c="#9CA3AF", ta="center", py="xl"),
             p="xl", radius="md", shadow="xs", withBorder=True,

@@ -69,18 +69,18 @@ For multi-series charts where department colors don't apply, use this sequence:
 
 ## Typography
 
-| Element | Font | Size | Weight | Color |
-|---------|------|------|--------|-------|
-| Page title | System sans-serif | 20px | 600 | `--text-primary` |
-| Section header | System sans-serif | 16px | 600 | `--text-primary` |
-| Card title | System sans-serif | 14px | 500 | `--text-secondary` |
-| KPI value | System sans-serif | 28px | 700 | `--text-primary` |
-| KPI label | System sans-serif | 12px | 400 | `--text-secondary` |
-| Body text | System sans-serif | 14px | 400 | `--text-primary` |
-| Table header | System sans-serif | 12px | 600 | `--text-secondary` |
-| Table cell | System sans-serif | 13px | 400 | `--text-primary` |
-| Filter label | System sans-serif | 12px | 500 | `--text-secondary` |
-| Nav item | System sans-serif | 13px | 500 | `--text-nav` |
+| Element | Font | Size | Weight | Color | Alignment |
+|---------|------|------|--------|-------|-----------|
+| Page title | System sans-serif | 20px | 700 | `#7C2A83` (purple) | Center |
+| Section header | System sans-serif | 16px | 600 | `--text-primary` | Left |
+| Card title | System sans-serif | 14px | 500 | `--text-secondary` | Left |
+| KPI value | System sans-serif | 28px | 700 | `--text-primary` | Left |
+| KPI label | System sans-serif | 12px | 400 | `--text-secondary` | Left |
+| Body text | System sans-serif | 14px | 400 | `--text-primary` | Left |
+| Table header | System sans-serif | 12px | 600 | `--text-secondary` | Left |
+| Table cell | System sans-serif | 13px | 400 | `--text-primary` | Left |
+| Filter label | System sans-serif | 12px | 500 | `--text-secondary` | Left |
+| Nav item | System sans-serif | 13px | 500 | `--text-nav` | Left |
 
 Use system font stack: `-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`
 
@@ -110,9 +110,10 @@ Use system font stack: `-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, s
 
 | Element | Value |
 |---------|-------|
-| Nav sidebar (expanded) | 200px wide |
+| Nav sidebar (expanded) | 220px wide |
 | Nav sidebar (collapsed) | 60px wide (icons only) |
 | Content area padding | 24px |
+| Content area left offset | 236px (sidebar + gap) |
 | Filter bar height | 56px |
 | Card gap (grid) | 16px |
 | Card padding | 20px |
@@ -227,6 +228,40 @@ A small card showing a single metric.
 - Padding: 20px
 - Optional: colored left border (4px) using `--primary` or semantic color
 - Optional: trend indicator with up/down arrow and comparison text
+- Optional: inline sparkline (see below)
+
+### KPI Sparkline
+
+When a KPI card includes a `sparkline_id`, a small inline chart is rendered:
+
+```
+┌─────────────────────────────────────────┐
+│  Consults (YTD)                          │
+│  1,247              ▲ 8.2% vs prior     │
+│  ╭─╮ ╭──╮                               │  ← 34px tall sparkline
+│  ╯ ╰─╯  ╰──                             │
+└─────────────────────────────────────────┘
+```
+
+**Implementation:**
+- Sparkline height: 34px
+- No axes, ticks, or grid — just the trend line
+- Color matches the card's `accent_color`
+- Smoothing applied via clientside callback (shares smoothing slider with main charts)
+- Data stored in `dcc.Store`, rendered via `clientside_callback`
+
+**Data structure for sparkline store:**
+```python
+{
+    "consults": {
+        "labels": ["2025-01-05", "2025-01-06", ...],  # ISO dates
+        "values": [42, 38, 45, ...],
+        "color": "#F44336",
+        "hover_fmt": "%{x|%b %d}: %{y:,.0f}<extra></extra>"  # Optional
+    },
+    ...
+}
+```
 
 ### Chart Card
 
@@ -249,6 +284,51 @@ A card containing a Plotly chart with optional inline controls.
 - These are chart-specific and do NOT go in the page-level filter bar
 - Chart fills the card with consistent padding
 - Same card styling as KPI cards
+
+### Chart Settings Component
+
+For charts with interactive controls, use the `chart_settings_popover()` component from `components/chart_settings.py`. This provides a consistent gear icon that expands to show controls.
+
+```
+┌──────────────────────────────────────────────────────┐
+│  Treatment Volume by Location              [⚙️]       │  ← gear icon toggles panel
+│  ┌─────────────────────────────────────────────────┐ │
+│  │ Type: [Area] [Line] [Bar]   Smooth: ━━━●━━━ 15  │ │  ← hidden panel, shown on click
+│  │                                       [📥 PNG]  │ │
+│  └─────────────────────────────────────────────────┘ │
+│  ┌─────────────────────────────────────────────────┐ │
+│  │              PLOTLY CHART                       │ │
+│  └─────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────┘
+```
+
+**Usage:**
+```python
+from components.chart_settings import chart_settings_popover
+
+chart_settings_popover(
+    "{page}-{chart}",  # e.g., "home-md" for physician census
+    chart_types=[
+        {"value": "area", "label": "Area"},
+        {"value": "line", "label": "Line"},
+        {"value": "bar", "label": "Bar"},
+    ],
+    show_smooth=True,
+    smooth_max=50,
+    smooth_default=15,
+)
+```
+
+**Generated IDs:**
+- `{chart_id}-settings-type` — SegmentedControl for chart type
+- `{chart_id}-settings-smooth` — Slider for LOESS smoothing (0-100%)
+- `{chart_id}-settings-export` — Button that triggers Plotly PNG download
+
+**Behavior:**
+- Panel hidden by default (`display: none`)
+- Gear icon click toggles visibility
+- Gear icon rotates on hover (CSS animation)
+- Export button downloads chart as PNG via Plotly's `toImage()`
 
 ### Data Table
 
@@ -388,7 +468,7 @@ DEFAULT_LAYOUT = dict(
 
 | Breakpoint | Nav | Grid | Filter bar |
 |-----------|-----|------|-----------|
-| > 1400px | Expanded (200px) | Full grid layouts | Single row |
+| > 1400px | Expanded (220px) | Full grid layouts | Single row |
 | 1024-1400px | Collapsed (60px) | 2-col max for charts | Single row, may wrap |
 | < 1024px | Hidden (hamburger toggle) | Single column | Stacked vertically |
 
@@ -481,15 +561,116 @@ DEFAULT_LAYOUT = dict(
 
 ## Header
 
-Minimal. The nav sidebar handles navigation, so the header is either:
-- **Not needed** (Grafana-style — the nav sidebar IS the header)
-- **Thin strip** showing just the current page title and help icon
-
-Recommended: no separate header. Page title appears at the top of the content area, left-aligned, with the help icon to its right.
+No separate header. Page title appears at the top of the content area, centered, in purple.
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│  Operations                              [?] [⚙️]    │  ← page title + help + settings
+│                    Operations                        │  ← centered, purple (#7C2A83), bold
 ├─────────────────────────────────────────────────────┤
 │  Filter bar...                                       │
 ```
+
+**Implementation:**
+```python
+dmc.Title("Operations", order=2, className="page-title")
+# CSS class applies: ta="center", c="#7C2A83", fw=700
+```
+
+---
+
+## Implementation Patterns
+
+### Server/Clientside Callback Split
+
+For charts with interactive controls (smoothing slider, chart type toggle), split the work:
+
+1. **Server callback** (slower, ~300ms) — computes raw data on filter change
+   - Outputs to `dcc.Store` component
+   - Runs on interval refresh or filter change
+
+2. **Clientside callback** (fast, ~50ms) — renders chart from stored data
+   - Reads from `dcc.Store` + settings controls
+   - Handles smoothing, chart type switching
+   - Runs on every slider/toggle interaction
+
+```python
+# Server callback — compute raw data
+@callback(
+    Output("page-store-chart-data", "data"),
+    Input("page-interval", "n_intervals"),
+    Input("page-filter-department", "value"),
+)
+def compute_chart_data(_n, departments):
+    df = load_data()
+    # ... filter and aggregate ...
+    return {
+        "dates": dates_list,
+        "series": [{"name": "Series 1", "values": [...], "color": "#2196F3"}],
+        "height": 380,
+        "yTitle": "Count",
+    }
+
+# Clientside callback — render with smoothing
+clientside_callback(
+    ClientsideFunction(namespace="census", function_name="smoothChartWithType"),
+    Output("page-chart", "figure"),
+    Input("page-store-chart-data", "data"),
+    Input("page-chart-settings-smooth", "value"),
+    Input("page-chart-settings-type", "value"),
+)
+```
+
+**Benefits:**
+- Slider feels instant (no server round-trip)
+- Reduces server load
+- Chart type switching is immediate
+
+### Census Data Structure
+
+Standard format for time series data passed to clientside callbacks:
+
+```python
+{
+    "dates": ["2025-01-06", "2025-01-07", ...],  # ISO format, business days
+    "futureDates": ["2025-02-17", ...],  # Optional: scheduled future
+    "series": [
+        {
+            "name": "Lacey",
+            "values": [42, 38, 45, ...],  # Past values
+            "futureValues": [50, 52, ...],  # Optional: future values
+            "color": "#2196F3",
+        },
+        ...
+    ],
+    "height": 380,  # Chart height in pixels
+    "yTitle": "Treatments",  # Y-axis label
+}
+```
+
+### LOESS Smoothing
+
+All smoothing uses LOESS (Locally Estimated Scatterplot Smoothing), not rolling averages:
+
+- Smoothing slider: 0–100% maps to LOESS `frac` parameter (0–0.5)
+- At 0%: raw data shown
+- At 100%: maximum smoothing (frac=0.5)
+- Implementation in `assets/clientside_smooth.js`
+
+### Filter Wiring
+
+**Critical:** All page-level filter IDs must be listed as callback Inputs, even if unused:
+
+```python
+@callback(
+    Output("page-kpi-row", "children"),
+    Input("page-interval", "n_intervals"),
+    Input("page-filter-date-preset", "value"),
+    Input("page-filter-daterange", "value"),
+    Input("page-filter-department", "value"),
+    Input("page-filter-physician", "value"),  # Include even if page doesn't filter by physician
+)
+def update_page(_n, date_preset, daterange, departments, physicians):
+    ...
+```
+
+If a filter ID is in the layout but not in the callback Inputs, the filter will render but changes won't trigger updates.

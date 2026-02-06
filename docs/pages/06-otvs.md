@@ -69,3 +69,53 @@ Template A (KPI + Charts + Table)
 - **Highlight:** `Extra Visit(s)` rows in `--warning`, `Too Few` in `--error`
 - **Sortable, filterable**
 - **Export:** CSV
+
+---
+
+## Implementation Guidance
+
+**Complexity:** Low — straightforward data, no Department merge needed, simple charts
+
+### Data Loading
+
+```python
+from data.loader import load_otv_audit, load_weekly_visits
+
+otv = load_otv_audit()  # Complete/OTV Audit.csv
+weekly = load_weekly_visits()  # Incremental/WeeklyVisits/
+```
+
+### Key Columns
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `AuditResult` | string | Values: "OK", "Extra Visit(s)", "Too Few" |
+| `Department` | string | Already clean (no `*` prefix) |
+| `ClinicalStatus` | string | "ACTIVE" or "COMPLETED" |
+| `FirstTreatmentDate` | date | Use for date filtering |
+| `TreatingPhysician` | string | For physician filter |
+
+### Filter Wiring
+
+```python
+@callback(
+    Output("otvs-kpi-row", "children"),
+    Output("otvs-chart-distribution", "figure"),
+    # ... other outputs
+    Input("otvs-interval", "n_intervals"),
+    Input("otvs-filter-date-preset", "value"),
+    Input("otvs-filter-daterange", "value"),
+    Input("otvs-filter-department", "value"),
+    Input("otvs-filter-physician", "value"),
+    Input("otvs-filter-status", "value"),
+    Input("otvs-filter-result", "value"),
+)
+```
+
+### Suggested Approach
+
+1. Start with KPIs (simple counts/percentages)
+2. Add distribution donut chart
+3. Add compliance by physician bar chart
+4. Add table with row highlighting
+5. No clientside callbacks needed (no smoothing sliders)

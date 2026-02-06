@@ -86,3 +86,80 @@ All KPI cards include a small inline sparkline (approx 80px x 24px) showing the 
 - **Columns:** Date, Patient, Department, Physician, Visit Type, Duration, Lead Time (days), Has Sim, Days to Sim, Diagnosis, Payor
 - **Sortable, filterable**
 - **Export:** CSV
+
+---
+
+## Implementation Notes
+
+**Reference file:** `pages/clinic_visits.py` (~668 lines)
+
+### Upgrade Needed
+
+Current implementation uses server-side rendering only. Upgrade to home.py patterns:
+- [ ] Add `dcc.Store` for volume/lead time chart raw data
+- [ ] Add clientside callbacks for smoothing
+- [ ] Add `chart_settings_popover()` to trend charts (volume, lead time, conversion)
+- [ ] Add KPI sparklines (spec already calls for them)
+
+### Current Architecture
+
+- **No stores or clientside callbacks** — all server-side rendering
+- Single main callback with standard filter inputs
+- Largest of the implemented pages due to 6 KPIs + 6 charts
+
+### Key Data Loader
+
+```python
+from data.loader import load_clinic_visits, load_diagnosis_lookup
+
+visits = load_clinic_visits()  # Incremental/ClinicVisits/
+diagnosis = load_diagnosis_lookup()  # For diagnosis mix chart
+```
+
+### Visit Type Classification
+
+Helper function classifies visits from `ActivityName`:
+
+```python
+def _classify_visit_type(activity_name):
+    name = activity_name.lower()
+    if "virtual" in name:
+        return "Virtual"
+    elif "consult" in name:
+        return "Consult"
+    elif "follow" in name or "f/u" in name:
+        return "Follow-Up"
+    return "Other"
+```
+
+### Key Columns
+
+| Column | Usage |
+|--------|-------|
+| `ScheduledDateTime` | Date filtering |
+| `DepartmentName` | Normalized to `Department` |
+| `AppointmentPhysician` | Physician filter |
+| `ActivityName` | Visit type classification |
+| `Status` | Completed/Cancelled filter |
+| `HasSimulationWithin180Days` | Conversion calculation (flag: 0/1) |
+| `DaysFromCreatedToAppt` | Lead time KPI |
+| `DaysToSimulation` | Days to sim KPI (consults only) |
+
+### Conversion Rate Calculation
+
+```python
+conversion_rate = visits["HasSimulationWithin180Days"].mean() * 100
+```
+
+### Cancel Rate Logic
+
+Case-insensitive match for cancelled/canceled/no-show:
+
+```python
+cancelled = visits[visits["Status"].str.lower().str.contains("cancel|no-show", na=False)]
+cancel_rate = len(cancelled) / len(visits) * 100
+```
+
+### Diagnosis Mix Chart
+
+Tries columns in order: `DiagnosisGroup`, `Diagnosis`, `DiagnosisCode`. Falls back to diagnosis lookup join if needed.

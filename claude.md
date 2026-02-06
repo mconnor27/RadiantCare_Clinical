@@ -101,3 +101,119 @@ All physician filtering/display should recognize these four radiation oncologist
 | Lacey | #2196F3 (blue) | TrueBeamNorth, 21EX |
 | Centralia | #F44336 (red) | 21iX_CEN |
 | Aberdeen | #4CAF50 (green) | 21iX_AB |
+
+## Reference Implementation
+
+**`pages/home.py` is the reference implementation.** Before building or modifying any page, read home.py to understand:
+- Server/clientside callback split pattern
+- KPI card with sparkline wiring
+- Census data builder structure
+- Filter callback input requirements
+- Date filtering helpers (`_spark_start`, `_preset_start`, `_prior_range`)
+
+### Pages Needing Upgrade
+
+Pages 01-05 (Operations, Workflow, Clinic Visits, Simulations, Tasks) were built earlier without the clientside pattern. They need refactoring to add:
+- `dcc.Store` for raw chart data
+- Clientside callbacks for smoothing/chart type switching
+- `chart_settings_popover()` for interactive controls (gear icon)
+- KPI sparklines where appropriate
+
+**When modifying these pages, upgrade them to match home.py patterns.**
+
+## Page Building Checklist
+
+When building a new page from stub:
+
+1. **Read the page spec** in `docs/pages/NN-pagename.md`
+2. **Verify data columns** — Before referencing any column, confirm it exists in the loader output:
+   ```python
+   df = load_<dataset>()
+   print(df.columns.tolist())  # Verify column names
+   ```
+3. **Create layout structure:**
+   - Page title (centered, purple `#7C2A83`, bold)
+   - Filter bar with page-appropriate filters
+   - KPI grid (4-6 cards, span 2.4 each on md+)
+   - Chart rows (half-width pairs in `dmc.Grid`)
+   - Optional data table (full-width)
+   - `dcc.Interval` for refresh + `dcc.Store` for raw data
+
+4. **Wire callback with ALL filter IDs as Inputs** — Even unused ones:
+   ```python
+   @callback(
+       Output("page-kpi-row", "children"),
+       Input("page-interval", "n_intervals"),
+       Input("page-filter-date-preset", "value"),
+       Input("page-filter-daterange", "value"),
+       Input("page-filter-department", "value"),
+       Input("page-filter-physician", "value"),  # MUST include even if page can't filter by physician
+   )
+   ```
+
+5. **For interactive charts, use clientside callbacks:**
+   - Server callback outputs raw data to `dcc.Store`
+   - Clientside callback reads store + settings, outputs figure
+   - Add functions to `assets/clientside_smooth.js` namespace
+
+## Data Loading Verification
+
+**Before using any column, verify it exists.** Common column mapping issues:
+
+| Source Column | Normalized Column | File |
+|---------------|-------------------|------|
+| `Location` | `Department` | Treatment, Daily Volume |
+| `DepartmentName` | `Department` | Clinic Visits, Billing, Availability |
+| `TreatmentDate` | `ScheduledDateTime` | Treatment-Detail |
+| `PatientMRN` | `PatientId` | Treatment-Detail |
+| `ActivityStatus` | `Status` | Clinic Visits, Simulations |
+| `Departments` | `Department` | Courses, Plans (comma-separated, take first) |
+
+**Datasets without Department column** (must merge via `_patient_department_map()`):
+- Workflow.csv
+- Simulations.csv
+
+## Date Filtering Pattern
+
+Always use **data-relative dates**, not `pd.Timestamp.now()`:
+
+```python
+last_date = df["ScheduledDateTime"].dt.normalize().max()
+start = last_date - pd.Timedelta(days=30)  # Relative to last data date
+```
+
+This handles data lag gracefully (data may be 1-2 days behind "today").
+
+## Common Pitfalls
+
+| Issue | Cause | Fix |
+|-------|-------|-----|
+| Filter doesn't update chart | Filter ID not in callback Inputs | Add ALL filter IDs as Inputs |
+| Department filter shows nothing | `*` prefix not stripped | Use `_clean_department()` |
+| Physician filter empty | NaN values in dropdown | Use `.dropna().unique()` |
+| Sparkline not updating | Wrong store/callback wiring | Check store ID matches clientside input |
+| Slow chart interaction | Server-side smoothing | Move to clientside callback |
+| Missing Department column | Dataset doesn't have it | Merge via `_patient_department_map()` |
+| Wrong date range | Using `now()` instead of data max | Use `df["date_col"].max()` as reference |
+
+## Stub Pages to Complete
+
+| Page | Primary Dataset | Key Metrics | Complexity |
+|------|-----------------|-------------|------------|
+| Billing | Billing.csv | Revenue, charges, procedures | Medium |
+| Courses | Courses.csv | Treatment courses, durations | Medium |
+| Machines | Machine Errors.csv | Downtime, error rates | Medium |
+| Plans | Plans.csv | Plan complexity, approval times | Medium |
+| Patients | Treatment-Detail + Referrals | Geography, demographics | High (Mapbox) |
+| Referrals | Referrals.csv | Sources, conversion | High (Mapbox) |
+| OTVs | OTV Audit.csv | Compliance, discrepancies | Low |
+
+## Counting Semantics
+
+When counting appointments/visits/treatments, clarify what's being counted:
+- **Appointment records**: Count rows where `AppointmentInstanceFlag = 1`
+- **Treatment sessions**: Count unique `SessionUniqueID`
+- **Patients**: Count unique `PatientId`
+- **Courses**: Count unique `CourseId`
+
+Do NOT count individual fields within a treatment (inflates numbers).

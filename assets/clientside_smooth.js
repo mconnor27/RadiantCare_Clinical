@@ -82,14 +82,16 @@ window.dash_clientside.census = {
      * Supports future projections with lighter fill.
      * @param {Object} rawData - {dates, futureDates?, series: [{name, values, futureValues?, color}...], height, yTitle}
      * @param {number} smoothPct - Slider value 0-50, maps to rolling average window
+     * @param {string} chartType - "area" (stacked), "line" (non-stacked), or "bar" (stacked bar)
      * @param {Object} currentFig - Current figure (to preserve trace visibility)
      * @returns {Object} Plotly figure
      */
-    smoothChart: function(rawData, smoothPct, currentFig) {
+    smoothChartWithType: function(rawData, smoothPct, chartType, currentFig) {
         if (!rawData || !rawData.series) {
             return window.dash_clientside.no_update;
         }
 
+        chartType = chartType || "area";
         var dates = rawData.dates;
         var futureDates = rawData.futureDates || [];
         var height = rawData.height || 380;
@@ -100,6 +102,12 @@ window.dash_clientside.census = {
         var maxPoints = 500;
         var step = dates.length > maxPoints ? Math.ceil(dates.length / maxPoints) : 1;
         var displayDates = step > 1 ? downsample(dates, step) : dates;
+
+        // For bar charts, format dates and filter to valid ones only
+        var barData = null;
+        if (chartType === "bar") {
+            barData = formatDatesForBars(displayDates);
+        }
 
         // Build a map of trace visibility from current figure (by name)
         var visibilityMap = {};
@@ -133,16 +141,41 @@ window.dash_clientside.census = {
                 }
             }
 
-            var traceObj = {
-                x: displayDates,
-                y: yVals,
-                name: s.name,
-                mode: "lines",
-                line: {color: s.color, width: 1.5},
-                fillcolor: hexToRgba(s.color, 0.5),
-                stackgroup: "one",
-                hovertemplate: s.name + ": %{y:.0f}<extra></extra>"
-            };
+            var traceObj;
+            if (chartType === "bar") {
+                // Stacked bar chart with formatted date labels (filtered to valid dates only)
+                var filteredY = filterByIndices(yVals, barData.validIndices);
+                traceObj = {
+                    x: barData.labels,
+                    y: filteredY,
+                    name: s.name,
+                    type: "bar",
+                    marker: {color: s.color, line: {width: 0}},
+                    hovertemplate: s.name + ": %{y:.0f}<extra></extra>"
+                };
+            } else if (chartType === "line") {
+                // Non-stacked line chart
+                traceObj = {
+                    x: displayDates,
+                    y: yVals,
+                    name: s.name,
+                    mode: "lines",
+                    line: {color: s.color, width: 2},
+                    hovertemplate: s.name + ": %{y:.0f}<extra></extra>"
+                };
+            } else {
+                // Stacked area chart (default)
+                traceObj = {
+                    x: displayDates,
+                    y: yVals,
+                    name: s.name,
+                    mode: "lines",
+                    line: {color: s.color, width: 1.5},
+                    fillcolor: hexToRgba(s.color, 0.5),
+                    stackgroup: "one",
+                    hovertemplate: s.name + ": %{y:.0f}<extra></extra>"
+                };
+            }
 
             // Preserve visibility if it was explicitly set
             if (visibilityMap.hasOwnProperty(s.name)) {
@@ -154,6 +187,9 @@ window.dash_clientside.census = {
 
         // Future projection traces (lighter fill, dotted line, no smoothing)
         if (hasFuture) {
+            // For bar charts, format future dates
+            var futureBarData = chartType === "bar" ? formatDatesForBars(futureDates) : null;
+
             for (var i = 0; i < rawData.series.length; i++) {
                 var s = rawData.series[i];
                 var futureVals = s.futureValues || [];
@@ -168,21 +204,36 @@ window.dash_clientside.census = {
                     }
                 }
 
-                // Connect to last past point
-                var lastPastDate = displayDates[displayDates.length - 1];
-                var lastPastVal = traces[i].y[traces[i].y.length - 1];
+                var futureTraceObj;
+                if (chartType === "bar") {
+                    // Bar chart: lighter opacity bars for future
+                    var filteredFutureY = filterByIndices(futureVals, futureBarData.validIndices);
+                    futureTraceObj = {
+                        x: futureBarData.labels,
+                        y: filteredFutureY,
+                        name: s.name + " (scheduled)",
+                        type: "bar",
+                        marker: {color: s.color, opacity: 0.4, line: {width: 0}},
+                        showlegend: false,
+                        hovertemplate: s.name + " (scheduled): %{y:.0f}<extra></extra>"
+                    };
+                } else {
+                    // Line/area: connect to last past point
+                    var lastPastDate = displayDates[displayDates.length - 1];
+                    var lastPastVal = traces[i].y[traces[i].y.length - 1];
 
-                var futureTraceObj = {
-                    x: [lastPastDate].concat(futureDates),
-                    y: [lastPastVal].concat(futureVals),
-                    name: s.name + " (scheduled)",
-                    mode: "lines",
-                    line: {color: s.color, width: 1, dash: "dot"},
-                    fillcolor: hexToRgba(s.color, 0.2),
-                    stackgroup: "future",
-                    showlegend: false,
-                    hovertemplate: s.name + " (scheduled): %{y:.0f}<extra></extra>"
-                };
+                    futureTraceObj = {
+                        x: [lastPastDate].concat(futureDates),
+                        y: [lastPastVal].concat(futureVals),
+                        name: s.name + " (scheduled)",
+                        mode: "lines",
+                        line: {color: s.color, width: 1, dash: "dot"},
+                        fillcolor: chartType === "line" ? "transparent" : hexToRgba(s.color, 0.2),
+                        stackgroup: chartType === "line" ? undefined : "future",
+                        showlegend: false,
+                        hovertemplate: s.name + " (scheduled): %{y:.0f}<extra></extra>"
+                    };
+                }
 
                 // Preserve visibility (use base name)
                 if (visibilityMap.hasOwnProperty(s.name)) {
@@ -193,33 +244,54 @@ window.dash_clientside.census = {
             }
         }
 
-        // Add invisible total trace for hover (sum of smoothed series)
-        traces.unshift({
-            x: displayDates,
-            y: totals,
-            name: "Total",
-            mode: "lines",
-            line: {color: "transparent", width: 0},
-            hovertemplate: "<b>Total: %{y:.0f}</b><extra></extra>",
-            showlegend: false
-        });
+        // Add invisible total trace for hover (sum of smoothed series) - only for stacked charts
+        if (chartType !== "line") {
+            var totalX = chartType === "bar" ? barData.labels : displayDates;
+            var totalY = chartType === "bar" ? filterByIndices(totals, barData.validIndices) : totals;
+            traces.unshift({
+                x: totalX,
+                y: totalY,
+                name: "Total",
+                mode: "lines",
+                line: {color: "transparent", width: 0},
+                hovertemplate: "<b>Total: %{y:.0f}</b><extra></extra>",
+                showlegend: false
+            });
+        }
 
         var smoothed = smoothPct > 0;
+        var layout = {
+            height: height,
+            xaxis: {showgrid: false},
+            yaxis: {gridcolor: "#E5E7EB"},
+            legend: {orientation: "h", yanchor: "bottom", y: 1.02, xanchor: "left", x: 0},
+            margin: {l: 28, r: 8, t: 8, b: 32},
+            plot_bgcolor: "white",
+            paper_bgcolor: "white",
+            font: {family: "Inter, system-ui, sans-serif", size: 12, color: "#374151"},
+            hovermode: "x unified",
+            hoverlabel: {align: "left"}
+        };
+
+        // Add barmode for stacked bar (categorical x-axis for no gaps)
+        if (chartType === "bar") {
+            layout.barmode = "stack";
+            layout.bargap = 0.15;  // Small gap to distinguish from area chart
+            layout.bargroupgap = 0;
+            layout.xaxis.type = "category";
+            layout.xaxis.tickangle = 0;  // Horizontal labels
+            layout.xaxis.nticks = 8;  // Sparse labels
+        }
+
         return {
             data: traces,
-            layout: {
-                height: height,
-                xaxis: {title: "Date", showgrid: false},
-                yaxis: {title: yTitle + (smoothed ? " (smoothed)" : ""), gridcolor: "#E5E7EB"},
-                legend: {orientation: "h", yanchor: "bottom", y: 1.02, xanchor: "left", x: 0},
-                margin: {l: 48, r: 16, t: 16, b: 48},
-                plot_bgcolor: "white",
-                paper_bgcolor: "white",
-                font: {family: "Inter, system-ui, sans-serif", size: 12, color: "#374151"},
-                hovermode: "x unified",
-                hoverlabel: {align: "left"}
-            }
+            layout: layout
         };
+    },
+
+    // Legacy wrapper for backward compatibility
+    smoothChart: function(rawData, smoothPct, currentFig) {
+        return window.dash_clientside.census.smoothChartWithType(rawData, smoothPct, "area", currentFig);
     }
 };
 
@@ -288,6 +360,69 @@ function hexToRgba(hex, alpha) {
 }
 
 /**
+ * Parse an ISO date string and return {valid, year, month, day} or {valid: false}.
+ */
+function parseIsoDate(dateStr) {
+    if (!dateStr || typeof dateStr !== "string") return {valid: false};
+
+    // Extract just the date part if it has time component
+    var datePart = dateStr.split("T")[0];
+    var parts = datePart.split("-");
+
+    if (parts.length === 3) {
+        var year = parseInt(parts[0], 10);
+        var month = parseInt(parts[1], 10) - 1;  // JS months are 0-indexed
+        var day = parseInt(parts[2], 10);
+
+        // Validate the parsed values
+        if (year >= 1900 && year <= 2100 && month >= 0 && month <= 11 && day >= 1 && day <= 31) {
+            return {valid: true, year: year, month: month, day: day};
+        }
+    }
+    return {valid: false};
+}
+
+/**
+ * Format dates for bar chart x-axis and return {labels, validIndices}.
+ * Only includes dates that parse correctly.
+ */
+function formatDatesForBars(dates) {
+    if (!dates || dates.length === 0) return {labels: [], validIndices: []};
+
+    var labels = [];
+    var validIndices = [];
+    var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    var lastYear = null;
+
+    for (var i = 0; i < dates.length; i++) {
+        var parsed = parseIsoDate(dates[i]);
+        if (!parsed.valid) continue;  // Skip invalid dates
+
+        validIndices.push(i);
+
+        // Format label: add year on first item or year change
+        if (lastYear === null || parsed.year !== lastYear) {
+            labels.push(months[parsed.month] + " " + parsed.day + ", " + parsed.year);
+            lastYear = parsed.year;
+        } else {
+            labels.push(months[parsed.month] + " " + parsed.day);
+        }
+    }
+    return {labels: labels, validIndices: validIndices};
+}
+
+/**
+ * Filter an array to only include items at the specified indices.
+ */
+function filterByIndices(arr, indices) {
+    var result = [];
+    for (var i = 0; i < indices.length; i++) {
+        result.push(arr[indices[i]]);
+    }
+    return result;
+}
+
+/**
  * Downsample an array by taking every nth element (for dates/labels).
  */
 function downsample(arr, step) {
@@ -353,11 +488,13 @@ function hourToTimeStr(hour) {
 
 window.dash_clientside.hoursRibbon = {
     /**
-     * Build operating hours ribbon chart with clientside smoothing.
+     * Build operating hours chart with clientside smoothing.
+     * Supports ribbon (band), line, and bar chart types.
      * @param {Object} rawData - {pastSeries, futureSeries, yAxis, today}
      * @param {number} smoothVal - Rolling average window size (0 = no smoothing)
+     * @param {string} chartType - "ribbon" (band), "line", or "bar"
      */
-    smoothChart: function(rawData, smoothVal) {
+    smoothChartWithType: function(rawData, smoothVal, chartType) {
         if (!rawData || !rawData.pastSeries) {
             // Return empty figure
             return {
@@ -374,6 +511,7 @@ window.dash_clientside.hoursRibbon = {
             };
         }
 
+        chartType = chartType || "ribbon";
         var windowSize = Math.max(1, Math.floor(smoothVal) + 1);
         var traces = [];
         var yAxis = rawData.yAxis;
@@ -390,7 +528,7 @@ window.dash_clientside.hoursRibbon = {
         // Downsample to ~500 points max for performance (chart is only ~500px wide)
         var maxPoints = 500;
 
-        // Process past series (solid fill with edge lines)
+        // Process past series
         for (var i = 0; i < rawData.pastSeries.length; i++) {
             var s = rawData.pastSeries[i];
             var dates = s.dates;
@@ -432,132 +570,212 @@ window.dash_clientside.hoursRibbon = {
             var color = s.color;
             var fillColor = hexToRgba(color, pastFillOpacity);
 
-            // Upper bound trace (end hours) - invisible for fill
-            traces.push({
-                x: dates,
-                y: endHours,
-                mode: "lines",
-                line: {width: 0},
-                showlegend: false,
-                hoverinfo: "skip"
-            });
+            if (chartType === "bar") {
+                // Floating bar chart: bars span from startHours to endHours
+                var durations = [];
+                var baseHours = [];
+                for (var j = 0; j < startHours.length; j++) {
+                    durations.push(endHours[j] - startHours[j]);
+                    baseHours.push(startHours[j]);
+                }
+                // Format dates for categorical axis (filter to valid dates)
+                var barData = formatDatesForBars(dates);
+                var filteredDurations = filterByIndices(durations, barData.validIndices);
+                var filteredBase = filterByIndices(baseHours, barData.validIndices);
+                var filteredHoverText = filterByIndices(hoverText, barData.validIndices);
+                traces.push({
+                    x: barData.labels,
+                    y: filteredDurations,
+                    base: filteredBase,  // Floating bars start at startHours
+                    name: s.name,
+                    type: "bar",
+                    marker: {color: color, opacity: 0.7, line: {width: 0}},
+                    hovertemplate: "%{text}<extra></extra>",
+                    text: filteredHoverText,
+                    textposition: "none"  // Hide text annotations
+                });
+            } else if (chartType === "line") {
+                // Line chart: show start and end times as separate lines
+                traces.push({
+                    x: dates,
+                    y: startHours,
+                    name: s.name + " Start",
+                    mode: "lines",
+                    line: {color: color, width: 2},
+                    text: hoverText,
+                    hovertemplate: "%{text}<extra></extra>"
+                });
+                traces.push({
+                    x: dates,
+                    y: endHours,
+                    name: s.name + " End",
+                    mode: "lines",
+                    line: {color: color, width: 2, dash: "dash"},
+                    showlegend: false,
+                    hoverinfo: "skip"
+                });
+            } else {
+                // Ribbon (band) chart - default
+                // Upper bound trace (end hours) - invisible for fill
+                traces.push({
+                    x: dates,
+                    y: endHours,
+                    mode: "lines",
+                    line: {width: 0},
+                    showlegend: false,
+                    hoverinfo: "skip"
+                });
 
-            // Lower bound trace (start hours) with fill to previous
-            traces.push({
-                x: dates,
-                y: startHours,
-                mode: "lines",
-                line: {width: 0},
-                fill: "tonexty",
-                fillcolor: fillColor,
-                name: s.name,
-                showlegend: true,
-                text: hoverText,
-                hovertemplate: "%{text}<extra></extra>"
-            });
+                // Lower bound trace (start hours) with fill to previous
+                traces.push({
+                    x: dates,
+                    y: startHours,
+                    mode: "lines",
+                    line: {width: 0},
+                    fill: "tonexty",
+                    fillcolor: fillColor,
+                    name: s.name,
+                    showlegend: true,
+                    text: hoverText,
+                    hovertemplate: "%{text}<extra></extra>"
+                });
 
-            // Edge line - top (end hours)
-            traces.push({
-                x: dates,
-                y: endHours,
-                mode: "lines",
-                line: {color: color, width: 1.5},
-                showlegend: false,
-                hoverinfo: "skip"
-            });
+                // Edge line - top (end hours)
+                traces.push({
+                    x: dates,
+                    y: endHours,
+                    mode: "lines",
+                    line: {color: color, width: 1.5},
+                    showlegend: false,
+                    hoverinfo: "skip"
+                });
 
-            // Edge line - bottom (start hours)
-            traces.push({
-                x: dates,
-                y: startHours,
-                mode: "lines",
-                line: {color: color, width: 1.5},
-                showlegend: false,
-                hoverinfo: "skip"
-            });
+                // Edge line - bottom (start hours)
+                traces.push({
+                    x: dates,
+                    y: startHours,
+                    mode: "lines",
+                    line: {color: color, width: 1.5},
+                    showlegend: false,
+                    hoverinfo: "skip"
+                });
+            }
         }
 
-        // Process future series (lighter fill, connect to past)
-        for (var i = 0; i < rawData.futureSeries.length; i++) {
-            var s = rawData.futureSeries[i];
-            // No smoothing for future data, but still downsample if large
-            var dates = s.dates;
-            var startHours = s.startHours.slice();
-            var endHours = s.endHours.slice();
+        // Process future series (lighter fill for ribbon, lighter opacity bars for bar)
+        if (chartType === "ribbon" || chartType === "bar") {
+            for (var i = 0; i < rawData.futureSeries.length; i++) {
+                var s = rawData.futureSeries[i];
+                // No smoothing for future data, but still downsample if large
+                var dates = s.dates;
+                var startHours = s.startHours.slice();
+                var endHours = s.endHours.slice();
 
-            var step = dates.length > maxPoints ? Math.ceil(dates.length / maxPoints) : 1;
-            if (step > 1) {
-                dates = downsample(dates, step);
-                startHours = downsampleAvg(startHours, step);
-                endHours = downsampleAvg(endHours, step);
-            } else {
-                dates = dates.slice();  // copy to avoid mutation
+                var step = dates.length > maxPoints ? Math.ceil(dates.length / maxPoints) : 1;
+                if (step > 1) {
+                    dates = downsample(dates, step);
+                    startHours = downsampleAvg(startHours, step);
+                    endHours = downsampleAvg(endHours, step);
+                } else {
+                    dates = dates.slice();  // copy to avoid mutation
+                }
+
+                // Build hover text
+                var hoverText = [];
+                for (var j = 0; j < dates.length; j++) {
+                    var d = new Date(dates[j]);
+                    var dateStr = d.toLocaleDateString("en-US", {month: "short", day: "numeric"});
+                    hoverText.push("<b>" + s.name + " (scheduled)</b><br>" + dateStr + ": " +
+                        hourToTimeStr(startHours[j]) + " - " + hourToTimeStr(endHours[j]));
+                }
+
+                var color = s.color;
+
+                if (chartType === "bar") {
+                    // Floating bar chart for future data (lighter opacity)
+                    var durations = [];
+                    var baseHours = [];
+                    for (var j = 0; j < startHours.length; j++) {
+                        durations.push(endHours[j] - startHours[j]);
+                        baseHours.push(startHours[j]);
+                    }
+                    var barData = formatDatesForBars(dates);
+                    var filteredDurations = filterByIndices(durations, barData.validIndices);
+                    var filteredBase = filterByIndices(baseHours, barData.validIndices);
+                    var filteredHoverText = filterByIndices(hoverText, barData.validIndices);
+                    traces.push({
+                        x: barData.labels,
+                        y: filteredDurations,
+                        base: filteredBase,
+                        name: s.name + " (scheduled)",
+                        type: "bar",
+                        marker: {color: color, opacity: 0.35, line: {width: 0}},
+                        hovertemplate: "%{text}<extra></extra>",
+                        text: filteredHoverText,
+                        textposition: "none",
+                        showlegend: false
+                    });
+                } else {
+                    // Ribbon chart - prepend past end point to connect
+                    var pastEnd = pastEndPoints[s.name];
+                    if (pastEnd && dates.length > 0) {
+                        dates.unshift(pastEnd.date);
+                        startHours.unshift(pastEnd.start);
+                        endHours.unshift(pastEnd.end);
+                        // Update hover text for connection point
+                        var d = new Date(pastEnd.date);
+                        var dateStr = d.toLocaleDateString("en-US", {month: "short", day: "numeric"});
+                        hoverText.unshift("<b>" + s.name + "</b><br>" + dateStr + ": " +
+                            hourToTimeStr(pastEnd.start) + " - " + hourToTimeStr(pastEnd.end));
+                    }
+
+                    var fillColor = hexToRgba(color, futureFillOpacity);
+
+                    // Upper bound trace
+                    traces.push({
+                        x: dates,
+                        y: endHours,
+                        mode: "lines",
+                        line: {width: 0},
+                        showlegend: false,
+                        hoverinfo: "skip"
+                    });
+
+                    // Lower bound trace with lighter fill
+                    traces.push({
+                        x: dates,
+                        y: startHours,
+                        mode: "lines",
+                        line: {width: 0},
+                        fill: "tonexty",
+                        fillcolor: fillColor,
+                        name: s.name + " (scheduled)",
+                        showlegend: false,
+                        text: hoverText,
+                        hovertemplate: "%{text}<extra></extra>"
+                    });
+
+                    // Edge line - top (dashed for future)
+                    traces.push({
+                        x: dates,
+                        y: endHours,
+                        mode: "lines",
+                        line: {color: color, width: 1, dash: "dot"},
+                        showlegend: false,
+                        hoverinfo: "skip"
+                    });
+
+                    // Edge line - bottom (dashed for future)
+                    traces.push({
+                        x: dates,
+                        y: startHours,
+                        mode: "lines",
+                        line: {color: color, width: 1, dash: "dot"},
+                        showlegend: false,
+                        hoverinfo: "skip"
+                    });
+                }
             }
-
-            // Prepend past end point to connect the series
-            var pastEnd = pastEndPoints[s.name];
-            if (pastEnd && dates.length > 0) {
-                dates.unshift(pastEnd.date);
-                startHours.unshift(pastEnd.start);
-                endHours.unshift(pastEnd.end);
-            }
-
-            // Build hover text
-            var hoverText = [];
-            for (var j = 0; j < dates.length; j++) {
-                var d = new Date(dates[j]);
-                var dateStr = d.toLocaleDateString("en-US", {month: "short", day: "numeric"});
-                var label = (j === 0 && pastEnd) ? s.name : s.name + " (scheduled)";
-                hoverText.push("<b>" + label + "</b><br>" + dateStr + ": " +
-                    hourToTimeStr(startHours[j]) + " - " + hourToTimeStr(endHours[j]));
-            }
-
-            var color = s.color;
-            var fillColor = hexToRgba(color, futureFillOpacity);
-
-            // Upper bound trace
-            traces.push({
-                x: dates,
-                y: endHours,
-                mode: "lines",
-                line: {width: 0},
-                showlegend: false,
-                hoverinfo: "skip"
-            });
-
-            // Lower bound trace with lighter fill
-            traces.push({
-                x: dates,
-                y: startHours,
-                mode: "lines",
-                line: {width: 0},
-                fill: "tonexty",
-                fillcolor: fillColor,
-                name: s.name + " (scheduled)",
-                showlegend: false,
-                text: hoverText,
-                hovertemplate: "%{text}<extra></extra>"
-            });
-
-            // Edge line - top (dashed for future)
-            traces.push({
-                x: dates,
-                y: endHours,
-                mode: "lines",
-                line: {color: color, width: 1, dash: "dot"},
-                showlegend: false,
-                hoverinfo: "skip"
-            });
-
-            // Edge line - bottom (dashed for future)
-            traces.push({
-                x: dates,
-                y: startHours,
-                mode: "lines",
-                line: {color: color, width: 1, dash: "dot"},
-                showlegend: false,
-                hoverinfo: "skip"
-            });
         }
 
         // Build layout with today line as shape (shifted back 1 day since data lags)
@@ -576,25 +794,94 @@ window.dash_clientside.hoursRibbon = {
             line: {color: "rgba(124, 42, 131, 0.4)", width: 1, dash: "dash"}
         }];
 
+        var layout = {
+            height: 380,
+            font: {family: "Inter, system-ui, sans-serif", size: 11},
+            plot_bgcolor: "#FFFFFF",
+            paper_bgcolor: "#FFFFFF",
+            margin: {l: 36, r: 8, t: 8, b: 32},
+            showlegend: false,
+            hovermode: "x unified",
+            xaxis: {showgrid: false},
+            yaxis: {
+                range: [yAxis.min, yAxis.max],
+                tickvals: yAxis.tickvals,
+                ticktext: yAxis.ticktext,
+                gridcolor: "#E5E7EB"
+            },
+            shapes: shapes
+        };
+
+        // Add barmode for overlapping bars (categorical x-axis for no gaps)
+        if (chartType === "bar") {
+            layout.barmode = "overlay";
+            layout.bargap = 0.15;  // Small gap to distinguish from ribbon chart
+            layout.bargroupgap = 0;
+            layout.xaxis.type = "category";
+            layout.xaxis.tickangle = 0;  // Horizontal labels
+            layout.xaxis.nticks = 8;  // Sparse labels
+        }
+
         return {
             data: traces,
-            layout: {
-                height: 380,
-                font: {family: "Inter, system-ui, sans-serif", size: 11},
-                plot_bgcolor: "#FFFFFF",
-                paper_bgcolor: "#FFFFFF",
-                margin: {l: 40, r: 16, t: 16, b: 30},
-                showlegend: false,
-                hovermode: "x unified",
-                xaxis: {showgrid: false},
-                yaxis: {
-                    range: [yAxis.min, yAxis.max],
-                    tickvals: yAxis.tickvals,
-                    ticktext: yAxis.ticktext,
-                    gridcolor: "#E5E7EB"
-                },
-                shapes: shapes
-            }
+            layout: layout
         };
+    },
+
+    // Legacy wrapper for backward compatibility
+    smoothChart: function(rawData, smoothVal) {
+        return window.dash_clientside.hoursRibbon.smoothChartWithType(rawData, smoothVal, "ribbon");
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Click Outside to Close Settings Panels
+// ---------------------------------------------------------------------------
+
+(function() {
+    document.addEventListener('click', function(e) {
+        // Find all open settings panels
+        var panels = document.querySelectorAll('.chart-settings-panel');
+        panels.forEach(function(panel) {
+            if (panel.style.display === 'block') {
+                // Check if click is outside the settings container
+                var container = panel.closest('.chart-settings-container');
+                if (container && !container.contains(e.target)) {
+                    panel.style.display = 'none';
+                }
+            }
+        });
+    });
+})();
+
+// ---------------------------------------------------------------------------
+// PNG Export Utility
+// ---------------------------------------------------------------------------
+
+window.dash_clientside.chartExport = {
+    /**
+     * Export a Plotly chart to PNG.
+     * @param {number} n_clicks - Button click count (trigger)
+     * @param {string} graphId - ID of the dcc.Graph component
+     * @param {string} filename - Filename for the exported PNG
+     */
+    exportPng: function(n_clicks, graphId, filename) {
+        if (!n_clicks) return window.dash_clientside.no_update;
+
+        var graphEl = document.getElementById(graphId);
+        if (!graphEl) {
+            console.warn("Chart not found:", graphId);
+            return window.dash_clientside.no_update;
+        }
+
+        filename = filename || graphId;
+        Plotly.downloadImage(graphEl, {
+            format: "png",
+            width: 1200,
+            height: 600,
+            filename: filename
+        });
+
+        return window.dash_clientside.no_update;
     }
 };

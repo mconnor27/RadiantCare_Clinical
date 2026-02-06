@@ -68,3 +68,89 @@ Template A (KPI + Charts + Table)
 - **Highlight:** Overdue tasks in `--error`, after-hours in `--warning`
 - **Sortable, filterable**
 - **Export:** CSV
+
+---
+
+## Implementation Notes
+
+**Reference file:** `pages/tasks.py` (~395 lines)
+
+### Upgrade Needed
+
+Current implementation uses server-side rendering only. Upgrade to home.py patterns:
+- [ ] Add `dcc.Store` for volume/SLA trend raw data
+- [ ] Add clientside callbacks for smoothing
+- [ ] Add `chart_settings_popover()` to volume and SLA trend charts
+- [ ] Consider KPI sparklines for open tasks / SLA rate
+
+### Current Architecture
+
+- **No stores or clientside callbacks** — all server-side rendering
+- Single main callback with 5 filter inputs
+- After-hours detection via simple hour check (no Physician Schedule join currently)
+
+### Key Data Loader
+
+```python
+from data.loader import load_tasks
+
+tasks = load_tasks()  # Complete/Tasks.csv
+```
+
+### Key Columns
+
+| Column | Usage |
+|--------|-------|
+| `StartDateTime` | Date filtering |
+| `DueDateTime` | SLA deadline |
+| `CompletedDateTime` | Status detection, after-hours check |
+| `ActivityName` | Task type classification |
+| `AssignedMD` | Physician filter |
+| `CompletingMD` | "NA" = open task |
+| `MinutesToComplete` | Actual completion time |
+| `MinutesAllowed` | SLA threshold |
+
+### Task Type Classification
+
+Uses `ActivityName` substring matching:
+
+```python
+if task_type == "draw":
+    tasks = tasks[tasks["ActivityName"].str.contains("Draw", case=False, na=False)]
+elif task_type == "review":
+    tasks = tasks[tasks["ActivityName"].str.contains("Review", case=False, na=False)]
+```
+
+### Status Filter Logic
+
+```python
+if status == "open":
+    tasks = tasks[tasks["CompletedDateTime"].isna()]
+elif status == "done":
+    tasks = tasks[tasks["CompletedDateTime"].notna()]
+```
+
+### SLA Compliance Calculation
+
+For completed tasks only:
+
+```python
+completed = tasks[tasks["CompletedDateTime"].notna()]
+on_time = completed[completed["MinutesToComplete"] <= completed["MinutesAllowed"]]
+sla_rate = len(on_time) / len(completed) * 100
+```
+
+### After-Hours Detection
+
+Simple hour check (not using Physician Schedule cross-reference):
+
+```python
+after_hours = tasks[
+    (tasks["CompletedDateTime"].dt.hour < 8) |
+    (tasks["CompletedDateTime"].dt.hour >= 17)
+]
+```
+
+### Physician Name Formatting
+
+Physician names in x-axis are split by comma (shows first part only for readability).

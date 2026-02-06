@@ -102,3 +102,67 @@ Template A (KPI + Charts + Table)
 - **Columns:** Date of Service, Patient, Department, CPT Code, Description, Code Type, Modifier, Supervising MD, Referring MD, Diagnosis
 - **Sortable, filterable**
 - **Export:** CSV
+
+---
+
+## Implementation Guidance
+
+**Complexity:** Medium — multi-view page, payor join logic
+
+### Data Loading
+
+```python
+from data.loader import load_billing, load_cpt_audit, load_patients_lookup
+
+billing = load_billing()  # Incremental/Billing/
+cpt_audit = load_cpt_audit()  # Complete/2026 CPT Delivery Audit.csv
+patients = load_patients_lookup()  # Lookup/Lookup - Patients.csv
+```
+
+### Key Columns
+
+**Billing.csv:**
+| Column | Type | Notes |
+|--------|------|-------|
+| `DepartmentName` | string | Normalized to `Department` by loader |
+| `DateOfService` | date | Primary date filter column |
+| `ProcedureCode` | string | CPT code |
+| `SupervisingPhysician` | string | For physician filter |
+
+**CPT Audit:**
+| Column | Type | Notes |
+|--------|------|-------|
+| `AuditResult` | string | Values: "PASS" or "FAIL" (different from OTV!) |
+| `Department` | string | Has `*` prefix — strip it |
+| `RxTechnique_Course` | string | IMRT, VMAT, SBRT, 3D |
+
+### Multi-View Pattern
+
+This page has three views controlled by a toggle. Handle with conditional rendering:
+
+```python
+@callback(
+    Output("billing-content", "children"),
+    Input("billing-filter-view", "value"),  # "activity" | "audit" | "payor"
+    ...
+)
+def update_billing_content(view, ...):
+    if view == "activity":
+        return billing_activity_layout(...)
+    elif view == "audit":
+        return cpt_audit_layout(...)
+    else:
+        return payor_mix_layout(...)
+```
+
+### Payor Join Logic
+
+For payor mix views, join billing/visits/courses to `Lookup - Patients`:
+
+```python
+df = billing.merge(patients[["PatientId", "PrimaryInsurance"]], on="PatientId", how="left")
+```
+
+### Filter Wiring
+
+Include view toggle as an Input alongside standard filters.

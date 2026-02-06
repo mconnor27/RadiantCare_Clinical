@@ -73,19 +73,11 @@ app.layout = dmc.MantineProvider(
             children=[
                 create_sidebar(),
                 dmc.AppShellMain(
-                    children=[
-                        # Page title row
-                        dmc.Group(
-                            id="page-title-row",
-                            justify="space-between",
-                            mb="md",
-                        ),
-                        page_container,
-                    ],
+                    children=[page_container],
                     style={
                         "backgroundColor": NEUTRAL["bg_page"],
                         "minHeight": "100vh",
-                        "padding": "24px",
+                        "padding": "12px 24px 12px 24px",
                     },
                 ),
             ],

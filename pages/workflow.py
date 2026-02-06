@@ -2,17 +2,19 @@
 
 import dash
 import dash_mantine_components as dmc
-from dash import callback, Input, Output, dcc
+from dash import callback, Input, Output, State, dcc, clientside_callback, ClientsideFunction
+import dash_ag_grid as dag
 import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
 from datetime import timedelta
 
-from config.settings import CHART_COLORWAY, DEFAULT_LAYOUT, FONT_FAMILY
+from config.settings import CHART_COLORWAY, DEFAULT_LAYOUT, FONT_FAMILY, PRIMARY
 from components.filter_bar import (
     filter_bar, date_presets, department_chips, physician_select, date_range_picker,
 )
 from components.kpi_card import kpi_card
+from components.chart_settings import chart_settings_popover
 from utils.charts import apply_default_layout, empty_figure
 
 dash.register_page(__name__, path="/workflow", name="Workflow", order=2)
@@ -25,10 +27,16 @@ STAGE_DATE_COLS = [
 ]
 INTER_STAGE_LABELS = ["Consult→Sim", "Sim→Draw", "Draw→Isodose", "Isodose→Review", "Review→Treatment"]
 
+
+# ---------------------------------------------------------------------------
+# Layout
+# ---------------------------------------------------------------------------
+
 layout = dmc.Stack(
-    gap="md",
+    gap=16,
+    className="page-content",
     children=[
-        dmc.Title("Workflow", order=2, c="#7C2A83", ta="center", fw=700, py="sm"),
+        dmc.Title("Workflow", order=2, className="page-title"),
         filter_bar("workflow", children=[
             date_presets("workflow"),
             date_range_picker("workflow"),
@@ -44,7 +52,7 @@ layout = dmc.Stack(
             ),
         ]),
 
-        # KPI row
+        # KPI row — 4 cards with sparklines
         dmc.Grid(id="wf-kpi-row", gutter="md", children=[
             dmc.GridCol(id="wf-kpi-consult-sim", span={"base": 6, "md": 3}),
             dmc.GridCol(id="wf-kpi-sim-tx", span={"base": 6, "md": 3}),
@@ -55,8 +63,24 @@ layout = dmc.Stack(
         # Sankey — full width
         dmc.Paper(
             children=[
-                dmc.Text("Patient Treatment Pipeline", size="sm", fw=500, c="#6B7280", mb="sm"),
-                dcc.Graph(id="wf-chart-sankey", config={"displayModeBar": False}),
+                dmc.Group(
+                    justify="space-between", mb="sm",
+                    children=[
+                        dmc.Text("Patient Treatment Pipeline", size="sm", fw=500, c="#6B7280"),
+                    ],
+                ),
+                dmc.Box(
+                    pos="relative",
+                    children=[
+                        dmc.LoadingOverlay(
+                            id="wf-sankey-loading",
+                            visible=False,
+                            loaderProps={"type": "dots", "color": "#7C2A83"},
+                            overlayProps={"radius": "sm", "blur": 2},
+                        ),
+                        dcc.Graph(id="wf-chart-sankey", config={"displayModeBar": False}),
+                    ],
+                ),
             ],
             p="md", radius="md", shadow="xs", withBorder=True,
         ),
@@ -67,7 +91,18 @@ layout = dmc.Stack(
                 dmc.Paper(
                     children=[
                         dmc.Text("Stage Duration (days)", size="sm", fw=500, c="#6B7280", mb="sm"),
-                        dcc.Graph(id="wf-chart-violin", config={"displayModeBar": False}),
+                        dmc.Box(
+                            pos="relative",
+                            children=[
+                                dmc.LoadingOverlay(
+                                    id="wf-violin-loading",
+                                    visible=False,
+                                    loaderProps={"type": "dots", "color": "#7C2A83"},
+                                    overlayProps={"radius": "sm", "blur": 2},
+                                ),
+                                dcc.Graph(id="wf-chart-violin", config={"displayModeBar": False}),
+                            ],
+                        ),
                     ],
                     p="md", radius="md", shadow="xs", withBorder=True,
                 ),
@@ -76,8 +111,34 @@ layout = dmc.Stack(
             dmc.GridCol(
                 dmc.Paper(
                     children=[
-                        dmc.Text("Pipeline Trend (monthly median)", size="sm", fw=500, c="#6B7280", mb="sm"),
-                        dcc.Graph(id="wf-chart-trend", config={"displayModeBar": False}),
+                        dmc.Group(
+                            justify="space-between", mb="sm",
+                            children=[
+                                dmc.Text("Pipeline Trend (monthly median)", size="sm", fw=500, c="#6B7280"),
+                                chart_settings_popover(
+                                    "wf-trend",
+                                    chart_types=[
+                                        {"value": "line", "label": "Line"},
+                                        {"value": "area", "label": "Area"},
+                                    ],
+                                    show_smooth=True,
+                                    smooth_max=12,
+                                    smooth_default=3,
+                                ),
+                            ],
+                        ),
+                        dmc.Box(
+                            pos="relative",
+                            children=[
+                                dmc.LoadingOverlay(
+                                    id="wf-trend-loading",
+                                    visible=False,
+                                    loaderProps={"type": "dots", "color": "#7C2A83"},
+                                    overlayProps={"radius": "sm", "blur": 2},
+                                ),
+                                dcc.Graph(id="wf-chart-trend", config={"displayModeBar": False}),
+                            ],
+                        ),
                     ],
                     p="md", radius="md", shadow="xs", withBorder=True,
                 ),
@@ -90,16 +151,54 @@ layout = dmc.Stack(
             children=[
                 dmc.Group(justify="space-between", mb="sm", children=[
                     dmc.Text("Patient Pipeline Detail", size="sm", fw=500, c="#6B7280"),
+                    dmc.Button(
+                        "Export CSV",
+                        id="wf-table-export",
+                        size="compact-xs",
+                        variant="light",
+                    ),
                 ]),
-                dmc.Box(id="wf-table-container"),
+                dag.AgGrid(
+                    id="wf-detail-grid",
+                    columnDefs=[],
+                    rowData=[],
+                    defaultColDef={"sortable": True, "filter": True, "resizable": True},
+                    dashGridOptions={"pagination": True, "paginationPageSize": 25},
+                    style={"height": 400},
+                    className="ag-theme-quartz",
+                ),
             ],
             p="md", radius="md", shadow="xs", withBorder=True,
         ),
 
         dcc.Interval(id="wf-interval", interval=300_000, n_intervals=0),
+
+        # Stores for clientside rendering
+        dcc.Store(id="wf-store-trend"),
+        dcc.Store(id="wf-store-kpi-sparklines"),
     ],
 )
 
+
+# ---------------------------------------------------------------------------
+# Helper: Date Range
+# ---------------------------------------------------------------------------
+
+def _get_date_range(date_preset, daterange, last_date):
+    """Calculate start/end based on preset or explicit range."""
+    if daterange and len(daterange) == 2 and daterange[0] and daterange[1]:
+        return pd.Timestamp(daterange[0]), pd.Timestamp(daterange[1])
+    elif date_preset == "ytd":
+        return pd.Timestamp(last_date.year, 1, 1), last_date
+    elif date_preset == "12mo":
+        return last_date - timedelta(days=365), last_date
+    else:
+        return pd.Timestamp("2020-01-01"), last_date
+
+
+# ---------------------------------------------------------------------------
+# Callbacks
+# ---------------------------------------------------------------------------
 
 @callback(
     Output("workflow-filter-diagnosis", "data"),
@@ -125,41 +224,42 @@ def populate_diagnosis_options(_n):
     Output("wf-kpi-pipeline", "children"),
     Output("wf-chart-sankey", "figure"),
     Output("wf-chart-violin", "figure"),
-    Output("wf-chart-trend", "figure"),
-    Output("wf-table-container", "children"),
+    Output("wf-store-trend", "data"),
+    Output("wf-detail-grid", "rowData"),
+    Output("wf-detail-grid", "columnDefs"),
+    Output("wf-store-kpi-sparklines", "data"),
     Input("wf-interval", "n_intervals"),
     Input("workflow-filter-department", "value"),
     Input("workflow-filter-date-preset", "value"),
     Input("workflow-filter-daterange", "value"),
     Input("workflow-filter-physician", "value"),
     Input("workflow-filter-diagnosis", "value"),
+    running=[
+        (Output("wf-sankey-loading", "visible"), True, False),
+        (Output("wf-violin-loading", "visible"), True, False),
+        (Output("wf-trend-loading", "visible"), True, False),
+    ],
 )
 def update_workflow(_n, departments, date_preset, daterange, physicians, diagnosis):
     from data.loader import load_workflow
-    import dash_ag_grid as dag
 
     try:
         wf = load_workflow()
     except Exception:
         empty = empty_figure("Workflow data unavailable")
         na = kpi_card("—", "N/A")
-        return na, na, na, na, empty, empty, empty, []
+        return na, na, na, na, empty, empty, None, [], [], {}
 
-    # Date filtering — explicit range overrides preset
-    today = pd.Timestamp.now().normalize()
-    if daterange and len(daterange) == 2 and daterange[0] and daterange[1]:
-        start = pd.Timestamp(daterange[0])
-        end = pd.Timestamp(daterange[1])
-    elif date_preset == "ytd":
-        start = pd.Timestamp(today.year, 1, 1)
-        end = today
-    elif date_preset == "12mo":
-        start = today - timedelta(days=365)
-        end = today
-    else:
-        start = pd.Timestamp("2020-01-01")
-        end = today
+    if wf.empty:
+        empty = empty_figure("No workflow data")
+        na = kpi_card("—", "N/A")
+        return na, na, na, na, empty, empty, None, [], [], {}
 
+    # Get date range
+    last_date = wf["ScheduledDateTime"].max() if "ScheduledDateTime" in wf.columns else pd.Timestamp.now().normalize()
+    start, end = _get_date_range(date_preset, daterange, last_date)
+
+    # Apply filters
     if departments and "Department" in wf.columns:
         wf = wf[wf["Department"].isin(departments)]
 
@@ -176,70 +276,175 @@ def update_workflow(_n, departments, date_preset, daterange, physicians, diagnos
     else:
         wf_period = wf
 
-    # --- KPIs ---
+    sparkline_data = {}
+
+    # --- KPIs with sparklines ---
     def safe_median(col):
         if col in wf_period.columns:
             vals = pd.to_numeric(wf_period[col], errors="coerce").dropna()
-            return f"{vals.median():.0f}" if len(vals) > 0 else "N/A"
-        return "N/A"
+            return vals.median() if len(vals) > 0 else None
+        return None
 
-    kpi_cs = kpi_card("Consult→Sim (median days)", safe_median("DaysToSimulation"))
-    kpi_st = kpi_card("Sim→Treatment (median days)", safe_median("DaysFromReviewToTreatment"))
+    def build_sparkline(col, color):
+        if col not in wf_period.columns or "ScheduledDateTime" not in wf_period.columns:
+            return None
+        temp = wf_period[["ScheduledDateTime", col]].copy()
+        temp[col] = pd.to_numeric(temp[col], errors="coerce")
+        temp = temp.dropna()
+        if temp.empty:
+            return None
+        temp["month"] = temp["ScheduledDateTime"].dt.to_period("M").dt.to_timestamp()
+        monthly = temp.groupby("month")[col].median()
+        return {
+            "labels": [d.isoformat() for d in monthly.index],
+            "values": monthly.tolist(),
+            "color": color,
+        }
 
+    cs_median = safe_median("DaysToSimulation")
+    cs_spark = build_sparkline("DaysToSimulation", CHART_COLORWAY[0])
+    if cs_spark:
+        sparkline_data["consult_sim"] = cs_spark
+    kpi_cs = kpi_card(
+        "Consult→Sim (median days)",
+        f"{cs_median:.0f}" if cs_median else "N/A",
+        accent_color=CHART_COLORWAY[0],
+        sparkline_id="wf-spark-consult-sim",
+    )
+
+    st_median = safe_median("DaysFromReviewToTreatment")
+    st_spark = build_sparkline("DaysFromReviewToTreatment", CHART_COLORWAY[1])
+    if st_spark:
+        sparkline_data["sim_tx"] = st_spark
+    kpi_st = kpi_card(
+        "Review→Tx (median days)",
+        f"{st_median:.0f}" if st_median else "N/A",
+        accent_color=CHART_COLORWAY[1],
+        sparkline_id="wf-spark-sim-tx",
+    )
+
+    # Total pipeline
     if "ScheduledDateTime" in wf_period.columns and "FirstTreatmentDate" in wf_period.columns:
-        total_days = (wf_period["FirstTreatmentDate"] - wf_period["ScheduledDateTime"]).dt.days.dropna()
-        total_median = f"{total_days.median():.0f}" if len(total_days) > 0 else "N/A"
+        wf_period = wf_period.copy()
+        wf_period["total_days"] = (wf_period["FirstTreatmentDate"] - wf_period["ScheduledDateTime"]).dt.days
+        total_days = wf_period["total_days"].dropna()
+        total_median = total_days.median() if len(total_days) > 0 else None
+        if not total_days.empty:
+            wf_period["month"] = wf_period["ScheduledDateTime"].dt.to_period("M").dt.to_timestamp()
+            monthly_total = wf_period.groupby("month")["total_days"].median()
+            sparkline_data["total"] = {
+                "labels": [d.isoformat() for d in monthly_total.index],
+                "values": monthly_total.tolist(),
+                "color": CHART_COLORWAY[2],
+            }
     else:
-        total_median = "N/A"
-    kpi_total = kpi_card("Total Pipeline (median days)", total_median)
+        total_median = None
+    kpi_total = kpi_card(
+        "Total Pipeline (median days)",
+        f"{total_median:.0f}" if total_median else "N/A",
+        accent_color=CHART_COLORWAY[2],
+        sparkline_id="wf-spark-total",
+    )
 
     pipeline_count = len(wf_period[wf_period["FirstTreatmentDate"].isna()]) if "FirstTreatmentDate" in wf_period.columns else 0
-    kpi_pipe = kpi_card("In Pipeline", str(pipeline_count))
+    kpi_pipe = kpi_card("In Pipeline", str(pipeline_count), accent_color=PRIMARY)
 
-    # --- Sankey ---
+    # --- Charts ---
     fig_sankey = _build_sankey(wf_period)
-
-    # --- Violin ---
     fig_violin = _build_violin(wf_period)
-
-    # --- Trend ---
-    fig_trend = _build_trend(wf_period)
+    trend_data = _prepare_trend_data(wf_period)
 
     # --- Detail table ---
-    table_cols = []
-    for col in ["PatientFullName", "ScheduledDateTime", "SimulationDate",
-                 "DaysToSimulation", "DrawVolumesCompletedDate",
-                 "IsodosePlanCompletedDate", "ReviewPlanCompletedDate",
-                 "FirstTreatmentDate"]:
-        if col in wf_period.columns:
-            table_cols.append(col)
+    row_data, col_defs = _build_table_data(wf_period)
 
-    if table_cols:
-        table_df = wf_period[table_cols].head(200).copy()
-        for c in table_df.select_dtypes(include=["datetime64"]).columns:
-            table_df[c] = table_df[c].dt.strftime("%m/%d/%Y")
-        table_df = table_df.fillna("—")
+    return kpi_cs, kpi_st, kpi_total, kpi_pipe, fig_sankey, fig_violin, trend_data, row_data, col_defs, sparkline_data
 
-        table = dag.AgGrid(
-            id="wf-detail-grid",
-            rowData=table_df.to_dict("records"),
-            columnDefs=[{"field": c, "headerName": c.replace("CompletedDate", "").replace("DateTime", "")} for c in table_cols],
-            defaultColDef={"sortable": True, "filter": True, "resizable": True},
-            dashGridOptions={"pagination": True, "paginationPageSize": 25, "domLayout": "autoHeight"},
-            className="ag-theme-alpine",
-        )
-    else:
-        table = dmc.Text("No workflow data available", c="#9CA3AF", ta="center", py="xl")
 
-    return kpi_cs, kpi_st, kpi_total, kpi_pipe, fig_sankey, fig_violin, fig_trend, table
+# ---------------------------------------------------------------------------
+# Clientside callbacks for sparklines
+# ---------------------------------------------------------------------------
 
+clientside_callback(
+    """function(data, _trigger) {
+        if (!data || !data.consult_sim) return window.dash_clientside.no_update;
+        var spark = data.consult_sim;
+        return {
+            data: [{x: spark.labels, y: spark.values, mode: "lines", line: {color: spark.color, width: 1.5}}],
+            layout: {margin: {l: 0, r: 0, t: 0, b: 0}, height: 34, plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)", xaxis: {visible: false}, yaxis: {visible: false}, showlegend: false, hovermode: "x"}
+        };
+    }""",
+    Output("wf-spark-consult-sim", "figure"),
+    Input("wf-store-kpi-sparklines", "data"),
+    Input("workflow-filter-date-preset", "value"),
+)
+
+clientside_callback(
+    """function(data, _trigger) {
+        if (!data || !data.sim_tx) return window.dash_clientside.no_update;
+        var spark = data.sim_tx;
+        return {
+            data: [{x: spark.labels, y: spark.values, mode: "lines", line: {color: spark.color, width: 1.5}}],
+            layout: {margin: {l: 0, r: 0, t: 0, b: 0}, height: 34, plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)", xaxis: {visible: false}, yaxis: {visible: false}, showlegend: false, hovermode: "x"}
+        };
+    }""",
+    Output("wf-spark-sim-tx", "figure"),
+    Input("wf-store-kpi-sparklines", "data"),
+    Input("workflow-filter-date-preset", "value"),
+)
+
+clientside_callback(
+    """function(data, _trigger) {
+        if (!data || !data.total) return window.dash_clientside.no_update;
+        var spark = data.total;
+        return {
+            data: [{x: spark.labels, y: spark.values, mode: "lines", line: {color: spark.color, width: 1.5}}],
+            layout: {margin: {l: 0, r: 0, t: 0, b: 0}, height: 34, plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)", xaxis: {visible: false}, yaxis: {visible: false}, showlegend: false, hovermode: "x"}
+        };
+    }""",
+    Output("wf-spark-total", "figure"),
+    Input("wf-store-kpi-sparklines", "data"),
+    Input("workflow-filter-date-preset", "value"),
+)
+
+
+# ---------------------------------------------------------------------------
+# Clientside callback for trend chart
+# ---------------------------------------------------------------------------
+
+clientside_callback(
+    ClientsideFunction(namespace="census", function_name="smoothChartWithType"),
+    Output("wf-chart-trend", "figure"),
+    Input("wf-store-trend", "data"),
+    Input("wf-trend-settings-smooth", "value"),
+    Input("wf-trend-settings-type", "value"),
+    State("wf-chart-trend", "figure"),
+)
+
+
+# ---------------------------------------------------------------------------
+# Settings panel toggle
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("wf-trend-settings-panel", "style"),
+    Input("wf-trend-settings-btn", "n_clicks"),
+    State("wf-trend-settings-panel", "style"),
+    prevent_initial_call=True,
+)
+def toggle_trend_settings(n, style):
+    if not n:
+        return style
+    current = style or {}
+    is_hidden = current.get("display") == "none"
+    return {"display": "block"} if is_hidden else {"display": "none"}
+
+
+# ---------------------------------------------------------------------------
+# Chart builders
+# ---------------------------------------------------------------------------
 
 def _build_sankey(wf):
-    """Build a Sankey diagram of the treatment pipeline.
-
-    All stages flow forward or to a single 'Pending' node (gray).
-    Node labels show the count and percentage of initial consults.
-    """
+    """Build a Sankey diagram of the treatment pipeline."""
     if wf.empty:
         return empty_figure("No workflow data")
 
@@ -275,7 +480,6 @@ def _build_sankey(wf):
         progressed = int((reached_current & reached_next).sum())
         pending = int((reached_current & ~reached_next).sum())
 
-        # Flow to next stage
         if progressed > 0:
             sources.append(i)
             targets.append(i + 1)
@@ -285,7 +489,6 @@ def _build_sankey(wf):
             r, g, b = int(hex_c[0:2], 16), int(hex_c[2:4], 16), int(hex_c[4:6], 16)
             link_colors.append(f"rgba({r},{g},{b},0.3)")
 
-        # Flow to single Pending node
         if pending > 0:
             sources.append(i)
             targets.append(pending_idx)
@@ -293,15 +496,8 @@ def _build_sankey(wf):
             link_colors.append("rgba(209,213,219,0.4)")
 
     fig = go.Figure(go.Sankey(
-        node=dict(
-            pad=20, thickness=30,
-            label=node_labels,
-            color=node_colors,
-        ),
-        link=dict(
-            source=sources, target=targets,
-            value=values, color=link_colors,
-        ),
+        node=dict(pad=20, thickness=30, label=node_labels, color=node_colors),
+        link=dict(source=sources, target=targets, value=values, color=link_colors),
     ))
     fig.update_layout(
         height=450,
@@ -335,18 +531,14 @@ def _build_violin(wf):
                 ))
 
     apply_default_layout(fig, height=350)
-    fig.update_layout(
-        yaxis_title="Days",
-        margin=dict(l=48, r=16, t=16, b=48),
-        showlegend=False,
-    )
+    fig.update_layout(yaxis_title="Days", margin=dict(l=48, r=16, t=16, b=48), showlegend=False)
     return fig
 
 
-def _build_trend(wf):
-    """Monthly median pipeline duration trend."""
+def _prepare_trend_data(wf):
+    """Prepare trend data for clientside rendering."""
     if "ScheduledDateTime" not in wf.columns or "FirstTreatmentDate" not in wf.columns:
-        return empty_figure()
+        return None
 
     wf = wf.copy()
     wf["total_days"] = (wf["FirstTreatmentDate"] - wf["ScheduledDateTime"]).dt.days
@@ -354,35 +546,95 @@ def _build_trend(wf):
     wf = wf.dropna(subset=["total_days"])
 
     if wf.empty:
-        return empty_figure()
+        return None
 
-    monthly = wf.groupby("month")["total_days"].median().reset_index()
+    monthly = wf.groupby("month")["total_days"].median()
+    dates = [d.isoformat() for d in monthly.index]
 
-    fig = go.Figure(go.Scatter(
-        x=monthly["month"], y=monthly["total_days"],
-        mode="lines+markers",
-        line=dict(color=CHART_COLORWAY[0], width=2),
-        marker=dict(size=5),
-        name="Total Pipeline",
-    ))
+    series = [{
+        "name": "Total Pipeline",
+        "values": monthly.tolist(),
+        "color": CHART_COLORWAY[0],
+    }]
 
-    # Add individual stage medians if available
+    # Add individual stage medians
     for col, label, color_idx in [
         ("DaysToSimulation", "Consult→Sim", 1),
         ("DaysFromReviewToTreatment", "Review→Tx", 2),
     ]:
         if col in wf.columns:
-            stage_monthly = wf.groupby("month")[col].median().reset_index()
-            stage_monthly[col] = pd.to_numeric(stage_monthly[col], errors="coerce")
-            fig.add_trace(go.Scatter(
-                x=stage_monthly["month"], y=stage_monthly[col],
-                mode="lines", name=label,
-                line=dict(color=CHART_COLORWAY[color_idx], width=1.5, dash="dash"),
-            ))
+            stage_data = wf.groupby("month")[col].median()
+            stage_data = pd.to_numeric(stage_data, errors="coerce")
+            series.append({
+                "name": label,
+                "values": stage_data.reindex(monthly.index, fill_value=0).tolist(),
+                "color": CHART_COLORWAY[color_idx],
+            })
 
-    apply_default_layout(fig, height=350)
-    fig.update_layout(
-        yaxis_title="Median Days",
-        margin=dict(l=48, r=16, t=16, b=48),
-    )
-    return fig
+    return {
+        "dates": dates,
+        "series": series,
+        "height": 350,
+        "yTitle": "Median Days",
+    }
+
+
+def _build_table_data(wf):
+    """Build table row data and column definitions."""
+    table_cols = []
+    col_header_map = {
+        "PatientFullName": "Patient",
+        "ScheduledDateTime": "Consult",
+        "SimulationDate": "Simulation",
+        "DaysToSimulation": "Days to Sim",
+        "DrawVolumesCompletedDate": "Draw",
+        "IsodosePlanCompletedDate": "Isodose",
+        "ReviewPlanCompletedDate": "Review",
+        "FirstTreatmentDate": "First Tx",
+    }
+
+    for col in col_header_map:
+        if col in wf.columns:
+            table_cols.append(col)
+
+    if not table_cols:
+        return [], []
+
+    table_df = wf[table_cols].head(200).copy()
+    for c in table_df.select_dtypes(include=["datetime64"]).columns:
+        table_df[c] = table_df[c].dt.strftime("%m/%d/%Y")
+    table_df = table_df.fillna("—")
+
+    col_defs = [{"field": c, "headerName": col_header_map.get(c, c)} for c in table_cols]
+
+    return table_df.to_dict("records"), col_defs
+
+
+# ---------------------------------------------------------------------------
+# PNG Export
+# ---------------------------------------------------------------------------
+
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        var wrapper = document.getElementById('wf-chart-trend');
+        var graphEl = wrapper ? wrapper.querySelector('.js-plotly-plot') : null;
+        if (graphEl) Plotly.downloadImage(graphEl, {format: 'png', width: 1200, height: 600, filename: 'pipeline_trend'});
+        return window.dash_clientside.no_update;
+    }""",
+    Output("wf-trend-settings-export", "n_clicks"),
+    Input("wf-trend-settings-export", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        var gridApi = window.dash_ag_grid && window.dash_ag_grid['wf-detail-grid'];
+        if (gridApi && gridApi.api) gridApi.api.exportDataAsCsv({fileName: 'pipeline_detail.csv'});
+        return window.dash_clientside.no_update;
+    }""",
+    Output("wf-table-export", "n_clicks"),
+    Input("wf-table-export", "n_clicks"),
+    prevent_initial_call=True,
+)

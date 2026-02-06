@@ -77,3 +77,68 @@ Template C (timeline/band chart)
 - **Source:** Daily Volume - Past joined with Treatment
 - **Sortable, filterable**
 - **Export:** CSV download button
+
+---
+
+## Implementation Notes
+
+**Reference file:** `pages/operations.py` (~387 lines)
+
+### Upgrade Needed
+
+Current implementation uses server-side rendering only. Upgrade to home.py patterns:
+- [ ] Add `dcc.Store` for ribbon chart raw data
+- [ ] Add clientside callback for smoothing slider on ribbon
+- [ ] Add `chart_settings_popover()` to treatment and ribbon charts
+- [ ] Add KPI sparklines
+
+### Current Architecture
+
+- **No stores or clientside callbacks** — all server-side rendering
+- Single main callback with `dcc.Interval` (300s refresh) + 4 filter inputs
+- Physician filter accepted but not applied to Treatment data (aggregated by department)
+
+### Key Data Loaders
+
+```python
+from data.loader import load_treatment, load_daily_volume, load_daily_volume_future, load_availability
+```
+
+### Operating Hours Ribbon Implementation
+
+Uses `make_subplots(rows=len(sites))` with stacked scatter fills:
+
+```python
+# Convert time columns to decimal hours for Y-axis
+site_data["start_hour"] = site_data["FirstActualStart"].dt.hour + site_data["FirstActualStart"].dt.minute / 60
+site_data["end_hour"] = site_data["LastActualEnd"].dt.hour + site_data["LastActualEnd"].dt.minute / 60
+
+# Create ribbon with fill between start and end
+fig.add_trace(go.Scatter(x=dates, y=start_hours, fill=None, ...))
+fig.add_trace(go.Scatter(x=dates, y=end_hours, fill='tonexty', ...))
+```
+
+### Site-Level Department Filtering
+
+Treatment.csv contains both site-level (`Lacey`) and machine-level (`Lacey - 21EX`) entries:
+
+```python
+site_depts = [d for d in tx["Department"].unique() if d in DEPARTMENTS]
+```
+
+### Availability Grouping
+
+Groups by `Category` column (Exam vs Simulation) when present.
+
+### Filter Wiring
+
+```python
+@callback(
+    Output("operations-kpi-row", "children"),
+    # ... other outputs
+    Input("operations-interval", "n_intervals"),
+    Input("operations-filter-date-preset", "value"),
+    Input("operations-filter-department", "value"),
+    Input("operations-filter-machine", "value"),
+)
+```

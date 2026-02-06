@@ -65,3 +65,60 @@ Template A (KPI + Charts + Table)
 - **Columns:** Patient, Course ID, Start Date, Status, Treating MD, Technique, Prescribed Fx, Delivered Fx, Duration (days), Department(s), Machine(s), Diagnosis, Prescription Site
 - **Sortable, filterable**
 - **Export:** CSV
+
+---
+
+## Implementation Guidance
+
+**Complexity:** Medium — comma-separated Departments, diagnosis join
+
+### Data Loading
+
+```python
+from data.loader import load_courses, load_diagnosis_lookup
+
+courses = load_courses()  # Incremental/Courses/
+diagnosis = load_diagnosis_lookup()  # Lookup/Lookup - Diagnosis.csv
+```
+
+### Key Columns
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `Departments` | string | Comma-separated (e.g., "Lacey, Centralia") — take first for filtering |
+| `CourseStartDateTime` | datetime | Normalized to `CourseStartDate` by loader |
+| `ClinicalStatus` | string | "ACTIVE" or "COMPLETED" |
+| `TreatingPhysician` | string | For physician filter |
+| `TreatmentTechniques` | string | Comma-separated techniques |
+| `DiagnosisCodes` | string | Comma-separated ICD codes |
+
+### Department Extraction
+
+Departments is comma-separated — extract primary:
+
+```python
+courses["Department"] = courses["Departments"].str.split(",").str[0].str.strip()
+```
+
+### Multi-Site Detection
+
+```python
+courses["IsMultiSite"] = courses["Departments"].str.contains(",", na=False)
+```
+
+### Diagnosis Join
+
+DiagnosisCodes may be comma-separated — split before joining:
+
+```python
+# Explode to join each code
+course_dx = courses.assign(
+    DiagnosisCode=courses["DiagnosisCodes"].str.split(",")
+).explode("DiagnosisCode")
+course_dx["DiagnosisCode"] = course_dx["DiagnosisCode"].str.strip()
+course_dx = course_dx.merge(diagnosis, on="DiagnosisCode", how="left")
+```
+
+### Filter Wiring
+
+Standard pattern with additional Status and Technique filters.

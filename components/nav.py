@@ -1,13 +1,13 @@
-"""Sidebar navigation component."""
+"""Sidebar navigation component with grouped sections."""
 
 import dash_mantine_components as dmc
-from dash import callback, html, Input, Output, State
+from dash import callback, html, Input, Output
 from dash_iconify import DashIconify
 
-from config.settings import NAV_PAGES, PRIMARY, NEUTRAL
+from config.settings import NAV_SECTIONS, NEUTRAL
 
 
-def create_nav_link(page, active_path):
+def _create_nav_link(page, active_path):
     """Create a single nav link."""
     is_active = page["path"] == active_path
     text_color = "#1A1A2E" if is_active else "white"
@@ -15,20 +15,49 @@ def create_nav_link(page, active_path):
     return dmc.NavLink(
         label=page["label"],
         href=page["path"],
-        leftSection=DashIconify(icon=page["icon"], width=20, color=icon_color),
+        leftSection=DashIconify(icon=page["icon"], width=18, color=icon_color),
         active=is_active,
         variant="filled" if is_active else "subtle",
         color="white",
+        className="nav-link-item nav-link-active" if is_active else "nav-link-item",
         styles={
             "root": {
                 "borderRadius": "6px",
                 "marginBottom": "2px",
                 "color": text_color,
-                "backgroundColor": "rgba(255,255,255,0.2)" if is_active else "transparent",
+                "backgroundColor": "rgba(255,255,255,0.35)" if is_active else "transparent",
+                "paddingLeft": "12px",
             },
-            "label": {"color": text_color, "fontWeight": "600" if is_active else "400"},
+            "label": {"color": text_color, "fontWeight": "600" if is_active else "400", "fontSize": "13px"},
         },
     )
+
+
+def _create_section_header(section_name):
+    """Create a section header label."""
+    return dmc.Text(
+        section_name,
+        size="xs",
+        fw=600,
+        c="rgba(255,255,255,0.5)",
+        pl=12,
+        pt=12,
+        pb=4,
+        style={"letterSpacing": "0.5px"},
+    )
+
+
+def _build_nav_items(active_path):
+    """Build all nav items with section headers."""
+    items = []
+    for section in NAV_SECTIONS:
+        # Add section header (skip for OVERVIEW to keep Home at top without label)
+        if section["section"] != "OVERVIEW":
+            items.append(_create_section_header(section["section"]))
+        # Add page links
+        for page in section["pages"]:
+            items.append(_create_nav_link(page, active_path))
+    return items
 
 
 def create_sidebar():
@@ -36,32 +65,39 @@ def create_sidebar():
     return dmc.AppShellNavbar(
         children=[
             dmc.Stack(
-                gap="xs",
+                gap=0,
                 children=[
                     # Brand header with logo — white background
                     dmc.Group(
                         children=[
                             html.Img(
                                 src="/assets/radiantcare.png",
-                                style={"height": "32px", "objectFit": "contain"},
+                                style={"height": "38px", "objectFit": "contain"},
                             ),
                         ],
                         gap="sm",
-                        px="md",
+                        pl=12,
+                        pr="md",
                         py="md",
-                        justify="center",
+                        justify="flex-start",
                         style={
                             "backgroundColor": "#FFFFFF",
                             "borderBottom": "1px solid #E0E0E0",
                         },
                     ),
                     # Navigation links
-                    dmc.Stack(
-                        id="nav-links",
-                        gap=2,
-                        px="xs",
-                        py="sm",
-                        style={"flex": 1, "overflowY": "auto"},
+                    dmc.ScrollArea(
+                        id="nav-scroll-area",
+                        type="scroll",
+                        offsetScrollbars=True,
+                        style={"flex": 1},
+                        children=dmc.Stack(
+                            id="nav-links",
+                            gap=0,
+                            px="xs",
+                            pt="md",
+                            pb="md",
+                        ),
                     ),
                     # Bottom section
                     dmc.Divider(color=NEUTRAL["bg_nav_hover"]),
@@ -73,14 +109,14 @@ def create_sidebar():
                             dmc.NavLink(
                                 label="Help",
                                 leftSection=DashIconify(
-                                    icon="tabler:help-circle", width=20, color="white"
+                                    icon="tabler:help-circle", width=18, color="white"
                                 ),
                                 variant="subtle",
                                 color="white",
                                 id="nav-help-btn",
                                 styles={
                                     "root": {"borderRadius": "6px", "color": "white"},
-                                    "label": {"color": "white"},
+                                    "label": {"color": "white", "fontSize": "13px"},
                                 },
                             ),
                         ],
@@ -103,4 +139,4 @@ def update_nav_links(pathname):
     """Update nav links to reflect the active page."""
     if pathname is None:
         pathname = "/"
-    return [create_nav_link(page, pathname) for page in NAV_PAGES]
+    return _build_nav_items(pathname)

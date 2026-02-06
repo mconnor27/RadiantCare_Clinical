@@ -15,6 +15,7 @@ from config.settings import (
 )
 from components.filter_bar import department_chips
 from components.kpi_card import kpi_card
+from components.chart_settings import chart_settings_popover
 from utils.charts import apply_default_layout, empty_figure, dept_color
 from statsmodels.nonparametric.smoothers_lowess import lowess as _lowess
 
@@ -453,7 +454,7 @@ def _build_availability_calendar(departments):
             font=dict(family=FONT_FAMILY, size=11),
             plot_bgcolor="#FFFFFF",
             paper_bgcolor="#FFFFFF",
-            margin=dict(l=60, r=16, t=50, b=40),
+            margin=dict(l=45, r=8, t=36, b=32),
             annotations=annotations,
         )
 
@@ -471,9 +472,10 @@ def _build_availability_calendar(departments):
 # Layout
 # ---------------------------------------------------------------------------
 layout = dmc.Stack(
-    gap="md",
+    gap=16,
+    className="page-content",
     children=[
-        dmc.Title("Home", order=2, c="#7C2A83", ta="center", fw=700, py="sm"),
+        dmc.Title("Home", order=2, className="page-title"),
 
         # Filter bar — date presets + smoothing slider
         dmc.Paper(
@@ -507,13 +509,13 @@ layout = dmc.Stack(
                     gap="lg", wrap="wrap",
                 ),
             ],
-            p="sm", px="md", radius="md", shadow="xs", withBorder=True, mb="md",
+            p="sm", px="md", radius="md", shadow="xs", withBorder=True,
         ),
 
         # KPI row — 5 cards with sparklines
         dmc.Grid(
             id="home-kpi-row",
-            gutter="md",
+            gutter=16,
             children=[
                 dmc.GridCol(id="home-kpi-consults-week", span={"base": 12, "sm": 6, "md": 2.4}),
                 dmc.GridCol(id="home-kpi-sims-week", span={"base": 12, "sm": 6, "md": 2.4}),
@@ -525,7 +527,7 @@ layout = dmc.Stack(
 
         # Census charts — side by side
         dmc.Grid(
-            gutter="md",
+            gutter=16,
             children=[
                 dmc.GridCol(
                     span={"base": 12, "md": 6},
@@ -548,13 +550,16 @@ layout = dmc.Stack(
                                             ],
                                             value="90", size="xs",
                                         ),
-                                        dmc.Text("Smooth", size="xs", c="#9CA3AF", fw=500),
-                                        dmc.Slider(
-                                            id="home-md-smooth",
-                                            min=0, max=50, step=1, value=15,
-                                            size="xs", w=80,
-                                            showLabelOnHover=False,
-                                            updatemode="drag",
+                                        chart_settings_popover(
+                                            "home-md",
+                                            chart_types=[
+                                                {"value": "area", "label": "Area"},
+                                                {"value": "line", "label": "Line"},
+                                                {"value": "bar", "label": "Bar"},
+                                            ],
+                                            show_smooth=True,
+                                            smooth_max=50,
+                                            smooth_default=15,
                                         ),
                                     ]),
                                 ],
@@ -572,7 +577,7 @@ layout = dmc.Stack(
                                 ],
                             ),
                         ],
-                        p="md", radius="md", shadow="xs", withBorder=True,
+                        p="sm", radius="md", shadow="xs", withBorder=True,
                     ),
                 ),
                 dmc.GridCol(
@@ -596,13 +601,16 @@ layout = dmc.Stack(
                                             ],
                                             value="90", size="xs",
                                         ),
-                                        dmc.Text("Smooth", size="xs", c="#9CA3AF", fw=500),
-                                        dmc.Slider(
-                                            id="home-site-smooth",
-                                            min=0, max=50, step=1, value=15,
-                                            size="xs", w=80,
-                                            showLabelOnHover=False,
-                                            updatemode="drag",
+                                        chart_settings_popover(
+                                            "home-site",
+                                            chart_types=[
+                                                {"value": "area", "label": "Area"},
+                                                {"value": "line", "label": "Line"},
+                                                {"value": "bar", "label": "Bar"},
+                                            ],
+                                            show_smooth=True,
+                                            smooth_max=50,
+                                            smooth_default=15,
                                         ),
                                     ]),
                                 ],
@@ -620,7 +628,7 @@ layout = dmc.Stack(
                                 ],
                             ),
                         ],
-                        p="md", radius="md", shadow="xs", withBorder=True,
+                        p="sm", radius="md", shadow="xs", withBorder=True,
                     ),
                 ),
             ],
@@ -628,8 +636,7 @@ layout = dmc.Stack(
 
         # Operating hours + Availability row
         dmc.Grid(
-            gutter="md",
-            mt="md",
+            gutter=16,
             children=[
                 # Left: Operating Hours Ribbon
                 dmc.GridCol(
@@ -665,13 +672,16 @@ layout = dmc.Stack(
                                             ],
                                             value="30", size="xs",
                                         ),
-                                        dmc.Text("Smooth", size="xs", c="#9CA3AF", fw=500),
-                                        dmc.Slider(
-                                            id="home-hours-smooth",
-                                            min=0, max=7, step=1, value=3,
-                                            size="xs", w=60,
-                                            showLabelOnHover=True,
-                                            updatemode="drag",
+                                        chart_settings_popover(
+                                            "home-hours",
+                                            chart_types=[
+                                                {"value": "ribbon", "label": "Ribbon"},
+                                                {"value": "line", "label": "Line"},
+                                                {"value": "bar", "label": "Bar"},
+                                            ],
+                                            show_smooth=True,
+                                            smooth_max=7,
+                                            smooth_default=3,
                                         ),
                                     ]),
                                 ],
@@ -689,7 +699,7 @@ layout = dmc.Stack(
                                 ],
                             ),
                         ],
-                        p="md", radius="md", shadow="xs", withBorder=True,
+                        p="sm", radius="md", shadow="xs", withBorder=True,
                     ),
                 ),
                 # Right: Availability Calendar
@@ -697,7 +707,17 @@ layout = dmc.Stack(
                     span={"base": 12, "md": 6},
                     children=dmc.Paper(
                         children=[
-                            dmc.Text("Slot Availability (4 Weeks)", size="sm", fw=500, c="#6B7280", mb="sm"),
+                            dmc.Group(
+                                justify="space-between", mb="sm",
+                                children=[
+                                    dmc.Text("Slot Availability (4 Weeks)", size="sm", fw=500, c="#6B7280"),
+                                    chart_settings_popover(
+                                        "home-avail",
+                                        chart_types=None,
+                                        show_smooth=False,
+                                    ),
+                                ],
+                            ),
                             dmc.Box(
                                 pos="relative",
                                 children=[
@@ -711,7 +731,7 @@ layout = dmc.Stack(
                                 ],
                             ),
                         ],
-                        p="md", radius="md", shadow="xs", withBorder=True,
+                        p="sm", radius="md", shadow="xs", withBorder=True,
                     ),
                 ),
             ],
@@ -1112,12 +1132,13 @@ def update_physician_data(_n, range_days, departments):
         return None
 
 
-# Clientside callback for physician chart smoothing
+# Clientside callback for physician chart smoothing with chart type
 clientside_callback(
-    ClientsideFunction(namespace="census", function_name="smoothChart"),
+    ClientsideFunction(namespace="census", function_name="smoothChartWithType"),
     Output("home-chart-physician", "figure"),
     Input("home-store-md-census", "data"),
-    Input("home-md-smooth", "value"),
+    Input("home-md-settings-smooth", "value"),
+    Input("home-md-settings-type", "value"),
     State("home-chart-physician", "figure"),
 )
 
@@ -1160,12 +1181,13 @@ def update_site_data(_n, range_days, departments):
         return None
 
 
-# Clientside callback for site chart smoothing
+# Clientside callback for site chart smoothing with chart type
 clientside_callback(
-    ClientsideFunction(namespace="census", function_name="smoothChart"),
+    ClientsideFunction(namespace="census", function_name="smoothChartWithType"),
     Output("home-chart-site", "figure"),
     Input("home-store-site-census", "data"),
-    Input("home-site-smooth", "value"),
+    Input("home-site-settings-smooth", "value"),
+    Input("home-site-settings-type", "value"),
     State("home-chart-site", "figure"),
 )
 
@@ -1290,10 +1312,10 @@ def _build_treatment_census_data(df_past, df_future, groups, colors, height=380)
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output("home-hours-smooth", "max"),
-    Output("home-hours-smooth", "value"),
+    Output("home-hours-settings-smooth", "max"),
+    Output("home-hours-settings-smooth", "value"),
     Input("home-hours-range", "value"),
-    State("home-hours-smooth", "value"),
+    State("home-hours-settings-smooth", "value"),
 )
 def update_smooth_slider_range(range_days, current_value):
     """Adjust smoothing slider max based on selected time range."""
@@ -1337,12 +1359,13 @@ def update_hours_data(_n, range_days, site_filter):
     return _prepare_hours_data(sites, days_back=days)
 
 
-# Clientside callback for hours ribbon smoothing
+# Clientside callback for hours ribbon smoothing with chart type
 clientside_callback(
-    ClientsideFunction(namespace="hoursRibbon", function_name="smoothChart"),
+    ClientsideFunction(namespace="hoursRibbon", function_name="smoothChartWithType"),
     Output("home-chart-hours", "figure"),
     Input("home-store-hours", "data"),
-    Input("home-hours-smooth", "value"),
+    Input("home-hours-settings-smooth", "value"),
+    Input("home-hours-settings-type", "value"),
 )
 
 
@@ -1359,3 +1382,128 @@ clientside_callback(
 def update_availability_calendar(_n, departments):
     """Update slot availability calendar (shows both Exam and Sim)."""
     return _build_availability_calendar(departments)
+
+
+# ---------------------------------------------------------------------------
+# Settings Panel Toggle Callbacks
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("home-md-settings-panel", "style"),
+    Input("home-md-settings-btn", "n_clicks"),
+    State("home-md-settings-panel", "style"),
+    prevent_initial_call=True,
+)
+def toggle_md_settings(n, style):
+    if not n:
+        return style
+    current = style or {}
+    is_hidden = current.get("display") == "none"
+    return {"display": "block"} if is_hidden else {"display": "none"}
+
+
+@callback(
+    Output("home-site-settings-panel", "style"),
+    Input("home-site-settings-btn", "n_clicks"),
+    State("home-site-settings-panel", "style"),
+    prevent_initial_call=True,
+)
+def toggle_site_settings(n, style):
+    if not n:
+        return style
+    current = style or {}
+    is_hidden = current.get("display") == "none"
+    return {"display": "block"} if is_hidden else {"display": "none"}
+
+
+@callback(
+    Output("home-hours-settings-panel", "style"),
+    Input("home-hours-settings-btn", "n_clicks"),
+    State("home-hours-settings-panel", "style"),
+    prevent_initial_call=True,
+)
+def toggle_hours_settings(n, style):
+    if not n:
+        return style
+    current = style or {}
+    is_hidden = current.get("display") == "none"
+    return {"display": "block"} if is_hidden else {"display": "none"}
+
+
+@callback(
+    Output("home-avail-settings-panel", "style"),
+    Input("home-avail-settings-btn", "n_clicks"),
+    State("home-avail-settings-panel", "style"),
+    prevent_initial_call=True,
+)
+def toggle_avail_settings(n, style):
+    if not n:
+        return style
+    current = style or {}
+    is_hidden = current.get("display") == "none"
+    return {"display": "block"} if is_hidden else {"display": "none"}
+
+
+# ---------------------------------------------------------------------------
+# PNG Export Callbacks (clientside)
+# ---------------------------------------------------------------------------
+
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        var wrapper = document.getElementById('home-chart-physician');
+        var graphEl = wrapper ? wrapper.querySelector('.js-plotly-plot') : null;
+        if (graphEl) {
+            Plotly.downloadImage(graphEl, {format: 'png', width: 1200, height: 600, filename: 'active_patients_by_physician'});
+        }
+        return window.dash_clientside.no_update;
+    }""",
+    Output("home-md-settings-export", "n_clicks"),
+    Input("home-md-settings-export", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        var wrapper = document.getElementById('home-chart-site');
+        var graphEl = wrapper ? wrapper.querySelector('.js-plotly-plot') : null;
+        if (graphEl) {
+            Plotly.downloadImage(graphEl, {format: 'png', width: 1200, height: 600, filename: 'treatments_by_site'});
+        }
+        return window.dash_clientside.no_update;
+    }""",
+    Output("home-site-settings-export", "n_clicks"),
+    Input("home-site-settings-export", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        var wrapper = document.getElementById('home-chart-hours');
+        var graphEl = wrapper ? wrapper.querySelector('.js-plotly-plot') : null;
+        if (graphEl) {
+            Plotly.downloadImage(graphEl, {format: 'png', width: 1200, height: 600, filename: 'operating_hours'});
+        }
+        return window.dash_clientside.no_update;
+    }""",
+    Output("home-hours-settings-export", "n_clicks"),
+    Input("home-hours-settings-export", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        var wrapper = document.getElementById('home-chart-availability');
+        var graphEl = wrapper ? wrapper.querySelector('.js-plotly-plot') : null;
+        if (graphEl) {
+            Plotly.downloadImage(graphEl, {format: 'png', width: 1200, height: 600, filename: 'slot_availability'});
+        }
+        return window.dash_clientside.no_update;
+    }""",
+    Output("home-avail-settings-export", "n_clicks"),
+    Input("home-avail-settings-export", "n_clicks"),
+    prevent_initial_call=True,
+)

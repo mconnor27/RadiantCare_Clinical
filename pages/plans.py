@@ -6,9 +6,10 @@ import dash_mantine_components as dmc
 dash.register_page(__name__, path="/plans", name="Plans", order=10)
 
 layout = dmc.Stack(
-    gap="md",
+    gap=16,
+    className="page-content",
     children=[
-        dmc.Title("Plans", order=2, c="#7C2A83", ta="center", fw=700, py="sm"),
+        dmc.Title("Plans", order=2, className="page-title"),
         dmc.Paper(
             dmc.Text("Plans page — coming soon", c="#9CA3AF", ta="center", py="xl"),
             p="xl", radius="md", shadow="xs", withBorder=True,

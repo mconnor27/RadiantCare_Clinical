@@ -67,3 +67,62 @@ Template A (KPI + Charts + Table)
 - **Highlight:** Severe deficits (> 50% MU gap) in `--error`
 - **Sortable by any column**
 - **Export:** CSV
+
+---
+
+## Implementation Guidance
+
+**Complexity:** Medium — no Department column, date from datetime
+
+### Data Loading
+
+```python
+from data.loader import load_machine_errors
+
+errors = load_machine_errors()  # Complete/Machine Errors.csv
+```
+
+### Key Columns
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `TreatmentStartTime` | datetime | Use for date filtering (no `Date` column) |
+| `Machine` | string | 21EX, 21iX_CEN, 21iX_AB (no TrueBeamNorth in this file) |
+| `PlannedMU` | float | Monitor units planned |
+| `DeliveredMU` | float | Monitor units actually delivered |
+| `ElapsedTimeToNextTreatment` | float | Recovery time in minutes |
+| `FieldCategory` | string | DynamicMLC, Arc |
+
+### Machine → Department Mapping
+
+No Department column — derive from Machine:
+
+```python
+MACHINE_DEPT = {
+    "21EX": "Lacey",
+    "TrueBeamNorth": "Lacey",
+    "21iX_CEN": "Centralia",
+    "21iX_AB": "Aberdeen",
+}
+errors["Department"] = errors["Machine"].map(MACHINE_DEPT)
+```
+
+### Date Extraction
+
+Extract date from datetime for filtering/grouping:
+
+```python
+errors["Date"] = pd.to_datetime(errors["TreatmentStartTime"]).dt.date
+```
+
+### Computed Columns
+
+```python
+errors["MU_Deficit_Pct"] = (
+    (errors["PlannedMU"] - errors["DeliveredMU"]) / errors["PlannedMU"] * 100
+)
+```
+
+### Filter Wiring
+
+Standard pattern — machine filter instead of department.

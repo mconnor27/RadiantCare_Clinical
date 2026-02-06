@@ -80,3 +80,66 @@ Template B (full-width feature)
 ### Mapbox Token
 - Requires `MAPBOX_TOKEN` environment variable
 - Free tier is sufficient for this use case
+
+---
+
+## Implementation Guidance
+
+**Complexity:** High — requires geocoding, Mapbox integration
+
+### Data Loading
+
+```python
+from data.loader import load_patients_lookup
+import os
+
+patients = load_patients_lookup()  # Lookup/Lookup - Patients.csv
+mapbox_token = os.environ.get("MAPBOX_TOKEN")
+```
+
+### Key Columns
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `PatientId` | string | Primary key |
+| `City` | string | For geocoding |
+| `County` | string | For grouping |
+| `Zip` | string | For geocoding |
+| `Department` | string | Primary treatment department |
+| `PrimaryInsurance` | string | For payor filter |
+| `FirstAppointment` | date | For date filtering |
+
+### Geocoding Strategy
+
+1. Build unique City+State combinations from data
+2. Geocode using Mapbox Geocoding API or static Washington State lookup
+3. Cache results in `data/geocode_cache.csv`:
+   ```csv
+   city,state,lat,lon
+   Olympia,WA,47.0379,-122.9007
+   Lacey,WA,47.0343,-122.8231
+   ```
+4. Merge geocode results to patient data for mapping
+
+### Mapbox Figure
+
+```python
+import plotly.express as px
+
+fig = px.scatter_mapbox(
+    df,
+    lat="lat",
+    lon="lon",
+    color="Department",
+    size="patient_count",
+    color_discrete_map=DEPARTMENT_COLORS,
+    mapbox_style="light",
+    center={"lat": 47.0, "lon": -122.5},
+    zoom=7,
+)
+fig.update_layout(mapbox_accesstoken=mapbox_token)
+```
+
+### Flow Lines (Optional)
+
+Use `go.Scattermapbox` with `mode="lines"` to draw patient flow to departments.
