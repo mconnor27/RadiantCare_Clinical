@@ -25,11 +25,17 @@ layout = dmc.Stack(
     gap=16,
     className="page-content",
     children=[
-        dmc.Title("OTV Audit", order=2, className="page-title"),
-        filter_bar("otv", children=[
-            date_presets("otv"),
-            department_chips("otv"),
-        ]),
+        # Sticky header with title and filter bar
+        dmc.Box(
+            className="page-sticky-header",
+            children=[
+                dmc.Title("OTV Audit", order=2, className="page-title"),
+                filter_bar("otv", children=[
+                    date_presets("otv"),
+                    department_chips("otv"),
+                ]),
+            ],
+        ),
 
         # KPI row
         dmc.Grid(id="otv-kpi-row", gutter="md", children=[

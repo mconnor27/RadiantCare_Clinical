@@ -32,32 +32,36 @@ layout = dmc.Stack(
     gap=16,
     className="page-content",
     children=[
-        dmc.Title("Simulations", order=2, className="page-title"),
-
-        # Filter bar
-        filter_bar("sim", children=[
-            date_presets("sim"),
-            date_range_picker("sim"),
-            department_chips("sim"),
-            physician_select("sim"),
-            dmc.MultiSelect(
-                id="sim-filter-simtype",
-                placeholder="Sim Type",
-                data=[],
-                clearable=True,
-                size="sm",
-                w=220,
-            ),
-            dmc.ChipGroup(
-                children=[
-                    dmc.Chip("Completed", value="completed", size="sm", variant="filled"),
-                    dmc.Chip("All", value="all", size="sm", variant="filled"),
-                ],
-                id="sim-filter-status",
-                value="all",
-                multiple=False,
-            ),
-        ]),
+        # Sticky header with title and filter bar
+        dmc.Box(
+            className="page-sticky-header",
+            children=[
+                dmc.Title("Simulations", order=2, className="page-title"),
+                filter_bar("sim", children=[
+                    date_presets("sim"),
+                    date_range_picker("sim"),
+                    department_chips("sim"),
+                    physician_select("sim"),
+                    dmc.MultiSelect(
+                        id="sim-filter-simtype",
+                        placeholder="Sim Type",
+                        data=[],
+                        clearable=True,
+                        size="sm",
+                        w=220,
+                    ),
+                    dmc.ChipGroup(
+                        children=[
+                            dmc.Chip("Completed", value="completed", size="sm", variant="filled"),
+                            dmc.Chip("All", value="all", size="sm", variant="filled"),
+                        ],
+                        id="sim-filter-status",
+                        value="all",
+                        multiple=False,
+                    ),
+                ]),
+            ],
+        ),
 
         # KPI row — 5 cards with sparklines
         dmc.Grid(id="sim-kpi-row", gutter="md", children=[

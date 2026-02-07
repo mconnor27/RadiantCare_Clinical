@@ -69,6 +69,25 @@ window.dash_clientside.sparklines = {
     },
     smoothSimLead: function(data, smoothPct) {
         return buildSparkline(data, smoothPct, "sim_lead");
+    },
+    // Operations page sparklines
+    smoothOpsToday: function(data, smoothPct) {
+        return buildSparkline(data, smoothPct, "today");
+    },
+    smoothOpsHoursLacey: function(data, smoothPct) {
+        return buildSparkline(data, smoothPct, "hours_lacey");
+    },
+    smoothOpsHoursCentralia: function(data, smoothPct) {
+        return buildSparkline(data, smoothPct, "hours_centralia");
+    },
+    smoothOpsHoursAberdeen: function(data, smoothPct) {
+        return buildSparkline(data, smoothPct, "hours_aberdeen");
+    },
+    smoothOpsLead: function(data, smoothPct) {
+        return buildSparkline(data, smoothPct, "lead");
+    },
+    smoothOpsNewStarts: function(data, smoothPct) {
+        return buildSparkline(data, smoothPct, "newstarts");
     }
 };
 
@@ -98,8 +117,9 @@ window.dash_clientside.census = {
         var yTitle = rawData.yTitle || "Unique Patients";
         var hasFuture = futureDates.length > 0;
 
-        // Downsample to ~500 points max for display (chart is only ~500px wide)
-        var maxPoints = 500;
+        // TEMPORARILY DISABLED: Downsampling was causing last data points to be dropped
+        // TODO: Fix downsampling to ensure dates and values arrays have matching lengths
+        var maxPoints = 10000;  // Effectively disable downsampling
         var step = dates.length > maxPoints ? Math.ceil(dates.length / maxPoints) : 1;
         var displayDates = step > 1 ? downsample(dates, step) : dates;
 
@@ -264,7 +284,7 @@ window.dash_clientside.census = {
             height: height,
             xaxis: {showgrid: false},
             yaxis: {gridcolor: "#E5E7EB"},
-            legend: {orientation: "h", yanchor: "bottom", y: 1.02, xanchor: "left", x: 0},
+            showlegend: false,
             margin: {l: 28, r: 8, t: 8, b: 32},
             plot_bgcolor: "white",
             paper_bgcolor: "white",
@@ -292,6 +312,69 @@ window.dash_clientside.census = {
     // Legacy wrapper for backward compatibility
     smoothChart: function(rawData, smoothPct, currentFig) {
         return window.dash_clientside.census.smoothChartWithType(rawData, smoothPct, "area", currentFig);
+    },
+
+    /**
+     * Apply smoothing to census chart with time range window support.
+     * Same as smoothChartWithType but also sets x-axis range based on rangeDays.
+     * All data is included in traces, but initial view is constrained to rangeDays.
+     * @param {Object} rawData - {dates, futureDates?, series: [{name, values, futureValues?, color}...], height, yTitle}
+     * @param {number} smoothPct - Slider value 0-50, maps to rolling average window
+     * @param {string} chartType - "area" (stacked), "line" (non-stacked), or "bar" (stacked bar)
+     * @param {string} rangeDays - Time window selector value ("30", "60", "90", "180", "365", "0" for all)
+     * @param {Object} currentFig - Current figure (to preserve trace visibility)
+     * @returns {Object} Plotly figure with x-axis range set to show selected time window
+     */
+    smoothChartWithTypeAndRange: function(rawData, smoothPct, chartType, rangeDays, currentFig) {
+        // First, get the base figure from smoothChartWithType
+        var fig = window.dash_clientside.census.smoothChartWithType(rawData, smoothPct, chartType, currentFig);
+
+        if (fig === window.dash_clientside.no_update || !rawData || !rawData.dates || rawData.dates.length === 0) {
+            return fig;
+        }
+
+        // Debug logging
+        console.log('[DEBUG] smoothChartWithTypeAndRange called');
+        console.log('  rawData.dates.length:', rawData.dates.length);
+        console.log('  First date:', rawData.dates[0]);
+        console.log('  Last date:', rawData.dates[rawData.dates.length - 1]);
+        console.log('  rangeDays:', rangeDays);
+
+        // Calculate x-axis range based on rangeDays
+        var days = parseInt(rangeDays) || 0;
+        if (days > 0) {
+            // Get last date from data (strip time component for consistency)
+            var lastDate = rawData.dates[rawData.dates.length - 1].split('T')[0];
+            var lastDateObj = new Date(lastDate);
+
+            // Calculate start date (days back from last date)
+            var startDateObj = new Date(lastDateObj);
+            startDateObj.setDate(startDateObj.getDate() - days);
+            var startDate = startDateObj.toISOString().split('T')[0];
+
+            console.log('  Calculated range:', startDate, 'to', lastDate);
+
+            // Set x-axis range in layout
+            fig.layout.xaxis = fig.layout.xaxis || {};
+            fig.layout.xaxis.range = [startDate, lastDate];
+
+            // Enable drag/pan to allow scrolling through all data (horizontal only)
+            fig.layout.dragmode = 'pan';
+            fig.layout.yaxis = fig.layout.yaxis || {};
+            fig.layout.yaxis.fixedrange = true;  // Lock y-axis to prevent vertical panning
+
+            // Add range slider for easier navigation (optional - commented out for cleaner UI)
+            // fig.layout.xaxis.rangeslider = {visible: true};
+        } else {
+            // "All" selected - show full range
+            fig.layout.xaxis = fig.layout.xaxis || {};
+            fig.layout.xaxis.autorange = true;
+            fig.layout.dragmode = 'pan';
+            fig.layout.yaxis = fig.layout.yaxis || {};
+            fig.layout.yaxis.fixedrange = true;  // Lock y-axis to prevent vertical panning
+        }
+
+        return fig;
     }
 };
 
@@ -424,11 +507,18 @@ function filterByIndices(arr, indices) {
 
 /**
  * Downsample an array by taking every nth element (for dates/labels).
+ * Always includes the last element to ensure recent data is shown.
  */
 function downsample(arr, step) {
+    if (arr.length === 0) return [];
     var result = [];
     for (var i = 0; i < arr.length; i += step) {
         result.push(arr[i]);
+    }
+    // Always include the last element if not already included
+    var lastIdx = arr.length - 1;
+    if (result[result.length - 1] !== arr[lastIdx]) {
+        result.push(arr[lastIdx]);
     }
     return result;
 }
@@ -436,10 +526,13 @@ function downsample(arr, step) {
 /**
  * Downsample numeric values by averaging buckets of size `step`.
  * This preserves the visual shape better than just sampling.
+ * Always includes the last bucket to ensure recent data is shown.
  */
 function downsampleAvg(arr, step) {
+    if (arr.length === 0) return [];
     var result = [];
-    for (var i = 0; i < arr.length; i += step) {
+    var i = 0;
+    for (i = 0; i < arr.length; i += step) {
         var end = Math.min(i + step, arr.length);
         var sum = 0;
         for (var j = i; j < end; j++) {
@@ -447,6 +540,10 @@ function downsampleAvg(arr, step) {
         }
         result.push(sum / (end - i));
     }
+    // If the last bucket wasn't complete (i.e., we didn't reach exactly arr.length),
+    // the loop already handled it. But if step perfectly divides length and we want
+    // to ensure the very last value is represented, check if we need to add it.
+    // Actually, the loop above already handles partial buckets correctly.
     return result;
 }
 
@@ -525,8 +622,10 @@ window.dash_clientside.hoursRibbon = {
         var pastFillOpacity = numSeries === 1 ? 0.35 : 0.15;
         var futureFillOpacity = numSeries === 1 ? 0.15 : 0.06;
 
-        // Downsample to ~500 points max for performance (chart is only ~500px wide)
-        var maxPoints = 500;
+        // Downsample to ~500 points max for performance (only for "All" view)
+        // Skip downsampling for time-limited views to preserve daily granularity
+        var skipDownsample = rawData._skipDownsample || false;
+        var maxPoints = skipDownsample ? 999999 : 500;
 
         // Process past series
         for (var i = 0; i < rawData.pastSeries.length; i++) {
@@ -831,6 +930,218 @@ window.dash_clientside.hoursRibbon = {
     // Legacy wrapper for backward compatibility
     smoothChart: function(rawData, smoothVal) {
         return window.dash_clientside.hoursRibbon.smoothChartWithType(rawData, smoothVal, "ribbon");
+    },
+
+    /**
+     * Build operating hours chart with time range window support.
+     * Same as smoothChartWithType but also sets x-axis range based on rangeDays.
+     * All data is included in traces, but initial view is constrained to rangeDays.
+     * @param {Object} rawData - {pastSeries, futureSeries, yAxis, today}
+     * @param {number} smoothVal - Rolling average window size (0 = no smoothing)
+     * @param {string} chartType - "ribbon" (band), "line", or "bar"
+     * @param {string} rangeDays - Time window selector value ("30", "60", "90", "180", "365", "0" for all)
+     * @returns {Object} Plotly figure with x-axis range set to show selected time window
+     */
+    smoothChartWithTypeAndRange: function(rawData, smoothVal, chartType, rangeDays) {
+        if (!rawData || !rawData.pastSeries || rawData.pastSeries.length === 0) {
+            return window.dash_clientside.hoursRibbon.smoothChartWithType(rawData, smoothVal, chartType);
+        }
+
+        // Store raw data globally for dynamic y-axis scaling on pan
+        window._ribbonChartData = rawData;
+
+        // Disable downsampling for time-limited views by setting flag
+        var days = parseInt(rangeDays) || 0;
+        var dataWithFlag = JSON.parse(JSON.stringify(rawData)); // Deep copy
+        dataWithFlag._skipDownsample = (days > 0); // Skip downsampling for specific time windows
+
+        // Render with all data (downsampling controlled by flag)
+        var fig = window.dash_clientside.hoursRibbon.smoothChartWithType(dataWithFlag, smoothVal, chartType);
+
+        // Set x-axis range to show selected window (keeps all data for panning)
+        if (days > 0) {
+            // Find the last date across all past series
+            var lastDate = null;
+            for (var i = 0; i < rawData.pastSeries.length; i++) {
+                var s = rawData.pastSeries[i];
+                if (s.dates && s.dates.length > 0) {
+                    var seriesLastDate = s.dates[s.dates.length - 1];
+                    if (!lastDate || seriesLastDate > lastDate) {
+                        lastDate = seriesLastDate;
+                    }
+                }
+            }
+
+            if (lastDate) {
+                // Strip time component for consistency
+                lastDate = lastDate.split('T')[0];
+                var lastDateObj = new Date(lastDate);
+
+                // Calculate start date (days back from last date)
+                var startDateObj = new Date(lastDateObj);
+                startDateObj.setDate(startDateObj.getDate() - days);
+                var startDate = startDateObj.toISOString().split('T')[0];
+
+                // Calculate y-axis range from visible data only
+                var minHour = 24, maxHour = 0;
+                for (var i = 0; i < rawData.pastSeries.length; i++) {
+                    var s = rawData.pastSeries[i];
+                    for (var j = 0; j < s.dates.length; j++) {
+                        var date = s.dates[j].split('T')[0];
+                        if (date >= startDate && date <= lastDate) {
+                            if (s.startHours[j] < minHour) minHour = s.startHours[j];
+                            if (s.endHours[j] > maxHour) maxHour = s.endHours[j];
+                        }
+                    }
+                }
+
+                // Round to nearest half-hour with padding
+                var yMin = Math.floor(minHour * 2) / 2 - 0.5;
+                var yMax = Math.ceil(maxHour * 2) / 2 + 0.5;
+                yMin = Math.max(0, yMin);
+                yMax = Math.min(24, yMax);
+
+                // Generate tick values for y-axis
+                var tickInterval = 1;
+                var tickStart = Math.ceil(yMin / tickInterval) * tickInterval;
+                var tickEnd = Math.floor(yMax / tickInterval) * tickInterval;
+                var tickvals = [];
+                var ticktext = [];
+                for (var h = tickStart; h <= tickEnd; h += tickInterval) {
+                    tickvals.push(h);
+                    if (h === 0) {
+                        ticktext.push("12am");
+                    } else if (h < 12) {
+                        ticktext.push(h + "am");
+                    } else if (h === 12) {
+                        ticktext.push("12pm");
+                    } else {
+                        ticktext.push((h - 12) + "pm");
+                    }
+                }
+
+                // Set x-axis range and y-axis range
+                fig.layout.xaxis = fig.layout.xaxis || {};
+                fig.layout.xaxis.range = [startDate, lastDate];
+                fig.layout.xaxis.fixedrange = false;  // Allow horizontal panning
+
+                fig.layout.yaxis = fig.layout.yaxis || {};
+                fig.layout.yaxis.range = [yMin, yMax];
+                fig.layout.yaxis.tickvals = tickvals;
+                fig.layout.yaxis.ticktext = ticktext;
+                fig.layout.yaxis.fixedrange = true;  // Lock y-axis (no vertical pan)
+
+                fig.layout.dragmode = 'pan';
+            }
+        } else {
+            // "All" view - autorange both axes
+            fig.layout.xaxis = fig.layout.xaxis || {};
+            fig.layout.xaxis.autorange = true;
+            fig.layout.xaxis.fixedrange = false;
+
+            fig.layout.yaxis = fig.layout.yaxis || {};
+            fig.layout.yaxis.fixedrange = true;  // Lock y-axis (no vertical pan)
+
+            fig.layout.dragmode = 'pan';
+        }
+
+        return fig;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Dynamic Y-Axis Scaling for Ribbon Chart on Pan
+// ---------------------------------------------------------------------------
+
+// Store reference to raw data for y-axis calculations (set by smoothChartWithTypeAndRange)
+window._ribbonChartData = null;
+
+// Clientside callback function to handle y-axis updates on pan
+window.dash_clientside = window.dash_clientside || {};
+window.dash_clientside.ribbonYAxis = {
+    updateYAxisOnPan: function(relayoutData, currentFigure) {
+        console.log('[Ribbon Y-Axis] updateYAxisOnPan called');
+        console.log('  relayoutData:', relayoutData);
+
+        // If no relayout data or no raw data, return current figure unchanged
+        if (!relayoutData || !window._ribbonChartData || !currentFigure) {
+            console.log('[Ribbon Y-Axis] Skipping - missing data');
+            return window.dash_clientside.no_update;
+        }
+
+        // Extract x-axis range from relayout data
+        var startDate, endDate;
+        if (relayoutData['xaxis.range[0]'] !== undefined && relayoutData['xaxis.range[1]'] !== undefined) {
+            startDate = relayoutData['xaxis.range[0]'];
+            endDate = relayoutData['xaxis.range[1]'];
+        } else if (relayoutData['xaxis.range'] && relayoutData['xaxis.range'].length === 2) {
+            startDate = relayoutData['xaxis.range'][0];
+            endDate = relayoutData['xaxis.range'][1];
+        } else {
+            // Not an x-axis range event
+            console.log('[Ribbon Y-Axis] Not an x-axis range event');
+            return window.dash_clientside.no_update;
+        }
+
+        console.log('[Ribbon Y-Axis] X-axis range changed to:', startDate, 'to', endDate);
+
+        // Convert to YYYY-MM-DD format
+        var startStr = (typeof startDate === 'string') ? startDate.split('T')[0] : new Date(startDate).toISOString().split('T')[0];
+        var endStr = (typeof endDate === 'string') ? endDate.split('T')[0] : new Date(endDate).toISOString().split('T')[0];
+
+        var rawData = window._ribbonChartData;
+
+        // Calculate y-axis range from visible data
+        var minHour = 24, maxHour = 0;
+        for (var i = 0; i < rawData.pastSeries.length; i++) {
+            var s = rawData.pastSeries[i];
+            for (var j = 0; j < s.dates.length; j++) {
+                var date = s.dates[j].split('T')[0];
+                if (date >= startStr && date <= endStr) {
+                    if (s.startHours[j] < minHour) minHour = s.startHours[j];
+                    if (s.endHours[j] > maxHour) maxHour = s.endHours[j];
+                }
+            }
+        }
+
+        console.log('[Ribbon Y-Axis] Calculated hours - min:', minHour, 'max:', maxHour);
+
+        if (minHour === 24 || maxHour === 0) {
+            console.log('[Ribbon Y-Axis] No data in visible range');
+            return window.dash_clientside.no_update;
+        }
+
+        // Round to nearest half-hour with padding
+        var yMin = Math.floor(minHour * 2) / 2 - 0.5;
+        var yMax = Math.ceil(maxHour * 2) / 2 + 0.5;
+        yMin = Math.max(0, yMin);
+        yMax = Math.min(24, yMax);
+
+        // Generate tick values
+        var tickvals = [];
+        var ticktext = [];
+        for (var h = Math.ceil(yMin); h <= Math.floor(yMax); h++) {
+            tickvals.push(h);
+            if (h === 0) {
+                ticktext.push("12am");
+            } else if (h < 12) {
+                ticktext.push(h + "am");
+            } else if (h === 12) {
+                ticktext.push("12pm");
+            } else {
+                ticktext.push((h - 12) + "pm");
+            }
+        }
+
+        console.log('[Ribbon Y-Axis] Updating y-axis range to:', yMin, '-', yMax);
+
+        // Create updated figure with new y-axis range
+        var newFigure = JSON.parse(JSON.stringify(currentFigure)); // Deep copy
+        newFigure.layout.yaxis.range = [yMin, yMax];
+        newFigure.layout.yaxis.tickvals = tickvals;
+        newFigure.layout.yaxis.ticktext = ticktext;
+
+        return newFigure;
     }
 };
 

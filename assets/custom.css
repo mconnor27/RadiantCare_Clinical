@@ -145,3 +145,31 @@ body {
     background-color: rgba(255, 255, 255, 0.4) !important;
 }
 
+/* AG Grid row highlighting for audit results */
+.ag-row-warning {
+    background-color: rgba(245, 158, 11, 0.1) !important;
+}
+
+.ag-row-error {
+    background-color: rgba(239, 68, 68, 0.1) !important;
+}
+
+/* Sticky page header (title + filter bar) */
+.page-sticky-header {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background-color: #F5F6F8;
+    padding-top: 8px;
+    padding-bottom: 16px;
+    margin-top: -8px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+/* Add shadow when scrolled */
+.page-sticky-header.scrolled {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+

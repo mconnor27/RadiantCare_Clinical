@@ -338,7 +338,7 @@ def load_otvs():
     """Load OTV Audit.csv."""
     df = _read_csv_safe(DATA_COMPLETE / "OTV Audit.csv")
     df = _clean_department(df)
-    df = _parse_dates(df, ["OTVDate", "FirstTreatmentDate", "LastTreatmentDate"])
+    df = _parse_dates(df, ["FirstTreatmentDate", "LastTreatmentDate"])
     if "UniqueRowID" in df.columns:
         df = df.drop_duplicates(subset=["UniqueRowID"], keep="last")
     return df
@@ -348,8 +348,9 @@ def load_otvs():
 def load_weekly_visits():
     """Load Weekly Visits.csv."""
     df = _load_incremental(DATA_INCREMENTAL / "WeeklyVisits", "Weekly Visits", "UniqueRowID")
+    df = _normalize_columns(df, {"DepartmentName": "Department"})
     df = _clean_department(df)
-    df = _parse_dates(df, ["VisitDate"])
+    df = _parse_dates(df, ["AppointmentDateTime"])
     return df
 
 
@@ -448,12 +449,24 @@ def load_diagnosis():
 def load_physician_schedule():
     """Load Physician Schedule.csv."""
     df = _read_csv_safe(DATA_COMPLETE / "Physician Schedule.csv")
-    df = _parse_dates(df, ["ScheduleDate"])
+    df = _parse_dates(df, ["ScheduledDate"])
+    df = df.rename(columns={
+        "ScheduledDate": "Date",
+        "PhysicianName": "Physician",
+        "ActivityName": "Status",
+    })
+    # Derive Department from Status (site assignment activities)
+    site_map = {"CENTRALIA": "Centralia", "ABERDEEN": "Aberdeen"}
+    upper = df["Status"].str.upper()
+    df["Department"] = upper.map(site_map)
+    df.loc[upper.isin(["ON CALL", "WEEKEND CALL"]), "Department"] = "Lacey"
     return df
 
 
 def clear_cache():
     """Clear all cached data (call after data refresh)."""
+    from utils.geocoding import load_geocode_cache
+
     for fn in [
         _patient_department_map,
         load_treatment, load_treatment_detail, load_daily_volume,
@@ -462,5 +475,6 @@ def clear_cache():
         load_weekly_visits, load_courses, load_plans, load_machines,
         load_billing, load_cpt_audit, load_patients, load_referring,
         load_diagnosis, load_physician_schedule,
+        load_geocode_cache,
     ]:
         fn.cache_clear()

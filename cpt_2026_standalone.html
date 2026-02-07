@@ -1,0 +1,1154 @@
+ Help me start this app, please.<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>2026 CPT Code Analysis</title>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f5f5f5;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .sidebar {
+            width: 300px;
+            background-color: white;
+            padding: 20px;
+            overflow-y: auto;
+            box-shadow: 2px 0 4px rgba(0,0,0,0.1);
+        }
+
+        .main-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        h2 {
+            color: #444;
+            margin-top: 30px;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+
+        h5 {
+            color: #555;
+            margin-bottom: 20px;
+        }
+
+        .file-upload {
+            text-align: center;
+            padding: 40px;
+            background-color: #f8f9fa;
+            border-radius: 6px;
+            margin-bottom: 30px;
+        }
+
+        .file-upload input[type="file"] {
+            display: none;
+        }
+
+        .file-upload label {
+            display: inline-block;
+            padding: 15px 30px;
+            background-color: #007bff;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+
+        .file-upload label:hover {
+            background-color: #0056b3;
+        }
+
+        .file-name {
+            margin-top: 15px;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .filter-section {
+            margin-bottom: 20px;
+        }
+
+        .filter-section label {
+            font-weight: bold;
+            display: block;
+            margin-bottom: 10px;
+            color: #555;
+        }
+
+        .filter-section input[type="checkbox"] {
+            margin-right: 8px;
+        }
+
+        .filter-section .checkbox-item {
+            display: block;
+            margin-bottom: 8px;
+        }
+
+        .filter-scroll {
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 10px;
+            border-radius: 4px;
+        }
+
+        .controls {
+            margin: 30px 0;
+            padding: 20px;
+            background-color: #f8f9fa;
+            border-radius: 6px;
+            display: none;
+        }
+
+        .controls.active {
+            display: block;
+        }
+
+        .checkbox-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+
+        .checkbox-group label {
+            font-weight: normal;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        #chart {
+            margin: 30px 0;
+            display: none;
+        }
+
+        #chart.active {
+            display: block;
+        }
+
+        .table-container {
+            margin-top: 40px;
+            display: none;
+        }
+
+        .table-container.active {
+            display: block;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+
+        th {
+            background-color: #e6e6e6;
+            font-weight: bold;
+        }
+
+        tr:nth-child(even) {
+            background-color: #f8f8ff;
+        }
+
+        .export-buttons {
+            margin: 20px 0;
+            text-align: center;
+            display: none;
+        }
+
+        .export-buttons.active {
+            display: block;
+        }
+
+        button {
+            padding: 10px 20px;
+            margin: 0 5px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .btn-primary {
+            background-color: #007bff;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background-color: #0056b3;
+        }
+
+        .instructions {
+            background-color: #e7f3ff;
+            padding: 20px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            border-left: 4px solid #007bff;
+        }
+
+        .instructions h3 {
+            margin-bottom: 10px;
+            color: #0056b3;
+        }
+
+        .instructions p {
+            margin-bottom: 10px;
+            line-height: 1.6;
+        }
+
+        .instructions code {
+            background-color: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+
+        hr {
+            border: none;
+            border-top: 1px solid #ddd;
+            margin: 15px 0;
+        }
+
+        /* Custom styling for Plotly hover tooltips */
+        .hoverlayer .hovertext text {
+            font-family: Arial, sans-serif !important;
+        }
+
+        .hoverlayer .hovertext tspan {
+            font-size: 13px !important;
+        }
+
+        .filter-buttons {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 10px;
+        }
+
+        .filter-buttons button {
+            padding: 4px 8px;
+            font-size: 11px;
+            background-color: #6c757d;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+
+        .filter-buttons button:hover {
+            background-color: #5a6268;
+        }
+    </style>
+</head>
+<body>
+    <div class="sidebar" id="sidebar" style="display:none;">
+        <h5>Filters</h5>
+
+        <div class="filter-section">
+            <label>Department</label>
+            <div id="departmentFilters"></div>
+        </div>
+        <hr>
+
+        <div class="filter-section">
+            <label>Machine</label>
+            <div id="machineFilters" class="filter-scroll"></div>
+        </div>
+        <hr>
+
+        <div class="filter-section">
+            <label>Insurer Category</label>
+            <div id="insurerCategoryFilters"></div>
+        </div>
+        <hr>
+
+        <div class="filter-section">
+            <label>Specific Insurer</label>
+            <div class="filter-buttons">
+                <button onclick="toggleAllCheckboxes('insurerFilters', true)">Select All</button>
+                <button onclick="toggleAllCheckboxes('insurerFilters', false)">Select None</button>
+            </div>
+            <div id="insurerFilters" class="filter-scroll"></div>
+        </div>
+        <hr>
+
+        <div class="filter-section">
+            <label>Technique</label>
+            <div id="techniqueFilters"></div>
+        </div>
+        <hr>
+
+        <div class="filter-section">
+            <label>2026 Code</label>
+            <div id="code2026Filters"></div>
+        </div>
+        <hr>
+
+        <div class="filter-section">
+            <label>Radiation Type</label>
+            <div id="radiationTypeFilters"></div>
+        </div>
+        <hr>
+
+        <div class="filter-section">
+            <label>Actual Billing Code</label>
+            <div class="filter-buttons">
+                <button onclick="toggleAllCheckboxes('actualCodeFilters', true)">Select All</button>
+                <button onclick="toggleAllCheckboxes('actualCodeFilters', false)">Select None</button>
+            </div>
+            <div id="actualCodeFilters" class="filter-scroll"></div>
+        </div>
+        <hr>
+
+        <div class="filter-section">
+            <label>Time Frame</label>
+            <div style="margin-top: 10px;">
+                <label style="font-size: 12px; font-weight: normal; margin-bottom: 5px; display: block;">Start Date</label>
+                <input type="date" id="startDate" style="width: 100%; padding: 5px; border: 1px solid #ddd; border-radius: 4px;" onchange="updateCharts(); updateTable();">
+            </div>
+            <div style="margin-top: 15px;">
+                <label style="font-size: 12px; font-weight: normal; margin-bottom: 5px; display: block;">End Date</label>
+                <input type="date" id="endDate" style="width: 100%; padding: 5px; border: 1px solid #ddd; border-radius: 4px;" onchange="updateCharts(); updateTable();">
+            </div>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="container">
+            <h1>2026 CPT Code Analysis</h1>
+
+            <div class="instructions">
+                <h3>How to Use</h3>
+                <p>1. Click "Choose CSV File" below and select your <code>2026_CPT.csv</code> file</p>
+                <p>2. The analysis will load automatically with interactive charts and tables</p>
+                <p>3. Use the sidebar filters to refine your data</p>
+                <p>4. Select dimensions to customize the flow diagram</p>
+                <p>5. Export results to CSV as needed</p>
+            </div>
+
+            <div class="file-upload">
+                <input type="file" id="csvFile" accept=".csv" onchange="handleFileSelect(event)">
+                <label for="csvFile">Choose CSV File</label>
+                <div class="file-name" id="fileName"></div>
+            </div>
+
+            <div class="export-buttons" id="exportButtons">
+                <button class="btn-primary" onclick="exportCSV()">Export to CSV</button>
+            </div>
+
+            <div class="controls" id="controls">
+                <label style="font-weight:bold;display:block;margin-bottom:10px;">Select dimensions to include (2026 Codes always shown on right):</label>
+                <div class="checkbox-group">
+                    <label><input type="checkbox" value="actual_codes" checked onchange="updateCharts()"> Actual Billing Codes</label>
+                    <label><input type="checkbox" value="department" onchange="updateCharts()"> Department</label>
+                    <label><input type="checkbox" value="machine" onchange="updateCharts()"> Machine</label>
+                    <label><input type="checkbox" value="insurer_category" onchange="updateCharts()"> Insurer Category</label>
+                    <label><input type="checkbox" value="technique" onchange="updateCharts()"> Technique</label>
+                    <label><input type="checkbox" value="radiation_type" onchange="updateCharts()"> Radiation Type</label>
+                </div>
+            </div>
+
+            <h2 id="sankeyTitle" style="display:none;">Sankey Flow Analysis</h2>
+            <div id="recordCount" style="text-align:center;color:#666;margin-bottom:20px;font-size:14px;"></div>
+            <div id="sankeyChart"></div>
+
+            <div class="table-container" id="tableContainer">
+                <h2>Code Summary Table</h2>
+                <table id="summaryTable">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>Code</th>
+                            <th>Count</th>
+                            <th>Percentage</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // CPT code explanations
+        const CODE_EXPLANATIONS_2026 = {
+            "77402": "Simple",
+            "77407": "Intermediate",
+            "77412": "Complex",
+            "77372": "SRS",
+            "77373": "SBRT"
+        };
+
+        const CODE_EXPLANATIONS_ACTUAL = {
+            "77402": "IMRT (Simple)", "G6003": "IMRT (Simple)", "G6004": "IMRT (Simple)",
+            "G6005": "IMRT (Simple)", "G6006": "IMRT (Simple)", "77407": "IMRT (Intermediate)",
+            "G6007": "IMRT (Intermediate)", "G6008": "IMRT (Intermediate)", "G6009": "IMRT (Intermediate)",
+            "G6010": "IMRT (Intermediate)", "77412": "IMRT (Complex)", "G6011": "IMRT (Complex)",
+            "G6012": "IMRT (Complex)", "G6013": "IMRT (Complex)", "G6014": "IMRT (Complex)",
+            "77385": "IMRT (Simple)", "77386": "IMRT (Complex)", "G6015": "IMRT (Simple)",
+            "G6016": "IMRT (Complex)", "77014": "CBCT", "77387": "IGRT", "77417": "Port Films", "G6002": "IGRT",
+            "77372": "SRS", "77373": "SBRT",
+            // With modifiers - Professional Component (26)
+            "77402-26": "IMRT (Simple) - Professional", "77407-26": "IMRT (Intermediate) - Professional",
+            "77412-26": "IMRT (Complex) - Professional", "77385-26": "IMRT (Simple) - Professional",
+            "77386-26": "IMRT (Complex) - Professional", "77014-26": "CBCT - Professional",
+            "77387-26": "IGRT - Professional", "77417-26": "Port Films - Professional", "77372-26": "SRS - Professional", "77373-26": "SBRT - Professional",
+            // With modifiers - Technical Component (TC)
+            "77402-TC": "IMRT (Simple) - Technical", "77407-TC": "IMRT (Intermediate) - Technical",
+            "77412-TC": "IMRT (Complex) - Technical", "77385-TC": "IMRT (Simple) - Technical",
+            "77386-TC": "IMRT (Complex) - Technical", "77014-TC": "CBCT - Technical",
+            "77387-TC": "IGRT - Technical", "77417-TC": "Port Films - Technical", "77372-TC": "SRS - Technical", "77373-TC": "SBRT - Technical",
+            // G-codes with modifiers
+            "G6003-26": "IMRT (Simple) - Professional", "G6007-26": "IMRT (Intermediate) - Professional",
+            "G6011-26": "IMRT (Complex) - Professional", "G6015-26": "IMRT (Simple) - Professional",
+            "G6016-26": "IMRT (Complex) - Professional", "G6002-26": "IGRT - Professional",
+            "G6003-TC": "IMRT (Simple) - Technical", "G6007-TC": "IMRT (Intermediate) - Technical",
+            "G6011-TC": "IMRT (Complex) - Technical", "G6015-TC": "IMRT (Simple) - Technical",
+            "G6016-TC": "IMRT (Complex) - Technical", "G6002-TC": "IGRT - Technical"
+        };
+
+        let rawData = [];
+        const processedElements = new WeakSet();
+        const processedPaths = new WeakSet();
+
+        // Tooltip enhancement observer
+        const observer = new MutationObserver(function(mutations) {
+            mutations.forEach(function(mutation) {
+                mutation.addedNodes.forEach(function(node) {
+                    if (node.nodeType === 1) {
+                        enhanceHoverText(node);
+                    }
+                });
+            });
+        });
+
+        function enhanceHoverText(element) {
+            const textElements = element.querySelectorAll ? element.querySelectorAll('tspan') : [];
+            let modified = false;
+
+            textElements.forEach(function(textEl) {
+                if (processedElements.has(textEl)) return;
+
+                const text = textEl.textContent || '';
+                let wasModified = false;
+
+                // Replace percentage placeholders
+                const percentPattern = /(\d[\d,]*)\s+of\s+(\d[\d,]*)\s+\(---\.--?%\)/;
+                const percentMatch = text.match(percentPattern);
+                if (percentMatch) {
+                    const numerator = parseInt(percentMatch[1].replace(/,/g, ''));
+                    const denominator = parseInt(percentMatch[2].replace(/,/g, ''));
+                    if (denominator > 0) {
+                        const percentage = ((numerator / denominator) * 100).toFixed(1);
+                        textEl.textContent = text.replace(percentMatch[0], `${percentMatch[1]} of ${percentMatch[2]} (${percentage}%)`);
+                        wasModified = true;
+                    }
+                }
+
+                // Add explanation for CPT codes
+                if (!wasModified) {
+                    const trimmedText = text.trim();
+                    const explanation = CODE_EXPLANATIONS_ACTUAL[trimmedText];
+                    if (explanation) {
+                        textEl.textContent = `${trimmedText} - ${explanation}`;
+                        wasModified = true;
+                    }
+                }
+
+                if (wasModified) {
+                    processedElements.add(textEl);
+                    modified = true;
+                }
+            });
+
+            if (modified) {
+                requestAnimationFrame(function() {
+                    resizeTooltipBox(element);
+                });
+            }
+        }
+
+        function resizeTooltipBox(element) {
+            const hoverGroups = element.classList && element.classList.contains('hovertext')
+                ? [element]
+                : (element.querySelectorAll ? element.querySelectorAll('.hovertext') : []);
+
+            hoverGroups.forEach(function(group) {
+                const path = group.querySelector('path');
+                const textEl = group.querySelector('text');
+
+                if (!path || !textEl || processedPaths.has(path)) return;
+
+                try {
+                    const textBBox = textEl.getBBox();
+                    const pathBBox = path.getBBox();
+                    const extraWidth = Math.max(0, (textBBox.width + 20) - pathBBox.width);
+
+                    if (extraWidth > 5) {
+                        const currentTransform = path.getAttribute('transform') || '';
+                        const scale = (pathBBox.width + extraWidth) / pathBBox.width;
+                        path.setAttribute('transform', currentTransform + ` scale(${scale}, 1)`);
+                        processedPaths.add(path);
+                    }
+                } catch (e) {
+                    // getBBox can fail if element not rendered
+                }
+            });
+        }
+
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            document.getElementById('fileName').textContent = `Loading: ${file.name}...`;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const csvText = e.target.result;
+                    rawData = parseCSV(csvText);
+                    processData();
+                    buildFilters();
+
+                    document.getElementById('fileName').textContent = `Loaded: ${file.name} (${rawData.length.toLocaleString()} records)`;
+                    document.getElementById('sidebar').style.display = 'block';
+                    document.getElementById('controls').classList.add('active');
+                    document.getElementById('sankeyChart').classList.add('active');
+                    document.getElementById('sankeyTitle').style.display = 'block';
+                    document.getElementById('tableContainer').classList.add('active');
+                    document.getElementById('exportButtons').classList.add('active');
+
+                    // Start observing for tooltip modifications
+                    observer.observe(document.body, { childList: true, subtree: true });
+
+                    updateCharts();
+                    updateTable();
+                } catch (error) {
+                    document.getElementById('fileName').textContent = `Error loading file: ${error.message}`;
+                    console.error('Error parsing CSV:', error);
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        function parseCSV(csvText) {
+            const rows = [];
+            let currentRow = [];
+            let currentField = '';
+            let inQuotes = false;
+            let i = 0;
+
+            // Character-by-character parsing to handle multi-line fields
+            while (i < csvText.length) {
+                const char = csvText[i];
+                const nextChar = csvText[i + 1];
+
+                if (char === '"') {
+                    if (inQuotes && nextChar === '"') {
+                        // Escaped quote
+                        currentField += '"';
+                        i += 2;
+                        continue;
+                    } else {
+                        // Toggle quote state
+                        inQuotes = !inQuotes;
+                        i++;
+                        continue;
+                    }
+                }
+
+                if (!inQuotes) {
+                    if (char === ',') {
+                        // End of field
+                        currentRow.push(currentField);
+                        currentField = '';
+                        i++;
+                        continue;
+                    }
+                    if (char === '\n' || (char === '\r' && nextChar === '\n')) {
+                        // End of row
+                        currentRow.push(currentField);
+                        if (currentRow.length > 0 && currentRow.some(f => f.trim() !== '')) {
+                            rows.push(currentRow);
+                        }
+                        currentRow = [];
+                        currentField = '';
+                        i += (char === '\r' && nextChar === '\n') ? 2 : 1;
+                        continue;
+                    }
+                }
+
+                // Regular character
+                currentField += char;
+                i++;
+            }
+
+            // Handle last field/row
+            if (currentField || currentRow.length > 0) {
+                currentRow.push(currentField);
+                if (currentRow.length > 0 && currentRow.some(f => f.trim() !== '')) {
+                    rows.push(currentRow);
+                }
+            }
+
+            if (rows.length === 0) return [];
+
+            // First row is headers
+            const headers = rows[0].map(h => h.trim());
+            const data = [];
+
+            // Process data rows
+            for (let i = 1; i < rows.length; i++) {
+                const values = rows[i];
+                if (values.length === headers.length) {
+                    const row = {};
+                    for (let j = 0; j < headers.length; j++) {
+                        row[headers[j]] = values[j].trim();
+                    }
+                    data.push(row);
+                }
+            }
+
+            return data;
+        }
+
+        function categorizeInsurer(insurer) {
+            if (!insurer || insurer === 'Unknown' || insurer === '') return 'Unknown';
+            const upper = insurer.toUpperCase();
+            if (upper.includes('MEDICARE') || upper.includes('MEDADVANTAGE') || upper.includes('MED ADVANTAGE')) return 'Medicare';
+            if (upper.includes('MEDICAID') || upper.includes('APPLE HEALTH') || upper.includes('CHPW MEDICAID') || upper.includes('MOLINA MEDICAID')) return 'Medicaid';
+            return 'Private';
+        }
+
+        function categorizeTechnique(billedCodes) {
+            if (!billedCodes) return 'Unknown';
+            const codes = billedCodes.split(',').map(c => c.trim());
+            const techniques = [];
+
+            // Strip modifiers (everything after '-') for technique matching
+            const baseCodeSet = new Set(codes.map(c => c.split('-')[0]));
+
+            const conventionalCodes = ['77402', 'G6003', 'G6004', 'G6005', 'G6006', '77407', 'G6007', 'G6008', 'G6009', 'G6010', '77412', 'G6011', 'G6012', 'G6013', 'G6014'];
+            const srsCode = '77372';
+            const sbrtCode = '77373';
+            const imrtCodes = ['77385', '77386', 'G6015', 'G6016'];
+            const igrtCodes = ['77014', '77387', '77417', 'G6002'];
+
+            if (baseCodeSet.has(sbrtCode)) techniques.push('SBRT');
+            if (baseCodeSet.has(srsCode)) techniques.push('SRS');
+            if (imrtCodes.some(c => baseCodeSet.has(c))) techniques.push('IMRT');
+            if (igrtCodes.some(c => baseCodeSet.has(c))) techniques.push('IGRT');
+            if (conventionalCodes.some(c => baseCodeSet.has(c))) techniques.push('Conventional');
+
+            return techniques.length > 0 ? techniques.join(', ') : 'Other';
+        }
+
+        function processData() {
+            rawData.forEach(row => {
+                row.Department = (row.Department || '').replace(/\*/g, '');
+                row.InsurerCategory = categorizeInsurer(row.PrimaryInsurer);
+                row.Technique = categorizeTechnique(row.BilledCodes);
+
+                // Parse treatment date (MM/DD/YYYY format)
+                if (row.TreatmentDate) {
+                    const parts = row.TreatmentDate.split('/');
+                    if (parts.length === 3) {
+                        const month = parts[0].padStart(2, '0');
+                        const day = parts[1].padStart(2, '0');
+                        const year = parts[2];
+                        row.TreatmentDateParsed = new Date(`${year}-${month}-${day}`);
+                    }
+                }
+            });
+        }
+
+        function buildFilters() {
+            const departments = [...new Set(rawData.map(r => r.Department).filter(Boolean))].sort();
+            const machines = [...new Set(rawData.map(r => r.Machine).filter(Boolean))].sort();
+            const insurerCategories = [...new Set(rawData.map(r => r.InsurerCategory).filter(Boolean))].sort();
+            const insurers = [...new Set(rawData.map(r => r.PrimaryInsurer ? r.PrimaryInsurer : '(Unknown)'))].sort();
+            const techniques = [...new Set(rawData.flatMap(r => (r.Technique || '').split(',').map(t => t.trim()).filter(Boolean)))].sort();
+            const codes2026Order = ['77402', '77407', '77412', '77372', '77373'];
+            const codes2026Set = [...new Set(rawData.map(r => r.ID2026Code).filter(Boolean))];
+            const codes2026 = codes2026Order.filter(c => codes2026Set.includes(c)).concat(
+                codes2026Set.filter(c => !codes2026Order.includes(c)).sort()
+            );
+            const radiationTypes = [...new Set(rawData.map(r => r.RadiationType).filter(Boolean))].sort();
+            const actualCodes = [...new Set(rawData.flatMap(r => (r.BilledCodes || '').split(',').map(c => c.trim()).filter(Boolean)))].sort();
+
+            createCheckboxes('departmentFilters', departments, true);
+            createCheckboxes('machineFilters', machines, true);
+            createCheckboxes('insurerCategoryFilters', insurerCategories, true);
+            createCheckboxes('insurerFilters', insurers, true);
+            createCheckboxes('techniqueFilters', techniques, true);
+            createCheckboxes('code2026Filters', codes2026, true);
+            createCheckboxes('radiationTypeFilters', radiationTypes, true);
+            createCheckboxes('actualCodeFilters', actualCodes, true);
+
+            // Set date range based on data
+            const dates = rawData.map(r => r.TreatmentDateParsed).filter(d => d && !isNaN(d));
+            if (dates.length > 0) {
+                const minDate = new Date(Math.min(...dates));
+                const maxDate = new Date(Math.max(...dates));
+
+                document.getElementById('startDate').value = minDate.toISOString().split('T')[0];
+                document.getElementById('endDate').value = maxDate.toISOString().split('T')[0];
+                document.getElementById('startDate').min = minDate.toISOString().split('T')[0];
+                document.getElementById('startDate').max = maxDate.toISOString().split('T')[0];
+                document.getElementById('endDate').min = minDate.toISOString().split('T')[0];
+                document.getElementById('endDate').max = maxDate.toISOString().split('T')[0];
+            }
+        }
+
+        function createCheckboxes(containerId, items, checked) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = items.map(item =>
+                `<div class="checkbox-item"><label><input type="checkbox" value="${item}" ${checked ? 'checked' : ''} onchange="updateCharts(); updateTable();">${item}</label></div>`
+            ).join('');
+        }
+
+        function getFilteredData() {
+            const selectedDepts = getCheckedValues('departmentFilters');
+            const selectedMachines = getCheckedValues('machineFilters');
+            const selectedInsurerCats = getCheckedValues('insurerCategoryFilters');
+            const selectedInsurers = getCheckedValues('insurerFilters');
+            const selectedTechs = getCheckedValues('techniqueFilters');
+            const selectedCodes2026 = getCheckedValues('code2026Filters');
+            const selectedRadTypes = getCheckedValues('radiationTypeFilters');
+            const selectedActualCodes = getCheckedValues('actualCodeFilters');
+
+            // Get date filters
+            const startDateStr = document.getElementById('startDate').value;
+            const endDateStr = document.getElementById('endDate').value;
+            const startDate = startDateStr ? new Date(startDateStr) : null;
+            const endDate = endDateStr ? new Date(endDateStr) : null;
+
+            return rawData.filter(row => {
+                if (selectedDepts.length && !selectedDepts.includes(row.Department)) return false;
+                if (selectedMachines.length && !selectedMachines.includes(row.Machine)) return false;
+                if (selectedInsurerCats.length && !selectedInsurerCats.includes(row.InsurerCategory)) return false;
+                if (selectedInsurers.length) {
+                    const rowInsurer = row.PrimaryInsurer ? row.PrimaryInsurer : '(Unknown)';
+                    if (!selectedInsurers.includes(rowInsurer)) return false;
+                }
+                if (selectedCodes2026.length && !selectedCodes2026.includes(row.ID2026Code)) return false;
+                if (selectedRadTypes.length && !selectedRadTypes.includes(row.RadiationType)) return false;
+
+                if (selectedTechs.length) {
+                    const rowTechs = (row.Technique || '').split(',').map(t => t.trim());
+                    if (!rowTechs.some(t => selectedTechs.includes(t))) return false;
+                }
+
+                if (selectedActualCodes.length) {
+                    const rowCodes = (row.BilledCodes || '').split(',').map(c => c.trim());
+                    if (!rowCodes.some(c => selectedActualCodes.includes(c))) return false;
+                }
+
+                // Apply date filters
+                if (row.TreatmentDateParsed) {
+                    if (startDate && row.TreatmentDateParsed < startDate) return false;
+                    if (endDate && row.TreatmentDateParsed > endDate) return false;
+                }
+
+                return true;
+            });
+        }
+
+        function getCheckedValues(containerId) {
+            const checkboxes = document.querySelectorAll(`#${containerId} input[type="checkbox"]:checked`);
+            return Array.from(checkboxes).map(cb => cb.value);
+        }
+
+        function getSelectedDimensions() {
+            const checkboxes = document.querySelectorAll('.checkbox-group input[type="checkbox"]:checked');
+            return Array.from(checkboxes).map(cb => cb.value);
+        }
+
+        function toggleAllCheckboxes(containerId, checked) {
+            const checkboxes = document.querySelectorAll(`#${containerId} input[type="checkbox"]`);
+            checkboxes.forEach(cb => cb.checked = checked);
+            updateCharts();
+            updateTable();
+        }
+
+        function updateCharts() {
+            updateSankeyChart();
+            updateRecordCount();
+        }
+
+        function updateSankeyChart() {
+            const userSelectedDims = getSelectedDimensions();
+            const selectedDims = userSelectedDims.filter(d => d !== '2026_codes').concat(['2026_codes']);
+
+            const dimMap = {
+                'actual_codes': { label: 'Actual Billed Code', field: 'BilledCodes', expand: true },
+                '2026_codes': { label: '2026 Code', field: 'ID2026Code' },
+                'department': { label: 'Department', field: 'Department' },
+                'machine': { label: 'Machine', field: 'Machine' },
+                'insurer_category': { label: 'Insurer Category', field: 'InsurerCategory' },
+                'technique': { label: 'Technique', field: 'Technique' },
+                'radiation_type': { label: 'Radiation Type', field: 'RadiationType' }
+            };
+
+            const originalData = getFilteredData().filter(row => row.ID2026Code);
+            const originalTreatmentCount = originalData.length;
+            let processedData = originalData;
+
+            // Expand for actual codes
+            if (selectedDims.includes('actual_codes')) {
+                const expanded = [];
+                processedData.forEach(row => {
+                    const codes = (row.BilledCodes || '').split(',').map(c => c.trim()).filter(c => c);
+                    if (codes.length === 0) codes.push('Unknown');
+                    codes.forEach(code => {
+                        expanded.push({ ...row, ActualCode: code });
+                    });
+                });
+                processedData = expanded;
+            }
+
+            // Expand for technique
+            if (selectedDims.includes('technique')) {
+                const expanded = [];
+                processedData.forEach(row => {
+                    const techniques = (row.Technique || '').split(',').map(t => t.trim()).filter(t => t);
+                    if (techniques.length === 0) techniques.push('Unknown');
+                    techniques.forEach(tech => {
+                        expanded.push({ ...row, TechniqueExpanded: tech });
+                    });
+                });
+                processedData = expanded;
+            }
+
+            // Build flow counts
+            const flowGroups = {};
+            processedData.forEach(row => {
+                const path = selectedDims.map(dimKey => {
+                    let field = dimMap[dimKey].field;
+                    if (dimKey === 'actual_codes') field = 'ActualCode';
+                    if (dimKey === 'technique') field = 'TechniqueExpanded';
+                    return (row[field] || 'Unknown').toString();
+                }).join('|||');
+                flowGroups[path] = (flowGroups[path] || 0) + 1;
+            });
+
+            // Build nodes and links
+            const allNodes = new Map(); // key -> {dimIdx, label, index}
+            const links = [];
+            let nodeIdx = 0;
+
+            Object.entries(flowGroups).forEach(([path, count]) => {
+                const vals = path.split('|||');
+                for (let i = 0; i < vals.length - 1; i++) {
+                    const srcKey = `${i}:${vals[i]}`;
+                    const tgtKey = `${i+1}:${vals[i+1]}`;
+
+                    if (!allNodes.has(srcKey)) {
+                        allNodes.set(srcKey, {dimIdx: i, label: vals[i], index: nodeIdx++});
+                    }
+                    if (!allNodes.has(tgtKey)) {
+                        allNodes.set(tgtKey, {dimIdx: i+1, label: vals[i+1], index: nodeIdx++});
+                    }
+
+                    const srcIdx = allNodes.get(srcKey).index;
+                    const tgtIdx = allNodes.get(tgtKey).index;
+                    const linkKey = `${srcIdx}-${tgtIdx}`;
+                    const existing = links.find(l => l.source === srcIdx && l.target === tgtIdx);
+                    if (existing) {
+                        existing.value += count;
+                    } else {
+                        links.push({source: srcIdx, target: tgtIdx, value: count});
+                    }
+                }
+            });
+
+            // Create label array with 2026 descriptions
+            const labels = new Array(nodeIdx);
+            const dimensionLabels = new Array(nodeIdx);
+            allNodes.forEach(node => {
+                let label = node.label;
+                if (node.dimIdx === selectedDims.length - 1) {
+                    // This is a 2026 code
+                    const code2026Counts = {};
+                    originalData.forEach(row => {
+                        const code = row.ID2026Code;
+                        code2026Counts[code] = (code2026Counts[code] || 0) + 1;
+                    });
+                    const count = code2026Counts[label] || 0;
+                    const pct = originalTreatmentCount > 0 ? ((count / originalTreatmentCount) * 100).toFixed(1) : '0.0';
+                    const desc = CODE_EXPLANATIONS_2026[label];
+                    label = desc ? `${label}: ${desc} (${count.toLocaleString()}, ${pct}%)` : label;
+                }
+                labels[node.index] = label;
+                dimensionLabels[node.index] = node.dimIdx;
+            });
+
+            // Add descriptions to actual billing codes
+            const labelsWithDesc = labels.map((label, i) => {
+                if (dimensionLabels[i] === 0 && selectedDims[0] === 'actual_codes') {
+                    const code = label.split(':')[0].trim();
+                    const desc = CODE_EXPLANATIONS_ACTUAL[code];
+                    return desc ? `${code}: ${desc}` : label;
+                }
+                return label;
+            });
+
+            // Calculate node colors
+            const numNodes = labels.length;
+            const plotlyColors = ['#636EFA', '#EF553B', '#00CC96', '#AB63FA', '#FFA15A', '#19D3F3', '#FF6692', '#B6E880', '#FF97FF', '#FECB52'];
+            const nodeColors = Array.from({length: numNodes}, (_, i) => plotlyColors[i % plotlyColors.length]);
+
+            // Calculate link colors
+            const linkColors = links.map(link => {
+                const color = nodeColors[link.target];
+                if (color.startsWith('#')) {
+                    const r = parseInt(color.slice(1,3), 16);
+                    const g = parseInt(color.slice(3,5), 16);
+                    const b = parseInt(color.slice(5,7), 16);
+                    return `rgba(${r},${g},${b},0.4)`;
+                }
+                return color.replace('rgb(', 'rgba(').replace(')', ',0.4)');
+            });
+
+            // Calculate actual treatment counts per node from ORIGINAL data (not inflated flow counts)
+            const nodeTreatmentCounts = {};
+            const allNodesArray = Array.from(allNodes.values());
+
+            for (let nodeI = 0; nodeI < allNodesArray.length; nodeI++) {
+                const node = allNodesArray[nodeI];
+                const dimKey = selectedDims[node.dimIdx];
+                const dimInfo = dimMap[dimKey];
+                const nodeIdx = node.index;
+
+                if (dimKey === 'actual_codes') {
+                    let count = 0;
+                    for (let j = 0; j < originalData.length; j++) {
+                        const codes = (originalData[j].BilledCodes || '').split(',');
+                        for (let k = 0; k < codes.length; k++) {
+                            if (codes[k].trim() === node.label) {
+                                count++;
+                                break;
+                            }
+                        }
+                    }
+                    nodeTreatmentCounts[nodeIdx] = count;
+                } else if (dimKey === 'technique') {
+                    let count = 0;
+                    for (let j = 0; j < originalData.length; j++) {
+                        const techs = (originalData[j].Technique || '').split(',');
+                        for (let k = 0; k < techs.length; k++) {
+                            if (techs[k].trim() === node.label) {
+                                count++;
+                                break;
+                            }
+                        }
+                    }
+                    nodeTreatmentCounts[nodeIdx] = count;
+                } else if (dimKey === '2026_codes') {
+                    let count = 0;
+                    for (let j = 0; j < originalData.length; j++) {
+                        if (originalData[j].ID2026Code === node.label) count++;
+                    }
+                    nodeTreatmentCounts[nodeIdx] = count;
+                } else {
+                    const field = dimInfo.field;
+                    let count = 0;
+                    for (let j = 0; j < originalData.length; j++) {
+                        if (originalData[j][field] === node.label) count++;
+                    }
+                    nodeTreatmentCounts[nodeIdx] = count;
+                }
+            }
+
+            // Calculate dimension totals from original data
+            const dimensionTotals = {};
+            for (let dimIdx = 0; dimIdx < selectedDims.length; dimIdx++) {
+                const dimKey = selectedDims[dimIdx];
+                if (dimKey === 'actual_codes') {
+                    let total = 0;
+                    for (let j = 0; j < originalData.length; j++) {
+                        const codes = (originalData[j].BilledCodes || '').split(',');
+                        let codeCount = 0;
+                        for (let k = 0; k < codes.length; k++) {
+                            if (codes[k].trim()) codeCount++;
+                        }
+                        total += codeCount || 1;
+                    }
+                    dimensionTotals[dimIdx] = total;
+                } else if (dimKey === 'technique') {
+                    let total = 0;
+                    for (let j = 0; j < originalData.length; j++) {
+                        const techs = (originalData[j].Technique || '').split(',');
+                        let techCount = 0;
+                        for (let k = 0; k < techs.length; k++) {
+                            if (techs[k].trim()) techCount++;
+                        }
+                        total += techCount || 1;
+                    }
+                    dimensionTotals[dimIdx] = total;
+                } else {
+                    dimensionTotals[dimIdx] = originalTreatmentCount;
+                }
+            }
+
+            // Build hover templates using actual treatment counts
+            const nodeCustomdata = Array.from({length: numNodes}, (_, i) => {
+                const count = nodeTreatmentCounts[i] || 0;
+                const dimIdx = dimensionLabels[i];
+                const dimTotal = dimensionTotals[dimIdx] || 1;
+                const pctCategory = dimTotal > 0 ? (count / dimTotal * 100) : 0;
+                return [count, dimTotal, pctCategory];
+            });
+
+            const linkCustomdata = links.map(link => {
+                const pctTotal = originalTreatmentCount > 0 ? (link.value / originalTreatmentCount * 100) : 0;
+                return [link.value, pctTotal];
+            });
+
+            const titleDims = userSelectedDims.filter(d => d !== '2026_codes').map(d => dimMap[d].label);
+            titleDims.push('2026 Code');
+
+            const trace = {
+                type: 'sankey',
+                node: {
+                    pad: 15,
+                    thickness: 20,
+                    line: {color: 'black', width: 0.5},
+                    label: labelsWithDesc,
+                    color: nodeColors,
+                    customdata: nodeCustomdata,
+                    hovertemplate: '<b>%{label}</b><br>Count: %{customdata[0]:,}<br>Category share: %{customdata[0]:,} of %{customdata[1]:,} (%{customdata[2]:.1f}%)<extra></extra>'
+                },
+                link: {
+                    source: links.map(l => l.source),
+                    target: links.map(l => l.target),
+                    value: links.map(l => l.value),
+                    color: linkColors,
+                    customdata: linkCustomdata,
+                    hovertemplate: '<b>%{source.label}</b> → <b>%{target.label}</b><br>Flow count: %{value:,}<extra></extra>'
+                },
+                valueformat: ',d',
+                valuesuffix: ''
+            };
+
+            const layout = {
+                title: 'Sankey Flow: ' + titleDims.join(' → '),
+                height: 700,
+                margin: {l: 20, r: 20, t: 80, b: 20},
+                font: {size: 11},
+                hovermode: 'closest'
+            };
+
+            Plotly.newPlot('sankeyChart', [trace], layout, {responsive: true});
+        }
+
+        function updateRecordCount() {
+            const filteredData = getFilteredData().filter(row => row.ID2026Code);
+            const count = filteredData.length;
+            const recordCountDiv = document.getElementById('recordCount');
+            recordCountDiv.textContent = `Showing ${count.toLocaleString()} treatment${count !== 1 ? 's' : ''}`;
+        }
+
+        function updateTable() {
+            const filteredData = getFilteredData();
+            const code2026Counts = {};
+            const actualCodeCounts = {};
+
+            filteredData.forEach(row => {
+                const code2026 = row.ID2026Code;
+                if (code2026) {
+                    code2026Counts[code2026] = (code2026Counts[code2026] || 0) + 1;
+                }
+
+                const codes = (row.BilledCodes || '').split(',').map(c => c.trim()).filter(c => c);
+                codes.forEach(code => {
+                    actualCodeCounts[code] = (actualCodeCounts[code] || 0) + 1;
+                });
+            });
+
+            const total2026 = Object.values(code2026Counts).reduce((a, b) => a + b, 0);
+            const totalActual = Object.values(actualCodeCounts).reduce((a, b) => a + b, 0);
+
+            const rows = [];
+
+            Object.entries(code2026Counts).sort().forEach(([code, count]) => {
+                const pct = ((count / total2026) * 100).toFixed(1);
+                rows.push({
+                    type: '2026 Billing Code',
+                    code: code,
+                    count: count.toLocaleString(),
+                    percentage: pct + '%'
+                });
+            });
+
+            Object.entries(actualCodeCounts).sort().forEach(([code, count]) => {
+                const pct = ((count / totalActual) * 100).toFixed(1);
+                rows.push({
+                    type: 'Actual Billing Code',
+                    code: code,
+                    count: count.toLocaleString(),
+                    percentage: pct + '%'
+                });
+            });
+
+            const tbody = document.getElementById('tableBody');
+            tbody.innerHTML = rows.map(row =>
+                `<tr><td>${row.type}</td><td>${row.code}</td><td>${row.count}</td><td>${row.percentage}</td></tr>`
+            ).join('');
+        }
+
+        function exportCSV() {
+            const rows = [['Type', 'Code', 'Count', 'Percentage']];
+            document.querySelectorAll('#summaryTable tbody tr').forEach(tr => {
+                const cells = tr.querySelectorAll('td');
+                rows.push(Array.from(cells).map(td => td.textContent));
+            });
+
+            const csv = rows.map(row => row.join(',')).join('\n');
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'cpt_billing_summary.csv';
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+    </script>
+</body>
+</html>

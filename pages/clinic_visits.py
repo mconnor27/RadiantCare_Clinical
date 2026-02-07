@@ -36,27 +36,31 @@ layout = dmc.Stack(
     gap=16,
     className="page-content",
     children=[
-        dmc.Title("Clinic Visits", order=2, className="page-title"),
-
-        # Filter bar
-        filter_bar("clinic-visits", children=[
-            date_presets("clinic-visits"),
-            date_range_picker("clinic-visits"),
-            department_chips("clinic-visits"),
-            physician_select("clinic-visits"),
-            dmc.SegmentedControl(
-                id="clinic-visits-filter-visit-type",
-                data=[{"value": v, "label": v} for v in VISIT_TYPES],
-                value="All",
-                size="sm",
-            ),
-            dmc.SegmentedControl(
-                id="clinic-visits-filter-status",
-                data=[{"value": s, "label": s} for s in STATUS_OPTIONS],
-                value="Completed",
-                size="sm",
-            ),
-        ]),
+        # Sticky header with title and filter bar
+        dmc.Box(
+            className="page-sticky-header",
+            children=[
+                dmc.Title("Clinic Visits", order=2, className="page-title"),
+                filter_bar("clinic-visits", children=[
+                    date_presets("clinic-visits"),
+                    date_range_picker("clinic-visits"),
+                    department_chips("clinic-visits"),
+                    physician_select("clinic-visits"),
+                    dmc.SegmentedControl(
+                        id="clinic-visits-filter-visit-type",
+                        data=[{"value": v, "label": v} for v in VISIT_TYPES],
+                        value="All",
+                        size="sm",
+                    ),
+                    dmc.SegmentedControl(
+                        id="clinic-visits-filter-status",
+                        data=[{"value": s, "label": s} for s in STATUS_OPTIONS],
+                        value="Completed",
+                        size="sm",
+                    ),
+                ]),
+            ],
+        ),
 
         # KPI row — 6 cards with sparklines
         dmc.Grid(id="cv-kpi-row", gutter="md", children=[

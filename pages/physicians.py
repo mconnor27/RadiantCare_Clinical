@@ -2,7 +2,7 @@
 
 import dash
 import dash_mantine_components as dmc
-from dash import callback, Input, Output, dcc
+from dash import callback, clientside_callback, ClientsideFunction, Input, Output, State, dcc
 import dash_ag_grid as dag
 import plotly.graph_objects as go
 import pandas as pd
@@ -12,11 +12,15 @@ from config.settings import (
     PHYSICIANS, DEPARTMENTS, DEPARTMENT_COLORS, PRIMARY, NEUTRAL,
     SEMANTIC_COLORS, CHART_COLORWAY,
 )
-from components.filter_bar import filter_bar, date_presets, physician_select
+from components.filter_bar import filter_bar, physician_select
+from components.chart_settings import chart_settings_popover
 from components.kpi_card import kpi_card
 from utils.charts import apply_default_layout, empty_figure, color_for_index
 
 dash.register_page(__name__, path="/physicians", name="Physicians", order=10)
+
+# Statuses that indicate a physician is on duty (includes site assignments)
+_ON_DUTY = {"ON", "ON CALL", "WEEKEND CALL", "CENTRALIA", "ABERDEEN"}
 
 # ---------------------------------------------------------------------------
 # Layout
@@ -25,11 +29,28 @@ layout = dmc.Stack(
     gap=16,
     className="page-content",
     children=[
-        dmc.Title("Physicians", order=2, className="page-title"),
-        filter_bar("phys", children=[
-            date_presets("phys"),
-            physician_select("phys"),
-        ]),
+        # Sticky header with title and filter bar
+        dmc.Box(
+            className="page-sticky-header",
+            children=[
+                dmc.Title("Physicians", order=2, className="page-title"),
+                filter_bar("phys", children=[
+                    dmc.SegmentedControl(
+                        id="phys-filter-date-preset",
+                        data=[
+                            {"value": "1mo", "label": "1 mo"},
+                            {"value": "3mo", "label": "3 mo"},
+                            {"value": "6mo", "label": "6 mo"},
+                            {"value": "12mo", "label": "12 mo"},
+                            {"value": "all", "label": "All"},
+                        ],
+                        value="12mo",
+                        size="sm",
+                    ),
+                    physician_select("phys"),
+                ]),
+            ],
+        ),
 
         # KPI row
         dmc.Grid(id="phys-kpi-row", gutter="md", children=[
@@ -45,7 +66,23 @@ layout = dmc.Stack(
             dmc.GridCol(
                 dmc.Paper(
                     children=[
-                        dmc.Text("Manpower Over Time", size="sm", fw=500, c=NEUTRAL["text_secondary"], mb="sm"),
+                        dmc.Group(
+                            justify="space-between", mb="sm",
+                            children=[
+                                dmc.Text("Manpower Over Time", size="sm", fw=500, c=NEUTRAL["text_secondary"]),
+                                chart_settings_popover(
+                                    "phys-manpower",
+                                    chart_types=[
+                                        {"value": "area", "label": "Area"},
+                                        {"value": "line", "label": "Line"},
+                                        {"value": "bar", "label": "Bar"},
+                                    ],
+                                    show_smooth=True,
+                                    smooth_max=50,
+                                    smooth_default=15,
+                                ),
+                            ],
+                        ),
                         dmc.Box(
                             pos="relative",
                             children=[
@@ -136,6 +173,7 @@ layout = dmc.Stack(
             p="md", radius="md", shadow="xs", withBorder=True,
         ),
 
+        dcc.Store(id="phys-store-manpower"),
         dcc.Interval(id="phys-interval", interval=300_000, n_intervals=0),
     ],
 )
@@ -150,7 +188,7 @@ layout = dmc.Stack(
     Output("phys-kpi-crosscoverage", "children"),
     Output("phys-kpi-vacation", "children"),
     Output("phys-kpi-weekend", "children"),
-    Output("phys-chart-manpower", "figure"),
+    Output("phys-store-manpower", "data"),
     Output("phys-chart-sites", "figure"),
     Output("phys-chart-afterhours", "figure"),
     Output("phys-chart-crosscoverage", "figure"),
@@ -176,39 +214,36 @@ def update_physicians(_n, date_preset, physicians):
     try:
         schedule = load_physician_schedule()
     except Exception:
-        return (na_kpi,) * 5 + (empty,) * 5 + ([],) + (loading_off,) * 5
+        return (na_kpi,) * 5 + (None,) + (empty,) * 4 + ([],) + (loading_off,) * 5
 
     try:
         tasks = load_tasks()
     except Exception:
         tasks = pd.DataFrame()
 
-    # Date filtering
+    # Date filtering — schedule extends into the future so clamp to today
     if "Date" in schedule.columns:
         schedule["Date"] = pd.to_datetime(schedule["Date"], errors="coerce")
-        last_date = schedule["Date"].max()
-    else:
-        last_date = pd.Timestamp.now().normalize()
+    today = pd.Timestamp.now().normalize()
 
-    if date_preset == "ytd":
-        start = pd.Timestamp(last_date.year, 1, 1)
-    elif date_preset == "12mo":
-        start = last_date - timedelta(days=365)
+    preset_days = {"1mo": 30, "3mo": 90, "6mo": 180, "12mo": 365}
+    if date_preset == "all":
+        start = None
     else:
-        start = last_date - timedelta(days=90)
+        start = today - timedelta(days=preset_days.get(date_preset, 365))
 
     # Filter schedule
     df = schedule.copy()
-    if "Date" in df.columns:
-        df = df[(df["Date"] >= start) & (df["Date"] <= last_date)]
+    if start is not None and "Date" in df.columns:
+        df = df[df["Date"] >= start]
 
     if physicians and "Physician" in df.columns:
         df = df[df["Physician"].isin(physicians)]
 
     # Filter tasks
     task_df = tasks.copy()
-    if not task_df.empty and "StartDateTime" in task_df.columns:
-        task_df = task_df[(task_df["StartDateTime"] >= start)]
+    if start is not None and not task_df.empty and "StartDateTime" in task_df.columns:
+        task_df = task_df[task_df["StartDateTime"] >= start]
     if physicians and not task_df.empty and "CompletingMD" in task_df.columns:
         task_df = task_df[task_df["CompletingMD"].isin(physicians)]
 
@@ -220,7 +255,7 @@ def update_physicians(_n, date_preset, physicians):
     kpi_wknd = _kpi_weekend_calls(df)
 
     # --- Charts ---
-    fig_manpower = _build_manpower_chart(df)
+    manpower_data = _build_manpower_data(df)
     fig_sites = _build_site_assignments(df)
     fig_afterhours = _build_afterhours_chart(task_df, df)
     fig_crosscov = _build_crosscoverage_chart(task_df)
@@ -231,7 +266,7 @@ def update_physicians(_n, date_preset, physicians):
 
     return (
         kpi_cov, kpi_ah, kpi_cc, kpi_vac, kpi_wknd,
-        fig_manpower, fig_sites, fig_afterhours, fig_crosscov, fig_calendar,
+        manpower_data, fig_sites, fig_afterhours, fig_crosscov, fig_calendar,
         table,
         False, False, False, False, False,
     )
@@ -241,7 +276,7 @@ def _kpi_coverage(df):
     """Average MDs on duty per day."""
     if df.empty or "Date" not in df.columns or "Status" not in df.columns:
         return kpi_card("Avg Daily Coverage", "N/A")
-    on_duty = df[df["Status"].str.upper().isin(["ON", "ON CALL", "WEEKEND CALL"])]
+    on_duty = df[df["Status"].str.upper().isin(_ON_DUTY)]
     if on_duty.empty:
         return kpi_card("Avg Daily Coverage", "0")
     avg = on_duty.groupby("Date").size().mean()
@@ -264,11 +299,11 @@ def _kpi_afterhours(task_df):
 
 
 def _kpi_crosscoverage(task_df):
-    """Tasks where CompletingMD != AssignedMD."""
-    if task_df.empty or "CompletingMD" not in task_df.columns or "AssignedMD" not in task_df.columns:
+    """Tasks where CompletingMD != TreatingPhysician."""
+    if task_df.empty or "CompletingMD" not in task_df.columns or "TreatingPhysician" not in task_df.columns:
         return kpi_card("Cross-Coverage Tasks", "N/A")
     completed = task_df[task_df["CompletedDateTime"].notna()].copy()
-    cross = completed[completed["CompletingMD"] != completed["AssignedMD"]]
+    cross = completed[completed["CompletingMD"] != completed["TreatingPhysician"]]
     pct = (len(cross) / len(completed) * 100) if len(completed) > 0 else 0
     return kpi_card("Cross-Coverage", f"{len(cross):,}", value_detail=f"({pct:.1f}%)")
 
@@ -289,47 +324,61 @@ def _kpi_weekend_calls(df):
     return kpi_card("Weekend Calls", f"{len(wknd):,}")
 
 
-def _build_manpower_chart(df):
-    """Stacked area chart of MDs available by day."""
+def _build_manpower_data(df):
+    """Build raw manpower data dict for clientside smoothing."""
     if df.empty or "Date" not in df.columns or "Status" not in df.columns:
-        return empty_figure("No schedule data")
+        return None
 
-    on_duty = df[df["Status"].str.upper().isin(["ON", "ON CALL", "WEEKEND CALL"])].copy()
+    on_duty = df[df["Status"].str.upper().isin(_ON_DUTY)].copy()
     if on_duty.empty:
-        return empty_figure("No on-duty records")
+        return None
 
     daily = on_duty.groupby("Date").size().reset_index(name="count")
+    # Keep only weekdays with >1 MD (excludes weekends / lone on-call days)
+    daily = daily[(daily["Date"].dt.dayofweek < 5) & (daily["count"] > 1)]
+    if daily.empty:
+        return None
 
-    fig = go.Figure(go.Scatter(
-        x=daily["Date"], y=daily["count"],
-        mode="lines",
-        fill="tozeroy",
-        line=dict(color=PRIMARY, width=2),
-        fillcolor="rgba(124, 42, 131, 0.2)",
-    ))
-
-    apply_default_layout(fig, height=320)
-    fig.update_layout(yaxis_title="MDs On Duty", margin=dict(l=48, r=16, t=16, b=48))
-    return fig
+    return {
+        "dates": [d.isoformat() for d in daily["Date"]],
+        "series": [{
+            "name": "MDs On Duty",
+            "values": daily["count"].tolist(),
+            "color": PRIMARY,
+        }],
+        "height": 320,
+        "yTitle": "MDs On Duty",
+    }
 
 
 def _build_site_assignments(df):
-    """Bar chart of assignments by site."""
-    if df.empty or "Department" not in df.columns:
+    """Grouped bar chart of site assignment days per physician."""
+    if df.empty or "Department" not in df.columns or "Physician" not in df.columns:
         return empty_figure("No department data")
 
-    site_counts = df.groupby("Department").size().reset_index(name="count")
+    assigned = df[df["Department"].notna()]
+    if assigned.empty:
+        return empty_figure("No site assignment data")
 
-    colors = [DEPARTMENT_COLORS.get(d, PRIMARY) for d in site_counts["Department"]]
+    counts = assigned.groupby(["Physician", "Department"]).size().reset_index(name="count")
+    counts["short_name"] = counts["Physician"].str.split(",").str[0]
 
-    fig = go.Figure(go.Bar(
-        x=site_counts["Department"],
-        y=site_counts["count"],
-        marker_color=colors,
-    ))
+    fig = go.Figure()
+    for dept in sorted(counts["Department"].unique()):
+        dept_data = counts[counts["Department"] == dept]
+        fig.add_trace(go.Bar(
+            x=dept_data["short_name"],
+            y=dept_data["count"],
+            name=dept,
+            marker_color=DEPARTMENT_COLORS.get(dept, PRIMARY),
+        ))
 
     apply_default_layout(fig, height=320)
-    fig.update_layout(yaxis_title="Assignment Days", margin=dict(l=48, r=16, t=16, b=48))
+    fig.update_layout(
+        yaxis_title="Assignment Days",
+        barmode="group",
+        margin=dict(l=48, r=16, t=16, b=48),
+    )
     return fig
 
 
@@ -366,11 +415,11 @@ def _build_afterhours_chart(task_df, schedule_df):
 
 def _build_crosscoverage_chart(task_df):
     """Bar chart showing cross-coverage by physician."""
-    if task_df.empty or "CompletingMD" not in task_df.columns or "AssignedMD" not in task_df.columns:
+    if task_df.empty or "CompletingMD" not in task_df.columns or "TreatingPhysician" not in task_df.columns:
         return empty_figure("No task data")
 
     completed = task_df[task_df["CompletedDateTime"].notna()].copy()
-    cross = completed[completed["CompletingMD"] != completed["AssignedMD"]]
+    cross = completed[completed["CompletingMD"] != completed["TreatingPhysician"]]
 
     if cross.empty:
         return empty_figure("No cross-coverage tasks")
@@ -409,7 +458,8 @@ def _build_calendar_heatmap(df):
 
     # Map status to numeric for heatmap
     status_map = {
-        "ON": 3, "ON CALL": 3, "WEEKEND CALL": 2,
+        "ON": 3, "ON CALL": 3, "CENTRALIA": 3, "ABERDEEN": 3,
+        "WEEKEND CALL": 2,
         "OFF": 0, "VACATION": -1, "SICK": -1,
     }
 
@@ -470,3 +520,33 @@ def _build_schedule_table(df):
         dashGridOptions={"pagination": True, "paginationPageSize": 25, "domLayout": "autoHeight"},
         className="ag-theme-alpine",
     )
+
+
+# ---------------------------------------------------------------------------
+# Clientside callback — manpower chart smoothing / chart type
+# ---------------------------------------------------------------------------
+clientside_callback(
+    ClientsideFunction(namespace="census", function_name="smoothChartWithType"),
+    Output("phys-chart-manpower", "figure"),
+    Input("phys-store-manpower", "data"),
+    Input("phys-manpower-settings-smooth", "value"),
+    Input("phys-manpower-settings-type", "value"),
+    State("phys-chart-manpower", "figure"),
+)
+
+
+# ---------------------------------------------------------------------------
+# Settings panel toggle
+# ---------------------------------------------------------------------------
+@callback(
+    Output("phys-manpower-settings-panel", "style"),
+    Input("phys-manpower-settings-btn", "n_clicks"),
+    State("phys-manpower-settings-panel", "style"),
+    prevent_initial_call=True,
+)
+def toggle_manpower_settings(n, style):
+    if not n:
+        return style
+    current = style or {}
+    is_hidden = current.get("display") == "none"
+    return {"display": "block"} if is_hidden else {"display": "none"}

@@ -126,19 +126,21 @@ def kpi_card(
         dmc.Text(label, size="xs", c=NEUTRAL["text_secondary"], fw=500),
     ]
 
-    # Value row: value + optional detail + optional trend, all inline
+    # Value row: value + optional detail inline
     value_row = [dmc.Text(str(value), size="xl", fw=700, c=NEUTRAL["text_primary"])]
     if value_detail:
         value_row.append(dmc.Text(value_detail, size="xs", c=NEUTRAL["text_muted"]))
+    children.append(dmc.Group(gap="xs", align="baseline", children=value_row))
+
+    # Trend on its own line (keeps card height consistent)
     if trend_text:
-        value_row.append(
+        children.append(
             dmc.Text(
                 f"{trend_icon}{trend_text}",
                 size="xs",
                 c=trend_color or NEUTRAL["text_muted"],
             )
         )
-    children.append(dmc.Group(gap="xs", align="baseline", children=value_row))
 
     if sparkline_past or sparkline_id:
         children.append(

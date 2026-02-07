@@ -58,29 +58,35 @@ layout = dmc.Stack(
     gap=16,
     className="page-content",
     children=[
-        dmc.Title("Tasks", order=2, className="page-title"),
-        filter_bar("tasks", children=[
-            date_presets("tasks"),
-            physician_select("tasks"),
-            dmc.SegmentedControl(
-                id="tasks-filter-type",
-                data=[
-                    {"value": "all", "label": "All"},
-                    {"value": "draw", "label": "Draw Volumes"},
-                    {"value": "review", "label": "Review Plan"},
-                ],
-                value="all", size="sm",
-            ),
-            dmc.SegmentedControl(
-                id="tasks-filter-status",
-                data=[
-                    {"value": "all", "label": "All"},
-                    {"value": "open", "label": "Open"},
-                    {"value": "done", "label": "Completed"},
-                ],
-                value="all", size="sm",
-            ),
-        ]),
+        # Sticky header with title and filter bar
+        dmc.Box(
+            className="page-sticky-header",
+            children=[
+                dmc.Title("Tasks", order=2, className="page-title"),
+                filter_bar("tasks", children=[
+                    date_presets("tasks"),
+                    physician_select("tasks"),
+                    dmc.SegmentedControl(
+                        id="tasks-filter-type",
+                        data=[
+                            {"value": "all", "label": "All"},
+                            {"value": "draw", "label": "Draw Volumes"},
+                            {"value": "review", "label": "Review Plan"},
+                        ],
+                        value="all", size="sm",
+                    ),
+                    dmc.SegmentedControl(
+                        id="tasks-filter-status",
+                        data=[
+                            {"value": "all", "label": "All"},
+                            {"value": "open", "label": "Open"},
+                            {"value": "done", "label": "Completed"},
+                        ],
+                        value="all", size="sm",
+                    ),
+                ]),
+            ],
+        ),
 
         # KPI row
         dmc.Grid(id="tasks-kpi-row", gutter="md", children=[

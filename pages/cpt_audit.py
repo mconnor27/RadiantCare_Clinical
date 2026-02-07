@@ -25,20 +25,26 @@ layout = dmc.Stack(
     gap=16,
     className="page-content",
     children=[
-        dmc.Title("CPT Audit", order=2, className="page-title"),
-        filter_bar("cpt", children=[
-            date_presets("cpt"),
-            department_chips("cpt"),
-            dmc.SegmentedControl(
-                id="cpt-filter-result",
-                data=[
-                    {"value": "all", "label": "All"},
-                    {"value": "pass", "label": "Pass"},
-                    {"value": "fail", "label": "Fail"},
-                ],
-                value="all", size="sm",
-            ),
-        ]),
+        # Sticky header with title and filter bar
+        dmc.Box(
+            className="page-sticky-header",
+            children=[
+                dmc.Title("CPT Audit", order=2, className="page-title"),
+                filter_bar("cpt", children=[
+                    date_presets("cpt"),
+                    department_chips("cpt"),
+                    dmc.SegmentedControl(
+                        id="cpt-filter-result",
+                        data=[
+                            {"value": "all", "label": "All"},
+                            {"value": "pass", "label": "Pass"},
+                            {"value": "fail", "label": "Fail"},
+                        ],
+                        value="all", size="sm",
+                    ),
+                ]),
+            ],
+        ),
 
         # KPI row
         dmc.Grid(id="cpt-kpi-row", gutter="md", children=[
@@ -345,7 +351,7 @@ def _build_mismatch_chart(df):
 
     mismatch_counts = failures.groupby(["CPT_Correct", "CPT_Billed"]).size().reset_index(name="count")
     mismatch_counts = mismatch_counts.nlargest(10, "count")
-    mismatch_counts["label"] = mismatch_counts["CPT_Correct"] + " → " + mismatch_counts["CPT_Billed"]
+    mismatch_counts["label"] = mismatch_counts["CPT_Correct"].astype(str) + " → " + mismatch_counts["CPT_Billed"].astype(str)
     mismatch_counts = mismatch_counts.sort_values("count", ascending=True)
 
     fig = go.Figure(go.Bar(

@@ -454,7 +454,7 @@ def _build_availability_calendar(departments):
             font=dict(family=FONT_FAMILY, size=11),
             plot_bgcolor="#FFFFFF",
             paper_bgcolor="#FFFFFF",
-            margin=dict(l=45, r=8, t=36, b=32),
+            margin=dict(l=45, r=8, t=50, b=32),
             annotations=annotations,
         )
 
@@ -475,41 +475,48 @@ layout = dmc.Stack(
     gap=16,
     className="page-content",
     children=[
-        dmc.Title("Home", order=2, className="page-title"),
-
-        # Filter bar — date presets + smoothing slider
-        dmc.Paper(
+        # Sticky header with title and filter bar
+        dmc.Box(
+            className="page-sticky-header",
             children=[
-                dmc.Group(
+                dmc.Title("Home", order=2, className="page-title"),
+
+                # Filter bar — date presets + smoothing slider
+                dmc.Paper(
                     children=[
-                        dmc.SegmentedControl(
-                            id="home-filter-date-preset",
-                            data=[
-                                {"value": "today", "label": "Today"},
-                                {"value": "week", "label": "7 Days"},
-                                {"value": "month", "label": "30 Days"},
-                                {"value": "quarter", "label": "3 Mo"},
-                                {"value": "12mo", "label": "12 Mo"},
-                                {"value": "ytd", "label": "YTD"},
+                        dmc.Group(
+                            children=[
+                                dmc.SegmentedControl(
+                                    id="home-filter-date-preset",
+                                    data=[
+                                        {"value": "today", "label": "Today"},
+                                        {"value": "week", "label": "7 Days"},
+                                        {"value": "month", "label": "30 Days"},
+                                        {"value": "quarter", "label": "3 Mo"},
+                                        {"value": "12mo", "label": "12 Mo"},
+                                        {"value": "lastyear", "label": "Last Year"},
+                                        {"value": "ytd", "label": "YTD"},
+                                    ],
+                                    value="ytd", size="sm",
+                                ),
+                                department_chips("home"),
+                                dmc.Group(gap=8, align="center", children=[
+                                    dmc.Text("Smoothing", size="sm", c="#9CA3AF", fw=500),
+                                    dmc.Slider(
+                                        id="home-filter-smoothing",
+                                        min=0, max=1, step=0.01, value=0.4,
+                                        size="xs", w=120,
+                                        showLabelOnHover=False,
+                                        updatemode="drag",
+                                    ),
+                                ]),
                             ],
-                            value="ytd", size="sm",
+                            gap="lg", wrap="wrap",
                         ),
-                        department_chips("home"),
-                        dmc.Group(gap=8, align="center", children=[
-                            dmc.Text("Smoothing", size="sm", c="#9CA3AF", fw=500),
-                            dmc.Slider(
-                                id="home-filter-smoothing",
-                                min=0, max=1, step=0.01, value=0.4,
-                                size="xs", w=120,
-                                showLabelOnHover=False,
-                                updatemode="drag",
-                            ),
-                        ]),
                     ],
-                    gap="lg", wrap="wrap",
+                    p="sm", px="md", radius="md", shadow="xs", withBorder=True,
                 ),
             ],
-            p="sm", px="md", radius="md", shadow="xs", withBorder=True,
         ),
 
         # KPI row — 5 cards with sparklines
@@ -775,16 +782,17 @@ def update_kpis(_n, date_preset, departments):
     PERIOD_LABELS = {
         "today": "Today", "week": "7 Days",
         "month": "30 Days", "quarter": "3 Mo",
-        "12mo": "12 Mo", "ytd": "YTD",
+        "12mo": "12 Mo", "lastyear": "Last Year", "ytd": "YTD",
     }
     TREND_LABELS = {
         "today": "vs yesterday", "week": "vs prior 7d",
         "month": "vs prior 30d", "quarter": "vs prior 3 mo",
-        "12mo": "vs prior 12 mo", "ytd": "vs prior year",
+        "12mo": "vs prior 12 mo", "lastyear": "vs prior year",
+        "ytd": "vs prior year",
     }
     SPARK_FREQ = {
         "today": "D", "week": "D", "month": "D",
-        "quarter": "W", "12mo": "W", "ytd": "W",
+        "quarter": "W", "12mo": "W", "lastyear": "W", "ytd": "W",
     }
     period_label = PERIOD_LABELS.get(date_preset, "YTD")
     trend_label = TREND_LABELS.get(date_preset, "vs prior")
@@ -797,6 +805,8 @@ def update_kpis(_n, date_preset, departments):
         """Compute sparkline start date (different from KPI range start)."""
         if preset == "ytd":
             return pd.Timestamp(last_date.year, 1, 1)
+        if preset == "lastyear":
+            return pd.Timestamp(last_date.year - 1, 1, 1)
         lookbacks = {"today": 14, "week": 28, "month": 60, "quarter": 120, "12mo": 365}
         return last_date - timedelta(days=lookbacks.get(preset, 365))
 
@@ -811,8 +821,16 @@ def update_kpis(_n, date_preset, departments):
             return last_date - timedelta(days=89)  # Rolling 90 days (~3 months)
         elif preset == "12mo":
             return last_date - timedelta(days=365)
+        elif preset == "lastyear":
+            return pd.Timestamp(last_date.year - 1, 1, 1)
         else:  # ytd
             return pd.Timestamp(last_date.year, 1, 1)
+
+    def _preset_end(last_date, preset):
+        """End date for the current period (only differs for lastyear)."""
+        if preset == "lastyear":
+            return pd.Timestamp(last_date.year - 1, 12, 31)
+        return last_date
 
     def _prior_range(last_date, preset):
         if preset == "today":
@@ -829,6 +847,8 @@ def update_kpis(_n, date_preset, departments):
             return last_date - timedelta(days=179), last_date - timedelta(days=90)
         elif preset == "12mo":
             return last_date - timedelta(days=730), last_date - timedelta(days=366)
+        elif preset == "lastyear":
+            return pd.Timestamp(last_date.year - 2, 1, 1), pd.Timestamp(last_date.year - 2, 12, 31)
         else:  # ytd
             try:
                 pe = pd.Timestamp(last_date.year - 1, last_date.month, last_date.day)
@@ -847,12 +867,13 @@ def update_kpis(_n, date_preset, departments):
     def _count_spark_raw(df, date_col, last_date):
         """Return raw sparkline data (no smoothing) as {labels, values}."""
         s_start = _spark_start(last_date, date_preset)
-        s_data = df[(df[date_col] >= s_start) & (df[date_col] <= last_date)]
+        s_end = _preset_end(last_date, date_preset)
+        s_data = df[(df[date_col] >= s_start) & (df[date_col] <= s_end)]
         if spark_freq == "W":
             series = s_data.groupby(s_data[date_col].dt.to_period("W").dt.start_time).size()
         else:
             series = s_data.groupby(s_data[date_col].dt.normalize()).size()
-            series = series.reindex(pd.date_range(s_start, last_date), fill_value=0)
+            series = series.reindex(pd.date_range(s_start, s_end), fill_value=0)
             # Filter to business days with activity
             if hasattr(series.index, 'weekday'):
                 series = series[series.index.weekday < 5]
@@ -865,7 +886,8 @@ def update_kpis(_n, date_preset, departments):
     def _lead_spark_raw(df, date_col, lead_col, last_date):
         """Return raw lead time sparkline data (no smoothing) as {labels, values}."""
         s_start = _spark_start(last_date, date_preset)
-        s_data = df[(df[date_col] >= s_start) & (df[date_col] <= last_date)]
+        s_end = _preset_end(last_date, date_preset)
+        s_data = df[(df[date_col] >= s_start) & (df[date_col] <= s_end)]
         if spark_freq == "W":
             series = s_data.groupby(s_data[date_col].dt.to_period("W").dt.start_time)[lead_col].median()
         else:
@@ -895,6 +917,11 @@ def update_kpis(_n, date_preset, departments):
                 sims["ActivityName"].str.contains("Initial", case=False, na=False) |
                 sims["ActivityName"].str.contains("Stereotactic Simulation", case=False, na=False)
             ]
+        # Filter to completed or billed simulations only
+        if not sims.empty:
+            completed = sims["Status"].str.contains("Completed", case=False, na=False) if "Status" in sims.columns else pd.Series(False, index=sims.index)
+            billed = sims["ProcedureCodes"].notna() & (sims["ProcedureCodes"].astype(str).str.strip() != "") if "ProcedureCodes" in sims.columns else pd.Series(False, index=sims.index)
+            sims = sims[completed | billed]
     except Exception:
         sims = pd.DataFrame()
     try:
@@ -919,7 +946,8 @@ def update_kpis(_n, date_preset, departments):
     if not consults.empty and "ScheduledDateTime" in consults.columns:
         last_cv = consults["ScheduledDateTime"].dt.normalize().max()
         start = _preset_start(last_cv, date_preset)
-        curr = len(consults[consults["ScheduledDateTime"] >= start])
+        end = _preset_end(last_cv, date_preset)
+        curr = len(consults[(consults["ScheduledDateTime"] >= start) & (consults["ScheduledDateTime"] <= end)])
         ps, pe = _prior_range(last_cv, date_preset)
         prior = len(consults[(consults["ScheduledDateTime"] >= ps) & (consults["ScheduledDateTime"] <= pe)])
         pt, t_dir, pv = _trend(curr, prior)
@@ -941,7 +969,8 @@ def update_kpis(_n, date_preset, departments):
     if not sims.empty and "ScheduledDateTime" in sims.columns:
         last_sim = sims["ScheduledDateTime"].dt.normalize().max()
         start = _preset_start(last_sim, date_preset)
-        curr = len(sims[sims["ScheduledDateTime"] >= start])
+        end = _preset_end(last_sim, date_preset)
+        curr = len(sims[(sims["ScheduledDateTime"] >= start) & (sims["ScheduledDateTime"] <= end)])
         ps, pe = _prior_range(last_sim, date_preset)
         prior = len(sims[(sims["ScheduledDateTime"] >= ps) & (sims["ScheduledDateTime"] <= pe)])
         pt, t_dir, pv = _trend(curr, prior)
@@ -963,7 +992,8 @@ def update_kpis(_n, date_preset, departments):
     if not td.empty and "ScheduledDateTime" in td.columns:
         last_date = td["ScheduledDateTime"].dt.normalize().max()
         start = _preset_start(last_date, date_preset)
-        curr = len(td[td["ScheduledDateTime"] >= start])
+        end = _preset_end(last_date, date_preset)
+        curr = len(td[(td["ScheduledDateTime"] >= start) & (td["ScheduledDateTime"] <= end)])
         ps, pe = _prior_range(last_date, date_preset)
         prior = len(td[(td["ScheduledDateTime"] >= ps) & (td["ScheduledDateTime"] <= pe)])
         pt, t_dir, pv = _trend(curr, prior)
@@ -989,7 +1019,8 @@ def update_kpis(_n, date_preset, departments):
         if not cl.empty:
             last_cv = cl["ScheduledDateTime"].dt.normalize().max()
             start = _preset_start(last_cv, date_preset)
-            curr_data = cl[cl["ScheduledDateTime"] >= start]
+            end = _preset_end(last_cv, date_preset)
+            curr_data = cl[(cl["ScheduledDateTime"] >= start) & (cl["ScheduledDateTime"] <= end)]
             curr_med = curr_data["lead_days"].median() if len(curr_data) > 0 else 0
             ps, pe = _prior_range(last_cv, date_preset)
             prior_data = cl[(cl["ScheduledDateTime"] >= ps) & (cl["ScheduledDateTime"] <= pe)]
@@ -1021,7 +1052,8 @@ def update_kpis(_n, date_preset, departments):
         if not sl.empty:
             last_sim = sl["ScheduledDateTime"].dt.normalize().max()
             start = _preset_start(last_sim, date_preset)
-            curr_data = sl[sl["ScheduledDateTime"] >= start]
+            end = _preset_end(last_sim, date_preset)
+            curr_data = sl[(sl["ScheduledDateTime"] >= start) & (sl["ScheduledDateTime"] <= end)]
             curr_med = curr_data["lead_days"].median() if len(curr_data) > 0 else 0
             ps, pe = _prior_range(last_sim, date_preset)
             prior_data = sl[(sl["ScheduledDateTime"] >= ps) & (sl["ScheduledDateTime"] <= pe)]

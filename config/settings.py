@@ -20,7 +20,10 @@ DATA_COMPLETE = DATA_DIR / "Complete"
 DATA_INCREMENTAL = DATA_DIR / "Incremental"
 DATA_LOOKUP = DATA_DIR / "Lookup"
 
-MAPBOX_TOKEN = os.environ.get("MAPBOX_TOKEN", "")
+MAPBOX_TOKEN = os.environ.get(
+    "MAPBOX_TOKEN",
+    "",
+)
 
 # ---------------------------------------------------------------------------
 # Colors
@@ -164,6 +167,7 @@ NAV_SECTIONS = [
             {"label": "Clinic Visits", "path": "/clinic-visits", "icon": "tabler:stethoscope"},
             {"label": "Simulations",   "path": "/simulations",   "icon": "tabler:scan"},
             {"label": "Tasks",         "path": "/tasks",         "icon": "tabler:checklist"},
+            {"label": "OTVs",          "path": "/otvs",          "icon": "tabler:clipboard-check"},
         ],
     },
     {
@@ -184,8 +188,8 @@ NAV_SECTIONS = [
         "section": "FINANCIAL",
         "pages": [
             {"label": "Billing",   "path": "/billing",   "icon": "tabler:receipt"},
-            {"label": "OTV Audit", "path": "/otv-audit", "icon": "tabler:clipboard-check"},
             {"label": "CPT Audit", "path": "/cpt-audit", "icon": "tabler:file-invoice"},
+            {"label": "OTV Audit", "path": "/otv-audit", "icon": "tabler:report-medical"},
         ],
     },
     {

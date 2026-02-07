@@ -36,21 +36,27 @@ layout = dmc.Stack(
     gap=16,
     className="page-content",
     children=[
-        dmc.Title("Workflow", order=2, className="page-title"),
-        filter_bar("workflow", children=[
-            date_presets("workflow"),
-            date_range_picker("workflow"),
-            department_chips("workflow"),
-            physician_select("workflow"),
-            dmc.MultiSelect(
-                id="workflow-filter-diagnosis",
-                placeholder="Diagnosis",
-                data=[],
-                clearable=True,
-                size="sm",
-                w=200,
-            ),
-        ]),
+        # Sticky header with title and filter bar
+        dmc.Box(
+            className="page-sticky-header",
+            children=[
+                dmc.Title("Workflow", order=2, className="page-title"),
+                filter_bar("workflow", children=[
+                    date_presets("workflow"),
+                    date_range_picker("workflow"),
+                    department_chips("workflow"),
+                    physician_select("workflow"),
+                    dmc.MultiSelect(
+                        id="workflow-filter-diagnosis",
+                        placeholder="Diagnosis",
+                        data=[],
+                        clearable=True,
+                        size="sm",
+                        w=200,
+                    ),
+                ]),
+            ],
+        ),
 
         # KPI row — 4 cards with sparklines
         dmc.Grid(id="wf-kpi-row", gutter="md", children=[

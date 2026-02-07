@@ -33,24 +33,6 @@ MACHINES = ["TrueBeamNorth", "21EX", "21iX_CEN", "21iX_AB"]
 # Filter Bar Components
 # ---------------------------------------------------------------------------
 
-def _date_presets_ops():
-    """Operations-specific date presets."""
-    return dmc.SegmentedControl(
-        id="operations-filter-date-preset",
-        data=[
-            {"value": "today", "label": "Today"},
-            {"value": "week", "label": "This Week"},
-            {"value": "2weeks", "label": "Next 2 Wks"},
-            {"value": "month", "label": "This Month"},
-            {"value": "3mo", "label": "3 Mo"},
-            {"value": "ytd", "label": "YTD"},
-            {"value": "all", "label": "All"},
-        ],
-        value="3mo",
-        size="sm",
-    )
-
-
 def _machine_select():
     """Machine multi-select dropdown."""
     return dmc.MultiSelect(
@@ -64,16 +46,25 @@ def _machine_select():
 
 
 def _ops_filter_bar():
-    """Operations page filter bar with date presets, department chips, and machine select."""
+    """Operations page filter bar with department chips, machine select, and smoothing slider."""
     return dmc.Paper(
         children=[
             dmc.Group(
                 children=[
-                    _date_presets_ops(),
                     department_chips("operations"),
                     _machine_select(),
+                    dmc.Group(gap=8, align="center", children=[
+                        dmc.Text("Smoothing", size="sm", c="#9CA3AF", fw=500),
+                        dmc.Slider(
+                            id="ops-filter-smoothing",
+                            min=0, max=1, step=0.01, value=0.4,
+                            size="xs", w=120,
+                            showLabelOnHover=False,
+                            updatemode="drag",
+                        ),
+                    ]),
                 ],
-                gap="md",
+                gap="lg",
                 wrap="wrap",
             ),
         ],
@@ -93,23 +84,31 @@ layout = dmc.Stack(
     gap=16,
     className="page-content",
     children=[
-        dmc.Title("Operations", order=2, className="page-title"),
-        _ops_filter_bar(),
+        # Sticky header with title and filter bar
+        dmc.Box(
+            className="page-sticky-header",
+            children=[
+                dmc.Title("Operations", order=2, className="page-title"),
+                _ops_filter_bar(),
+            ],
+        ),
 
-        # Hidden dummy inputs for filter bar IDs required by other pages
+        # Hidden dummy inputs for filter bar IDs required by other pages/callbacks
         dcc.Store(id="operations-filter-daterange", data=None),
         dcc.Store(id="operations-filter-physician", data=None),
+        dcc.Store(id="operations-filter-date-preset", data=None),
 
-        # KPI row — 5 cards with sparklines
+        # KPI row — 6 cards: Today, Lacey Hours, Centralia Hours, Aberdeen Hours, Avg Volume, New Starts
         dmc.Grid(
             id="ops-kpi-row",
             gutter=16,
             children=[
-                dmc.GridCol(id="ops-kpi-today", span={"base": 6, "sm": 4, "md": 2.4}),
-                dmc.GridCol(id="ops-kpi-daily-avg", span={"base": 6, "sm": 4, "md": 2.4}),
-                dmc.GridCol(id="ops-kpi-next-slot", span={"base": 6, "sm": 4, "md": 2.4}),
-                dmc.GridCol(id="ops-kpi-scheduled-week", span={"base": 6, "sm": 4, "md": 2.4}),
-                dmc.GridCol(id="ops-kpi-new-starts", span={"base": 6, "sm": 4, "md": 2.4}),
+                dmc.GridCol(id="ops-kpi-today", span={"base": 6, "sm": 4, "md": 2}),
+                dmc.GridCol(id="ops-kpi-hours-lacey", span={"base": 6, "sm": 4, "md": 2}),
+                dmc.GridCol(id="ops-kpi-hours-centralia", span={"base": 6, "sm": 4, "md": 2}),
+                dmc.GridCol(id="ops-kpi-hours-aberdeen", span={"base": 6, "sm": 4, "md": 2}),
+                dmc.GridCol(id="ops-kpi-lead-times", span={"base": 6, "sm": 4, "md": 2}),
+                dmc.GridCol(id="ops-kpi-new-starts", span={"base": 6, "sm": 4, "md": 2}),
             ],
         ),
 
@@ -125,8 +124,21 @@ layout = dmc.Stack(
                             dmc.Group(
                                 justify="space-between", mb="sm",
                                 children=[
-                                    dmc.Text("Treatment Appointments (completed)", size="sm", fw=500, c="#6B7280"),
+                                    dmc.Text("Treatments", size="sm", fw=500, c="#6B7280"),
                                     dmc.Group(gap="xs", align="center", children=[
+                                        dmc.SegmentedControl(
+                                            id="ops-volume-range",
+                                            data=[
+                                                {"value": "30", "label": "30d"},
+                                                {"value": "60", "label": "60d"},
+                                                {"value": "90", "label": "90d"},
+                                                {"value": "180", "label": "6mo"},
+                                                {"value": "365", "label": "1y"},
+                                                {"value": "0", "label": "All"},
+                                            ],
+                                            value="90",
+                                            size="xs",
+                                        ),
                                         dmc.SegmentedControl(
                                             id="ops-volume-agg",
                                             data=[
@@ -160,11 +172,19 @@ layout = dmc.Stack(
                                         loaderProps={"type": "dots", "color": "#7C2A83"},
                                         overlayProps={"radius": "sm", "blur": 2},
                                     ),
-                                    dcc.Graph(id="ops-chart-volume", config={"displayModeBar": False}),
+                                    dcc.Graph(
+                                        id="ops-chart-volume",
+                                        config={
+                                            "displayModeBar": False,
+                                            "scrollZoom": False,
+                                            "doubleClick": "reset",
+                                        },
+                                        style={"height": "380px"}
+                                    ),
                                 ],
                             ),
                         ],
-                        p="sm", radius="md", shadow="xs", withBorder=True,
+                        p="sm", radius="md", shadow="xs", withBorder=True, h="466px",
                     ),
                 ),
                 # Upcoming 2 Weeks Heatmap
@@ -187,11 +207,15 @@ layout = dmc.Stack(
                                         loaderProps={"type": "dots", "color": "#7C2A83"},
                                         overlayProps={"radius": "sm", "blur": 2},
                                     ),
-                                    dcc.Graph(id="ops-chart-heatmap", config={"displayModeBar": False}),
+                                    dcc.Graph(
+                                        id="ops-chart-heatmap",
+                                        config={"displayModeBar": False},
+                                        style={"height": "380px"}
+                                    ),
                                 ],
                             ),
                         ],
-                        p="sm", radius="md", shadow="xs", withBorder=True,
+                        p="sm", radius="md", shadow="xs", withBorder=True, h="466px",
                     ),
                 ),
             ],
@@ -240,7 +264,7 @@ layout = dmc.Stack(
                                 ],
                                 show_smooth=True,
                                 smooth_max=14,
-                                smooth_default=3,
+                                smooth_default=0,
                             ),
                         ]),
                     ],
@@ -254,7 +278,14 @@ layout = dmc.Stack(
                             loaderProps={"type": "dots", "color": "#7C2A83"},
                             overlayProps={"radius": "sm", "blur": 2},
                         ),
-                        dcc.Graph(id="ops-chart-ribbon", config={"displayModeBar": False}),
+                        dcc.Graph(
+                            id="ops-chart-ribbon",
+                            config={
+                                "displayModeBar": False,
+                                "scrollZoom": False,
+                                "doubleClick": "reset",
+                            }
+                        ),
                     ],
                 ),
             ],
@@ -308,35 +339,20 @@ layout = dmc.Stack(
 )
 
 
-# ---------------------------------------------------------------------------
-# Helper: Date Range Calculation
-# ---------------------------------------------------------------------------
-
-def _get_date_range(preset, last_date):
-    """Calculate start date based on preset, using last_date as reference."""
-    today = last_date
-    if preset == "today":
-        return today, today
-    elif preset == "week":
-        return today - timedelta(days=today.weekday()), today
-    elif preset == "2weeks":
-        return today, today + timedelta(days=14)
-    elif preset == "month":
-        return today.replace(day=1), today
-    elif preset == "3mo":
-        return today - timedelta(days=90), today
-    elif preset == "ytd":
-        return pd.Timestamp(today.year, 1, 1), today
-    else:  # all
-        return pd.Timestamp("2020-01-01"), today
-
 
 # ---------------------------------------------------------------------------
 # Helper: Operating Hours Data (for clientside smoothing)
 # ---------------------------------------------------------------------------
 
-def _prepare_hours_data(departments, machines, days_back=90):
-    """Prepare raw operating hours data for clientside smoothing."""
+def _prepare_hours_data(departments, machines, days_back=90, aggregate_weekly=False):
+    """Prepare raw operating hours data for clientside smoothing.
+
+    Args:
+        departments: List of departments to include
+        machines: List of machines for Lacey filtering
+        days_back: Number of days to include (0 = all data)
+        aggregate_weekly: If True, aggregate data by week instead of day
+    """
     from data.loader import load_daily_volume, load_daily_volume_future
 
     try:
@@ -345,9 +361,17 @@ def _prepare_hours_data(departments, machines, days_back=90):
 
         sites = departments if departments else DEPARTMENTS
 
-        # Filter to site-level departments only
-        dv_past = dv_past[dv_past["Department"].isin(sites)]
-        dv_future = dv_future[dv_future["Department"].isin(sites)]
+        # Machine sub-filter for Lacey
+        dv_machine_depts, _, machine_active = _machine_dept_values(machines)
+        if machine_active and "Lacey" in sites:
+            dv_eff = [s for s in sites if s != "Lacey"] + dv_machine_depts
+            dv_past = dv_past[dv_past["Department"].isin(dv_eff)].copy()
+            dv_past.loc[dv_past["Department"].isin(dv_machine_depts), "Department"] = "Lacey"
+            dv_future = dv_future[dv_future["Department"].isin(dv_eff)].copy()
+            dv_future.loc[dv_future["Department"].isin(dv_machine_depts), "Department"] = "Lacey"
+        else:
+            dv_past = dv_past[dv_past["Department"].isin(sites)]
+            dv_future = dv_future[dv_future["Department"].isin(sites)]
 
         if dv_past.empty:
             return None
@@ -409,6 +433,16 @@ def _prepare_hours_data(departments, machines, days_back=90):
                 if site_data.empty:
                     continue
                 site_data = site_data.sort_values("ScheduledDate")
+
+                # Aggregate by week if requested
+                if aggregate_weekly:
+                    site_data["week_start"] = site_data["ScheduledDate"] - pd.to_timedelta(site_data["ScheduledDate"].dt.weekday, unit='D')
+                    weekly = site_data.groupby("week_start").agg({
+                        "start_hour": "min",
+                        "end_hour": "max",
+                    }).reset_index()
+                    weekly = weekly.rename(columns={"week_start": "ScheduledDate"})
+                    site_data = weekly
 
                 results.append({
                     "name": site,
@@ -485,9 +519,15 @@ def _prepare_volume_data(departments, machines, agg, start, end):
     try:
         dv = load_daily_volume()
 
-        # Filter to departments (site-level only)
+        # Filter to departments with machine sub-filter for Lacey
         sites = departments if departments else DEPARTMENTS
-        dv = dv[dv["Department"].isin(sites)]
+        dv_machine_depts, _, machine_active = _machine_dept_values(machines)
+        if machine_active and "Lacey" in sites:
+            dv_eff = [s for s in sites if s != "Lacey"] + dv_machine_depts
+            dv = dv[dv["Department"].isin(dv_eff)].copy()
+            dv.loc[dv["Department"].isin(dv_machine_depts), "Department"] = "Lacey"
+        else:
+            dv = dv[dv["Department"].isin(sites)]
 
         # Date filter
         dv = dv[(dv["ScheduledDate"] >= start) & (dv["ScheduledDate"] <= end)]
@@ -536,209 +576,456 @@ def _prepare_volume_data(departments, machines, agg, start, end):
 # KPI Callback — outputs cards + raw sparkline data
 # ---------------------------------------------------------------------------
 
+def _fmt_time(time_str):
+    """Convert HH:MM(:SS) time string to compact display like '7:30a' or '4:45p'."""
+    if pd.isna(time_str) or not time_str:
+        return None
+    try:
+        parts = str(time_str).split(":")
+        h, m = int(parts[0]), int(parts[1])
+        suffix = "a" if h < 12 else "p"
+        display_h = h if h <= 12 else h - 12
+        if display_h == 0:
+            display_h = 12
+        return f"{display_h}:{m:02d}{suffix}"
+    except (ValueError, IndexError):
+        return None
+
+
+def _time_to_hours(time_str):
+    """Convert HH:MM(:SS) time string to decimal hours."""
+    if pd.isna(time_str) or not time_str:
+        return None
+    try:
+        parts = str(time_str).split(":")
+        return int(parts[0]) + int(parts[1]) / 60
+    except (ValueError, IndexError):
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Trend helper
+# ---------------------------------------------------------------------------
+
+def _trend(curr, prior, invert=False):
+    """Return (pct_text, direction, prior_value) for trend display."""
+    if prior is None or prior == 0:
+        return None, None, None
+    pct = (curr - prior) / prior * 100
+    direction = ("down" if pct > 0 else "up") if invert else ("up" if pct > 0 else "down")
+    return f"{abs(pct):.0f}%", direction, prior
+
+
+def _machine_dept_values(machines):
+    """Return (dv_depts, tx_depts, is_active) for Lacey machine-level filtering.
+
+    Only activates when a strict SUBSET of Lacey machines is selected.
+    Returns department values in Daily Volume and Treatment naming conventions.
+    """
+    lacey_machines = set(MACHINE_MAP["Lacey"])
+    if not machines:
+        return [], [], False
+    selected_lacey = lacey_machines & set(machines)
+    if not selected_lacey or selected_lacey == lacey_machines:
+        return [], [], False
+    dv_depts = list(selected_lacey)
+    tx_depts = [f"Lacey - {m}" for m in selected_lacey]
+    return dv_depts, tx_depts, True
+
+
 @callback(
     Output("ops-kpi-today", "children"),
-    Output("ops-kpi-daily-avg", "children"),
-    Output("ops-kpi-next-slot", "children"),
-    Output("ops-kpi-scheduled-week", "children"),
+    Output("ops-kpi-hours-lacey", "children"),
+    Output("ops-kpi-hours-centralia", "children"),
+    Output("ops-kpi-hours-aberdeen", "children"),
+    Output("ops-kpi-lead-times", "children"),
     Output("ops-kpi-new-starts", "children"),
     Output("ops-store-kpi-sparklines", "data"),
     Input("ops-interval", "n_intervals"),
-    Input("operations-filter-date-preset", "value"),
     Input("operations-filter-department", "value"),
     Input("operations-filter-machine", "value"),
 )
-def update_kpis(_n, date_preset, departments, machines):
-    """Compute all 5 KPI cards with sparkline IDs."""
-    from data.loader import load_daily_volume, load_daily_volume_future, load_availability, load_treatment
+def update_kpis(_n, departments, machines):
+    """Compute all 6 KPI cards with fixed 30-day sparklines."""
+    from data.loader import load_daily_volume, load_treatment, load_clinic_visits, load_simulations
 
     sparkline_data = {}
 
-    # Load data
     try:
         dv = load_daily_volume()
-        dv_future = load_daily_volume_future()
-        avail = load_availability()
         tx = load_treatment()
     except Exception:
         dv = pd.DataFrame()
-        dv_future = pd.DataFrame()
-        avail = pd.DataFrame()
         tx = pd.DataFrame()
 
-    # Filter departments
+    # Filter departments + machine sub-filter for Lacey
     sites = departments if departments else DEPARTMENTS
+    dv_machine_depts, tx_machine_depts, machine_active = _machine_dept_values(machines)
+
     if not dv.empty and "Department" in dv.columns:
-        dv = dv[dv["Department"].isin(sites)]
-    if not dv_future.empty and "Department" in dv_future.columns:
-        dv_future = dv_future[dv_future["Department"].isin(sites)]
+        if machine_active and "Lacey" in sites:
+            dv_eff = [s for s in sites if s != "Lacey"] + dv_machine_depts
+            dv_filtered = dv[dv["Department"].isin(dv_eff)].copy()
+            dv_filtered.loc[dv_filtered["Department"].isin(dv_machine_depts), "Department"] = "Lacey"
+        else:
+            dv_filtered = dv[dv["Department"].isin(sites)]
+    else:
+        dv_filtered = dv
+
     if not tx.empty and "Department" in tx.columns:
-        tx_sites = [d for d in tx["Department"].unique() if d in sites]
-        tx = tx[tx["Department"].isin(tx_sites)]
+        if machine_active and "Lacey" in sites:
+            tx_eff = [s for s in sites if s != "Lacey"] + tx_machine_depts
+            tx_filtered = tx[tx["Department"].isin(tx_eff)].copy()
+            tx_filtered.loc[tx_filtered["Department"].isin(tx_machine_depts), "Department"] = "Lacey"
+        else:
+            tx_sites = [d for d in tx["Department"].unique() if d in sites]
+            tx_filtered = tx[tx["Department"].isin(tx_sites)]
+    else:
+        tx_filtered = tx
 
-    today = pd.Timestamp.now().normalize()
-    last_date = dv["ScheduledDate"].max() if not dv.empty and "ScheduledDate" in dv.columns else today
+    actual_today = pd.Timestamp.now().normalize()
+    last_date = dv_filtered["ScheduledDate"].max() if not dv_filtered.empty and "ScheduledDate" in dv_filtered.columns else actual_today
+    is_lagged = last_date.normalize() != actual_today
 
-    # --- 1. Treatments Today ---
-    if not dv.empty:
-        today_data = dv[dv["ScheduledDate"] == last_date]
+    # ── 1. Today's Treatments ──────────────────────────────────────────
+    if not dv_filtered.empty:
+        today_data = dv_filtered[dv_filtered["ScheduledDate"] == last_date]
         today_count = int(today_data["AppointmentCount"].sum()) if "AppointmentCount" in today_data.columns else 0
 
-        # Sparkline: last 14 days
-        spark_start = last_date - timedelta(days=14)
-        spark_data = dv[(dv["ScheduledDate"] >= spark_start) & (dv["ScheduledDate"] <= last_date)]
-        spark_data = spark_data[spark_data["ScheduledDate"].dt.weekday < 5]
+        label = "Today's Treatments"
+        # Per-site breakdown
+        site_parts = []
+        if "AppointmentCount" in today_data.columns:
+            for s in DEPARTMENTS:
+                if s not in sites:
+                    continue
+                s_count = int(today_data[today_data["Department"] == s]["AppointmentCount"].sum())
+                site_parts.append(f"{s[0]}:{s_count}")
+        breakdown = "  ".join(site_parts) if site_parts else ""
+        if is_lagged:
+            detail = f"({last_date.strftime('%b %-d')})  {breakdown}".strip()
+        else:
+            detail = breakdown or None
+
+        # Sparkline: daily totals over prior 30 days (weekdays only)
+        sp_start = last_date - timedelta(days=30)
+        spark_data = dv_filtered[
+            (dv_filtered["ScheduledDate"] >= sp_start) &
+            (dv_filtered["ScheduledDate"] <= last_date) &
+            (dv_filtered["ScheduledDate"].dt.weekday < 5)
+        ]
         daily_totals = spark_data.groupby("ScheduledDate")["AppointmentCount"].sum()
         sparkline_data["today"] = {
             "labels": [d.isoformat() for d in daily_totals.index],
             "values": daily_totals.tolist(),
             "color": PRIMARY,
         }
+
+        # Trend: today vs 30d average
+        avg_30d = daily_totals.mean() if not daily_totals.empty else None
+        trend_text = None
+        trend_dir = None
+        if avg_30d and avg_30d > 0:
+            pct = (today_count - avg_30d) / avg_30d * 100
+            trend_text = f"{abs(pct):.0f}% vs avg"
+            trend_dir = "up" if pct > 0 else "down"
+
         kpi_today = kpi_card(
-            "Treatments Today", f"{today_count:,}",
+            label, f"{today_count:,}",
+            value_detail=detail,
+            trend_text=trend_text,
+            trend_direction=trend_dir,
             accent_color=PRIMARY,
             sparkline_id="ops-spark-today",
         )
     else:
-        kpi_today = kpi_card("Treatments Today", "N/A")
+        kpi_today = kpi_card("Today's Treatments", "N/A")
 
-    # --- 2. Avg Daily Volume (30d) ---
-    if not dv.empty:
-        start_30 = last_date - timedelta(days=30)
-        vol_30 = dv[(dv["ScheduledDate"] >= start_30) & (dv["ScheduledDate"] <= last_date)]
-        vol_30 = vol_30[vol_30["ScheduledDate"].dt.weekday < 5]
-        if not vol_30.empty:
-            daily_avg = vol_30.groupby("ScheduledDate")["AppointmentCount"].sum()
-            avg_val = round(daily_avg.mean(), 1)
-            sparkline_data["avg30"] = {
-                "labels": [d.isoformat() for d in daily_avg.index],
-                "values": daily_avg.tolist(),
-                "color": CHART_COLORWAY[1],
+    # ── 2–4. Site Operating Hours ──────────────────────────────────────
+    site_hours_cards = {}
+    for site in DEPARTMENTS:
+        site_key = site.lower()
+        color = DEPARTMENT_COLORS.get(site, PRIMARY)
+
+        if dv.empty:
+            site_hours_cards[site] = kpi_card(f"{site} Hours", "N/A", accent_color=color)
+            continue
+
+        if site == "Lacey" and machine_active:
+            site_dv = dv[dv["Department"].isin(dv_machine_depts)]
+        else:
+            site_dv = dv[dv["Department"] == site]
+        if site_dv.empty:
+            site_hours_cards[site] = kpi_card(f"{site} Hours", "N/A", accent_color=color)
+            continue
+
+        site_last = site_dv["ScheduledDate"].max()
+        site_today_data = site_dv[site_dv["ScheduledDate"] == site_last]
+
+        # Card value: SCHEDULED times (the plan for the day)
+        sched_start_col = "FirstScheduledStart" if "FirstScheduledStart" in site_today_data.columns else None
+        sched_end_col = "LastScheduledEnd" if "LastScheduledEnd" in site_today_data.columns else None
+
+        start_str = site_today_data[sched_start_col].dropna().iloc[0] if sched_start_col and not site_today_data[sched_start_col].dropna().empty else None
+        end_str = site_today_data[sched_end_col].dropna().iloc[0] if sched_end_col and not site_today_data[sched_end_col].dropna().empty else None
+
+        start_fmt = _fmt_time(start_str)
+        end_fmt = _fmt_time(end_str)
+        start_hrs = _time_to_hours(start_str)
+        end_hrs = _time_to_hours(end_str)
+
+        if start_fmt and end_fmt and start_hrs is not None and end_hrs is not None:
+            value = f"{start_fmt} – {end_fmt}"
+            duration = round(end_hrs - start_hrs, 1)
+            hrs_detail = f"{duration} hrs"
+        else:
+            value = "No data"
+            hrs_detail = None
+
+        # Sparkline: ACTUAL duration over prior 30 days (weekdays only)
+        sp_start = site_last - timedelta(days=30)
+        spark_site = site_dv[
+            (site_dv["ScheduledDate"] >= sp_start) &
+            (site_dv["ScheduledDate"] <= site_last) &
+            (site_dv["ScheduledDate"].dt.weekday < 5)
+        ].copy()
+
+        if "FirstActualStart" in spark_site.columns and "LastActualEnd" in spark_site.columns:
+            spark_site["_s_hr"] = spark_site["FirstActualStart"].apply(_time_to_hours)
+            spark_site["_e_hr"] = spark_site["LastActualEnd"].apply(_time_to_hours)
+        else:
+            spark_site["_s_hr"] = None
+            spark_site["_e_hr"] = None
+
+        spark_site = spark_site.dropna(subset=["_s_hr", "_e_hr"])
+        spark_site["_dur"] = spark_site["_e_hr"] - spark_site["_s_hr"]
+        spark_site = spark_site[spark_site["_dur"] > 0]
+
+        if not spark_site.empty:
+            spark_dur = spark_site.groupby("ScheduledDate")["_dur"].max().sort_index()
+            sparkline_data[f"hours_{site_key}"] = {
+                "labels": [d.isoformat() for d in spark_dur.index],
+                "values": [round(v, 2) for v in spark_dur.tolist()],
+                "color": color,
+                "hover_fmt": "%{x|%b %d}: %{y:.1f} hrs<extra></extra>",
             }
-            kpi_avg = kpi_card(
-                "Avg Daily Volume (30d)", str(avg_val),
-                accent_color=CHART_COLORWAY[1],
-                sparkline_id="ops-spark-avg30",
-            )
-        else:
-            kpi_avg = kpi_card("Avg Daily Volume (30d)", "N/A")
-    else:
-        kpi_avg = kpi_card("Avg Daily Volume (30d)", "N/A")
 
-    # --- 3. Next Available Slot ---
-    if not avail.empty and "SlotDate" in avail.columns:
-        future_avail = avail[avail["SlotDate"] > today]
-        if not future_avail.empty:
-            next_slot = future_avail["SlotDate"].min()
-            slot_str = next_slot.strftime("%b %d")
-            days_out = (next_slot - today).days
-            kpi_slot = kpi_card(
-                "Next Available Slot", slot_str,
-                value_detail=f"({days_out}d)",
-                accent_color=CHART_COLORWAY[2],
-            )
-        else:
-            kpi_slot = kpi_card("Next Available Slot", "None")
-    else:
-        kpi_slot = kpi_card("Next Available Slot", "N/A")
-
-    # --- 4. Scheduled This Week ---
-    if not dv_future.empty:
-        week_start = today - timedelta(days=today.weekday())
-        week_end = week_start + timedelta(days=6)
-        week_future = dv_future[(dv_future["ScheduledDate"] >= week_start) & (dv_future["ScheduledDate"] <= week_end)]
-        week_count = int(week_future["AppointmentCount"].sum()) if "AppointmentCount" in week_future.columns else 0
-        kpi_scheduled = kpi_card(
-            "Scheduled This Week", f"{week_count:,}",
-            accent_color=CHART_COLORWAY[3],
+        site_hours_cards[site] = kpi_card(
+            f"{site} Hours", value,
+            trend_text=hrs_detail,
+            accent_color=color,
+            sparkline_id=f"ops-spark-hours-{site_key}",
         )
-    else:
-        kpi_scheduled = kpi_card("Scheduled This Week", "N/A")
 
-    # --- 5. New Starts This Week ---
-    if not tx.empty and "ScheduledDate" in tx.columns:
-        week_start = last_date - timedelta(days=last_date.weekday())
-        week_end = week_start + timedelta(days=6)
-        tx_week = tx[(tx["ScheduledDate"] >= week_start) & (tx["ScheduledDate"] <= week_end)]
-        ns_col = next((c for c in tx_week.columns if "NewStarts" in c and "Course" in c), None)
-        if ns_col and ns_col in tx_week.columns:
-            new_starts = int(tx_week[ns_col].sum())
-        else:
-            new_starts = 0
+    # ── 5. Scheduling Lead Times (consult + sim) ────────────────────
+    try:
+        cv = load_clinic_visits()
+        sims_data = load_simulations()
+    except Exception:
+        cv = pd.DataFrame()
+        sims_data = pd.DataFrame()
+
+    # Filter consults by department; sims always in Lacey so leave unfiltered
+    if departments:
+        if not cv.empty and "Department" in cv.columns:
+            cv = cv[cv["Department"].isin(sites)]
+
+    def _calc_lead(df, date_col="ScheduledDateTime"):
+        """Compute lead_days column and return filtered df."""
+        if df.empty or date_col not in df.columns or "AppointmentCreatedDate" not in df.columns:
+            return pd.DataFrame()
+        out = df[df["AppointmentCreatedDate"].notna()].copy()
+        if out.empty:
+            return out
+        out["lead_days"] = (out[date_col] - out["AppointmentCreatedDate"]).dt.days
+        return out[out["lead_days"] >= 0]
+
+    cv_lead = _calc_lead(cv)
+    sim_lead = _calc_lead(sims_data)
+
+    # Value: median lead time for FUTURE-scheduled appointments (snapshot)
+    future_cv = cv_lead[cv_lead["ScheduledDateTime"] > actual_today] if not cv_lead.empty else pd.DataFrame()
+    future_sim = sim_lead[sim_lead["ScheduledDateTime"] > actual_today] if not sim_lead.empty else pd.DataFrame()
+
+    c_med = future_cv["lead_days"].median() if not future_cv.empty else None
+    s_med = future_sim["lead_days"].median() if not future_sim.empty else None
+
+    c_str = f"C:{c_med:.0f}d" if c_med is not None else "C:--"
+    s_str = f"S:{s_med:.0f}d" if s_med is not None else "S:--"
+    lead_value = f"{c_str}  {s_str}"
+
+    # Trend: past 30d consult lead median vs prior 30d median
+    lead_trend_text = None
+    lead_trend_dir = None
+    cv_ref = cv_lead["ScheduledDateTime"].dt.normalize().max() if not cv_lead.empty else actual_today
+    if not cv_lead.empty:
+        curr_30d = cv_lead[
+            (cv_lead["ScheduledDateTime"] >= cv_ref - timedelta(days=29)) &
+            (cv_lead["ScheduledDateTime"] <= cv_ref)
+        ]
+        prior_30d = cv_lead[
+            (cv_lead["ScheduledDateTime"] >= cv_ref - timedelta(days=59)) &
+            (cv_lead["ScheduledDateTime"] <= cv_ref - timedelta(days=30))
+        ]
+        curr_med = curr_30d["lead_days"].median() if not curr_30d.empty else None
+        prior_med = prior_30d["lead_days"].median() if not prior_30d.empty else None
+        pt, td, _ = _trend(curr_med, prior_med, invert=True)
+        if pt:
+            lead_trend_text = f"{pt} vs prior 30d"
+            lead_trend_dir = td
+
+    # Sparkline: daily consult lead median over past 30 days
+    if not cv_lead.empty:
+        sp_start = cv_ref - timedelta(days=30)
+        cl_spark = cv_lead[
+            (cv_lead["ScheduledDateTime"] >= sp_start) &
+            (cv_lead["ScheduledDateTime"] <= cv_ref)
+        ]
+        if not cl_spark.empty:
+            daily_lead = cl_spark.groupby(
+                cl_spark["ScheduledDateTime"].dt.normalize()
+            )["lead_days"].median().sort_index()
+            if not daily_lead.empty:
+                sparkline_data["lead"] = {
+                    "labels": [d.isoformat() for d in daily_lead.index],
+                    "values": [round(v, 1) for v in daily_lead.tolist()],
+                    "color": CHART_COLORWAY[1],
+                    "hover_fmt": "%{x|%b %d}: %{y:.0f}d<extra></extra>",
+                }
+
+    kpi_lead = kpi_card(
+        "Scheduling Lead", lead_value,
+        value_detail="future scheduled",
+        trend_text=lead_trend_text,
+        trend_direction=lead_trend_dir,
+        accent_color=CHART_COLORWAY[1],
+        sparkline_id="ops-spark-lead",
+    )
+
+    # ── 6. New Starts (7d rolling, 30d sparkline) ────────────────────
+    ns_col = None
+    if not tx_filtered.empty and "ScheduledDate" in tx_filtered.columns:
+        ns_col = next((c for c in tx_filtered.columns if "NewStarts" in c and "Course" in c), None)
+
+    if ns_col and not tx_filtered.empty:
+        tx_last = tx_filtered["ScheduledDate"].max()
+
+        # Value: rolling 7-day total
+        ns_start = tx_last - timedelta(days=6)
+        tx_7d = tx_filtered[
+            (tx_filtered["ScheduledDate"] >= ns_start) &
+            (tx_filtered["ScheduledDate"] <= tx_last)
+        ]
+        total_starts = int(tx_7d[ns_col].sum())
+
+        # Per-site breakdown
+        site_breakdown = []
+        for site in DEPARTMENTS:
+            if site not in sites:
+                continue
+            site_tx = tx_7d[tx_7d["Department"] == site]
+            site_ns = int(site_tx[ns_col].sum()) if not site_tx.empty else 0
+            site_breakdown.append(f"{site[0]}:{site_ns}")
+        ns_detail = "  ".join(site_breakdown) if site_breakdown else None
+
+        # Trend: 7d vs prior 7d
+        prior_7d_start = tx_last - timedelta(days=13)
+        prior_7d_end = tx_last - timedelta(days=7)
+        tx_prior_7d = tx_filtered[
+            (tx_filtered["ScheduledDate"] >= prior_7d_start) &
+            (tx_filtered["ScheduledDate"] <= prior_7d_end)
+        ]
+        prior_starts = int(tx_prior_7d[ns_col].sum()) if not tx_prior_7d.empty else None
+        ns_trend_text = None
+        ns_trend_dir = None
+        pt, td, _ = _trend(total_starts, prior_starts)
+        if pt:
+            ns_trend_text = f"{pt} vs prior 7d"
+            ns_trend_dir = td
+
+        # Sparkline: daily new starts over prior 30 days
+        sp_start = tx_last - timedelta(days=30)
+        tx_spark = tx_filtered[
+            (tx_filtered["ScheduledDate"] >= sp_start) &
+            (tx_filtered["ScheduledDate"] <= tx_last)
+        ]
+        daily_ns = tx_spark.groupby("ScheduledDate")[ns_col].sum().sort_index()
+        sparkline_data["newstarts"] = {
+            "labels": [d.isoformat() for d in daily_ns.index],
+            "values": daily_ns.tolist(),
+            "color": CHART_COLORWAY[4],
+        }
+
         kpi_new = kpi_card(
-            "New Starts This Week", str(new_starts),
+            "New Starts (7d)", str(total_starts),
+            value_detail=ns_detail,
+            trend_text=ns_trend_text,
+            trend_direction=ns_trend_dir,
             accent_color=CHART_COLORWAY[4],
+            sparkline_id="ops-spark-newstarts",
         )
     else:
-        kpi_new = kpi_card("New Starts This Week", "N/A")
+        kpi_new = kpi_card("New Starts", "N/A")
 
-    return kpi_today, kpi_avg, kpi_slot, kpi_scheduled, kpi_new, sparkline_data
+    return (
+        kpi_today,
+        site_hours_cards.get("Lacey", kpi_card("Lacey Hours", "N/A")),
+        site_hours_cards.get("Centralia", kpi_card("Centralia Hours", "N/A")),
+        site_hours_cards.get("Aberdeen", kpi_card("Aberdeen Hours", "N/A")),
+        kpi_lead,
+        kpi_new,
+        sparkline_data,
+    )
 
 
 # ---------------------------------------------------------------------------
-# Clientside callbacks for KPI sparklines
+# Clientside callbacks for KPI sparklines (with smoothing)
 # ---------------------------------------------------------------------------
 
+# Today's Treatments sparkline
 clientside_callback(
-    """function(data, smoothPct) {
-        if (!data || !data.today) return window.dash_clientside.no_update;
-        var spark = data.today;
-        var color = spark.color || "#7C2A83";
-        return {
-            data: [{
-                x: spark.labels,
-                y: spark.values,
-                mode: "lines",
-                line: {color: color, width: 1.5},
-                hovertemplate: "%{x|%b %d}: %{y:,.0f}<extra></extra>"
-            }],
-            layout: {
-                margin: {l: 0, r: 0, t: 0, b: 0},
-                height: 34,
-                plot_bgcolor: "rgba(0,0,0,0)",
-                paper_bgcolor: "rgba(0,0,0,0)",
-                xaxis: {visible: false},
-                yaxis: {visible: false},
-                showlegend: false,
-                dragmode: false,
-                hovermode: "x"
-            }
-        };
-    }""",
+    ClientsideFunction(namespace="sparklines", function_name="smoothOpsToday"),
     Output("ops-spark-today", "figure"),
     Input("ops-store-kpi-sparklines", "data"),
-    Input("operations-filter-date-preset", "value"),
+    Input("ops-filter-smoothing", "value"),
+)
+
+# Site hours sparklines (duration in hours)
+clientside_callback(
+    ClientsideFunction(namespace="sparklines", function_name="smoothOpsHoursLacey"),
+    Output("ops-spark-hours-lacey", "figure"),
+    Input("ops-store-kpi-sparklines", "data"),
+    Input("ops-filter-smoothing", "value"),
 )
 
 clientside_callback(
-    """function(data, smoothPct) {
-        if (!data || !data.avg30) return window.dash_clientside.no_update;
-        var spark = data.avg30;
-        var color = spark.color || "#2196F3";
-        return {
-            data: [{
-                x: spark.labels,
-                y: spark.values,
-                mode: "lines",
-                line: {color: color, width: 1.5},
-                hovertemplate: "%{x|%b %d}: %{y:,.0f}<extra></extra>"
-            }],
-            layout: {
-                margin: {l: 0, r: 0, t: 0, b: 0},
-                height: 34,
-                plot_bgcolor: "rgba(0,0,0,0)",
-                paper_bgcolor: "rgba(0,0,0,0)",
-                xaxis: {visible: false},
-                yaxis: {visible: false},
-                showlegend: false,
-                dragmode: false,
-                hovermode: "x"
-            }
-        };
-    }""",
-    Output("ops-spark-avg30", "figure"),
+    ClientsideFunction(namespace="sparklines", function_name="smoothOpsHoursCentralia"),
+    Output("ops-spark-hours-centralia", "figure"),
     Input("ops-store-kpi-sparklines", "data"),
-    Input("operations-filter-date-preset", "value"),
+    Input("ops-filter-smoothing", "value"),
+)
+
+clientside_callback(
+    ClientsideFunction(namespace="sparklines", function_name="smoothOpsHoursAberdeen"),
+    Output("ops-spark-hours-aberdeen", "figure"),
+    Input("ops-store-kpi-sparklines", "data"),
+    Input("ops-filter-smoothing", "value"),
+)
+
+# Scheduling Lead sparkline (consult lead daily median)
+clientside_callback(
+    ClientsideFunction(namespace="sparklines", function_name="smoothOpsLead"),
+    Output("ops-spark-lead", "figure"),
+    Input("ops-store-kpi-sparklines", "data"),
+    Input("ops-filter-smoothing", "value"),
+)
+
+# New Starts sparkline (daily)
+clientside_callback(
+    ClientsideFunction(namespace="sparklines", function_name="smoothOpsNewStarts"),
+    Output("ops-spark-newstarts", "figure"),
+    Input("ops-store-kpi-sparklines", "data"),
+    Input("ops-filter-smoothing", "value"),
 )
 
 
@@ -750,13 +1037,12 @@ clientside_callback(
     Output("ops-store-volume", "data"),
     Input("ops-interval", "n_intervals"),
     Input("ops-volume-agg", "value"),
-    Input("operations-filter-date-preset", "value"),
     Input("operations-filter-department", "value"),
     Input("operations-filter-machine", "value"),
     running=[(Output("ops-volume-loading", "visible"), True, False)],
 )
-def update_volume_data(_n, agg, date_preset, departments, machines):
-    """Load treatment volume data to store."""
+def update_volume_data(_n, agg, departments, machines):
+    """Load ALL treatment volume data to store (time window applied clientside)."""
     from data.loader import load_daily_volume
 
     try:
@@ -764,20 +1050,32 @@ def update_volume_data(_n, agg, date_preset, departments, machines):
         if dv.empty:
             return None
 
+        # Always load all data - time window will be applied clientside for initial view
+        start = dv["ScheduledDate"].min()
         last_date = dv["ScheduledDate"].max()
-        start, end = _get_date_range(date_preset, last_date)
-        return _prepare_volume_data(departments, machines, agg, start, end)
-    except Exception:
+        result = _prepare_volume_data(departments, machines, agg, start, last_date)
+
+        # Debug logging
+        if result and result.get('dates'):
+            print(f"[DEBUG] Volume data prepared: {len(result['dates'])} dates from {result['dates'][0]} to {result['dates'][-1]}")
+            print(f"[DEBUG] Last 5 dates: {result['dates'][-5:]}")
+
+        return result
+    except Exception as e:
+        print(f"[ERROR] update_volume_data: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
-# Clientside callback for volume chart smoothing with chart type
+# Clientside callback for volume chart smoothing with chart type and time window
 clientside_callback(
-    ClientsideFunction(namespace="census", function_name="smoothChartWithType"),
+    ClientsideFunction(namespace="census", function_name="smoothChartWithTypeAndRange"),
     Output("ops-chart-volume", "figure"),
     Input("ops-store-volume", "data"),
     Input("ops-volume-settings-smooth", "value"),
     Input("ops-volume-settings-type", "value"),
+    Input("ops-volume-range", "value"),
     State("ops-chart-volume", "figure"),
 )
 
@@ -807,21 +1105,35 @@ def update_heatmap(_n, departments, machines):
         # Filter future volume
         dv = dv[(dv["ScheduledDate"] >= today) & (dv["ScheduledDate"] <= two_weeks)]
         sites = departments if departments else DEPARTMENTS
-        dv = dv[dv["Department"].isin(sites)]
 
-        # Build treatment rows (by machine if machines filter, else by site)
-        machines_to_show = machines if machines else MACHINES
-        y_labels = machines_to_show + ["Exam", "Simulation"]
+        # Derive machines from selected departments (heatmap ignores machine filter)
+        machines_to_show = []
+        for s in sites:
+            machines_to_show.extend(MACHINE_MAP.get(s, []))
+        if not machines_to_show:
+            machines_to_show = MACHINES
 
-        # Generate date range (next 14 calendar days)
+        # Include both site-level and machine-level Department values
+        dept_filter = list(sites)
+        for s in sites:
+            dept_filter.extend(MACHINE_MAP.get(s, []))
+        dv = dv[dv["Department"].isin(dept_filter)]
+
+        # Build y-axis labels: machines, department exams, simulation (no spacers)
+        exam_labels = [f"{site} Exam" for site in sites]
+        y_labels = machines_to_show + exam_labels + ["Simulation"]
+
+        # Generate date range (next 14 calendar days, weekdays only)
         date_range = pd.date_range(today, two_weeks, freq="D")
-        x_labels = [d.strftime("%m/%d %a") for d in date_range]
+        date_range = date_range[date_range.weekday < 5]  # Monday=0 to Friday=4
+        x_date_labels = [f"{d.month}/{d.day}" for d in date_range]
+        x_day_labels = [d.strftime('%a') for d in date_range]
 
         # Initialize heatmap matrix
         z_data = np.zeros((len(y_labels), len(date_range)))
         hover_data = [[f"{y}: 0" for _ in date_range] for y in y_labels]
 
-        # Fill treatment rows
+        # Fill treatment rows — machines
         if not dv.empty and "AppointmentCount" in dv.columns:
             for i, machine in enumerate(machines_to_show):
                 # Match machine to department or machine-specific data
@@ -839,40 +1151,122 @@ def update_heatmap(_n, departments, machines):
                     z_data[i, j] = count
                     hover_data[i][j] = f"{machine}: {count}"
 
-        # Fill availability rows (Exam and Simulation)
+        # Fill exam availability rows by department
+        machines_end_idx = len(machines_to_show)
         if not avail.empty and "SlotDate" in avail.columns and "Category" in avail.columns:
-            avail = avail[(avail["SlotDate"] >= today) & (avail["SlotDate"] <= two_weeks)]
+            avail_filtered = avail[(avail["SlotDate"] >= today) & (avail["SlotDate"] <= two_weeks)]
 
-            for cat_idx, category in enumerate(["Exam", "Simulation"]):
-                row_idx = len(machines_to_show) + cat_idx
-                cat_data = avail[avail["Category"].str.contains(category, case=False, na=False)]
+            # Exam rows by department
+            exam_data = avail_filtered[avail_filtered["Category"].str.contains("Exam", case=False, na=False)]
+            for dept_i, dept in enumerate(sites):
+                row_idx = machines_end_idx + dept_i
+                # Filter exam appointments for this department
+                dept_exam = exam_data
+                if "Department" in exam_data.columns:
+                    dept_exam = exam_data[exam_data["Department"] == dept]
+
                 for j, date in enumerate(date_range):
-                    day_data = cat_data[cat_data["SlotDate"] == date]
+                    day_data = dept_exam[dept_exam["SlotDate"] == date]
                     count = len(day_data)
                     z_data[row_idx, j] = count
-                    hover_data[row_idx][j] = f"{category}: {count} slots"
+                    hover_data[row_idx][j] = f"{dept} Exam: {count} slots"
+
+        # Fill simulation availability row
+        if not avail.empty and "SlotDate" in avail.columns and "Category" in avail.columns:
+            sim_row_idx = machines_end_idx + len(sites)
+            sim_data = avail_filtered[avail_filtered["Category"].str.contains("Simulation", case=False, na=False)]
+            for j, date in enumerate(date_range):
+                day_data = sim_data[sim_data["SlotDate"] == date]
+                count = len(day_data)
+                z_data[sim_row_idx, j] = count
+                hover_data[sim_row_idx][j] = f"Simulation: {count} slots"
 
         # Build heatmap
+        # Prepare text array that shows numbers only for non-NaN cells
+        text_array = np.where(np.isnan(z_data), "", z_data.astype(int).astype(str))
+
         fig = go.Figure(go.Heatmap(
             z=z_data,
-            x=x_labels,
+            x=x_date_labels,
             y=y_labels,
             colorscale=[[0, "#F3E8F5"], [1, "#7C2A83"]],
-            text=z_data.astype(int).astype(str),
+            text=text_array,
             texttemplate="%{text}",
             textfont={"size": 10},
             hovertemplate="<b>%{y}</b><br>%{x}<br>%{z:.0f}<extra></extra>",
             showscale=False,
+            connectgaps=False,
         ))
 
+        # Add day-of-week annotations at bottom using x domain coordinates
+        annotations = []
+        num_cols = len(x_day_labels)
+        for i, day_label in enumerate(x_day_labels):
+            # Calculate x position in domain coordinates (0 to 1)
+            x_pos = (i + 0.5) / num_cols
+            annotations.append(dict(
+                x=x_pos,
+                y=-0.01,  # Just below the chart area
+                text=day_label,
+                xref="x domain",
+                yref="paper",
+                showarrow=False,
+                font=dict(size=10, color="#6B7280"),
+                xanchor="center",
+                yanchor="top",
+            ))
+
+        # Add separator lines (white)
+        shapes = []
+
+        # Horizontal separators between row sections (10px white)
+        # After machines (before exam section)
+        shapes.append(dict(
+            type="line",
+            x0=-0.5, x1=len(date_range) - 0.5,
+            y0=machines_end_idx - 0.5, y1=machines_end_idx - 0.5,
+            line=dict(color="#FFFFFF", width=10),
+            xref="x", yref="y",
+        ))
+        # After exams (before simulation)
+        shapes.append(dict(
+            type="line",
+            x0=-0.5, x1=len(date_range) - 0.5,
+            y0=machines_end_idx + len(sites) - 0.5, y1=machines_end_idx + len(sites) - 0.5,
+            line=dict(color="#FFFFFF", width=10),
+            xref="x", yref="y",
+        ))
+
+        # Vertical separators between weeks (2px white, after Friday)
+        for i, d in enumerate(date_range):
+            if d.weekday() == 4 and i < len(date_range) - 1:  # Friday
+                shapes.append(dict(
+                    type="line",
+                    x0=i + 0.5, x1=i + 0.5,
+                    y0=-0.5, y1=len(y_labels) - 0.5,
+                    line=dict(color="#FFFFFF", width=2),
+                    xref="x", yref="y",
+                ))
+
         fig.update_layout(
-            height=300,
+            height=380,
             font=dict(family=FONT_FAMILY, size=11),
             plot_bgcolor="#FFFFFF",
             paper_bgcolor="#FFFFFF",
-            margin=dict(l=100, r=16, t=16, b=48),
-            xaxis=dict(side="bottom", tickangle=45),
-            yaxis=dict(autorange="reversed"),
+            margin=dict(l=90, r=16, t=32, b=20),
+            xaxis=dict(
+                side="top",
+                tickangle=0,
+                tickvals=list(range(len(x_date_labels))),
+                ticktext=x_date_labels,
+                tickfont=dict(size=10),
+            ),
+            yaxis=dict(
+                autorange="reversed",
+                tickfont=dict(size=10),
+            ),
+            annotations=annotations,
+            shapes=shapes,
         )
 
         return fig
@@ -888,30 +1282,41 @@ def update_heatmap(_n, departments, machines):
 @callback(
     Output("ops-store-ribbon", "data"),
     Input("ops-interval", "n_intervals"),
-    Input("ops-ribbon-range", "value"),
     Input("ops-ribbon-site", "value"),
+    Input("ops-ribbon-range", "value"),
     Input("operations-filter-department", "value"),
     Input("operations-filter-machine", "value"),
     running=[(Output("ops-ribbon-loading", "visible"), True, False)],
 )
-def update_ribbon_data(_n, range_days, site_filter, departments, machines):
-    """Load operating hours data to store."""
-    days = int(range_days) if range_days else 90
+def update_ribbon_data(_n, site_filter, range_val, departments, machines):
+    """Load operating hours data to store - always daily granularity."""
     # Use chart's own site selector
     if site_filter and site_filter != "all":
         sites = [site_filter]
     else:
         sites = departments if departments else None
-    return _prepare_hours_data(sites, machines, days_back=days)
+
+    # Always use daily data (no weekly aggregation)
+    return _prepare_hours_data(sites, machines, days_back=0, aggregate_weekly=False)
 
 
-# Clientside callback for ribbon chart smoothing with chart type
+# Clientside callback for ribbon chart smoothing with chart type and time window
 clientside_callback(
-    ClientsideFunction(namespace="hoursRibbon", function_name="smoothChartWithType"),
+    ClientsideFunction(namespace="hoursRibbon", function_name="smoothChartWithTypeAndRange"),
     Output("ops-chart-ribbon", "figure"),
     Input("ops-store-ribbon", "data"),
     Input("ops-ribbon-settings-smooth", "value"),
     Input("ops-ribbon-settings-type", "value"),
+    Input("ops-ribbon-range", "value"),
+)
+
+# Clientside callback for dynamic y-axis scaling on pan
+clientside_callback(
+    ClientsideFunction(namespace="ribbonYAxis", function_name="updateYAxisOnPan"),
+    Output("ops-chart-ribbon", "figure", allow_duplicate=True),
+    Input("ops-chart-ribbon", "relayoutData"),
+    State("ops-chart-ribbon", "figure"),
+    prevent_initial_call=True,
 )
 
 
@@ -922,11 +1327,11 @@ clientside_callback(
 @callback(
     Output("ops-table", "rowData"),
     Input("ops-interval", "n_intervals"),
-    Input("operations-filter-date-preset", "value"),
+    Input("ops-volume-range", "value"),
     Input("operations-filter-department", "value"),
     Input("operations-filter-machine", "value"),
 )
-def update_table(_n, date_preset, departments, machines):
+def update_table(_n, range_days, departments, machines):
     """Build daily detail table data."""
     from data.loader import load_daily_volume, load_treatment
 
@@ -938,7 +1343,12 @@ def update_table(_n, date_preset, departments, machines):
             return []
 
         last_date = dv["ScheduledDate"].max()
-        start, end = _get_date_range(date_preset, last_date)
+        days = int(range_days) if range_days else 90
+        if days > 0:
+            start = last_date - timedelta(days=days - 1)
+        else:
+            start = dv["ScheduledDate"].min()
+        end = last_date
 
         # Filter
         sites = departments if departments else DEPARTMENTS
