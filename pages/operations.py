@@ -57,7 +57,7 @@ def _ops_filter_bar():
                         dmc.Text("Smoothing", size="sm", c="#9CA3AF", fw=500),
                         dmc.Slider(
                             id="ops-filter-smoothing",
-                            min=0, max=1, step=0.01, value=0.4,
+                            min=0, max=1, step=0.01, value=0.7,
                             size="xs", w=120,
                             showLabelOnHover=False,
                             updatemode="drag",
@@ -146,7 +146,7 @@ layout = dmc.Stack(
                                                 {"value": "W", "label": "Weekly"},
                                                 {"value": "M", "label": "Monthly"},
                                             ],
-                                            value="W",
+                                            value="D",
                                             size="xs",
                                         ),
                                         chart_settings_popover(
@@ -245,6 +245,7 @@ layout = dmc.Stack(
                             dmc.SegmentedControl(
                                 id="ops-ribbon-range",
                                 data=[
+                                    {"value": "thisweek", "label": "This Week"},
                                     {"value": "30", "label": "30d"},
                                     {"value": "60", "label": "60d"},
                                     {"value": "90", "label": "90d"},
@@ -252,7 +253,7 @@ layout = dmc.Stack(
                                     {"value": "365", "label": "1y"},
                                     {"value": "0", "label": "All"},
                                 ],
-                                value="90",
+                                value="thisweek",
                                 size="xs",
                             ),
                             chart_settings_popover(
@@ -296,32 +297,43 @@ layout = dmc.Stack(
         dmc.Paper(
             children=[
                 dmc.Group(
-                    justify="space-between", mb="sm",
+                    justify="space-between", mb="sm", wrap="wrap", gap="sm",
                     children=[
                         dmc.Text("Daily Detail", size="sm", fw=500, c="#6B7280"),
-                        dmc.Button(
-                            "Export CSV",
-                            id="ops-table-export",
-                            size="compact-xs",
-                            variant="light",
-                            leftSection=dmc.Text("↓", size="xs"),
-                        ),
+                        dmc.Group(gap="md", align="center", children=[
+                            dmc.Group(gap="xs", align="center", children=[
+                                dmc.Text("Include Future", size="xs", c="#6B7280"),
+                                dmc.Switch(
+                                    id="ops-table-include-future",
+                                    checked=True,
+                                    size="sm",
+                                ),
+                            ]),
+                            dmc.SegmentedControl(
+                                id="ops-table-view-by",
+                                data=[
+                                    {"value": "location", "label": "By Location"},
+                                    {"value": "machine", "label": "By Machine"},
+                                ],
+                                value="location",
+                                size="xs",
+                            ),
+                            dmc.Button(
+                                "Export CSV",
+                                id="ops-table-export",
+                                size="compact-xs",
+                                variant="light",
+                                leftSection=dmc.Text("↓", size="xs"),
+                            ),
+                        ]),
                     ],
                 ),
                 dag.AgGrid(
                     id="ops-table",
-                    columnDefs=[
-                        {"field": "Date", "sortable": True, "filter": True, "width": 120},
-                        {"field": "Location", "sortable": True, "filter": True, "width": 120},
-                        {"field": "Appointments", "sortable": True, "filter": True, "width": 120, "type": "numericColumn"},
-                        {"field": "First Start", "sortable": True, "filter": True, "width": 110},
-                        {"field": "Last End", "sortable": True, "filter": True, "width": 110},
-                        {"field": "Duration (hrs)", "sortable": True, "filter": True, "width": 120, "type": "numericColumn"},
-                        {"field": "New Starts", "sortable": True, "filter": True, "width": 110, "type": "numericColumn"},
-                    ],
+                    columnDefs=[],  # Will be set by callback
                     defaultColDef={"resizable": True, "sortable": True, "filter": True},
-                    dashGridOptions={"pagination": True, "paginationPageSize": 15},
-                    style={"height": 400},
+                    dashGridOptions={"pagination": True, "paginationPageSize": 50},
+                    style={"height": 800},
                     className="ag-theme-quartz",
                 ),
             ],
@@ -387,15 +399,17 @@ def _prepare_hours_data(departments, machines, days_back=90, aggregate_weekly=Fa
         two_weeks_ahead = today + timedelta(days=14)
         dv_future = dv_future[dv_future["ScheduledDate"] <= two_weeks_ahead]
 
-        def _parse_time_to_hour(time_str):
-            """Convert time string like '08:30:00' to decimal hour (8.5)."""
-            if pd.isna(time_str) or time_str is None or time_str == "":
-                return None
-            try:
-                parts = str(time_str).split(":")
-                return int(parts[0]) + int(parts[1]) / 60
-            except (ValueError, IndexError):
-                return None
+        def _vec_time_to_hour(series):
+            """Vectorized: convert time strings like '08:30:00' to decimal hours."""
+            s = series.astype(str)
+            parts = s.str.split(":", n=2, expand=True)
+            if parts.shape[1] < 2:
+                return pd.Series(np.nan, index=series.index)
+            hours = pd.to_numeric(parts[0], errors="coerce")
+            mins = pd.to_numeric(parts[1], errors="coerce")
+            result = hours + mins / 60
+            result[series.isna() | (series == "") | (series == "None")] = np.nan
+            return result
 
         def _process_dv(dv_df, is_future=False):
             """Process daily volume dataframe into series data."""
@@ -423,9 +437,9 @@ def _prepare_hours_data(departments, machines, days_back=90, aggregate_weekly=Fa
                 else:
                     continue
 
-                # Convert time strings to decimal hours
-                site_data["start_hour"] = site_data["start_str"].apply(_parse_time_to_hour)
-                site_data["end_hour"] = site_data["end_str"].apply(_parse_time_to_hour)
+                # Convert time strings to decimal hours (vectorized)
+                site_data["start_hour"] = _vec_time_to_hour(site_data["start_str"])
+                site_data["end_hour"] = _vec_time_to_hour(site_data["end_str"])
 
                 # Drop rows with no valid times
                 site_data = site_data.dropna(subset=["start_hour", "end_hour"])
@@ -444,11 +458,17 @@ def _prepare_hours_data(departments, machines, days_back=90, aggregate_weekly=Fa
                     weekly = weekly.rename(columns={"week_start": "ScheduledDate"})
                     site_data = weekly
 
+                # Include appointment counts for calendar hover info
+                counts = []
+                if "AppointmentCount" in site_data.columns:
+                    counts = site_data["AppointmentCount"].fillna(0).astype(int).tolist()
+
                 results.append({
                     "name": site,
                     "dates": [d.isoformat() for d in site_data["ScheduledDate"]],
                     "startHours": site_data["start_hour"].tolist(),
                     "endHours": site_data["end_hour"].tolist(),
+                    "counts": counts,
                     "color": dept_color(site),
                     "isFuture": is_future,
                 })
@@ -1080,6 +1100,34 @@ clientside_callback(
 )
 
 
+# Dynamically adjust smoothing slider range based on selected time window
+# ~1/3 of visible weekday data points gives useful max without over-smoothing
+_SMOOTH_MAX_JS = """
+function(rangeDays, currentVal) {
+    var map = {'thisweek': 3, '30': 7, '60': 15, '90': 22, '180': 40, '365': 50, '0': 50};
+    var newMax = map[rangeDays] || 50;
+    var clamped = Math.min(currentVal || 0, newMax);
+    return [newMax, clamped];
+}
+"""
+
+clientside_callback(
+    _SMOOTH_MAX_JS,
+    Output("ops-volume-settings-smooth", "max"),
+    Output("ops-volume-settings-smooth", "value"),
+    Input("ops-volume-range", "value"),
+    State("ops-volume-settings-smooth", "value"),
+)
+
+clientside_callback(
+    _SMOOTH_MAX_JS,
+    Output("ops-ribbon-settings-smooth", "max"),
+    Output("ops-ribbon-settings-smooth", "value"),
+    Input("ops-ribbon-range", "value"),
+    State("ops-ribbon-settings-smooth", "value"),
+)
+
+
 # ---------------------------------------------------------------------------
 # Heatmap Callback — combines future schedule + availability
 # ---------------------------------------------------------------------------
@@ -1119,24 +1167,26 @@ def update_heatmap(_n, departments, machines):
             dept_filter.extend(MACHINE_MAP.get(s, []))
         dv = dv[dv["Department"].isin(dept_filter)]
 
-        # Build y-axis labels: machines, department exams, simulation (no spacers)
         exam_labels = [f"{site} Exam" for site in sites]
-        y_labels = machines_to_show + exam_labels + ["Simulation"]
+        n_machines = len(machines_to_show)
+        n_exams = len(exam_labels)
+        n_sim = 1
 
         # Generate date range (next 14 calendar days, weekdays only)
         date_range = pd.date_range(today, two_weeks, freq="D")
-        date_range = date_range[date_range.weekday < 5]  # Monday=0 to Friday=4
+        date_range = date_range[date_range.weekday < 5]
         x_date_labels = [f"{d.month}/{d.day}" for d in date_range]
         x_day_labels = [d.strftime('%a') for d in date_range]
+        x_hover_labels = [f"{d.strftime('%a')} {d.month}/{d.day}" for d in date_range]
 
-        # Initialize heatmap matrix
-        z_data = np.zeros((len(y_labels), len(date_range)))
-        hover_data = [[f"{y}: 0" for _ in date_range] for y in y_labels]
+        # Initialize per-group matrices
+        z_machines = np.zeros((n_machines, len(date_range)))
+        z_exams = np.zeros((n_exams, len(date_range)))
+        z_sim = np.zeros((n_sim, len(date_range)))
 
         # Fill treatment rows — machines
         if not dv.empty and "AppointmentCount" in dv.columns:
             for i, machine in enumerate(machines_to_show):
-                # Match machine to department or machine-specific data
                 machine_data = dv[dv["Department"].str.contains(machine.replace("_", "|"), case=False, na=False)]
                 if machine_data.empty and machine in ["TrueBeamNorth", "21EX"]:
                     machine_data = dv[dv["Department"] == "Lacey"]
@@ -1147,66 +1197,69 @@ def update_heatmap(_n, departments, machines):
 
                 for j, date in enumerate(date_range):
                     day_data = machine_data[machine_data["ScheduledDate"] == date]
-                    count = int(day_data["AppointmentCount"].sum()) if not day_data.empty else 0
-                    z_data[i, j] = count
-                    hover_data[i][j] = f"{machine}: {count}"
+                    z_machines[i, j] = int(day_data["AppointmentCount"].sum()) if not day_data.empty else 0
 
         # Fill exam availability rows by department
-        machines_end_idx = len(machines_to_show)
         if not avail.empty and "SlotDate" in avail.columns and "Category" in avail.columns:
             avail_filtered = avail[(avail["SlotDate"] >= today) & (avail["SlotDate"] <= two_weeks)]
-
-            # Exam rows by department
             exam_data = avail_filtered[avail_filtered["Category"].str.contains("Exam", case=False, na=False)]
             for dept_i, dept in enumerate(sites):
-                row_idx = machines_end_idx + dept_i
-                # Filter exam appointments for this department
                 dept_exam = exam_data
                 if "Department" in exam_data.columns:
                     dept_exam = exam_data[exam_data["Department"] == dept]
-
                 for j, date in enumerate(date_range):
-                    day_data = dept_exam[dept_exam["SlotDate"] == date]
-                    count = len(day_data)
-                    z_data[row_idx, j] = count
-                    hover_data[row_idx][j] = f"{dept} Exam: {count} slots"
+                    z_exams[dept_i, j] = len(dept_exam[dept_exam["SlotDate"] == date])
 
-        # Fill simulation availability row
-        if not avail.empty and "SlotDate" in avail.columns and "Category" in avail.columns:
-            sim_row_idx = machines_end_idx + len(sites)
+            # Fill simulation row
             sim_data = avail_filtered[avail_filtered["Category"].str.contains("Simulation", case=False, na=False)]
             for j, date in enumerate(date_range):
-                day_data = sim_data[sim_data["SlotDate"] == date]
-                count = len(day_data)
-                z_data[sim_row_idx, j] = count
-                hover_data[sim_row_idx][j] = f"Simulation: {count} slots"
+                z_sim[0, j] = len(sim_data[sim_data["SlotDate"] == date])
 
-        # Build heatmap
-        # Prepare text array that shows numbers only for non-NaN cells
-        text_array = np.where(np.isnan(z_data), "", z_data.astype(int).astype(str))
+        # Build faceted figure: 3 subplot rows with true vertical gaps
+        fig = make_subplots(
+            rows=3, cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.06,
+            row_heights=[n_machines, max(n_exams, 1), n_sim],
+        )
 
-        fig = go.Figure(go.Heatmap(
-            z=z_data,
-            x=x_date_labels,
-            y=y_labels,
-            colorscale=[[0, "#F3E8F5"], [1, "#7C2A83"]],
-            text=text_array,
-            texttemplate="%{text}",
-            textfont={"size": 10},
-            hovertemplate="<b>%{y}</b><br>%{x}<br>%{z:.0f}<extra></extra>",
-            showscale=False,
-            connectgaps=False,
-        ))
+        colorscale = [[0, "#F3E8F5"], [1, "#7C2A83"]]
+        # Shared zmin/zmax for consistent color mapping across all groups
+        z_all = np.concatenate([z_machines.ravel(), z_exams.ravel(), z_sim.ravel()])
+        zmax = float(z_all.max()) if len(z_all) and z_all.max() > 0 else 1
 
-        # Add day-of-week annotations at bottom using x domain coordinates
+        for group_i, (z, labels) in enumerate([
+            (z_machines, machines_to_show),
+            (z_exams, exam_labels),
+            (z_sim, ["Simulation"]),
+        ], start=1):
+            text_arr = np.where(np.isnan(z), "", z.astype(int).astype(str))
+            # customdata: repeat hover labels for each row in this group
+            hover_cd = np.tile(x_hover_labels, (len(labels), 1))
+            fig.add_trace(go.Heatmap(
+                z=z,
+                x=x_date_labels,
+                y=labels,
+                customdata=hover_cd,
+                colorscale=colorscale,
+                zmin=0,
+                zmax=zmax,
+                text=text_arr,
+                texttemplate="%{text}",
+                textfont={"size": 10},
+                hovertemplate="<b>%{y}</b><br>%{customdata}: %{z:.0f}<extra></extra>",
+                showscale=False,
+                connectgaps=False,
+            ), row=group_i, col=1)
+
+        # Day-of-week annotations below the bottom subplot
         annotations = []
         num_cols = len(x_day_labels)
         for i, day_label in enumerate(x_day_labels):
-            # Calculate x position in domain coordinates (0 to 1)
             x_pos = (i + 0.5) / num_cols
             annotations.append(dict(
                 x=x_pos,
-                y=-0.01,  # Just below the chart area
+                y=-0.01,
                 text=day_label,
                 xref="x domain",
                 yref="paper",
@@ -1216,37 +1269,33 @@ def update_heatmap(_n, departments, machines):
                 yanchor="top",
             ))
 
-        # Add separator lines (white)
+        # Vertical week separators (span full height via paper coords)
         shapes = []
-
-        # Horizontal separators between row sections (10px white)
-        # After machines (before exam section)
-        shapes.append(dict(
-            type="line",
-            x0=-0.5, x1=len(date_range) - 0.5,
-            y0=machines_end_idx - 0.5, y1=machines_end_idx - 0.5,
-            line=dict(color="#FFFFFF", width=10),
-            xref="x", yref="y",
-        ))
-        # After exams (before simulation)
-        shapes.append(dict(
-            type="line",
-            x0=-0.5, x1=len(date_range) - 0.5,
-            y0=machines_end_idx + len(sites) - 0.5, y1=machines_end_idx + len(sites) - 0.5,
-            line=dict(color="#FFFFFF", width=10),
-            xref="x", yref="y",
-        ))
-
-        # Vertical separators between weeks (2px white, after Friday)
         for i, d in enumerate(date_range):
-            if d.weekday() == 4 and i < len(date_range) - 1:  # Friday
+            if d.weekday() == 4 and i < len(date_range) - 1:
                 shapes.append(dict(
                     type="line",
                     x0=i + 0.5, x1=i + 0.5,
-                    y0=-0.5, y1=len(y_labels) - 0.5,
+                    y0=0, y1=1,
                     line=dict(color="#FFFFFF", width=2),
-                    xref="x", yref="y",
+                    xref="x", yref="paper",
                 ))
+
+        # 1px black border around each subplot group
+        n_cols = len(date_range)
+        for group_i, n_rows, yref in [
+            (1, n_machines, "y"),
+            (2, n_exams, "y2"),
+            (3, n_sim, "y3"),
+        ]:
+            shapes.append(dict(
+                type="rect",
+                x0=-0.5, x1=n_cols - 0.5,
+                y0=-0.5, y1=n_rows - 0.5,
+                line=dict(color="#D1D5DB", width=1),
+                fillcolor="rgba(0,0,0,0)",
+                xref="x", yref=yref,
+            ))
 
         fig.update_layout(
             height=380,
@@ -1254,20 +1303,21 @@ def update_heatmap(_n, departments, machines):
             plot_bgcolor="#FFFFFF",
             paper_bgcolor="#FFFFFF",
             margin=dict(l=90, r=16, t=32, b=20),
-            xaxis=dict(
-                side="top",
-                tickangle=0,
-                tickvals=list(range(len(x_date_labels))),
-                ticktext=x_date_labels,
-                tickfont=dict(size=10),
-            ),
-            yaxis=dict(
-                autorange="reversed",
-                tickfont=dict(size=10),
-            ),
             annotations=annotations,
             shapes=shapes,
         )
+
+        # Style each subplot's axes
+        fig.update_xaxes(side="top", tickangle=0, tickfont=dict(size=10), row=1, col=1)
+        for row_i in range(1, 4):
+            fig.update_yaxes(
+                autorange="reversed",
+                tickfont=dict(size=10),
+                row=row_i, col=1,
+            )
+            # Hide x-axis ticks/labels on lower subplots (shared)
+            if row_i > 1:
+                fig.update_xaxes(showticklabels=False, row=row_i, col=1)
 
         return fig
 
@@ -1319,9 +1369,42 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
+# Clientside callback to attach heatmap hover highlight
+clientside_callback(
+    ClientsideFunction(namespace="heatmapHover", function_name="init"),
+    Output("ops-chart-heatmap", "className"),
+    Input("ops-chart-heatmap", "figure"),
+    prevent_initial_call=True,
+)
+
 
 # ---------------------------------------------------------------------------
-# Daily Detail Table Callback
+# Daily Detail Table Column Definitions Callback
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("ops-table", "columnDefs"),
+    Input("ops-table-view-by", "value"),
+)
+def update_table_columns(view_by):
+    """Update column headers based on view mode."""
+    location_header = "Machine" if view_by == "machine" else "Location"
+
+    return [
+        {"field": "Date", "sortable": True, "filter": True, "width": 140},
+        {"field": "Location", "headerName": location_header, "sortable": True, "filter": True, "width": 160},
+        {"field": "Appointments", "sortable": True, "filter": True, "width": 160, "type": "numericColumn"},
+        {"field": "Scheduled Start", "sortable": True, "filter": True, "width": 165},
+        {"field": "Scheduled End", "sortable": True, "filter": True, "width": 160},
+        {"field": "Actual Start", "sortable": True, "filter": True, "width": 145},
+        {"field": "Actual End", "sortable": True, "filter": True, "width": 135},
+        {"field": "Duration (hrs)", "sortable": True, "filter": True, "width": 150, "type": "numericColumn"},
+        {"field": "New Starts", "sortable": True, "filter": True, "width": 130, "type": "numericColumn"},
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Daily Detail Table Data Callback
 # ---------------------------------------------------------------------------
 
 @callback(
@@ -1330,32 +1413,111 @@ clientside_callback(
     Input("ops-volume-range", "value"),
     Input("operations-filter-department", "value"),
     Input("operations-filter-machine", "value"),
+    Input("ops-table-include-future", "checked"),
+    Input("ops-table-view-by", "value"),
 )
-def update_table(_n, range_days, departments, machines):
-    """Build daily detail table data."""
-    from data.loader import load_daily_volume, load_treatment
+def update_table(_n, range_days, departments, machines, include_future, view_by):
+    """Build daily detail table data with optional future data and machine-level detail."""
+    from data.loader import load_daily_volume, load_daily_volume_future, load_treatment
+
+    print(f"[DEBUG TABLE] Called with: range_days={range_days}, departments={departments}, machines={machines}, include_future={include_future}, view_by={view_by}")
 
     try:
-        dv = load_daily_volume()
+        dv_past = load_daily_volume()
+        dv_future = load_daily_volume_future() if include_future else pd.DataFrame()
         tx = load_treatment()
 
-        if dv.empty:
+        print(f"[DEBUG TABLE] Loaded: dv_past={len(dv_past)} rows, dv_future={len(dv_future)} rows, tx={len(tx)} rows")
+
+        if dv_past.empty and dv_future.empty:
+            print("[DEBUG TABLE] Both past and future daily volume are empty, returning []")
             return []
 
-        last_date = dv["ScheduledDate"].max()
+        # Combine past and future data
+        dv = pd.concat([dv_past, dv_future], ignore_index=True) if not dv_past.empty and not dv_future.empty else (dv_past if not dv_past.empty else dv_future)
+
+        last_date_past = dv_past["ScheduledDate"].max() if not dv_past.empty else pd.Timestamp.now().normalize()
+        today = pd.Timestamp.now().normalize()
+
+        # For range calculation, use last_date_past for historical data
+        # For future data, include up to 14 days ahead if enabled
         days = int(range_days) if range_days else 90
+        print(f"[DEBUG TABLE] Date range: last_date_past={last_date_past}, days={days}")
+
         if days > 0:
-            start = last_date - timedelta(days=days - 1)
+            start = last_date_past - timedelta(days=days - 1)
+            end = (today + timedelta(days=14)) if include_future else last_date_past
         else:
             start = dv["ScheduledDate"].min()
-        end = last_date
+            end = dv["ScheduledDate"].max()
 
-        # Filter
+        # Filter departments + machine sub-filter for Lacey
         sites = departments if departments else DEPARTMENTS
-        dv = dv[dv["Department"].isin(sites)]
+        dv_machine_depts, tx_machine_depts, machine_active = _machine_dept_values(machines)
+
+        # When viewing by machine, don't aggregate - show machine names directly
+        if view_by == "machine":
+            # Build list of departments as they appear in the data
+            dept_list = []
+            for site in sites:
+                if site == "Lacey":
+                    # Add Lacey machines (filtered by machine selector if active)
+                    if machine_active:
+                        dept_list.extend(dv_machine_depts)
+                    else:
+                        dept_list.extend(["TrueBeamNorth", "21EX"])
+                elif site == "Centralia":
+                    dept_list.append("Centralia")  # Data has "Centralia", not machine name
+                elif site == "Aberdeen":
+                    dept_list.append("Aberdeen")  # Data has "Aberdeen", not machine name
+
+            # Filter data to selected departments
+            dv = dv[dv["Department"].isin(dept_list)].copy()
+
+            # Rename to machine names for display
+            dv.loc[dv["Department"] == "Centralia", "Department"] = "21iX_CEN"
+            dv.loc[dv["Department"] == "Aberdeen", "Department"] = "21iX_AB"
+
+            if not tx.empty and "Department" in tx.columns:
+                # Treatment data uses "Lacey - TrueBeamNorth" format for Lacey machines
+                tx_machine_list = []
+                for site in sites:
+                    if site == "Lacey":
+                        if machine_active:
+                            tx_machine_list.extend([f"Lacey - {m}" for m in dv_machine_depts])
+                        else:
+                            tx_machine_list.extend(["Lacey - TrueBeamNorth", "Lacey - 21EX"])
+                    elif site == "Centralia":
+                        tx_machine_list.append("21iX_CEN")
+                    elif site == "Aberdeen":
+                        tx_machine_list.append("21iX_AB")
+                tx = tx[tx["Department"].isin(tx_machine_list)]
+        else:
+            # View by location - aggregate machines to department level
+            if machine_active and "Lacey" in sites:
+                dv_eff = [s for s in sites if s != "Lacey"] + dv_machine_depts
+                dv = dv[dv["Department"].isin(dv_eff)].copy()
+                dv.loc[dv["Department"].isin(dv_machine_depts), "Department"] = "Lacey"
+            else:
+                dv = dv[dv["Department"].isin(sites)]
+
+            # Apply machine filtering to treatment data as well
+            if not tx.empty and "Department" in tx.columns:
+                if machine_active and "Lacey" in sites:
+                    tx_eff = [s for s in sites if s != "Lacey"] + tx_machine_depts
+                    tx = tx[tx["Department"].isin(tx_eff)].copy()
+                    tx.loc[tx["Department"].isin(tx_machine_depts), "Department"] = "Lacey"
+                else:
+                    tx_sites = [d for d in tx["Department"].unique() if d in sites]
+                    tx = tx[tx["Department"].isin(tx_sites)]
+
+        # Date filter
         dv = dv[(dv["ScheduledDate"] >= start) & (dv["ScheduledDate"] <= end)]
 
+        print(f"[DEBUG TABLE] After filtering: dv={len(dv)} rows")
+
         if dv.empty:
+            print("[DEBUG TABLE] No data after filtering, returning []")
             return []
 
         # Build row data
@@ -1363,16 +1525,24 @@ def update_table(_n, range_days, departments, machines):
         for _, row in dv.iterrows():
             date_str = row["ScheduledDate"].strftime("%Y-%m-%d") if pd.notna(row["ScheduledDate"]) else ""
             dept = row.get("Department", "")
-            appts = int(row.get("AppointmentCount", 0))
+            appts_val = row.get("AppointmentCount", 0)
+            appts = int(appts_val) if pd.notna(appts_val) else 0
 
-            # Parse times
-            start_time = row.get("FirstActualStart") or row.get("FirstScheduledStart", "")
-            end_time = row.get("LastActualEnd") or row.get("LastScheduledEnd", "")
+            # Parse all 4 time fields separately
+            sched_start = row.get("FirstScheduledStart", "")
+            sched_end = row.get("LastScheduledEnd", "")
+            actual_start = row.get("FirstActualStart", "")
+            actual_end = row.get("LastActualEnd", "")
 
-            # Calculate duration
+            # Calculate duration (prefer actual, fallback to scheduled for future dates)
             duration = ""
             try:
-                if start_time and end_time:
+                # Use actual times if available, otherwise use scheduled times
+                start_time = actual_start if (actual_start and not pd.isna(actual_start)) else sched_start
+                end_time = actual_end if (actual_end and not pd.isna(actual_end)) else sched_end
+
+                # Only calculate if both times are valid
+                if start_time and end_time and not pd.isna(start_time) and not pd.isna(end_time):
                     s_parts = str(start_time).split(":")
                     e_parts = str(end_time).split(":")
                     s_hr = int(s_parts[0]) + int(s_parts[1]) / 60
@@ -1381,27 +1551,49 @@ def update_table(_n, range_days, departments, machines):
             except Exception:
                 pass
 
-            # Get new starts from treatment data
+            # Get new starts from treatment data (only for past dates)
             new_starts = 0
-            if not tx.empty and "ScheduledDate" in tx.columns:
-                tx_row = tx[(tx["ScheduledDate"] == row["ScheduledDate"]) & (tx["Department"] == dept)]
+            if not tx.empty and "ScheduledDate" in tx.columns and row["ScheduledDate"] <= today:
+                # Match department/machine name format in treatment data
+                tx_dept = dept
+                if view_by == "machine":
+                    # Treatment data uses "Lacey - MachineName" for Lacey machines
+                    if dept in ["TrueBeamNorth", "21EX"]:
+                        tx_dept = f"Lacey - {dept}"
+                    # Treatment data uses machine names directly for other sites
+                    elif dept in ["21iX_CEN", "21iX_AB"]:
+                        tx_dept = dept
+
+                tx_row = tx[(tx["ScheduledDate"] == row["ScheduledDate"]) & (tx["Department"] == tx_dept)]
                 ns_col = next((c for c in tx_row.columns if "NewStarts" in c and "Course" in c), None)
                 if ns_col and not tx_row.empty:
                     new_starts = int(tx_row[ns_col].sum())
+
+            # Format time strings, ensuring NaN/empty values show as blank
+            def format_time(time_val):
+                if pd.isna(time_val) or not time_val or str(time_val).strip() == "":
+                    return ""
+                return str(time_val)[:5]
 
             rows.append({
                 "Date": date_str,
                 "Location": dept,
                 "Appointments": appts,
-                "First Start": str(start_time)[:5] if start_time else "",
-                "Last End": str(end_time)[:5] if end_time else "",
+                "Scheduled Start": format_time(sched_start),
+                "Scheduled End": format_time(sched_end),
+                "Actual Start": format_time(actual_start),
+                "Actual End": format_time(actual_end),
                 "Duration (hrs)": duration,
                 "New Starts": new_starts,
             })
 
+        print(f"[DEBUG TABLE] Returning {len(rows)} rows")
         return sorted(rows, key=lambda x: x["Date"], reverse=True)
 
-    except Exception:
+    except Exception as e:
+        print(f"[ERROR TABLE] Exception: {e}")
+        import traceback
+        traceback.print_exc()
         return []
 
 

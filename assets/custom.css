@@ -173,3 +173,20 @@ body {
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
+/* Compact KPI-card toggle (smaller than xs) */
+#home-sims-scope.mantine-SegmentedControl-root {
+    --sc-font-size: 10px;
+    --sc-padding: 2px;
+    min-height: 0;
+
+}
+
+#home-sims-scope .mantine-SegmentedControl-label {
+    font-size: 10px;
+    padding: 2px 6px;
+}
+
+#home-sims-scope .mantine-SegmentedControl-indicator {
+    height: calc(100% - 4px);
+}
+

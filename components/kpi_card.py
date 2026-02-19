@@ -1,7 +1,7 @@
 """KPI card component with optional sparkline."""
 
 import dash_mantine_components as dmc
-from dash import dcc
+from dash import dcc, html
 import plotly.graph_objects as go
 
 from config.settings import PRIMARY, NEUTRAL, SEMANTIC_COLORS
@@ -95,6 +95,7 @@ def kpi_card(
     card_id=None,
     value_detail=None,
     sparkline_id=None,
+    header_control=None,
 ):
     """Create a KPI card.
 
@@ -112,6 +113,7 @@ def kpi_card(
         card_id: optional component ID
         value_detail: optional sub-text displayed inline to the right of value
         sparkline_id: optional ID for the sparkline Graph (for clientside updates)
+        header_control: optional Dash component absolutely positioned top-right
     """
     trend_color = None
     trend_icon = ""
@@ -151,7 +153,7 @@ def kpi_card(
                     sparkline_past_labels, sparkline_future_labels,
                     accent_color or PRIMARY,
                     hover_fmt=sparkline_hover_fmt,
-                ) if sparkline_past else {},
+                ) if sparkline_past else create_sparkline(),
                 config={"displayModeBar": False, "scrollZoom": False},
                 style={"height": "34px", "marginTop": "4px"},
             )
@@ -159,10 +161,23 @@ def kpi_card(
 
     style = {
         "borderLeft": f"4px solid {accent_color}" if accent_color else "none",
+        "position": "relative",
     }
 
+    paper_children = [dmc.Stack(children=children, gap=4)]
+
+    if header_control is not None:
+        paper_children.append(
+            html.Div(header_control, style={
+                "position": "absolute",
+                "top": "14px",
+                "right": "14px",
+                "zIndex": 2,
+            })
+        )
+
     return dmc.Paper(
-        children=dmc.Stack(children=children, gap=4),
+        children=paper_children,
         p="md",
         radius="md",
         shadow="xs",

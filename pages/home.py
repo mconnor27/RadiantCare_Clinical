@@ -245,6 +245,7 @@ def _prepare_hours_data(departments, days_back=30):
                 "ticktext": ticktext,
             },
             "today": today.isoformat(),
+            "height": 380,
         }
 
     except Exception:
@@ -520,15 +521,26 @@ layout = dmc.Stack(
         ),
 
         # KPI row — 5 cards with sparklines
-        dmc.Grid(
-            id="home-kpi-row",
-            gutter=16,
+        dmc.Box(
+            pos="relative",
             children=[
-                dmc.GridCol(id="home-kpi-consults-week", span={"base": 12, "sm": 6, "md": 2.4}),
-                dmc.GridCol(id="home-kpi-sims-week", span={"base": 12, "sm": 6, "md": 2.4}),
-                dmc.GridCol(id="home-kpi-tx-today", span={"base": 12, "sm": 6, "md": 2.4}),
-                dmc.GridCol(id="home-kpi-consult-lead", span={"base": 12, "sm": 6, "md": 2.4}),
-                dmc.GridCol(id="home-kpi-sim-lead", span={"base": 12, "sm": 6, "md": 2.4}),
+                dmc.LoadingOverlay(
+                    id="home-kpi-loading",
+                    visible=False,
+                    loaderProps={"type": "dots", "color": PRIMARY},
+                    overlayProps={"radius": "sm", "blur": 2},
+                ),
+                dmc.Grid(
+                    id="home-kpi-row",
+                    gutter=16,
+                    children=[
+                        dmc.GridCol(id="home-kpi-consults-week", span={"base": 12, "sm": 6, "md": 2.4}),
+                        dmc.GridCol(id="home-kpi-sims-week", span={"base": 12, "sm": 6, "md": 2.4}),
+                        dmc.GridCol(id="home-kpi-tx-today", span={"base": 12, "sm": 6, "md": 2.4}),
+                        dmc.GridCol(id="home-kpi-consult-lead", span={"base": 12, "sm": 6, "md": 2.4}),
+                        dmc.GridCol(id="home-kpi-sim-lead", span={"base": 12, "sm": 6, "md": 2.4}),
+                    ],
+                ),
             ],
         ),
 
@@ -670,6 +682,7 @@ layout = dmc.Stack(
                                         dmc.SegmentedControl(
                                             id="home-hours-range",
                                             data=[
+                                                {"value": "thisweek", "label": "This Week"},
                                                 {"value": "7", "label": "7d"},
                                                 {"value": "30", "label": "30d"},
                                                 {"value": "60", "label": "60d"},
@@ -677,7 +690,7 @@ layout = dmc.Stack(
                                                 {"value": "365", "label": "1y"},
                                                 {"value": "0", "label": "All"},
                                             ],
-                                            value="30", size="xs",
+                                            value="thisweek", size="xs",
                                         ),
                                         chart_settings_popover(
                                             "home-hours",
@@ -756,7 +769,31 @@ layout = dmc.Stack(
 
         # Store for operating hours ribbon (clientside smoothing)
         dcc.Store(id="home-store-hours"),
+
+        # Store for sims scope toggle (bridges dynamically-created control → callback)
+        dcc.Store(id="home-store-sims-scope", data="initial"),
     ],
+)
+
+
+def _sims_scope_toggle(current="initial"):
+    """Tiny Initial/All toggle for the Simulations KPI card header."""
+    return dmc.SegmentedControl(
+        id="home-sims-scope",
+        data=[
+            {"value": "initial", "label": "Initial"},
+            {"value": "all", "label": "All"},
+        ],
+        value=current, size="xs",
+    )
+
+
+# Sync dynamically-created toggle → Store so the KPI callback can read it
+clientside_callback(
+    """function(v) { return v; }""",
+    Output("home-store-sims-scope", "data"),
+    Input("home-sims-scope", "value"),
+    prevent_initial_call=True,
 )
 
 
@@ -774,10 +811,13 @@ layout = dmc.Stack(
     Input("home-interval", "n_intervals"),
     Input("home-filter-date-preset", "value"),
     Input("home-filter-department", "value"),
+    Input("home-store-sims-scope", "data"),
+    running=[(Output("home-kpi-loading", "visible"), True, False)],
 )
-def update_kpis(_n, date_preset, departments):
+def update_kpis(_n, date_preset, departments, sims_scope):
     """Compute all 5 KPI cards with sparkline IDs (data computed separately)."""
     from data.loader import load_treatment_detail, load_simulations, load_clinic_visits
+    sims_scope = sims_scope or "initial"
 
     PERIOD_LABELS = {
         "today": "Today", "week": "7 Days",
@@ -790,13 +830,8 @@ def update_kpis(_n, date_preset, departments):
         "12mo": "vs prior 12 mo", "lastyear": "vs prior year",
         "ytd": "vs prior year",
     }
-    SPARK_FREQ = {
-        "today": "D", "week": "D", "month": "D",
-        "quarter": "W", "12mo": "W", "lastyear": "W", "ytd": "W",
-    }
     period_label = PERIOD_LABELS.get(date_preset, "YTD")
     trend_label = TREND_LABELS.get(date_preset, "vs prior")
-    spark_freq = SPARK_FREQ.get(date_preset, "W")
 
     # Store raw sparkline data for clientside smoothing
     sparkline_data = {}
@@ -869,15 +904,12 @@ def update_kpis(_n, date_preset, departments):
         s_start = _spark_start(last_date, date_preset)
         s_end = _preset_end(last_date, date_preset)
         s_data = df[(df[date_col] >= s_start) & (df[date_col] <= s_end)]
-        if spark_freq == "W":
-            series = s_data.groupby(s_data[date_col].dt.to_period("W").dt.start_time).size()
-        else:
-            series = s_data.groupby(s_data[date_col].dt.normalize()).size()
-            series = series.reindex(pd.date_range(s_start, s_end), fill_value=0)
-            # Filter to business days with activity
-            if hasattr(series.index, 'weekday'):
-                series = series[series.index.weekday < 5]
-                series = series[series > 0]
+        series = s_data.groupby(s_data[date_col].dt.normalize()).size()
+        series = series.reindex(pd.date_range(s_start, s_end), fill_value=0)
+        # Filter to business days with activity
+        if hasattr(series.index, 'weekday'):
+            series = series[series.index.weekday < 5]
+            series = series[series > 0]
         return {
             "labels": [d.isoformat() for d in series.index],
             "values": series.tolist(),
@@ -888,12 +920,9 @@ def update_kpis(_n, date_preset, departments):
         s_start = _spark_start(last_date, date_preset)
         s_end = _preset_end(last_date, date_preset)
         s_data = df[(df[date_col] >= s_start) & (df[date_col] <= s_end)]
-        if spark_freq == "W":
-            series = s_data.groupby(s_data[date_col].dt.to_period("W").dt.start_time)[lead_col].median()
-        else:
-            series = s_data.groupby(s_data[date_col].dt.normalize())[lead_col].median()
-            if hasattr(series.index, 'weekday'):
-                series = series[series.index.weekday < 5]
+        series = s_data.groupby(s_data[date_col].dt.normalize())[lead_col].median()
+        if hasattr(series.index, 'weekday'):
+            series = series[series.index.weekday < 5]
         return {
             "labels": [d.isoformat() for d in series.index],
             "values": series.tolist(),
@@ -911,12 +940,20 @@ def update_kpis(_n, date_preset, departments):
         if departments and "Department" in sims.columns:
             # Include NaN departments (new patients without treatment history yet)
             sims = sims[sims["Department"].isin(departments) | sims["Department"].isna()]
-        # Filter to initial and stereotactic simulations only
+        # Filter to countable simulation activities only
         if not sims.empty and "ActivityName" in sims.columns:
-            sims = sims[
-                sims["ActivityName"].str.contains("Initial", case=False, na=False) |
-                sims["ActivityName"].str.contains("Stereotactic Simulation", case=False, na=False)
-            ]
+            if sims_scope == "initial":
+                sims = sims[
+                    sims["ActivityName"].str.contains("Initial", case=False, na=False) |
+                    sims["ActivityName"].str.contains("Stereotactic Simulation", case=False, na=False)
+                ]
+            else:  # "all"
+                sims = sims[
+                    sims["ActivityName"].str.contains("Initial", case=False, na=False) |
+                    sims["ActivityName"].str.contains("Stereotactic Simulation", case=False, na=False) |
+                    sims["ActivityName"].str.contains("Re-Simulation", case=False, na=False) |
+                    sims["ActivityName"].str.contains("Decub", case=False, na=False)
+                ]
         # Filter to completed or billed simulations only
         if not sims.empty:
             completed = sims["Status"].str.contains("Completed", case=False, na=False) if "Status" in sims.columns else pd.Series(False, index=sims.index)
@@ -984,9 +1021,11 @@ def update_kpis(_n, date_preset, departments):
             trend_direction=t_dir,
             accent_color=CHART_COLORWAY[1],
             sparkline_id="home-spark-sims",
+            header_control=_sims_scope_toggle(sims_scope),
         )
     else:
-        kpi_sims = kpi_card("Simulations", "N/A")
+        kpi_sims = kpi_card("Simulations", "N/A",
+                            header_control=_sims_scope_toggle(sims_scope))
 
     # --- 3. Treatments ---
     if not td.empty and "ScheduledDateTime" in td.columns:
@@ -1011,23 +1050,23 @@ def update_kpis(_n, date_preset, departments):
     else:
         kpi_tx = kpi_card("Treatments", "N/A", accent_color=PRIMARY)
 
-    # --- 4. Consult Lead Time (days from booking to appointment) ---
+    # --- 4. Consult Lead Time (anchored on booking date for recency) ---
     if not consults.empty and "AppointmentCreatedDate" in consults.columns:
         cl = consults[consults["AppointmentCreatedDate"].notna()].copy()
         cl["lead_days"] = (cl["ScheduledDateTime"] - cl["AppointmentCreatedDate"]).dt.days
         cl = cl[cl["lead_days"] >= 0]
         if not cl.empty:
-            last_cv = cl["ScheduledDateTime"].dt.normalize().max()
-            start = _preset_start(last_cv, date_preset)
-            end = _preset_end(last_cv, date_preset)
-            curr_data = cl[(cl["ScheduledDateTime"] >= start) & (cl["ScheduledDateTime"] <= end)]
+            last_booked = cl["AppointmentCreatedDate"].dt.normalize().max()
+            start = _preset_start(last_booked, date_preset)
+            end = _preset_end(last_booked, date_preset)
+            curr_data = cl[(cl["AppointmentCreatedDate"] >= start) & (cl["AppointmentCreatedDate"] <= end)]
             curr_med = curr_data["lead_days"].median() if len(curr_data) > 0 else 0
-            ps, pe = _prior_range(last_cv, date_preset)
-            prior_data = cl[(cl["ScheduledDateTime"] >= ps) & (cl["ScheduledDateTime"] <= pe)]
+            ps, pe = _prior_range(last_booked, date_preset)
+            prior_data = cl[(cl["AppointmentCreatedDate"] >= ps) & (cl["AppointmentCreatedDate"] <= pe)]
             prior_med = prior_data["lead_days"].median() if len(prior_data) > 0 else None
             pt, t_dir, pv = _trend(curr_med, prior_med, invert=True)
             sparkline_data["consult_lead"] = {
-                **_lead_spark_raw(cl, "ScheduledDateTime", "lead_days", last_cv),
+                **_lead_spark_raw(cl, "AppointmentCreatedDate", "lead_days", last_booked),
                 "color": CHART_COLORWAY[4],
                 "hover_fmt": "%{x|%b %d}: %{y:.0f} days<extra></extra>",
             }
@@ -1044,23 +1083,23 @@ def update_kpis(_n, date_preset, departments):
     else:
         kpi_consult_lead = kpi_card("Consult Lead Time", "N/A")
 
-    # --- 5. Sim Lead Time (days from booking to appointment) ---
+    # --- 5. Sim Lead Time (anchored on booking date for recency) ---
     if not sims.empty and "AppointmentCreatedDate" in sims.columns:
         sl = sims[sims["AppointmentCreatedDate"].notna()].copy()
         sl["lead_days"] = (sl["ScheduledDateTime"] - sl["AppointmentCreatedDate"]).dt.days
         sl = sl[sl["lead_days"] >= 0]
         if not sl.empty:
-            last_sim = sl["ScheduledDateTime"].dt.normalize().max()
-            start = _preset_start(last_sim, date_preset)
-            end = _preset_end(last_sim, date_preset)
-            curr_data = sl[(sl["ScheduledDateTime"] >= start) & (sl["ScheduledDateTime"] <= end)]
+            last_booked = sl["AppointmentCreatedDate"].dt.normalize().max()
+            start = _preset_start(last_booked, date_preset)
+            end = _preset_end(last_booked, date_preset)
+            curr_data = sl[(sl["AppointmentCreatedDate"] >= start) & (sl["AppointmentCreatedDate"] <= end)]
             curr_med = curr_data["lead_days"].median() if len(curr_data) > 0 else 0
-            ps, pe = _prior_range(last_sim, date_preset)
-            prior_data = sl[(sl["ScheduledDateTime"] >= ps) & (sl["ScheduledDateTime"] <= pe)]
+            ps, pe = _prior_range(last_booked, date_preset)
+            prior_data = sl[(sl["AppointmentCreatedDate"] >= ps) & (sl["AppointmentCreatedDate"] <= pe)]
             prior_med = prior_data["lead_days"].median() if len(prior_data) > 0 else None
             pt, t_dir, pv = _trend(curr_med, prior_med, invert=True)
             sparkline_data["sim_lead"] = {
-                **_lead_spark_raw(sl, "ScheduledDateTime", "lead_days", last_sim),
+                **_lead_spark_raw(sl, "AppointmentCreatedDate", "lead_days", last_booked),
                 "color": CHART_COLORWAY[3],
                 "hover_fmt": "%{x|%b %d}: %{y:.0f} days<extra></extra>",
             }
@@ -1351,6 +1390,8 @@ def _build_treatment_census_data(df_past, df_future, groups, colors, height=380)
 )
 def update_smooth_slider_range(range_days, current_value):
     """Adjust smoothing slider max based on selected time range."""
+    if range_days == "thisweek":
+        return 3, min(current_value or 0, 3)
     days = int(range_days) if range_days else 30
     # Scale max smoothing window to ~20% of the time range
     # 7d -> max 3, 30d -> max 7, 60d -> max 12, 90d -> max 18, 365d -> max 30, All -> max 50
@@ -1382,7 +1423,8 @@ def update_smooth_slider_range(range_days, current_value):
 )
 def update_hours_data(_n, range_days, site_filter):
     """Load operating hours data to store (smoothing is clientside)."""
-    days = int(range_days) if range_days else 30
+    # "thisweek" sends all data; JS filters to current week clientside
+    days = 0 if range_days == "thisweek" else (int(range_days) if range_days else 30)
     # Use chart's own site selector (independent of global filter)
     if site_filter and site_filter != "all":
         sites = [site_filter]
@@ -1391,13 +1433,14 @@ def update_hours_data(_n, range_days, site_filter):
     return _prepare_hours_data(sites, days_back=days)
 
 
-# Clientside callback for hours ribbon smoothing with chart type
+# Clientside callback for hours ribbon smoothing with chart type and range
 clientside_callback(
-    ClientsideFunction(namespace="hoursRibbon", function_name="smoothChartWithType"),
+    ClientsideFunction(namespace="hoursRibbon", function_name="smoothChartWithTypeAndRange"),
     Output("home-chart-hours", "figure"),
     Input("home-store-hours", "data"),
     Input("home-hours-settings-smooth", "value"),
     Input("home-hours-settings-type", "value"),
+    Input("home-hours-range", "value"),
 )
 
 

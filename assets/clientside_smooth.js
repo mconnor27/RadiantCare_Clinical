@@ -16,14 +16,19 @@ function buildSparkline(data, smoothPct, key) {
 
     var spark = data[key];
     var frac = (smoothPct || 0) * 0.5;  // slider 0-1 maps to frac 0-0.5
-    var yVals = frac > 0 && spark.values.length >= 4 ? loess(spark.values, frac) : spark.values;
+    var rawVals = spark.values;
+    var yVals = frac > 0 && rawVals.length >= 4 ? loess(rawVals, frac) : rawVals;
     var color = spark.color || "#7C2A83";
-    var hoverFmt = spark.hover_fmt || "%{x|%b %d}: %{y:,.0f}<extra></extra>";
+    // Use customdata for raw values so hover always shows actual numbers
+    var hoverFmt = spark.hover_fmt
+        ? spark.hover_fmt.replace(/%\{y/g, "%{customdata")
+        : "%{x|%b %d}: %{customdata:,.0f}<extra></extra>";
 
     return {
         data: [{
             x: spark.labels,
             y: yVals,
+            customdata: rawVals,
             mode: "lines",
             line: {color: color, width: 1.5},
             hovertemplate: hoverFmt
@@ -145,6 +150,7 @@ window.dash_clientside.census = {
 
         var traces = [];
         var totals = new Array(displayDates.length).fill(0);
+        var rawTotals = new Array(displayDates.length).fill(0);
         var futureTotals = hasFuture ? new Array(futureDates.length).fill(0) : [];
 
         // Past data traces
@@ -154,10 +160,11 @@ window.dash_clientside.census = {
             var yVals = smoothPct > 0 ? rollingAvg(displayVals, windowSize) : displayVals;
             var isVisible = !visibilityMap.hasOwnProperty(s.name) || visibilityMap[s.name] === true;
 
-            // Sum for total trace
+            // Sum for total trace (smoothed for rendering, raw for hover)
             if (isVisible) {
                 for (var k = 0; k < yVals.length; k++) {
                     totals[k] += yVals[k];
+                    rawTotals[k] += displayVals[k];
                 }
             }
 
@@ -165,35 +172,39 @@ window.dash_clientside.census = {
             if (chartType === "bar") {
                 // Stacked bar chart with formatted date labels (filtered to valid dates only)
                 var filteredY = filterByIndices(yVals, barData.validIndices);
+                var filteredRaw = filterByIndices(displayVals, barData.validIndices);
                 traceObj = {
                     x: barData.labels,
                     y: filteredY,
+                    customdata: filteredRaw,
                     name: s.name,
                     type: "bar",
                     marker: {color: s.color, line: {width: 0}},
-                    hovertemplate: s.name + ": %{y:.0f}<extra></extra>"
+                    hovertemplate: s.name + ": %{customdata:.0f}<extra></extra>"
                 };
             } else if (chartType === "line") {
                 // Non-stacked line chart
                 traceObj = {
                     x: displayDates,
                     y: yVals,
+                    customdata: displayVals,
                     name: s.name,
                     mode: "lines",
                     line: {color: s.color, width: 2},
-                    hovertemplate: s.name + ": %{y:.0f}<extra></extra>"
+                    hovertemplate: s.name + ": %{customdata:.0f}<extra></extra>"
                 };
             } else {
                 // Stacked area chart (default)
                 traceObj = {
                     x: displayDates,
                     y: yVals,
+                    customdata: displayVals,
                     name: s.name,
                     mode: "lines",
                     line: {color: s.color, width: 1.5},
                     fillcolor: hexToRgba(s.color, 0.5),
                     stackgroup: "one",
-                    hovertemplate: s.name + ": %{y:.0f}<extra></extra>"
+                    hovertemplate: s.name + ": %{customdata:.0f}<extra></extra>"
                 };
             }
 
@@ -226,16 +237,17 @@ window.dash_clientside.census = {
 
                 var futureTraceObj;
                 if (chartType === "bar") {
-                    // Bar chart: lighter opacity bars for future
+                    // Bar chart: lighter opacity bars for future (no smoothing, raw = y)
                     var filteredFutureY = filterByIndices(futureVals, futureBarData.validIndices);
                     futureTraceObj = {
                         x: futureBarData.labels,
                         y: filteredFutureY,
+                        customdata: filteredFutureY,
                         name: s.name + " (scheduled)",
                         type: "bar",
                         marker: {color: s.color, opacity: 0.4, line: {width: 0}},
                         showlegend: false,
-                        hovertemplate: s.name + " (scheduled): %{y:.0f}<extra></extra>"
+                        hovertemplate: s.name + " (scheduled): %{customdata:.0f}<extra></extra>"
                     };
                 } else {
                     // Line/area: connect to last past point
@@ -245,13 +257,14 @@ window.dash_clientside.census = {
                     futureTraceObj = {
                         x: [lastPastDate].concat(futureDates),
                         y: [lastPastVal].concat(futureVals),
+                        customdata: [lastPastVal].concat(futureVals),
                         name: s.name + " (scheduled)",
                         mode: "lines",
                         line: {color: s.color, width: 1, dash: "dot"},
                         fillcolor: chartType === "line" ? "transparent" : hexToRgba(s.color, 0.2),
                         stackgroup: chartType === "line" ? undefined : "future",
                         showlegend: false,
-                        hovertemplate: s.name + " (scheduled): %{y:.0f}<extra></extra>"
+                        hovertemplate: s.name + " (scheduled): %{customdata:.0f}<extra></extra>"
                     };
                 }
 
@@ -264,17 +277,19 @@ window.dash_clientside.census = {
             }
         }
 
-        // Add invisible total trace for hover (sum of smoothed series) - only for stacked charts
+        // Add invisible total trace for hover (raw totals) - only for stacked charts
         if (chartType !== "line") {
             var totalX = chartType === "bar" ? barData.labels : displayDates;
             var totalY = chartType === "bar" ? filterByIndices(totals, barData.validIndices) : totals;
+            var totalRaw = chartType === "bar" ? filterByIndices(rawTotals, barData.validIndices) : rawTotals;
             traces.unshift({
                 x: totalX,
                 y: totalY,
+                customdata: totalRaw,
                 name: "Total",
                 mode: "lines",
                 line: {color: "transparent", width: 0},
-                hovertemplate: "<b>Total: %{y:.0f}</b><extra></extra>",
+                hovertemplate: "<b>Total: %{customdata:.0f}</b><extra></extra>",
                 showlegend: false
             });
         }
@@ -325,56 +340,63 @@ window.dash_clientside.census = {
      * @param {Object} currentFig - Current figure (to preserve trace visibility)
      * @returns {Object} Plotly figure with x-axis range set to show selected time window
      */
-    smoothChartWithTypeAndRange: function(rawData, smoothPct, chartType, rangeDays, currentFig) {
-        // First, get the base figure from smoothChartWithType
+    _buildWithRange: function(rawData, smoothPct, chartType, rangeDays, currentFig) {
         var fig = window.dash_clientside.census.smoothChartWithType(rawData, smoothPct, chartType, currentFig);
 
         if (fig === window.dash_clientside.no_update || !rawData || !rawData.dates || rawData.dates.length === 0) {
             return fig;
         }
 
-        // Debug logging
-        console.log('[DEBUG] smoothChartWithTypeAndRange called');
-        console.log('  rawData.dates.length:', rawData.dates.length);
-        console.log('  First date:', rawData.dates[0]);
-        console.log('  Last date:', rawData.dates[rawData.dates.length - 1]);
-        console.log('  rangeDays:', rangeDays);
-
-        // Calculate x-axis range based on rangeDays
         var days = parseInt(rangeDays) || 0;
         if (days > 0) {
-            // Get last date from data (strip time component for consistency)
             var lastDate = rawData.dates[rawData.dates.length - 1].split('T')[0];
             var lastDateObj = new Date(lastDate);
-
-            // Calculate start date (days back from last date)
             var startDateObj = new Date(lastDateObj);
             startDateObj.setDate(startDateObj.getDate() - days);
             var startDate = startDateObj.toISOString().split('T')[0];
 
-            console.log('  Calculated range:', startDate, 'to', lastDate);
-
-            // Set x-axis range in layout
             fig.layout.xaxis = fig.layout.xaxis || {};
             fig.layout.xaxis.range = [startDate, lastDate];
-
-            // Enable drag/pan to allow scrolling through all data (horizontal only)
             fig.layout.dragmode = 'pan';
             fig.layout.yaxis = fig.layout.yaxis || {};
-            fig.layout.yaxis.fixedrange = true;  // Lock y-axis to prevent vertical panning
-
-            // Add range slider for easier navigation (optional - commented out for cleaner UI)
-            // fig.layout.xaxis.rangeslider = {visible: true};
+            fig.layout.yaxis.fixedrange = true;
         } else {
-            // "All" selected - show full range
             fig.layout.xaxis = fig.layout.xaxis || {};
             fig.layout.xaxis.autorange = true;
             fig.layout.dragmode = 'pan';
             fig.layout.yaxis = fig.layout.yaxis || {};
-            fig.layout.yaxis.fixedrange = true;  // Lock y-axis to prevent vertical panning
+            fig.layout.yaxis.fixedrange = true;
         }
 
         return fig;
+    },
+
+    smoothChartWithTypeAndRange: function(rawData, smoothPct, chartType, rangeDays, currentFig) {
+        if (!rawData || !rawData.dates || rawData.dates.length === 0) {
+            return window.dash_clientside.census._buildWithRange(rawData, smoothPct, chartType, rangeDays, currentFig);
+        }
+
+        // Debounce: skip intermediate slider ticks, yield to browser for paint before render
+        if (window._censusDebounce) clearTimeout(window._censusDebounce);
+        window._censusDebounce = setTimeout(function() {
+            // rAF queues after pending input/paint, setTimeout(0) yields one more frame
+            requestAnimationFrame(function() { setTimeout(function() {
+                var fig = window.dash_clientside.census._buildWithRange(rawData, smoothPct, chartType, rangeDays, currentFig);
+                if (fig && fig !== window.dash_clientside.no_update) {
+                    var el = document.getElementById('ops-chart-volume');
+                    var plotEl = el && el.querySelector('.js-plotly-plot');
+                    if (plotEl) Plotly.react(plotEl, fig.data, fig.layout);
+                }
+            }, 0); });
+        }, 150);
+
+        // First render (no existing plot) — render immediately
+        var el = document.getElementById('ops-chart-volume');
+        var plotEl = el && el.querySelector('.js-plotly-plot');
+        if (!plotEl || !plotEl.data || !plotEl.data.length) {
+            return window.dash_clientside.census._buildWithRange(rawData, smoothPct, chartType, rangeDays, currentFig);
+        }
+        return window.dash_clientside.no_update;
     }
 };
 
@@ -548,7 +570,7 @@ function downsampleAvg(arr, step) {
 }
 
 /**
- * Centered rolling average - ideal for stacked area charts.
+ * Centered rolling average using prefix sums — O(n).
  * sum(rolling_avg(series)) = rolling_avg(sum(series))
  */
 function rollingAvg(arr, windowSize) {
@@ -557,14 +579,17 @@ function rollingAvg(arr, windowSize) {
     var result = new Array(n);
     var halfW = Math.floor(windowSize / 2);
 
+    // Build prefix sum array: prefix[i] = arr[0] + ... + arr[i-1]
+    var prefix = new Array(n + 1);
+    prefix[0] = 0;
+    for (var i = 0; i < n; i++) {
+        prefix[i + 1] = prefix[i] + arr[i];
+    }
+
     for (var i = 0; i < n; i++) {
         var left = Math.max(0, i - halfW);
         var right = Math.min(n - 1, i + halfW);
-        var sum = 0;
-        for (var j = left; j <= right; j++) {
-            sum += arr[j];
-        }
-        result[i] = sum / (right - left + 1);
+        result[i] = (prefix[right + 1] - prefix[left]) / (right - left + 1);
     }
     return result;
 }
@@ -942,50 +967,44 @@ window.dash_clientside.hoursRibbon = {
      * @param {string} rangeDays - Time window selector value ("30", "60", "90", "180", "365", "0" for all)
      * @returns {Object} Plotly figure with x-axis range set to show selected time window
      */
-    smoothChartWithTypeAndRange: function(rawData, smoothVal, chartType, rangeDays) {
-        if (!rawData || !rawData.pastSeries || rawData.pastSeries.length === 0) {
-            return window.dash_clientside.hoursRibbon.smoothChartWithType(rawData, smoothVal, chartType);
-        }
-
-        // Store raw data globally for dynamic y-axis scaling on pan
+    _buildWithRange: function(rawData, smoothVal, chartType, rangeDays) {
         window._ribbonChartData = rawData;
 
-        // Disable downsampling for time-limited views by setting flag
         var days = parseInt(rangeDays) || 0;
-        var dataWithFlag = JSON.parse(JSON.stringify(rawData)); // Deep copy
-        dataWithFlag._skipDownsample = (days > 0); // Skip downsampling for specific time windows
+        rawData._skipDownsample = (days > 0);
 
-        // Render with all data (downsampling controlled by flag)
-        var fig = window.dash_clientside.hoursRibbon.smoothChartWithType(dataWithFlag, smoothVal, chartType);
+        var fig = window.dash_clientside.hoursRibbon.smoothChartWithType(rawData, smoothVal, chartType);
 
-        // Set x-axis range to show selected window (keeps all data for panning)
         if (days > 0) {
-            // Find the last date across all past series
             var lastDate = null;
             for (var i = 0; i < rawData.pastSeries.length; i++) {
                 var s = rawData.pastSeries[i];
                 if (s.dates && s.dates.length > 0) {
-                    var seriesLastDate = s.dates[s.dates.length - 1];
-                    if (!lastDate || seriesLastDate > lastDate) {
-                        lastDate = seriesLastDate;
+                    var d = s.dates[s.dates.length - 1];
+                    if (!lastDate || d > lastDate) lastDate = d;
+                }
+            }
+            if (rawData.futureSeries) {
+                for (var i = 0; i < rawData.futureSeries.length; i++) {
+                    var s = rawData.futureSeries[i];
+                    if (s.dates && s.dates.length > 0) {
+                        var d = s.dates[s.dates.length - 1];
+                        if (!lastDate || d > lastDate) lastDate = d;
                     }
                 }
             }
 
             if (lastDate) {
-                // Strip time component for consistency
                 lastDate = lastDate.split('T')[0];
                 var lastDateObj = new Date(lastDate);
-
-                // Calculate start date (days back from last date)
                 var startDateObj = new Date(lastDateObj);
                 startDateObj.setDate(startDateObj.getDate() - days);
                 var startDate = startDateObj.toISOString().split('T')[0];
 
-                // Calculate y-axis range from visible data only
                 var minHour = 24, maxHour = 0;
-                for (var i = 0; i < rawData.pastSeries.length; i++) {
-                    var s = rawData.pastSeries[i];
+                var allSeries = rawData.pastSeries.concat(rawData.futureSeries || []);
+                for (var i = 0; i < allSeries.length; i++) {
+                    var s = allSeries[i];
                     for (var j = 0; j < s.dates.length; j++) {
                         var date = s.dates[j].split('T')[0];
                         if (date >= startDate && date <= lastDate) {
@@ -995,57 +1014,441 @@ window.dash_clientside.hoursRibbon = {
                     }
                 }
 
-                // Round to nearest half-hour with padding
-                var yMin = Math.floor(minHour * 2) / 2 - 0.5;
-                var yMax = Math.ceil(maxHour * 2) / 2 + 0.5;
-                yMin = Math.max(0, yMin);
-                yMax = Math.min(24, yMax);
+                var yMin = Math.max(0, Math.floor(minHour * 2) / 2 - 0.5);
+                var yMax = Math.min(24, Math.ceil(maxHour * 2) / 2 + 0.5);
 
-                // Generate tick values for y-axis
-                var tickInterval = 1;
-                var tickStart = Math.ceil(yMin / tickInterval) * tickInterval;
-                var tickEnd = Math.floor(yMax / tickInterval) * tickInterval;
-                var tickvals = [];
-                var ticktext = [];
-                for (var h = tickStart; h <= tickEnd; h += tickInterval) {
+                var tickvals = [], ticktext = [];
+                for (var h = Math.ceil(yMin); h <= Math.floor(yMax); h++) {
                     tickvals.push(h);
-                    if (h === 0) {
-                        ticktext.push("12am");
-                    } else if (h < 12) {
-                        ticktext.push(h + "am");
-                    } else if (h === 12) {
-                        ticktext.push("12pm");
-                    } else {
-                        ticktext.push((h - 12) + "pm");
-                    }
+                    ticktext.push(h === 0 ? "12am" : h < 12 ? h + "am" : h === 12 ? "12pm" : (h - 12) + "pm");
                 }
 
-                // Set x-axis range and y-axis range
                 fig.layout.xaxis = fig.layout.xaxis || {};
                 fig.layout.xaxis.range = [startDate, lastDate];
-                fig.layout.xaxis.fixedrange = false;  // Allow horizontal panning
-
+                fig.layout.xaxis.fixedrange = false;
                 fig.layout.yaxis = fig.layout.yaxis || {};
                 fig.layout.yaxis.range = [yMin, yMax];
                 fig.layout.yaxis.tickvals = tickvals;
                 fig.layout.yaxis.ticktext = ticktext;
-                fig.layout.yaxis.fixedrange = true;  // Lock y-axis (no vertical pan)
-
+                fig.layout.yaxis.fixedrange = true;
                 fig.layout.dragmode = 'pan';
             }
         } else {
-            // "All" view - autorange both axes
             fig.layout.xaxis = fig.layout.xaxis || {};
             fig.layout.xaxis.autorange = true;
             fig.layout.xaxis.fixedrange = false;
-
             fig.layout.yaxis = fig.layout.yaxis || {};
-            fig.layout.yaxis.fixedrange = true;  // Lock y-axis (no vertical pan)
-
+            fig.layout.yaxis.fixedrange = true;
             fig.layout.dragmode = 'pan';
         }
 
         return fig;
+    },
+
+    smoothChartWithTypeAndRange: function(rawData, smoothVal, chartType, rangeDays) {
+        // Calendar mode: no debounce needed
+        if (rangeDays === "thisweek") {
+            window._ribbonChartData = rawData;
+            var calFig = window.dash_clientside.hoursRibbon.renderCalendarWeek(rawData);
+            setTimeout(window.dash_clientside.hoursRibbon._setupCalendarHover, 150);
+            return calFig;
+        }
+
+        if (!rawData || !rawData.pastSeries || rawData.pastSeries.length === 0) {
+            return window.dash_clientside.hoursRibbon.smoothChartWithType(rawData, smoothVal, chartType);
+        }
+
+        // Debounce: skip intermediate slider ticks, yield to browser for paint before render
+        if (window._ribbonDebounce) clearTimeout(window._ribbonDebounce);
+        window._ribbonDebounce = setTimeout(function() {
+            requestAnimationFrame(function() { setTimeout(function() {
+                var fig = window.dash_clientside.hoursRibbon._buildWithRange(rawData, smoothVal, chartType, rangeDays);
+                if (fig && fig !== window.dash_clientside.no_update) {
+                    var el = document.getElementById('ops-chart-ribbon');
+                    var plotEl = el && el.querySelector('.js-plotly-plot');
+                    if (plotEl) Plotly.react(plotEl, fig.data, fig.layout);
+                }
+            }, 0); });
+        }, 150);
+
+        // First render (no existing plot) — render immediately
+        var el = document.getElementById('ops-chart-ribbon');
+        var plotEl = el && el.querySelector('.js-plotly-plot');
+        if (!plotEl || !plotEl.data || !plotEl.data.length) {
+            return window.dash_clientside.hoursRibbon._buildWithRange(rawData, smoothVal, chartType, rangeDays);
+        }
+        return window.dash_clientside.no_update;
+    },
+
+    /**
+     * Render a weekly calendar view of operating hours.
+     * Shows Mon-Fri columns with time-of-day on Y-axis and colored bands
+     * per department representing operating windows (first start to last end).
+     *
+     * @param {Object} rawData - {pastSeries, futureSeries, yAxis, today}
+     * @returns {Object} Plotly figure
+     */
+    renderCalendarWeek: function(rawData) {
+        var calHeight = (rawData && rawData.height) || 570;
+        if (!rawData || (!rawData.pastSeries && !rawData.futureSeries)) {
+            return {
+                data: [],
+                layout: {
+                    height: calHeight,
+                    annotations: [{
+                        text: "No operating hours data available",
+                        xref: "paper", yref: "paper",
+                        x: 0.5, y: 0.5, showarrow: false,
+                        font: {size: 14, color: "#6B7280"}
+                    }]
+                }
+            };
+        }
+
+        // Calculate current week Mon-Fri
+        var now = new Date();
+        var dayOfWeek = now.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+        var mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+        var monday = new Date(now);
+        monday.setDate(now.getDate() + mondayOffset);
+        monday.setHours(0, 0, 0, 0);
+
+        // Build day labels and date strings for Mon-Fri
+        var dayLabels = [];
+        var dayDateStrs = []; // YYYY-MM-DD format for matching
+        var dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+        for (var i = 0; i < 5; i++) {
+            var d = new Date(monday);
+            d.setDate(monday.getDate() + i);
+            var mm = String(d.getMonth() + 1).padStart(2, "0");
+            var dd = String(d.getDate()).padStart(2, "0");
+            var yyyy = d.getFullYear();
+            dayLabels.push(dayNames[i] + " " + mm + "/" + dd);
+            dayDateStrs.push(yyyy + "-" + mm + "-" + dd);
+        }
+
+        // Today's date string
+        var todayMm = String(now.getMonth() + 1).padStart(2, "0");
+        var todayDd = String(now.getDate()).padStart(2, "0");
+        var todayStr = now.getFullYear() + "-" + todayMm + "-" + todayDd;
+
+        // Collect all series (past + future)
+        var allSeries = [];
+        if (rawData.pastSeries) allSeries = allSeries.concat(rawData.pastSeries);
+        if (rawData.futureSeries) allSeries = allSeries.concat(rawData.futureSeries);
+
+        // Build lookup: deptName -> [{col, startHour, endHour, count, isFuture}]
+        var deptBands = {};
+        var deptColors = {};
+        for (var si = 0; si < allSeries.length; si++) {
+            var s = allSeries[si];
+            if (!s.dates || s.dates.length === 0) continue;
+            deptColors[s.name] = s.color;
+
+            for (var j = 0; j < s.dates.length; j++) {
+                var dateStr = s.dates[j].split("T")[0];
+                var col = dayDateStrs.indexOf(dateStr);
+                if (col === -1) continue;
+
+                if (!deptBands[s.name]) deptBands[s.name] = [];
+                deptBands[s.name].push({
+                    col: col,
+                    startHour: s.startHours[j],
+                    endHour: s.endHours[j],
+                    count: (s.counts && s.counts[j]) ? s.counts[j] : 0,
+                    isFuture: !!s.isFuture
+                });
+            }
+        }
+
+        // Determine department order and lane widths
+        var deptNames = Object.keys(deptBands);
+        if (deptNames.length === 0) {
+            // Try to get dept names from series even if no data this week
+            for (var si = 0; si < allSeries.length; si++) {
+                if (deptNames.indexOf(allSeries[si].name) === -1) {
+                    deptNames.push(allSeries[si].name);
+                    deptColors[allSeries[si].name] = allSeries[si].color;
+                }
+            }
+        }
+        var numDepts = Math.max(deptNames.length, 1);
+        var totalWidth = 0.85;
+        var deptWidth = totalWidth / numDepts;
+        var gapWidth = 0.02;
+
+        // Calculate dept offsets (centered within each day column)
+        var deptOffset = {};
+        for (var d = 0; d < deptNames.length; d++) {
+            deptOffset[deptNames[d]] = -totalWidth / 2 + d * deptWidth;
+        }
+
+        // Calculate Y-axis range from this week's data
+        var minHour = 24, maxHour = 0;
+        for (var dn in deptBands) {
+            var bands = deptBands[dn];
+            for (var b = 0; b < bands.length; b++) {
+                if (bands[b].startHour < minHour) minHour = bands[b].startHour;
+                if (bands[b].endHour > maxHour) maxHour = bands[b].endHour;
+            }
+        }
+        if (minHour >= maxHour) { minHour = 7; maxHour = 18; }
+        var yMin = Math.floor(minHour) - 0.5;
+        var yMax = Math.ceil(maxHour) + 0.5;
+        yMin = Math.max(0, yMin);
+        yMax = Math.min(24, yMax);
+
+        // Build shapes
+        var shapes = [];
+
+        // Today column highlight
+        var todayCol = dayDateStrs.indexOf(todayStr);
+        if (todayCol !== -1) {
+            shapes.push({
+                type: "rect",
+                x0: todayCol - 0.48, x1: todayCol + 0.48,
+                y0: yMin, y1: yMax,
+                fillcolor: "rgba(124, 42, 131, 0.05)",
+                line: {width: 0},
+                xref: "x", yref: "y", layer: "below"
+            });
+        }
+
+        // Horizontal gridlines at each hour
+        for (var h = Math.ceil(yMin); h <= Math.floor(yMax); h++) {
+            shapes.push({
+                type: "line",
+                x0: -0.5, x1: 4.5, y0: h, y1: h,
+                line: {color: "#E5E7EB", width: 0.5},
+                xref: "x", yref: "y", layer: "below"
+            });
+        }
+
+        // Vertical day separators
+        for (var d = 0; d < 4; d++) {
+            shapes.push({
+                type: "line",
+                x0: d + 0.5, x1: d + 0.5, y0: yMin, y1: yMax,
+                line: {color: "#E5E7EB", width: 1},
+                xref: "x", yref: "y", layer: "below"
+            });
+        }
+
+        // Department operating window bands (shapes for visuals, scatter for hover)
+        var annotations = [];
+        var hoverX = [], hoverY = [], hoverText = [], hoverShapeIdx = [];
+
+        for (var dn in deptBands) {
+            var color = deptColors[dn] || "#7C2A83";
+            var offset = deptOffset[dn] || 0;
+            var bands = deptBands[dn];
+            var bandWidth = deptWidth - gapWidth;
+
+            for (var b = 0; b < bands.length; b++) {
+                var band = bands[b];
+                var fillOpacity = band.isFuture ? 0.12 : 0.4;
+                var borderDash = band.isFuture ? "dot" : "solid";
+                var borderWidth = band.isFuture ? 1 : 1.5;
+
+                var shapeIdx = shapes.length;
+                shapes.push({
+                    type: "rect",
+                    x0: band.col + offset,
+                    x1: band.col + offset + bandWidth,
+                    y0: band.startHour, y1: band.endHour,
+                    fillcolor: hexToRgba(color, fillOpacity),
+                    line: {color: color, width: borderWidth, dash: borderDash},
+                    xref: "x", yref: "y"
+                });
+
+                // Count annotation
+                if (band.count > 0) {
+                    annotations.push({
+                        x: band.col + offset + bandWidth / 2,
+                        y: (band.startHour + band.endHour) / 2,
+                        text: "<b>" + band.count + "</b>",
+                        showarrow: false,
+                        font: {size: 11, color: color},
+                        xref: "x", yref: "y",
+                        opacity: band.isFuture ? 0.5 : 0.8
+                    });
+                }
+
+                // Hover point at band center
+                hoverX.push(band.col + offset + bandWidth / 2);
+                hoverY.push((band.startHour + band.endHour) / 2);
+                hoverShapeIdx.push(shapeIdx);
+
+                var label = band.isFuture ? "<b>" + dn + " (scheduled)</b>" : "<b>" + dn + "</b>";
+                var timeStr = hourToTimeStr(band.startHour) + " – " + hourToTimeStr(band.endHour);
+                var countStr = band.count > 0 ? "<br>" + band.count + " appointments" : "";
+                hoverText.push(label + "<br>" + timeStr + countStr);
+            }
+        }
+
+        // Store shape info for hover highlight handler
+        window._calendarShapeInfo = hoverShapeIdx.map(function(si) {
+            var orig = shapes[si].fillcolor;
+            var hover = orig.replace(/[\d.]+\)$/, function(m) {
+                return Math.min(0.85, parseFloat(m) + 0.25) + ")";
+            });
+            return {idx: si, orig: orig, hover: hover};
+        });
+        window._calendarLastHovered = -1;
+
+        // Invisible scatter trace at band centers for hover tooltips
+        var traces = [];
+        if (hoverX.length > 0) {
+            traces.push({
+                x: hoverX, y: hoverY,
+                mode: "markers",
+                marker: {size: 1, color: "rgba(0,0,0,0)"},
+                text: hoverText,
+                hovertemplate: "%{text}<extra></extra>",
+                showlegend: false
+            });
+        }
+
+        // Y-axis tick labels
+        var tickvals = [];
+        var ticktext = [];
+        for (var h = Math.ceil(yMin); h <= Math.floor(yMax); h++) {
+            tickvals.push(h);
+            if (h === 0) ticktext.push("12am");
+            else if (h < 12) ticktext.push(h + "am");
+            else if (h === 12) ticktext.push("12pm");
+            else ticktext.push((h - 12) + "pm");
+        }
+
+        var layout = {
+            height: calHeight,
+            font: {family: "Inter, system-ui, sans-serif", size: 11},
+            plot_bgcolor: "#FFFFFF",
+            paper_bgcolor: "#FFFFFF",
+            margin: {l: 44, r: 8, t: 32, b: 8},
+            showlegend: false,
+            hovermode: "closest",
+            hoverdistance: -1,
+            dragmode: false,
+            xaxis: {
+                tickvals: [0, 1, 2, 3, 4],
+                ticktext: dayLabels,
+                range: [-0.5, 4.5],
+                showgrid: false,
+                fixedrange: true,
+                side: "top",
+                zeroline: false
+            },
+            yaxis: {
+                range: [yMax, yMin], // Reversed: morning at top
+                tickvals: tickvals,
+                ticktext: ticktext,
+                showgrid: false,
+                fixedrange: true,
+                zeroline: false
+            },
+            shapes: shapes,
+            annotations: annotations
+        };
+
+        return {data: traces, layout: layout};
+    },
+
+    /**
+     * Attach plotly_hover / plotly_unhover listeners that brighten the
+     * hovered shape rectangle via Plotly.relayout (lightweight, no re-render).
+     */
+    _setupCalendarHover: function() {
+        // Find the actual Plotly div — Dash wraps it inside dcc.Graph
+        var wrapper = document.getElementById("ops-chart-ribbon");
+        if (!wrapper) {
+            console.log("[CalHover] wrapper #ops-chart-ribbon not found, retrying…");
+            requestAnimationFrame(window.dash_clientside.hoursRibbon._setupCalendarHover);
+            return;
+        }
+
+        // The Plotly div is the child with class "js-plotly-plot", or the wrapper itself
+        var el = wrapper.querySelector(".js-plotly-plot") || wrapper;
+        console.log("[CalHover] wrapper:", wrapper.tagName, wrapper.className);
+        console.log("[CalHover] plotly el:", el.tagName, el.className);
+        console.log("[CalHover] el._fullData?", !!el._fullData, "el.on?", typeof el.on);
+
+        if (!el._fullData && !el.on) {
+            // Not ready yet
+            console.log("[CalHover] not ready, retrying…");
+            requestAnimationFrame(window.dash_clientside.hoursRibbon._setupCalendarHover);
+            return;
+        }
+
+        // Also check if .on exists (Plotly adds it after newPlot)
+        if (typeof el.on !== "function") {
+            console.log("[CalHover] el.on is not a function — trying wrapper…");
+            // Maybe Dash puts Plotly on the wrapper directly
+            if (typeof wrapper.on === "function") {
+                el = wrapper;
+                console.log("[CalHover] using wrapper instead, wrapper.on?", typeof wrapper.on);
+            } else {
+                console.log("[CalHover] neither element has .on(), retrying…");
+                requestAnimationFrame(window.dash_clientside.hoursRibbon._setupCalendarHover);
+                return;
+            }
+        }
+
+        // Tear down previous listeners
+        if (el._calCleanup) el._calCleanup();
+
+        var info = window._calendarShapeInfo;
+        if (!info || !info.length) {
+            console.log("[CalHover] no _calendarShapeInfo, aborting");
+            return;
+        }
+        console.log("[CalHover] attaching listeners, " + info.length + " shapes");
+
+        function onHover(data) {
+            if (!data.points || !data.points.length) return;
+            var ptIdx = data.points[0].pointIndex;
+            console.log("[CalHover] HOVER ptIdx=" + ptIdx);
+            if (ptIdx === window._calendarLastHovered) return;
+
+            // Restore previous
+            if (window._calendarLastHovered >= 0 && window._calendarLastHovered < info.length) {
+                var prev = info[window._calendarLastHovered];
+                var u = {};
+                u["shapes[" + prev.idx + "].fillcolor"] = prev.orig;
+                Plotly.relayout(el, u);
+            }
+
+            // Highlight current
+            if (ptIdx < info.length) {
+                var curr = info[ptIdx];
+                var u2 = {};
+                u2["shapes[" + curr.idx + "].fillcolor"] = curr.hover;
+                console.log("[CalHover] highlighting shape " + curr.idx + ": " + curr.orig + " → " + curr.hover);
+                Plotly.relayout(el, u2);
+                window._calendarLastHovered = ptIdx;
+            }
+        }
+
+        function onUnhover() {
+            console.log("[CalHover] UNHOVER");
+            if (window._calendarLastHovered >= 0 && window._calendarLastHovered < info.length) {
+                var prev = info[window._calendarLastHovered];
+                var u = {};
+                u["shapes[" + prev.idx + "].fillcolor"] = prev.orig;
+                Plotly.relayout(el, u);
+                window._calendarLastHovered = -1;
+            }
+        }
+
+        el.on("plotly_hover", onHover);
+        el.on("plotly_unhover", onUnhover);
+        console.log("[CalHover] listeners attached successfully");
+
+        el._calCleanup = function() {
+            el.removeListener("plotly_hover", onHover);
+            el.removeListener("plotly_unhover", onUnhover);
+            window._calendarLastHovered = -1;
+        };
     }
 };
 
@@ -1056,16 +1459,89 @@ window.dash_clientside.hoursRibbon = {
 // Store reference to raw data for y-axis calculations (set by smoothChartWithTypeAndRange)
 window._ribbonChartData = null;
 
-// Clientside callback function to handle y-axis updates on pan
+// Helper function to calculate y-axis range from x-axis range
+function calculateRibbonYAxis(startDate, endDate) {
+    if (!window._ribbonChartData) return null;
+
+    // Convert to YYYY-MM-DD format
+    var startStr = (typeof startDate === 'string') ? startDate.split('T')[0] : new Date(startDate).toISOString().split('T')[0];
+    var endStr = (typeof endDate === 'string') ? endDate.split('T')[0] : new Date(endDate).toISOString().split('T')[0];
+
+    var rawData = window._ribbonChartData;
+
+    // Calculate y-axis range from visible data (both past and future)
+    var minHour = 24, maxHour = 0;
+    for (var i = 0; i < rawData.pastSeries.length; i++) {
+        var s = rawData.pastSeries[i];
+        for (var j = 0; j < s.dates.length; j++) {
+            var date = s.dates[j].split('T')[0];
+            if (date >= startStr && date <= endStr) {
+                if (s.startHours[j] < minHour) minHour = s.startHours[j];
+                if (s.endHours[j] > maxHour) maxHour = s.endHours[j];
+            }
+        }
+    }
+
+    // Also include future series in y-axis calculation
+    if (rawData.futureSeries && rawData.futureSeries.length > 0) {
+        for (var i = 0; i < rawData.futureSeries.length; i++) {
+            var s = rawData.futureSeries[i];
+            for (var j = 0; j < s.dates.length; j++) {
+                var date = s.dates[j].split('T')[0];
+                if (date >= startStr && date <= endStr) {
+                    if (s.startHours[j] < minHour) minHour = s.startHours[j];
+                    if (s.endHours[j] > maxHour) maxHour = s.endHours[j];
+                }
+            }
+        }
+    }
+
+    if (minHour === 24 || maxHour === 0) return null;
+
+    // Round to nearest half-hour with padding
+    var yMin = Math.floor(minHour * 2) / 2 - 0.5;
+    var yMax = Math.ceil(maxHour * 2) / 2 + 0.5;
+    yMin = Math.max(0, yMin);
+    yMax = Math.min(24, yMax);
+
+    // Generate tick values
+    var tickvals = [];
+    var ticktext = [];
+    for (var h = Math.ceil(yMin); h <= Math.floor(yMax); h++) {
+        tickvals.push(h);
+        if (h === 0) {
+            ticktext.push("12am");
+        } else if (h < 12) {
+            ticktext.push(h + "am");
+        } else if (h === 12) {
+            ticktext.push("12pm");
+        } else {
+            ticktext.push((h - 12) + "pm");
+        }
+    }
+
+    return {
+        range: [yMin, yMax],
+        tickvals: tickvals,
+        ticktext: ticktext
+    };
+}
+
+// Note: Continuous updates during drag (plotly_relayouting) are not supported
+// in Dash's clientside callback architecture. Y-axis updates on mouseup only.
+
+// Clientside callback function to handle y-axis updates on pan (final update on mouseup)
 window.dash_clientside = window.dash_clientside || {};
 window.dash_clientside.ribbonYAxis = {
     updateYAxisOnPan: function(relayoutData, currentFigure) {
-        console.log('[Ribbon Y-Axis] updateYAxisOnPan called');
-        console.log('  relayoutData:', relayoutData);
+        // Skip in calendar mode (no panning, fixed axes)
+        if (currentFigure && currentFigure.layout &&
+            currentFigure.layout.xaxis && currentFigure.layout.xaxis.side === "top") {
+            return window.dash_clientside.no_update;
+        }
 
         // If no relayout data or no raw data, return current figure unchanged
         if (!relayoutData || !window._ribbonChartData || !currentFigure) {
-            console.log('[Ribbon Y-Axis] Skipping - missing data');
             return window.dash_clientside.no_update;
         }
 
@@ -1078,68 +1554,19 @@ window.dash_clientside.ribbonYAxis = {
             startDate = relayoutData['xaxis.range'][0];
             endDate = relayoutData['xaxis.range'][1];
         } else {
-            // Not an x-axis range event
-            console.log('[Ribbon Y-Axis] Not an x-axis range event');
             return window.dash_clientside.no_update;
         }
 
-        console.log('[Ribbon Y-Axis] X-axis range changed to:', startDate, 'to', endDate);
-
-        // Convert to YYYY-MM-DD format
-        var startStr = (typeof startDate === 'string') ? startDate.split('T')[0] : new Date(startDate).toISOString().split('T')[0];
-        var endStr = (typeof endDate === 'string') ? endDate.split('T')[0] : new Date(endDate).toISOString().split('T')[0];
-
-        var rawData = window._ribbonChartData;
-
-        // Calculate y-axis range from visible data
-        var minHour = 24, maxHour = 0;
-        for (var i = 0; i < rawData.pastSeries.length; i++) {
-            var s = rawData.pastSeries[i];
-            for (var j = 0; j < s.dates.length; j++) {
-                var date = s.dates[j].split('T')[0];
-                if (date >= startStr && date <= endStr) {
-                    if (s.startHours[j] < minHour) minHour = s.startHours[j];
-                    if (s.endHours[j] > maxHour) maxHour = s.endHours[j];
-                }
-            }
-        }
-
-        console.log('[Ribbon Y-Axis] Calculated hours - min:', minHour, 'max:', maxHour);
-
-        if (minHour === 24 || maxHour === 0) {
-            console.log('[Ribbon Y-Axis] No data in visible range');
+        var yAxisConfig = calculateRibbonYAxis(startDate, endDate);
+        if (!yAxisConfig) {
             return window.dash_clientside.no_update;
         }
-
-        // Round to nearest half-hour with padding
-        var yMin = Math.floor(minHour * 2) / 2 - 0.5;
-        var yMax = Math.ceil(maxHour * 2) / 2 + 0.5;
-        yMin = Math.max(0, yMin);
-        yMax = Math.min(24, yMax);
-
-        // Generate tick values
-        var tickvals = [];
-        var ticktext = [];
-        for (var h = Math.ceil(yMin); h <= Math.floor(yMax); h++) {
-            tickvals.push(h);
-            if (h === 0) {
-                ticktext.push("12am");
-            } else if (h < 12) {
-                ticktext.push(h + "am");
-            } else if (h === 12) {
-                ticktext.push("12pm");
-            } else {
-                ticktext.push((h - 12) + "pm");
-            }
-        }
-
-        console.log('[Ribbon Y-Axis] Updating y-axis range to:', yMin, '-', yMax);
 
         // Create updated figure with new y-axis range
-        var newFigure = JSON.parse(JSON.stringify(currentFigure)); // Deep copy
-        newFigure.layout.yaxis.range = [yMin, yMax];
-        newFigure.layout.yaxis.tickvals = tickvals;
-        newFigure.layout.yaxis.ticktext = ticktext;
+        var newFigure = JSON.parse(JSON.stringify(currentFigure));
+        newFigure.layout.yaxis.range = yAxisConfig.range;
+        newFigure.layout.yaxis.tickvals = yAxisConfig.tickvals;
+        newFigure.layout.yaxis.ticktext = yAxisConfig.ticktext;
 
         return newFigure;
     }
@@ -1194,5 +1621,80 @@ window.dash_clientside.chartExport = {
         });
 
         return window.dash_clientside.no_update;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Heatmap Hover Highlight
+// ---------------------------------------------------------------------------
+
+window.dash_clientside.heatmapHover = {
+    /**
+     * Trigger hover-highlight setup after heatmap figure updates.
+     * Called as a clientside callback with the figure as input.
+     */
+    init: function(fig) {
+        if (!fig) return window.dash_clientside.no_update;
+        setTimeout(window.dash_clientside.heatmapHover._setup, 150);
+        return window.dash_clientside.no_update;
+    },
+
+    _setup: function() {
+        var wrapper = document.getElementById("ops-chart-heatmap");
+        if (!wrapper) {
+            requestAnimationFrame(window.dash_clientside.heatmapHover._setup);
+            return;
+        }
+        var el = wrapper.querySelector(".js-plotly-plot") || wrapper;
+        if (typeof el.on !== "function") {
+            if (typeof wrapper.on === "function") { el = wrapper; }
+            else { requestAnimationFrame(window.dash_clientside.heatmapHover._setup); return; }
+        }
+
+        if (el._hmCleanup) el._hmCleanup();
+
+        // Snapshot the base shapes (separators etc.) — we'll always restore these
+        var baseShapes = (el.layout && el.layout.shapes)
+            ? JSON.parse(JSON.stringify(el.layout.shapes))
+            : [];
+
+        function onHover(data) {
+            if (!data.points || !data.points.length) return;
+            var pt = data.points[0];
+            var col, row;
+            if (pt.pointIndex && pt.pointIndex.length === 2) {
+                row = pt.pointIndex[0];
+                col = pt.pointIndex[1];
+            } else {
+                return;
+            }
+
+            // Determine axis refs for the hovered subplot (3 facet rows)
+            var yref = ["y", "y2", "y3"][pt.curveNumber] || "y";
+
+            var highlight = {
+                type: "rect",
+                x0: col - 0.46, x1: col + 0.46,
+                y0: row - 0.46, y1: row + 0.46,
+                fillcolor: "rgba(255,255,255,0.25)",
+                line: {width: 0},
+                xref: "x", yref: yref
+            };
+            var shapes = baseShapes.concat([highlight]);
+            Plotly.relayout(el, {shapes: shapes});
+        }
+
+        function onUnhover() {
+            // Restore base shapes only (removes highlight)
+            Plotly.relayout(el, {shapes: baseShapes.slice()});
+        }
+
+        el.on("plotly_hover", onHover);
+        el.on("plotly_unhover", onUnhover);
+
+        el._hmCleanup = function() {
+            el.removeListener("plotly_hover", onHover);
+            el.removeListener("plotly_unhover", onUnhover);
+        };
     }
 };

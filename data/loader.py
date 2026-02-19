@@ -50,6 +50,62 @@ def _clean_department(df):
     return df
 
 
+def _reshape_daily_volume(df):
+    """Reshape new Daily Volume CSV format to match the old Location-based layout.
+
+    Old format: one row per Location (department name OR machine name) per date.
+    New format: rows broken out by Category (Treatment/Simulation/Total) and
+    Resource (machine name or None for aggregate).
+
+    We keep Treatment rows only and recreate machine-name Department entries
+    so that downstream machine-level filtering (Lacey → TrueBeamNorth / 21EX)
+    continues to work.
+    """
+    if "Category" not in df.columns or "Resource" not in df.columns:
+        return df
+
+    df = df[df["Category"] == "Treatment"].copy()
+
+    # Rows with Resource=None are department aggregates
+    agg_rows = df[df["Resource"].isna()]
+    # Rows with a specific Resource are machine-level
+    machine_rows = df[df["Resource"].notna()]
+
+    # Create machine-as-department rows (Resource value becomes Department)
+    machine_as_dept = machine_rows.copy()
+    machine_as_dept["Department"] = machine_as_dept["Resource"]
+
+    # Departments that lack an aggregate row need one synthesised from machines
+    depts_with_agg = set(agg_rows["Department"].unique()) if not agg_rows.empty else set()
+    missing = set(df["Department"].unique()) - depts_with_agg
+
+    # Time columns that need min/max aggregation (not sum)
+    _start_cols = ["FirstScheduledStart", "FirstActualStart"]
+    _end_cols = ["LastScheduledEnd", "LastActualEnd"]
+
+    new_aggs = []
+    for dept in missing:
+        rows = machine_rows[machine_rows["Department"] == dept]
+        if rows.empty:
+            continue
+        num_cols = rows.select_dtypes(include="number").columns.tolist()
+        grouped = rows.groupby("ScheduledDate", as_index=False)[num_cols].sum()
+        # Aggregate time strings: earliest start, latest end per day
+        for col in _start_cols:
+            if col in rows.columns:
+                grouped[col] = rows.groupby("ScheduledDate")[col].min().values
+        for col in _end_cols:
+            if col in rows.columns:
+                grouped[col] = rows.groupby("ScheduledDate")[col].max().values
+        grouped["Department"] = dept
+        new_aggs.append(grouped)
+
+    parts = [p for p in [agg_rows, machine_as_dept] + new_aggs if not p.empty]
+    result = pd.concat(parts, ignore_index=True) if parts else df
+    result = result.drop(columns=["Category", "Resource"], errors="ignore")
+    return result
+
+
 def _parse_dates(df, cols):
     """Parse date columns, coercing errors.
 
@@ -188,7 +244,6 @@ def load_treatment():
 
 
 @lru_cache(maxsize=1)
-@lru_cache(maxsize=1)
 def load_treatment_detail():
     """Load Treatment - Detail.csv — per-session treatment records.
 
@@ -204,6 +259,14 @@ def load_treatment_detail():
     df = _clean_department(df)
     df = _parse_dates(df, ["ScheduledDateTime", "AppointmentDateTime",
                            "TreatmentStartTime", "TreatmentEndTime"])
+    # Secondary dedup: ARIA incremental exports can regenerate different
+    # SessionUniqueIDs for the same treatment session, so fall back to a
+    # stable composite key.  Safe to keep after the extraction is fixed
+    # (will be a no-op once SessionUniqueIDs are stable).
+    _composite = ["PatientId", "ScheduledDateTime", "Machine", "FractionNumber", "CourseName"]
+    _usable = [c for c in _composite if c in df.columns]
+    if _usable:
+        df = df.drop_duplicates(subset=_usable, keep="last")
     return df
 
 
@@ -216,8 +279,9 @@ def load_daily_volume():
     FirstActualStart, LastActualEnd
     """
     df = _read_csv_safe(DATA_COMPLETE / "Daily Volume - Past.csv")
-    df = _normalize_columns(df, {"Location": "Department", "Date": "ScheduledDate"})
+    df = _normalize_columns(df, {"Location": "Department", "Site": "Department", "Date": "ScheduledDate"})
     df = _clean_department(df)
+    df = _reshape_daily_volume(df)
     df = _parse_dates(df, ["ScheduledDate"])
     return df
 
@@ -229,8 +293,9 @@ def load_daily_volume_future():
     Same structure as Daily Volume - Past.
     """
     df = _read_csv_safe(DATA_COMPLETE / "Daily Volume - Future.csv")
-    df = _normalize_columns(df, {"Location": "Department", "Date": "ScheduledDate"})
+    df = _normalize_columns(df, {"Location": "Department", "Site": "Department", "Date": "ScheduledDate"})
     df = _clean_department(df)
+    df = _reshape_daily_volume(df)
     df = _parse_dates(df, ["ScheduledDate"])
     return df
 

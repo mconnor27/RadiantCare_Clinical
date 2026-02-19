@@ -107,4 +107,4 @@ threading.Thread(target=_preload, daemon=True).start()
 # Run
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    app.run(debug=True, port=8050)
+    app.run(debug=True, port=8050, host="localhost")
