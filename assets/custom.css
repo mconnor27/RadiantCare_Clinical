@@ -41,6 +41,13 @@ body {
     opacity: 1;
 }
 
+/* Hide Plotly's separate axis hover label on the home census charts.
+   This leaves the custom tooltip body without unified-hover indentation. */
+#home-chart-physician .hoverlayer .axistext,
+#home-chart-site .hoverlayer .axistext {
+    display: none;
+}
+
 /* Nav sidebar text truncation when collapsed */
 .mantine-NavLink-label {
     white-space: nowrap;

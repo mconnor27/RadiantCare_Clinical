@@ -1292,13 +1292,21 @@ def update_physician_data(_n, departments):
             main_first = [p for p in PHYSICIANS if p in all_physicians]
             others = sorted([p for p in all_physicians if p not in PHYSICIANS])
             physicians = main_first + others
+            render_physicians = others + main_first
             # Extend colors if needed
             colors = list(CHART_COLORWAY) * ((len(physicians) // len(CHART_COLORWAY)) + 1)
         else:
             physicians = PHYSICIANS
+            render_physicians = PHYSICIANS
             colors = CHART_COLORWAY
 
-        return _build_census_data(td, "TreatingPhysician", physicians, colors)
+        return _build_census_data(
+            td,
+            "TreatingPhysician",
+            physicians,
+            colors,
+            render_groups=render_physicians,
+        )
     except Exception:
         return None
 
@@ -1313,6 +1321,37 @@ clientside_callback(
     Input("home-md-range", "value"),
     State("home-chart-physician", "figure"),
 )
+
+
+def _home_census_smooth_limits(range_days, current_value):
+    """Scale Home census smoothing max to the selected visible range."""
+    days = int(range_days) if range_days else 90
+    if days == 0:  # All history
+        max_val = 180
+    elif days <= 30:
+        max_val = 12
+    elif days <= 60:
+        max_val = 20
+    elif days <= 90:
+        max_val = 30
+    elif days <= 180:
+        max_val = 60
+    elif days <= 365:
+        max_val = 120
+    else:
+        max_val = 180
+    return max_val, min(current_value or 0, max_val)
+
+
+@callback(
+    Output("home-md-settings-smooth", "max"),
+    Output("home-md-settings-smooth", "value"),
+    Input("home-md-range", "value"),
+    State("home-md-settings-smooth", "value"),
+)
+def update_md_smooth_slider(range_days, current_value):
+    """Adjust physician chart smoothing slider for the selected range."""
+    return _home_census_smooth_limits(range_days, current_value)
 
 
 # ---------------------------------------------------------------------------
@@ -1359,14 +1398,26 @@ clientside_callback(
 )
 
 
+@callback(
+    Output("home-site-settings-smooth", "max"),
+    Output("home-site-settings-smooth", "value"),
+    Input("home-site-range", "value"),
+    State("home-site-settings-smooth", "value"),
+)
+def update_site_smooth_slider(range_days, current_value):
+    """Adjust site chart smoothing slider for the selected range."""
+    return _home_census_smooth_limits(range_days, current_value)
+
+
 # ---------------------------------------------------------------------------
 # Census data builder (for clientside smoothing)
 # ---------------------------------------------------------------------------
 
-def _build_census_data(df, group_col, groups, colors, height=380):
+def _build_census_data(df, group_col, groups, colors, height=380, render_groups=None):
     """Build raw census data dict for clientside smoothing.
 
-    Returns dict with dates, series (name, values, color), height, yTitle.
+    Returns dict with dates, series (name, values, color), optional renderOrder,
+    height, yTitle.
     """
     df = df.copy()
     df["Date"] = df["ScheduledDateTime"].dt.normalize()
@@ -1403,6 +1454,10 @@ def _build_census_data(df, group_col, groups, colors, height=380):
     return {
         "dates": [d.isoformat() for d in date_range],
         "series": series,
+        "renderOrder": [
+            grp.split(",")[0] if "," in grp else grp
+            for grp in (render_groups or groups)
+        ],
         "height": height,
         "yTitle": "Unique Patients",
     }

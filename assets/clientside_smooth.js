@@ -176,19 +176,31 @@ window.dash_clientside.census = {
         var windowSize = Math.max(1, Math.floor(smoothPct) + 1);
 
         var traces = [];
+        var renderSeries = rawData.series.slice();
+        var rawValsByName = {};
+        if (stacked && rawData.renderOrder && rawData.renderOrder.length) {
+            var renderRanks = {};
+            for (var ri = 0; ri < rawData.renderOrder.length; ri++) {
+                renderRanks[rawData.renderOrder[ri]] = ri;
+            }
+            renderSeries.sort(function(a, b) {
+                var aRank = renderRanks.hasOwnProperty(a.name) ? renderRanks[a.name] : Number.MAX_SAFE_INTEGER;
+                var bRank = renderRanks.hasOwnProperty(b.name) ? renderRanks[b.name] : Number.MAX_SAFE_INTEGER;
+                return aRank - bRank;
+            });
+        }
         var totals = new Array(displayDates.length).fill(0);
         var rawTotals = new Array(displayDates.length).fill(0);
         var futureTotals = hasFuture ? new Array(futureDates.length).fill(0) : [];
-        var allRawVals = [];  // collect raw vals per series for summary hover
 
         // Past data traces (hoverinfo:"skip" — hover handled by summary trace)
-        for (var i = 0; i < rawData.series.length; i++) {
-            var s = rawData.series[i];
+        for (var i = 0; i < renderSeries.length; i++) {
+            var s = renderSeries[i];
             var displayVals = step > 1 ? downsampleAvg(s.values, step) : s.values.slice();
             var yVals = smoothPct > 0 ? rollingAvg(displayVals, windowSize) : displayVals;
             var isVisible = !visibilityMap.hasOwnProperty(s.name) || visibilityMap[s.name] === true;
 
-            allRawVals.push(displayVals);
+            rawValsByName[s.name] = displayVals;
 
             // Sum for total trace (smoothed for rendering, raw for hover) — only when stacked
             if (stacked && isVisible) {
@@ -258,8 +270,8 @@ window.dash_clientside.census = {
             // For bar charts, format future dates
             var futureBarData = chartType === "bar" ? formatDatesForBars(futureDates) : null;
 
-            for (var i = 0; i < rawData.series.length; i++) {
-                var s = rawData.series[i];
+            for (var i = 0; i < renderSeries.length; i++) {
+                var s = renderSeries[i];
                 var futureVals = s.futureValues || [];
                 if (futureVals.length === 0) continue;
 
@@ -316,14 +328,13 @@ window.dash_clientside.census = {
 
         // Build summary hover text per date point (only for stacked mode)
         if (stacked) {
+        var monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
         var summaryX = chartType === "bar" ? barData.labels : displayDates;
         var summaryHover = [];
         var nPts = chartType === "bar" ? barData.labels.length : displayDates.length;
-        var monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
         for (var idx = 0; idx < nPts; idx++) {
-            // Format date header
-            var dateStr = "";
             var rawDate = chartType === "bar" ? barData.labels[idx] : displayDates[idx];
+            var dateStr = "";
             if (rawDate) {
                 var d = new Date(rawDate);
                 if (!isNaN(d)) {
@@ -332,15 +343,17 @@ window.dash_clientside.census = {
                     dateStr = String(rawDate);
                 }
             }
-            var parts = ["<b>" + dateStr + "</b>"];
+            var parts = dateStr ? ["<b>" + dateStr + "</b>"] : [];
             var total = 0;
             for (var si = 0; si < rawData.series.length; si++) {
                 var rawIdx = chartType === "bar" ? barData.validIndices[idx] : idx;
-                var val = Math.round(allRawVals[si][rawIdx] || 0);
+                var seriesName = rawData.series[si].name;
+                var seriesRawVals = rawValsByName[seriesName] || [];
+                var val = Math.round(seriesRawVals[rawIdx] || 0);
                 var isVis = !visibilityMap.hasOwnProperty(rawData.series[si].name) ||
                             visibilityMap[rawData.series[si].name] === true;
                 if (val > 0 && isVis) {
-                    parts.push(rawData.series[si].name + ": " + val);
+                    parts.push("<span style='color:" + rawData.series[si].color + "'>\u25A0</span> " + rawData.series[si].name + ": " + val);
                     total += val;
                 }
             }
@@ -1541,7 +1554,8 @@ window.dash_clientside.hoursRibbon = {
 
         // Department operating window bands (shapes for visuals, scatter for hover)
         var annotations = [];
-        var hoverX = [], hoverY = [], hoverText = [], hoverShapeIdx = [];
+        var hoverX = [], hoverY = [], hoverText = [], hoverBandIdx = [];
+        var bandShapeMap = []; // bandIndex -> shapeIndex
 
         for (var dn in deptBands) {
             var color = deptColors[dn] || "#7C2A83";
@@ -1566,6 +1580,9 @@ window.dash_clientside.hoursRibbon = {
                     xref: "x", yref: "y"
                 });
 
+                var bandIdx = bandShapeMap.length;
+                bandShapeMap.push(shapeIdx);
+
                 // Count annotation
                 if (band.count > 0) {
                     annotations.push({
@@ -1579,29 +1596,40 @@ window.dash_clientside.hoursRibbon = {
                     });
                 }
 
-                // Hover point at band center
-                hoverX.push(band.col + offset + bandWidth / 2);
-                hoverY.push((band.startHour + band.endHour) / 2);
-                hoverShapeIdx.push(shapeIdx);
-
+                // Build tooltip once for this band
                 var label = band.isFuture ? "<b>" + dn + " (scheduled)</b>" : "<b>" + dn + "</b>";
                 var timeStr = hourToTimeStr(band.startHour) + " – " + hourToTimeStr(band.endHour);
                 var countStr = band.count > 0 ? "<br>" + band.count + " appointments" : "";
-                hoverText.push(label + "<br>" + timeStr + countStr);
+                var tooltipText = label + "<br>" + timeStr + countStr;
+
+                // Create multiple hover points spanning the band height.
+                // A single center point causes hover to snap to the wrong band
+                // when the cursor is near the top/bottom of a tall rectangle.
+                var cx = band.col + offset + bandWidth / 2;
+                var bandHeight = band.endHour - band.startHour;
+                var numPoints = Math.max(3, Math.ceil(bandHeight));
+                for (var p = 0; p < numPoints; p++) {
+                    var t = numPoints === 1 ? 0.5 : p / (numPoints - 1);
+                    hoverX.push(cx);
+                    hoverY.push(band.startHour + t * bandHeight);
+                    hoverText.push(tooltipText);
+                    hoverBandIdx.push(bandIdx);
+                }
             }
         }
 
         // Store shape info for hover highlight handler
-        window._calendarShapeInfo = hoverShapeIdx.map(function(si) {
+        window._calendarShapeInfo = bandShapeMap.map(function(si) {
             var orig = shapes[si].fillcolor;
             var hover = orig.replace(/[\d.]+\)$/, function(m) {
                 return Math.min(0.85, parseFloat(m) + 0.25) + ")";
             });
             return {idx: si, orig: orig, hover: hover};
         });
+        window._calendarBandMap = hoverBandIdx; // point index -> band index
         window._calendarLastHovered = -1;
 
-        // Invisible scatter trace at band centers for hover tooltips
+        // Invisible scatter points distributed within each band for hover tooltips
         var traces = [];
         if (hoverX.length > 0) {
             traces.push({
@@ -1665,9 +1693,11 @@ window.dash_clientside.hoursRibbon = {
      */
     _setupCalendarHover: function() {
         // Find the actual Plotly div — Dash wraps it inside dcc.Graph
-        var wrapper = document.getElementById("ops-chart-ribbon");
+        // Check both home page and operations page element IDs
+        var wrapper = document.getElementById("home-chart-hours")
+                   || document.getElementById("ops-chart-ribbon");
         if (!wrapper) {
-            console.log("[CalHover] wrapper #ops-chart-ribbon not found, retrying…");
+            console.log("[CalHover] wrapper not found, retrying…");
             requestAnimationFrame(window.dash_clientside.hoursRibbon._setupCalendarHover);
             return;
         }
@@ -1712,8 +1742,10 @@ window.dash_clientside.hoursRibbon = {
         function onHover(data) {
             if (!data.points || !data.points.length) return;
             var ptIdx = data.points[0].pointIndex;
-            console.log("[CalHover] HOVER ptIdx=" + ptIdx);
-            if (ptIdx === window._calendarLastHovered) return;
+            // Map point index to band index (multiple points per band)
+            var bandIdx = (window._calendarBandMap && window._calendarBandMap[ptIdx] !== undefined)
+                ? window._calendarBandMap[ptIdx] : ptIdx;
+            if (bandIdx === window._calendarLastHovered) return;
 
             // Restore previous
             if (window._calendarLastHovered >= 0 && window._calendarLastHovered < info.length) {
@@ -1724,13 +1756,12 @@ window.dash_clientside.hoursRibbon = {
             }
 
             // Highlight current
-            if (ptIdx < info.length) {
-                var curr = info[ptIdx];
+            if (bandIdx < info.length) {
+                var curr = info[bandIdx];
                 var u2 = {};
                 u2["shapes[" + curr.idx + "].fillcolor"] = curr.hover;
-                console.log("[CalHover] highlighting shape " + curr.idx + ": " + curr.orig + " → " + curr.hover);
                 Plotly.relayout(el, u2);
-                window._calendarLastHovered = ptIdx;
+                window._calendarLastHovered = bandIdx;
             }
         }
 
