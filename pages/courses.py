@@ -106,6 +106,127 @@ layout = dmc.Stack(
         # Charts container
         dmc.Stack(id="courses-charts", gap=16),
 
+        # Fractions per Course chart (clientside-rendered)
+        dmc.Paper(
+            children=[
+                dmc.Group(
+                    justify="space-between",
+                    mb="sm",
+                    children=[
+                        dmc.Text("Fractions per Course Over Time", size="sm", fw=500, c="#6B7280"),
+                        dmc.Group(
+                            gap="xs",
+                            children=[
+                                dmc.SegmentedControl(
+                                    id="courses-frac-mode",
+                                    data=[
+                                        {"value": "first", "label": "First Tx"},
+                                        {"value": "active", "label": "Active During"},
+                                    ],
+                                    value="first",
+                                    size="xs",
+                                ),
+                                dmc.SegmentedControl(
+                                    id="courses-frac-range",
+                                    data=[
+                                        {"value": "ytd", "label": "YTD"},
+                                        {"value": "1y", "label": "1Y"},
+                                        {"value": "5y", "label": "5Y"},
+                                        {"value": "all", "label": "All"},
+                                    ],
+                                    value="all",
+                                    size="xs",
+                                ),
+                                dmc.SegmentedControl(
+                                    id="courses-frac-agg",
+                                    data=[
+                                        {"value": "W", "label": "Week"},
+                                        {"value": "M", "label": "Month"},
+                                        {"value": "Y", "label": "Year"},
+                                    ],
+                                    value="M",
+                                    size="xs",
+                                ),
+                                chart_settings_popover(
+                                    "courses-frac",
+                                    chart_types=[
+                                        {"value": "bar", "label": "Bar"},
+                                        {"value": "line", "label": "Line"},
+                                        {"value": "area", "label": "Area"},
+                                    ],
+                                    show_smooth=True,
+                                    smooth_max=50,
+                                    smooth_default=0,
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+                dcc.Graph(id="courses-chart-fractions", config={"displayModeBar": False}),
+            ],
+            p="sm", radius="md", shadow="xs", withBorder=True,
+        ),
+        dcc.Store(id="courses-store-fractions"),
+
+        # Fraction Distribution Comparison (density plot)
+        dmc.Paper(
+            children=[
+                dmc.Group(
+                    justify="space-between",
+                    mb="sm",
+                    children=[
+                        dmc.Text(
+                            "Fraction Distribution Comparison",
+                            size="sm", fw=500, c="#6B7280",
+                        ),
+                        dmc.Group(
+                            gap="xs",
+                            children=[
+                                dmc.Group(
+                                    gap=4,
+                                    children=[
+                                        dmc.Text("Period 1", size="xs", c="#6B7280"),
+                                        dmc.MultiSelect(
+                                            id="courses-density-p1",
+                                            placeholder="Select year(s)…",
+                                            size="xs",
+                                            w=160,
+                                            clearable=True,
+                                            searchable=True,
+                                        ),
+                                    ],
+                                ),
+                                dmc.Group(
+                                    gap=4,
+                                    children=[
+                                        dmc.Text("Period 2", size="xs", c="#6B7280"),
+                                        dmc.MultiSelect(
+                                            id="courses-density-p2",
+                                            placeholder="Compare (optional)",
+                                            size="xs",
+                                            w=160,
+                                            clearable=True,
+                                            searchable=True,
+                                        ),
+                                    ],
+                                ),
+                                chart_settings_popover(
+                                    "courses-density",
+                                    chart_types=None,
+                                    show_smooth=True,
+                                    smooth_max=20,
+                                    smooth_default=6,
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+                dcc.Graph(id="courses-chart-density", config={"displayModeBar": False}),
+            ],
+            p="sm", radius="md", shadow="xs", withBorder=True,
+        ),
+        dcc.Store(id="courses-store-density"),
+
         # Detail table container
         dmc.Stack(id="courses-table-container", gap=0),
 
@@ -567,6 +688,240 @@ def update_courses(_n, date_preset, departments, physicians, status):
     ]
 
     return kpi_children, chart_children, table_children
+
+
+# ---------------------------------------------------------------------------
+# Fractions per Course — server callback builds store data
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("courses-store-fractions", "data"),
+    Input("courses-interval", "n_intervals"),
+    Input("courses-filter-department", "value"),
+    Input("courses-filter-physician", "value"),
+    Input("courses-filter-status", "value"),
+    Input("courses-frac-agg", "value"),
+    Input("courses-frac-range", "value"),
+    Input("courses-frac-mode", "value"),
+)
+def update_fractions_store(_n, departments, physicians, status, agg, frac_range, mode):
+    from data.loader import load_courses
+
+    df = load_courses()
+    if df.empty or "FractionsPrescribed" not in df.columns or "CourseStartDate" not in df.columns:
+        return None
+
+    # Apply filters (same as main callback)
+    if departments and "Department" in df.columns:
+        df = df[df["Department"].isin(departments)]
+    if physicians and "TreatingPhysician" in df.columns:
+        df = df[df["TreatingPhysician"].isin(physicians)]
+    if status and status != "all" and "ClinicalStatus" in df.columns:
+        df = df[df["ClinicalStatus"] == status]
+
+    # Drop rows without fractions data
+    df = df.dropna(subset=["FractionsPrescribed"])
+    if df.empty:
+        return None
+
+    # Resolve treatment date columns (fall back to CourseStartDate)
+    df["_start"] = df["FirstTreatmentDate"].fillna(df["CourseStartDate"])
+    df["_end"] = df["LastTreatmentDate"].fillna(df["_start"])
+    df = df.dropna(subset=["_start"])
+    if df.empty:
+        return None
+
+    # Date filter — chart's own timeframe selector
+    last_date = df["_end"].dt.normalize().max()
+
+    if frac_range == "ytd":
+        start_date = pd.Timestamp(last_date.year, 1, 1)
+    elif frac_range == "1y":
+        start_date = last_date - timedelta(days=365)
+    elif frac_range == "5y":
+        start_date = last_date - timedelta(days=365 * 5)
+    else:  # "all"
+        start_date = pd.Timestamp("2000-01-01")
+
+    if mode == "active":
+        # "Active During" — course appears in every period it was treated
+        df = df[(df["_end"] >= start_date) & (df["_start"] <= last_date)]
+        if df.empty:
+            return None
+
+        rows = []
+        for _, row in df.iterrows():
+            periods = pd.period_range(start=row["_start"], end=row["_end"], freq=agg)
+            for p in periods:
+                ts = p.to_timestamp()
+                if ts >= start_date:
+                    rows.append({"Period": ts, "FractionsPrescribed": row["FractionsPrescribed"]})
+
+        if not rows:
+            return None
+
+        expanded = pd.DataFrame(rows)
+        grouped = expanded.groupby("Period")["FractionsPrescribed"].agg(["mean", "count"]).reset_index()
+    else:
+        # "First Tx" — one entry per course at its first treatment date
+        df = df[df["_start"] >= start_date]
+        if df.empty:
+            return None
+
+        df["Period"] = df["_start"].dt.to_period(agg).dt.to_timestamp()
+        grouped = df.groupby("Period")["FractionsPrescribed"].agg(["mean", "count"]).reset_index()
+
+    # Format labels based on aggregation
+    fmt = {"W": "%b %d, %Y", "M": "%b %Y", "Y": "%Y"}
+    labels = grouped["Period"].dt.strftime(fmt.get(agg, "%b %Y")).tolist()
+
+    return {
+        "labels": labels,
+        "values": grouped["mean"].round(1).tolist(),
+        "counts": grouped["count"].tolist(),
+        "height": 380,
+        "yTitle": "Avg Fractions Prescribed",
+        "color": CHART_COLORWAY[5],
+    }
+
+
+# Fractions chart — clientside render from store + chart type + smoothing
+clientside_callback(
+    ClientsideFunction(namespace="courses", function_name="renderFractions"),
+    Output("courses-chart-fractions", "figure"),
+    Input("courses-store-fractions", "data"),
+    Input("courses-frac-settings-type", "value"),
+    Input("courses-frac-settings-smooth", "value"),
+    State("courses-chart-fractions", "figure"),
+)
+
+
+# ---------------------------------------------------------------------------
+# Fractions chart — settings panel toggle
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("courses-frac-settings-panel", "style"),
+    Input("courses-frac-settings-btn", "n_clicks"),
+    State("courses-frac-settings-panel", "style"),
+    prevent_initial_call=True,
+)
+def toggle_frac_settings(n, style):
+    if not n:
+        return style
+    current = style or {}
+    is_hidden = current.get("display") == "none"
+    return {"display": "block"} if is_hidden else {"display": "none"}
+
+
+# ---------------------------------------------------------------------------
+# Density comparison — populate year options + build store
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("courses-density-p1", "data"),
+    Output("courses-density-p2", "data"),
+    Output("courses-density-p1", "value"),
+    Input("courses-interval", "n_intervals"),
+)
+def populate_density_years(_n):
+    from data.loader import load_courses
+
+    df = load_courses()
+    if df.empty or "CourseStartDate" not in df.columns or "FractionsPrescribed" not in df.columns:
+        return [], [], []
+
+    years = sorted(
+        df.loc[df["CourseStartDate"].notna(), "CourseStartDate"]
+        .dt.year.dropna().unique().astype(int),
+        reverse=True,
+    )
+    options = [{"value": str(y), "label": str(y)} for y in years]
+    # Default period 1 to most recent year
+    default_p1 = [str(years[0])] if years else []
+    return options, options, default_p1
+
+
+@callback(
+    Output("courses-store-density", "data"),
+    Input("courses-density-p1", "value"),
+    Input("courses-density-p2", "value"),
+    Input("courses-filter-department", "value"),
+    Input("courses-filter-physician", "value"),
+    Input("courses-filter-status", "value"),
+)
+def update_density_store(p1_years, p2_years, departments, physicians, status):
+    from data.loader import load_courses
+
+    df = load_courses()
+    if df.empty or "FractionsPrescribed" not in df.columns or "CourseStartDate" not in df.columns:
+        return None
+
+    # Apply non-date filters
+    if departments and "Department" in df.columns:
+        df = df[df["Department"].isin(departments)]
+    if physicians and "TreatingPhysician" in df.columns:
+        df = df[df["TreatingPhysician"].isin(physicians)]
+    if status and status != "all" and "ClinicalStatus" in df.columns:
+        df = df[df["ClinicalStatus"] == status]
+
+    df = df.dropna(subset=["FractionsPrescribed", "CourseStartDate"])
+    if df.empty:
+        return None
+
+    df["Year"] = df["CourseStartDate"].dt.year.astype(int)
+
+    result = {}
+
+    # Period 1
+    if p1_years:
+        int_years = [int(y) for y in p1_years]
+        vals = df.loc[df["Year"].isin(int_years), "FractionsPrescribed"].tolist()
+        if vals:
+            label = ", ".join(sorted(p1_years))
+            result["period1"] = {
+                "label": label,
+                "values": vals,
+                "color": CHART_COLORWAY[1],  # blue
+            }
+
+    # Period 2 (optional)
+    if p2_years:
+        int_years = [int(y) for y in p2_years]
+        vals = df.loc[df["Year"].isin(int_years), "FractionsPrescribed"].tolist()
+        if vals:
+            label = ", ".join(sorted(p2_years))
+            result["period2"] = {
+                "label": label,
+                "values": vals,
+                "color": CHART_COLORWAY[2],  # red
+            }
+
+    return result if result else None
+
+
+# Density chart — clientside render with bandwidth control
+clientside_callback(
+    ClientsideFunction(namespace="courses", function_name="renderDensity"),
+    Output("courses-chart-density", "figure"),
+    Input("courses-store-density", "data"),
+    Input("courses-density-settings-smooth", "value"),
+)
+
+
+# Density chart — settings panel toggle
+@callback(
+    Output("courses-density-settings-panel", "style"),
+    Input("courses-density-settings-btn", "n_clicks"),
+    State("courses-density-settings-panel", "style"),
+    prevent_initial_call=True,
+)
+def toggle_density_settings(n, style):
+    if not n:
+        return style
+    current = style or {}
+    is_hidden = current.get("display") == "none"
+    return {"display": "block"} if is_hidden else {"display": "none"}
 
 
 # ---------------------------------------------------------------------------

@@ -9,6 +9,13 @@ window.dash_clientside = window.dash_clientside || {};
 // Sparkline smoothing (KPI cards)
 // ---------------------------------------------------------------------------
 
+function hexToRgba(hex, alpha) {
+    var r = parseInt(hex.slice(1, 3), 16);
+    var g = parseInt(hex.slice(3, 5), 16);
+    var b = parseInt(hex.slice(5, 7), 16);
+    return "rgba(" + r + "," + g + "," + b + "," + alpha + ")";
+}
+
 function buildSparkline(data, smoothPct, key) {
     if (!data || !data[key]) {
         return window.dash_clientside.no_update;
@@ -24,6 +31,11 @@ function buildSparkline(data, smoothPct, key) {
         ? spark.hover_fmt.replace(/%\{y/g, "%{customdata")
         : "%{x|%b %d}: %{customdata:,.0f}<extra></extra>";
 
+    // Compute y range for gradient fill
+    var yMin = Math.min.apply(null, yVals);
+    var yMax = Math.max.apply(null, yVals);
+    var yRange = yMax - yMin || 1;
+
     return {
         data: [{
             x: spark.labels,
@@ -31,11 +43,22 @@ function buildSparkline(data, smoothPct, key) {
             customdata: rawVals,
             mode: "lines",
             line: {color: color, width: 1.5},
+            fill: "tozeroy",
+            fillgradient: {
+                type: "vertical",
+                start: yMin - yRange * 0.3,
+                stop: yMax,
+                colorscale: [
+                    [0, hexToRgba(color, 0)],
+                    [1, hexToRgba(color, 0.2)]
+                ]
+            },
+            fillcolor: hexToRgba(color, 0),
             hovertemplate: hoverFmt
         }],
         layout: {
             margin: {l: 0, r: 0, t: 0, b: 0},
-            height: 34,
+            height: 44,
             plot_bgcolor: "rgba(0,0,0,0)",
             paper_bgcolor: "rgba(0,0,0,0)",
             xaxis: {
@@ -46,7 +69,10 @@ function buildSparkline(data, smoothPct, key) {
                 spikecolor: "#D1D5DB",
                 spikedash: "solid"
             },
-            yaxis: {visible: false},
+            yaxis: {
+                visible: false,
+                range: [yMin - yRange * 0.3, yMax + yRange * 0.05]
+            },
             showlegend: false,
             dragmode: false,
             hovermode: "x",
@@ -121,6 +147,7 @@ window.dash_clientside.census = {
         var height = rawData.height || 380;
         var yTitle = rawData.yTitle || "Unique Patients";
         var hasFuture = futureDates.length > 0;
+        var stacked = rawData.stacked !== false;  // default true, opt-out with stacked:false
 
         // TEMPORARILY DISABLED: Downsampling was causing last data points to be dropped
         // TODO: Fix downsampling to ensure dates and values arrays have matching lengths
@@ -152,16 +179,19 @@ window.dash_clientside.census = {
         var totals = new Array(displayDates.length).fill(0);
         var rawTotals = new Array(displayDates.length).fill(0);
         var futureTotals = hasFuture ? new Array(futureDates.length).fill(0) : [];
+        var allRawVals = [];  // collect raw vals per series for summary hover
 
-        // Past data traces
+        // Past data traces (hoverinfo:"skip" — hover handled by summary trace)
         for (var i = 0; i < rawData.series.length; i++) {
             var s = rawData.series[i];
             var displayVals = step > 1 ? downsampleAvg(s.values, step) : s.values.slice();
             var yVals = smoothPct > 0 ? rollingAvg(displayVals, windowSize) : displayVals;
             var isVisible = !visibilityMap.hasOwnProperty(s.name) || visibilityMap[s.name] === true;
 
-            // Sum for total trace (smoothed for rendering, raw for hover)
-            if (isVisible) {
+            allRawVals.push(displayVals);
+
+            // Sum for total trace (smoothed for rendering, raw for hover) — only when stacked
+            if (stacked && isVisible) {
                 for (var k = 0; k < yVals.length; k++) {
                     totals[k] += yVals[k];
                     rawTotals[k] += displayVals[k];
@@ -170,7 +200,7 @@ window.dash_clientside.census = {
 
             var traceObj;
             if (chartType === "bar") {
-                // Stacked bar chart with formatted date labels (filtered to valid dates only)
+                // Bar chart (stacked or grouped)
                 var filteredY = filterByIndices(yVals, barData.validIndices);
                 var filteredRaw = filterByIndices(displayVals, barData.validIndices);
                 traceObj = {
@@ -180,10 +210,11 @@ window.dash_clientside.census = {
                     name: s.name,
                     type: "bar",
                     marker: {color: s.color, line: {width: 0}},
-                    hovertemplate: s.name + ": %{customdata:.0f}<extra></extra>"
+                    hoverinfo: stacked ? "skip" : undefined,
+                    hovertemplate: stacked ? undefined : s.name + ": %{customdata:.1f}" + (rawData.yTitle && rawData.yTitle.indexOf('%') >= 0 ? "%" : "") + "<extra></extra>"
                 };
             } else if (chartType === "line") {
-                // Non-stacked line chart
+                // Line chart (always non-stacked)
                 traceObj = {
                     x: displayDates,
                     y: yVals,
@@ -191,21 +222,27 @@ window.dash_clientside.census = {
                     name: s.name,
                     mode: "lines",
                     line: {color: s.color, width: 2},
-                    hovertemplate: s.name + ": %{customdata:.0f}<extra></extra>"
+                    hoverinfo: stacked ? "skip" : undefined,
+                    hovertemplate: stacked ? undefined : s.name + ": %{customdata:.1f}" + (rawData.yTitle && rawData.yTitle.indexOf('%') >= 0 ? "%" : "") + "<extra></extra>"
                 };
             } else {
-                // Stacked area chart (default)
+                // Area chart (stacked by default, overlay when stacked:false)
                 traceObj = {
                     x: displayDates,
                     y: yVals,
                     customdata: displayVals,
                     name: s.name,
                     mode: "lines",
-                    line: {color: s.color, width: 1.5},
-                    fillcolor: hexToRgba(s.color, 0.5),
-                    stackgroup: "one",
-                    hovertemplate: s.name + ": %{customdata:.0f}<extra></extra>"
+                    line: {color: s.color, width: stacked ? 1.5 : 2},
+                    fillcolor: hexToRgba(s.color, stacked ? 0.5 : 0.15),
+                    hoverinfo: stacked ? "skip" : undefined,
+                    hovertemplate: stacked ? undefined : s.name + ": %{customdata:.1f}" + (rawData.yTitle && rawData.yTitle.indexOf('%') >= 0 ? "%" : "") + "<extra></extra>"
                 };
+                if (stacked) {
+                    traceObj.stackgroup = "one";
+                } else {
+                    traceObj.fill = "tozeroy";
+                }
             }
 
             // Preserve visibility if it was explicitly set
@@ -247,7 +284,7 @@ window.dash_clientside.census = {
                         type: "bar",
                         marker: {color: s.color, opacity: 0.4, line: {width: 0}},
                         showlegend: false,
-                        hovertemplate: s.name + " (scheduled): %{customdata:.0f}<extra></extra>"
+                        hoverinfo: "skip"
                     };
                 } else {
                     // Line/area: connect to last past point
@@ -264,7 +301,7 @@ window.dash_clientside.census = {
                         fillcolor: chartType === "line" ? "transparent" : hexToRgba(s.color, 0.2),
                         stackgroup: chartType === "line" ? undefined : "future",
                         showlegend: false,
-                        hovertemplate: s.name + " (scheduled): %{customdata:.0f}<extra></extra>"
+                        hoverinfo: "skip"
                     };
                 }
 
@@ -277,45 +314,102 @@ window.dash_clientside.census = {
             }
         }
 
-        // Add invisible total trace for hover (raw totals) - only for stacked charts
-        if (chartType !== "line") {
-            var totalX = chartType === "bar" ? barData.labels : displayDates;
-            var totalY = chartType === "bar" ? filterByIndices(totals, barData.validIndices) : totals;
-            var totalRaw = chartType === "bar" ? filterByIndices(rawTotals, barData.validIndices) : rawTotals;
-            traces.unshift({
-                x: totalX,
-                y: totalY,
-                customdata: totalRaw,
-                name: "Total",
-                mode: "lines",
-                line: {color: "transparent", width: 0},
-                hovertemplate: "<b>Total: %{customdata:.0f}</b><extra></extra>",
-                showlegend: false
-            });
+        // Build summary hover text per date point (only for stacked mode)
+        if (stacked) {
+        var summaryX = chartType === "bar" ? barData.labels : displayDates;
+        var summaryHover = [];
+        var nPts = chartType === "bar" ? barData.labels.length : displayDates.length;
+        var monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+        for (var idx = 0; idx < nPts; idx++) {
+            // Format date header
+            var dateStr = "";
+            var rawDate = chartType === "bar" ? barData.labels[idx] : displayDates[idx];
+            if (rawDate) {
+                var d = new Date(rawDate);
+                if (!isNaN(d)) {
+                    dateStr = monthNames[d.getMonth()] + " " + d.getDate() + ", " + d.getFullYear();
+                } else {
+                    dateStr = String(rawDate);
+                }
+            }
+            var parts = ["<b>" + dateStr + "</b>"];
+            var total = 0;
+            for (var si = 0; si < rawData.series.length; si++) {
+                var rawIdx = chartType === "bar" ? barData.validIndices[idx] : idx;
+                var val = Math.round(allRawVals[si][rawIdx] || 0);
+                var isVis = !visibilityMap.hasOwnProperty(rawData.series[si].name) ||
+                            visibilityMap[rawData.series[si].name] === true;
+                if (val > 0 && isVis) {
+                    parts.push(rawData.series[si].name + ": " + val);
+                    total += val;
+                }
+            }
+            if (total > 0) {
+                parts.push("<b>Total: " + total + "</b>");
+            }
+            summaryHover.push(parts.join("<br>"));
         }
+
+        var summaryY = chartType === "bar"
+            ? filterByIndices(totals, barData.validIndices)
+            : totals;
+
+        // Invisible summary trace carries the hover tooltip
+        traces.push({
+            x: summaryX,
+            y: summaryY,
+            customdata: summaryHover,
+            name: "",
+            mode: "lines",
+            line: {color: "transparent", width: 0},
+            hovertemplate: "%{customdata}<extra></extra>",
+            showlegend: false
+        });
+        }  // end if (stacked)
 
         var smoothed = smoothPct > 0;
         var layout = {
             height: height,
-            xaxis: {showgrid: false},
+            xaxis: {showgrid: false, showspikes: false},
             yaxis: {gridcolor: "#E5E7EB"},
-            showlegend: false,
-            margin: {l: 28, r: 8, t: 8, b: 32},
+            showlegend: !stacked,
+            margin: {l: stacked ? 28 : 40, r: 8, t: 8, b: 32},
             plot_bgcolor: "white",
             paper_bgcolor: "white",
             font: {family: "Inter, system-ui, sans-serif", size: 12, color: "#374151"},
-            hovermode: "x unified",
-            hoverlabel: {align: "left"}
+            hovermode: "x",
+            hoverlabel: {
+                align: "left",
+                bgcolor: "white",
+                bordercolor: "#E5E7EB",
+                font: {color: "#374151", size: 12, family: "Inter, system-ui, sans-serif"}
+            }
         };
 
-        // Add barmode for stacked bar (categorical x-axis for no gaps)
+        // Show legend above chart for non-stacked mode
+        if (!stacked) {
+            layout.legend = {
+                orientation: "h",
+                yanchor: "bottom",
+                y: 1.02,
+                xanchor: "left",
+                x: 0
+            };
+            layout.margin.t = 28;
+            // Suffix for y-axis
+            if (rawData.yTitle && rawData.yTitle.indexOf('%') >= 0) {
+                layout.yaxis.ticksuffix = '%';
+            }
+        }
+
+        // Add barmode for bar charts
         if (chartType === "bar") {
-            layout.barmode = "stack";
-            layout.bargap = 0.15;  // Small gap to distinguish from area chart
-            layout.bargroupgap = 0;
+            layout.barmode = stacked ? "stack" : "group";
+            layout.bargap = 0.15;
+            layout.bargroupgap = stacked ? 0 : 0.05;
             layout.xaxis.type = "category";
-            layout.xaxis.tickangle = 0;  // Horizontal labels
-            layout.xaxis.nticks = 8;  // Sparse labels
+            layout.xaxis.tickangle = 0;
+            layout.xaxis.nticks = 8;
         }
 
         return {
@@ -376,14 +470,18 @@ window.dash_clientside.census = {
             return window.dash_clientside.census._buildWithRange(rawData, smoothPct, chartType, rangeDays, currentFig);
         }
 
+        // Chart element ID: use rawData.chartId if provided, fallback to ops-chart-volume
+        var chartElId = rawData.chartId || 'ops-chart-volume';
+        var debounceKey = '_censusDebounce_' + chartElId;
+
         // Debounce: skip intermediate slider ticks, yield to browser for paint before render
-        if (window._censusDebounce) clearTimeout(window._censusDebounce);
-        window._censusDebounce = setTimeout(function() {
+        if (window[debounceKey]) clearTimeout(window[debounceKey]);
+        window[debounceKey] = setTimeout(function() {
             // rAF queues after pending input/paint, setTimeout(0) yields one more frame
             requestAnimationFrame(function() { setTimeout(function() {
                 var fig = window.dash_clientside.census._buildWithRange(rawData, smoothPct, chartType, rangeDays, currentFig);
                 if (fig && fig !== window.dash_clientside.no_update) {
-                    var el = document.getElementById('ops-chart-volume');
+                    var el = document.getElementById(chartElId);
                     var plotEl = el && el.querySelector('.js-plotly-plot');
                     if (plotEl) Plotly.react(plotEl, fig.data, fig.layout);
                 }
@@ -391,12 +489,219 @@ window.dash_clientside.census = {
         }, 150);
 
         // First render (no existing plot) — render immediately
-        var el = document.getElementById('ops-chart-volume');
+        var el = document.getElementById(chartElId);
         var plotEl = el && el.querySelector('.js-plotly-plot');
         if (!plotEl || !plotEl.data || !plotEl.data.length) {
             return window.dash_clientside.census._buildWithRange(rawData, smoothPct, chartType, rangeDays, currentFig);
         }
         return window.dash_clientside.no_update;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Courses namespace — fractions-per-course over time
+// ---------------------------------------------------------------------------
+window.dash_clientside.courses = {
+
+    _hexToRgba: function(hex, alpha) {
+        var r = parseInt(hex.slice(1,3), 16);
+        var g = parseInt(hex.slice(3,5), 16);
+        var b = parseInt(hex.slice(5,7), 16);
+        return "rgba(" + r + "," + g + "," + b + "," + alpha + ")";
+    },
+
+    /**
+     * Render fractions-per-course chart from store data.
+     * @param {Object} rawData - {labels, values, counts, yTitle, height, color}
+     * @param {string} chartType - "bar", "line", or "area"
+     * @param {number} smoothPct - Smoothing slider value (0 = none)
+     * @param {Object} currentFig - preserve trace visibility
+     */
+    renderFractions: function(rawData, chartType, smoothPct, currentFig) {
+        if (!rawData || !rawData.labels || rawData.labels.length === 0) {
+            return window.dash_clientside.no_update;
+        }
+
+        chartType = chartType || "bar";
+        smoothPct = smoothPct || 0;
+        var labels = rawData.labels;
+        var values = rawData.values;
+        var height = rawData.height || 380;
+        var yTitle = rawData.yTitle || "Avg Fractions";
+        var color = rawData.color || "#7C2A83";
+        var counts = rawData.counts || [];
+
+        // Apply smoothing (rolling average)
+        var windowSize = Math.max(1, Math.floor(smoothPct) + 1);
+        var yVals = smoothPct > 0 ? rollingAvg(values, windowSize) : values;
+
+        var traceBase = {
+            x: labels,
+            y: yVals,
+            name: "Avg Fractions",
+            customdata: counts.length ? counts : undefined,
+            hovertemplate: counts.length
+                ? "<b>%{x}</b><br>Avg Fractions: %{y:.1f}<br>Courses: %{customdata}<extra></extra>"
+                : "<b>%{x}</b><br>Avg Fractions: %{y:.1f}<extra></extra>",
+        };
+
+        var trace;
+        if (chartType === "bar") {
+            trace = Object.assign({}, traceBase, {
+                type: "bar",
+                marker: { color: color, opacity: 0.85 },
+            });
+        } else if (chartType === "area") {
+            var fillColor = color.startsWith("#")
+                ? window.dash_clientside.courses._hexToRgba(color, 0.2)
+                : color.replace(")", ",0.2)").replace("rgb", "rgba");
+            trace = Object.assign({}, traceBase, {
+                type: "scatter",
+                mode: "lines",
+                fill: "tozeroy",
+                line: { color: color, width: 2 },
+                fillcolor: fillColor,
+            });
+        } else {
+            trace = Object.assign({}, traceBase, {
+                type: "scatter",
+                mode: "lines+markers",
+                line: { color: color, width: 2 },
+                marker: { color: color, size: 5 },
+            });
+        }
+
+        // Sparse x-axis labels: show ~12-15 ticks max, horizontal
+        var nticks = Math.min(labels.length, 15);
+
+        var layout = {
+            height: height,
+            margin: { l: 48, r: 16, t: 8, b: 48 },
+            plot_bgcolor: "rgba(0,0,0,0)",
+            paper_bgcolor: "rgba(0,0,0,0)",
+            font: { family: "Inter, system-ui, sans-serif", size: 12, color: "#374151" },
+            xaxis: {
+                showgrid: false,
+                zeroline: false,
+                nticks: nticks,
+                tickangle: 0,
+            },
+            yaxis: {
+                title: yTitle,
+                gridcolor: "#E5E7EB",
+                gridwidth: 1,
+                zeroline: false,
+            },
+            hovermode: "x unified",
+            dragmode: "pan",
+        };
+
+        return { data: [trace], layout: layout };
+    },
+
+    /**
+     * Render density comparison chart for fraction distributions.
+     * @param {Object} rawData - {period1: {label, values, color}, period2?: {label, values, color}}
+     * @param {number} bwSlider - Bandwidth slider (0-20). 0 = auto, higher = smoother.
+     */
+    renderDensity: function(rawData, bwSlider) {
+        if (!rawData || !rawData.period1 || !rawData.period1.values || rawData.period1.values.length === 0) {
+            return window.dash_clientside.no_update;
+        }
+
+        bwSlider = bwSlider || 6;  // default matches smooth_default
+
+        // Collect global min/max across both periods for consistent x grid
+        var allVals = [];
+        var periods = ["period1", "period2"];
+        for (var i = 0; i < periods.length; i++) {
+            var p = rawData[periods[i]];
+            if (p && p.values && p.values.length > 0) {
+                allVals = allVals.concat(p.values);
+            }
+        }
+        var globalMin = Math.min.apply(null, allVals);
+        var globalMax = Math.max.apply(null, allVals);
+        var globalRange = globalMax - globalMin || 1;
+
+        var traces = [];
+
+        for (var i = 0; i < periods.length; i++) {
+            var key = periods[i];
+            var pd = rawData[key];
+            if (!pd || !pd.values || pd.values.length === 0) continue;
+
+            var vals = pd.values;
+            var color = pd.color;
+            var fillColor = color.startsWith("#")
+                ? window.dash_clientside.courses._hexToRgba(color, 0.3)
+                : color.replace(")", ",0.3)").replace("rgb", "rgba");
+
+            // Bandwidth: slider maps 1-20 to fraction of range (0.5% to 10%)
+            var bwFrac = Math.max(0.005, bwSlider * 0.005);
+            var bandwidth = globalRange * bwFrac;
+
+            // Build KDE using gaussian kernel over shared x grid
+            var nBins = 100;
+            var pad = globalRange * 0.05;  // 5% padding on each side
+            var step = (globalRange + 2 * pad) / nBins;
+            var xGrid = [];
+            var yGrid = [];
+
+            for (var j = 0; j <= nBins; j++) {
+                var x = (globalMin - pad) + j * step;
+                xGrid.push(Math.round(x * 10) / 10);
+                var density = 0;
+                for (var k = 0; k < vals.length; k++) {
+                    var z = (x - vals[k]) / bandwidth;
+                    density += Math.exp(-0.5 * z * z);
+                }
+                density /= (vals.length * bandwidth * Math.sqrt(2 * Math.PI));
+                yGrid.push(density);
+            }
+
+            traces.push({
+                x: xGrid,
+                y: yGrid,
+                type: "scatter",
+                mode: "lines",
+                fill: "tozeroy",
+                name: pd.label + " (n=" + vals.length + ")",
+                line: { color: color, width: 2 },
+                fillcolor: fillColor,
+                hovertemplate: "<b>" + pd.label + "</b><br>Fractions: %{x:.0f}<br>Density: %{y:.4f}<extra></extra>",
+            });
+        }
+
+        var layout = {
+            height: 380,
+            margin: { l: 48, r: 16, t: 8, b: 48 },
+            plot_bgcolor: "rgba(0,0,0,0)",
+            paper_bgcolor: "rgba(0,0,0,0)",
+            font: { family: "Inter, system-ui, sans-serif", size: 12, color: "#374151" },
+            xaxis: {
+                title: "Fractions Prescribed",
+                showgrid: false,
+                zeroline: false,
+                tickangle: 0,
+            },
+            yaxis: {
+                title: "Density",
+                gridcolor: "#E5E7EB",
+                gridwidth: 1,
+                zeroline: false,
+            },
+            legend: {
+                orientation: "h",
+                yanchor: "bottom",
+                y: 1.02,
+                xanchor: "left",
+                x: 0,
+            },
+            hovermode: "x unified",
+        };
+
+        return { data: traces, layout: layout };
     }
 };
 

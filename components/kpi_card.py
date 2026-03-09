@@ -7,6 +7,14 @@ import plotly.graph_objects as go
 from config.settings import PRIMARY, NEUTRAL, SEMANTIC_COLORS
 
 
+def _hex_to_rgba(hex_color, alpha):
+    """Convert hex color to rgba string."""
+    r = int(hex_color[1:3], 16)
+    g = int(hex_color[3:5], 16)
+    b = int(hex_color[5:7], 16)
+    return f"rgba({r},{g},{b},{alpha})"
+
+
 def create_sparkline(past_values=None, future_values=None,
                      past_labels=None, future_labels=None,
                      color=PRIMARY, hover_fmt=None):
@@ -31,12 +39,32 @@ def create_sparkline(past_values=None, future_values=None,
     else:
         hover = "%{y:,.0f}<extra></extra>"
 
+    # Compute y range for gradient fill
+    all_vals = list(past_values or []) + list(future_values or [])
+    if all_vals:
+        y_min = min(all_vals)
+        y_max = max(all_vals)
+        y_range = y_max - y_min or 1
+    else:
+        y_min, y_max, y_range = 0, 1, 1
+
     if past_values:
         x_past = list(past_labels) if has_labels else list(range(len(past_values)))
         fig.add_trace(go.Scatter(
             x=x_past, y=past_values,
             mode="lines",
             line=dict(color=color, width=1.5),
+            fill="tozeroy",
+            fillgradient=dict(
+                type="vertical",
+                start=y_min - y_range * 0.3,
+                stop=y_max,
+                colorscale=[
+                    [0, _hex_to_rgba(color, 0)],
+                    [1, _hex_to_rgba(color, 0.2)],
+                ],
+            ),
+            fillcolor=_hex_to_rgba(color, 0),
             hovertemplate=hover,
         ))
 
@@ -57,7 +85,7 @@ def create_sparkline(past_values=None, future_values=None,
 
     fig.update_layout(
         margin=dict(l=0, r=0, t=0, b=0),
-        height=34,
+        height=44,
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
         xaxis=dict(
@@ -68,7 +96,10 @@ def create_sparkline(past_values=None, future_values=None,
             spikecolor="#D1D5DB",
             spikedash="solid",
         ),
-        yaxis=dict(visible=False),
+        yaxis=dict(
+            visible=False,
+            range=[y_min - y_range * 0.3, y_max + y_range * 0.05],
+        ),
         showlegend=False,
         dragmode=False,
         hovermode="x",
@@ -129,7 +160,7 @@ def kpi_card(
     ]
 
     # Value row: value + optional detail inline
-    value_row = [dmc.Text(str(value), size="xl", fw=700, c=NEUTRAL["text_primary"])]
+    value_row = [dmc.Text(str(value), size="xl", fw=700, c=NEUTRAL["text_primary"], lh=1.2)]
     if value_detail:
         value_row.append(dmc.Text(value_detail, size="xs", c=NEUTRAL["text_muted"]))
     children.append(dmc.Group(gap="xs", align="baseline", children=value_row))
@@ -155,7 +186,7 @@ def kpi_card(
                     hover_fmt=sparkline_hover_fmt,
                 ) if sparkline_past else create_sparkline(),
                 config={"displayModeBar": False, "scrollZoom": False},
-                style={"height": "34px", "marginTop": "4px"},
+                style={"height": "44px", "marginTop": "2px"},
             )
         )
 
@@ -164,13 +195,13 @@ def kpi_card(
         "position": "relative",
     }
 
-    paper_children = [dmc.Stack(children=children, gap=4)]
+    paper_children = [dmc.Stack(children=children, gap=2)]
 
     if header_control is not None:
         paper_children.append(
             html.Div(header_control, style={
                 "position": "absolute",
-                "top": "14px",
+                "top": "10px",
                 "right": "14px",
                 "zIndex": 2,
             })
@@ -178,7 +209,9 @@ def kpi_card(
 
     return dmc.Paper(
         children=paper_children,
-        p="md",
+        pt="sm",
+        px="md",
+        pb=8,
         radius="md",
         shadow="xs",
         withBorder=True,

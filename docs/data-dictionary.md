@@ -29,7 +29,7 @@ All data originates from **ARIA** (Varian) via automated SQL data warehouse expo
 ### 2026 CPT Delivery Audit
 
 - **File:** `Complete/2026 CPT Delivery Audit.csv`
-- **Size:** ~278 KB
+- **Size:** ~463 KB
 - **Refresh:** Nightly full replace
 - **Used by:** Billing page
 
@@ -49,6 +49,7 @@ All data originates from **ARIA** (Varian) via automated SQL data warehouse expo
 | `RxGating` | string | Gating type (e.g., "OSMS") or empty |
 | `TotalFractions` | int | Total prescribed fractions |
 | `FractionsDelivered` | int | Fractions delivered so far |
+| `FxOverride` | int | Fraction override count (0 if none) |
 | `RxTechnique_Course` | string | Technique at course level (IMRT, SBRT, VMAT, 3D) |
 | `PrimaryInsurer` | string | Primary insurance carrier |
 | `RxTechnique_Day` | string | Technique used on that specific day |
@@ -67,42 +68,67 @@ All data originates from **ARIA** (Varian) via automated SQL data warehouse expo
 ### Daily Volume - Future
 
 - **File:** `Complete/Daily Volume - Future.csv`
-- **Size:** ~5 KB
+- **Size:** ~11 KB
 - **Refresh:** Nightly full replace
 - **Used by:** Operations page
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `Location` | string | Machine or site name (21EX, Aberdeen, Centralia, Lacey, Simulation, TrueBeamNorth, 6EX) |
+| `Site` | string | Site name (Aberdeen, Centralia, Lacey) — currently empty, site derived from `Resource` |
+| `Category` | string | Row category: Treatment, Simulation, or Total |
 | `Date` | date (MM/DD/YYYY) | Scheduled date |
+| `Resource` | string | Machine or resource name (21EX, 21iX_AB, 21iX_CEN, TrueBeamNorth, CT_CEN, CT_Sim, 6EX) |
 | `FirstScheduledStart` | time (HH:MM) | Earliest scheduled appointment start |
 | `LastScheduledEnd` | time (HH:MM) | Latest scheduled appointment end |
 | `AppointmentCount` | int | Number of scheduled appointments |
 | `FirstActualStart` | time (HH:MM) | Always empty for future dates |
 | `LastActualEnd` | time (HH:MM) | Always empty for future dates |
+| `NewStartCount` | int | Number of new treatment starts (Future only) |
+| `ScheduledActiveMinutes` | int | Total scheduled active minutes (sum of scheduled durations) |
+| `ActualActiveMinutes` | int | Total actual active minutes (empty for future) |
+| `ApptActualMinutes` | int | Actual appointment minutes (empty for future) |
+
+**Business rules:**
+- `Site` column is currently unpopulated — derive site from `Resource` using machine-to-department mapping
+- `Category` = "Total" rows aggregate Treatment + Simulation for a given date/resource
+- `NewStartCount` is only present in the Future file, not Past
 
 ---
 
 ### Daily Volume - Past
 
 - **File:** `Complete/Daily Volume - Past.csv`
-- **Size:** ~1.6 MB
+- **Size:** ~3.5 MB
 - **Refresh:** Nightly full replace
 - **Used by:** Operations page
 
-Same schema as Daily Volume - Future, but `FirstActualStart` and `LastActualEnd` are populated.
+| Column | Type | Description |
+|--------|------|-------------|
+| `Site` | string | Site name — currently empty, site derived from `Resource` |
+| `Category` | string | Row category: Treatment, Simulation, or Total |
+| `Date` | date (MM/DD/YYYY) | Scheduled date |
+| `Resource` | string | Machine or resource name (21EX, 21iX_AB, 21iX_CEN, TrueBeamNorth, CT_CEN, CT_Sim, 6EX) |
+| `FirstScheduledStart` | time (HH:MM) | Earliest scheduled appointment start |
+| `LastScheduledEnd` | time (HH:MM) | Latest scheduled appointment end |
+| `AppointmentCount` | int | Number of scheduled appointments |
+| `FirstActualStart` | time (HH:MM) | Earliest actual appointment start |
+| `LastActualEnd` | time (HH:MM) | Latest actual appointment end |
+| `ScheduledActiveMinutes` | int | Total scheduled active minutes |
+| `ActualActiveMinutes` | int | Total actual active minutes |
+| `ApptActualMinutes` | int | Actual appointment minutes |
 
 **Business rules:**
-- `6EX` consistently shows no appointments (decommissioned or inactive machine)
-- Lacey has the highest appointment counts across locations
-- Compare scheduled vs actual times to measure punctuality
+- Same schema as Future but without `NewStartCount`, and actual time fields are populated
+- `Site` is empty — derive site from `Resource` using machine-to-department mapping
+- `Category` rows allow filtering Treatment vs Simulation vs Total aggregates
+- Compare `ScheduledActiveMinutes` vs `ActualActiveMinutes` for utilization analysis
 
 ---
 
 ### Machine Errors
 
 - **File:** `Complete/Machine Errors.csv`
-- **Size:** ~808 KB
+- **Size:** ~811 KB
 - **Refresh:** Nightly full replace
 - **Used by:** Machine Performance page
 
@@ -151,6 +177,7 @@ Same schema as Daily Volume - Future, but `FirstActualStart` and `LastActualEnd`
 | `TreatmentDurationDays` | int | Duration of treatment in days |
 | `SessionCount_Delivery` | int | Number of delivery sessions |
 | `PrescribedFractions` | int | Total prescribed fractions |
+| `FxOverride` | int | Fraction override count (0 if none) |
 | `PrimaryFractions` | int | Primary phase fractions |
 | `BoostFractions` | int | Boost phase fractions |
 | `TotalPlanCount` | int | Number of plans in course |
@@ -172,7 +199,7 @@ Same schema as Daily Volume - Future, but `FirstActualStart` and `LastActualEnd`
 ### Physician Schedule
 
 - **File:** `Complete/Physician Schedule.csv`
-- **Size:** ~2.1 MB
+- **Size:** ~2.4 MB
 - **Refresh:** Nightly full replace
 - **Used by:** Tasks page (cross-reference only, no dedicated page)
 
@@ -183,19 +210,21 @@ Same schema as Daily Volume - Future, but `FirstActualStart` and `LastActualEnd`
 | `ScheduledStartDateTime` | datetime (M/D/YYYY H:MM:SS AM/PM) | Start time |
 | `ScheduledEndDateTime` | datetime (M/D/YYYY H:MM:SS AM/PM) | End time |
 | `PhysicianName` | string | Physician name (Last, First) |
+| `DepartmentName` | string | Department name (prefixed with `*`, e.g., `*Lacey`) |
 | `ActivityNote` | string | Free text (e.g., "CLOSED - LABOR DAY") |
 
 **Business rules:**
 - Used to cross-reference task completion — identify work done while a physician was OFF or on WEEKEND CALL
 - Data extends months into the future
 - Four physicians: Allen Gregory, Connor Michael, Suszko Justin, Tinnel Brent
+- `DepartmentName` has `*` prefix — strip for display/joining
 
 ---
 
 ### Tasks
 
 - **File:** `Complete/Tasks.csv`
-- **Size:** ~8.3 MB
+- **Size:** ~10 MB
 - **Refresh:** Nightly full replace
 - **Used by:** Tasks page
 
@@ -212,9 +241,14 @@ Same schema as Daily Volume - Future, but `FirstActualStart` and `LastActualEnd`
 | `MinutesToComplete` | float | Actual minutes to complete (empty if pending) |
 | `MinutesAllowed` | float | SLA: minutes from start to deadline |
 | `AssignedMD` | string | Physician assigned the task |
+| `MinutesFromSimToDrawCompletion` | float | Minutes from simulation end to draw volumes completion |
 | `CompletingMD` | string | Physician who completed it ("NA" if pending) |
+| `DrawCreationDateTime` | datetime (M/D/YYYY H:MM:SS AM/PM) | When the draw volumes task was created |
+| `SimulationDateTime` | datetime (M/D/YYYY H:MM:SS AM/PM) | Linked simulation appointment time |
 | `TreatingPhysician` | string | Treating physician for the patient |
+| `SimScheduledEndDateTime` | datetime (M/D/YYYY H:MM:SS AM/PM) | Scheduled end time of the linked simulation |
 | `PriorExamPhysician` | string | Physician from prior exam |
+| `SimActualEndDateTime` | datetime (M/D/YYYY H:MM:SS AM/PM) | Actual end time of the linked simulation |
 | `DiagnosisCodes` | string | ICD codes |
 | `DiagnosisDescriptions` | string | Diagnosis descriptions |
 
@@ -222,6 +256,9 @@ Same schema as Daily Volume - Future, but `FirstActualStart` and `LastActualEnd`
 - `CompletingMD = "NA"` means the task is still open
 - `MinutesToComplete` is blank for uncompleted tasks
 - `MinutesAllowed` is the SLA window in minutes from `StartDateTime`
+- `MinutesFromSimToDrawCompletion` links draw tasks to their triggering simulation — useful for measuring sim→draw turnaround
+- `SimulationDateTime`, `SimScheduledEndDateTime`, `SimActualEndDateTime` provide simulation context for draw/review tasks
+- `DrawCreationDateTime` tracks when the draw task was spawned (may differ from `StartDateTime`)
 - Cross-reference with Physician Schedule to identify after-hours or off-day completions
 
 ---
@@ -233,23 +270,26 @@ All incremental files use `UniqueRowID` as the deduplication key. New rows are a
 ### Availability
 
 - **File:** `Incremental/Availability/Availability.csv`
-- **Size:** ~54 KB
+- **Size:** ~53 KB
 - **Used by:** Operations page
 
 | Column | Type | Description |
 |--------|------|-------------|
+| `UniqueRowID` | int | Deduplication key |
 | `Category` | string | Appointment category (Exam, Simulation) |
 | `DepartmentName` | string | Department name |
 | `AppointmentDateTime` | datetime (M/D/YYYY H:MM:SS AM/PM) | Appointment start |
 | `ScheduledEndTime` | datetime (M/D/YYYY H:MM:SS AM/PM) | Appointment end |
 | `DurationMinutes` | int | Duration in minutes |
 | `AppointmentNotes` | string | Free text scheduling notes |
+| `ActivityName` | string | Hold/block type (HOLD SIM TIME, HOLD CONSULT, HOLD RE EVAL/2 FOLLOW UPS) |
 | `AssignedResource` | string | Physician name or machine/room (e.g., CT_RC_LACEY) |
-| `ActivityName` | string | Hold/block type (HOLD SIM TIME, HOLD RE EVAL/2 FOLLOW UPS) |
+| `SlotTaken` | string | Whether the slot has been filled (Yes/No) |
 
 **Business rules:**
 - Shows future availability slots and holds
 - `AssignedResource` can be either a physician name or a machine identifier
+- `SlotTaken` indicates if a hold has been converted to an actual appointment
 - Used to analyze scheduling lead times and find openings
 
 ---
@@ -257,7 +297,7 @@ All incremental files use `UniqueRowID` as the deduplication key. New rows are a
 ### Billing
 
 - **File:** `Incremental/Billing/Billing.csv`
-- **Size:** ~56 MB
+- **Size:** ~201 MB
 - **Used by:** Billing page
 
 | Column | Type | Description |
@@ -266,25 +306,35 @@ All incremental files use `UniqueRowID` as the deduplication key. New rows are a
 | `PatientId` | string | Patient identifier |
 | `PatientFullName` | string | Patient name (LAST, FIRST) |
 | `DateOfService` | date (MM/DD/YYYY) | Service date |
+| `ActivityName` | string | Activity type (Daily Treatment, Consult, etc.) |
 | `DepartmentName` | string | Department name |
+| `ActivityCategory` | string | Category: Treatment, Exam, Simulation, Nursing, Physics, Planning Tasks, Office Tasks, Physics Weekly Chart Checks |
 | `ProcedureCode` | string | CPT procedure code |
+| `ActivityDateTime` | datetime (M/D/YYYY H:MM:SS AM/PM) | Activity timestamp |
 | `ProcedureCodeDescription` | string | CPT description |
+| `SourceActivitySer` | int | Source activity serial number (ARIA internal key) |
 | `CodeType` | string | Global, Technical, or Professional |
 | `Quantity` | int | Number of units |
 | `Modifiers` | string | CPT modifiers (26, TC, or empty) |
-| `Credited` | string | "No" (boolean-like) |
-| `Waived` | string | "No" (boolean-like) |
+| `Credited` | string | Whether credited (Yes/No) |
+| `Waived` | string | Whether waived (Yes/No) |
 | `SupervisingPhysician` | string | Supervising physician |
 | `AttendingPhysician` | string | Attending physician |
+| `Completed` | string | Whether completed (Yes/No) |
 | `ReferringPhysicianDimDoctorID` | int | FK to Lookup - Referring |
+| `MarkedCompleted` | string | Whether marked completed (Yes/No) |
 | `ReferringPhysician` | string | Referring physician name |
+| `Reviewed` | string | Whether reviewed (Yes/No) |
 | `ReferringPhysicianSpecialty` | string | Referring physician specialty |
+| `Exported` | string | Whether exported to billing system (Yes/No) |
 | `DiagnosisCodes` | string | ICD codes |
 | `DiagnosisDescriptions` | string | Diagnosis descriptions |
 
 **Business rules:**
 - `CodeType` determines the billing split: Professional (physician), Technical (facility), Global (both)
 - `Modifiers`: 26 = professional component, TC = technical component
+- `ActivityCategory` enables filtering by department function (Treatment, Exam, Simulation, etc.)
+- `Completed`, `MarkedCompleted`, `Reviewed`, `Exported` track the billing workflow state
 - Join to `Lookup - Patients` via `PatientId` for payor mix analysis
 - Join to `Lookup - Referring` via `ReferringPhysicianDimDoctorID` for referral billing
 
@@ -293,7 +343,7 @@ All incremental files use `UniqueRowID` as the deduplication key. New rows are a
 ### Clinic Visits
 
 - **File:** `Incremental/ClinicVisits/Clinic Visits.csv`
-- **Size:** ~11 MB
+- **Size:** ~13 MB
 - **Used by:** Clinic Visits page, Referrals page
 
 | Column | Type | Description |
@@ -306,10 +356,11 @@ All incremental files use `UniqueRowID` as the deduplication key. New rows are a
 | `ScheduledDateTime` | datetime (M/D/YYYY H:MM:SS AM/PM) | Scheduled appointment time |
 | `DaysFromCreatedToAppt` | int | Lead time in days |
 | `DurationMinutes` | int | Appointment duration |
-| `ActivityName` | string | Visit type (Consult, Follow-Up, Virtual Consult/Follow Up) |
-| `ActivityStatus` | string | Status (Manually Completed, Cancelled) |
+| `ActivityName` | string | Visit type (Consult, Follow-Up, Re-eval, Virtual Consult/Follow Up) |
+| `ActivityStatus` | string | Status (Manually Completed, Cancelled, Open) |
 | `AppointmentNotes` | string | Clinical notes |
 | `SupervisingPhysician` | string | Supervising physician |
+| `InPatientFlag` | string | Whether patient is inpatient (Yes/No) |
 | `AppointmentPhysician` | string | Physician on the appointment |
 | `AttendingPhysician` | string | Attending physician |
 | `ReferringPhysicianDimDoctorID` | int | FK to Lookup - Referring |
@@ -319,14 +370,18 @@ All incremental files use `UniqueRowID` as the deduplication key. New rows are a
 | `DiagnosisDescriptions` | string | Diagnosis descriptions |
 | `ProcedureCodes` | string | CPT codes (can be comma-separated) |
 | `ProcedureDescriptions` | string | CPT descriptions |
-
-| `HasSimulationWithin180Days` | int (0/1) | Whether patient had a sim within 180 days |
+| `SimulationStatus` | string | Simulation linkage status: None, Scheduled, Completed, Cancelled |
+| `SimTransactionID` | int | Transaction ID of the linked simulation record |
 | `SimulationDateTime` | datetime | Date of linked simulation |
 | `DaysToSimulation` | int | Days from visit to simulation |
+| `SimActivityName` | string | Linked simulation activity type (Initial Simulation, HOLD SIM TIME, etc.) |
+| `SimVisitRank` | int | Ranking of simulation visit linkage |
+| `ModalityType` | string | Treatment modality: EBRT, Brachytherapy, Cancelled, No Imaging |
 
 **Business rules:**
-- `ActivityName` determines visit type: Consult, Follow-Up, Virtual Consult/Follow Up
-- `HasSimulationWithin180Days` indicates consult-to-treatment conversion
+- `ActivityName` determines visit type: Consult, Follow-Up, Re-eval, Virtual Consult/Follow Up
+- `SimulationStatus` replaces the old `HasSimulationWithin180Days` boolean — provides richer status tracking
+- `ModalityType` indicates the treatment pathway (EBRT vs Brachytherapy vs no treatment)
 - Join to `Lookup - Referring` via `ReferringPhysicianDimDoctorID` for referral analysis
 - Join to `Lookup - Patients` via `PatientId` for payor mix per consult
 
@@ -335,7 +390,7 @@ All incremental files use `UniqueRowID` as the deduplication key. New rows are a
 ### Courses
 
 - **File:** `Incremental/Courses/Courses.csv`
-- **Size:** ~5.1 MB
+- **Size:** ~5.3 MB
 - **Used by:** Courses page, Billing (payor mix per course)
 
 | Column | Type | Description |
@@ -352,6 +407,7 @@ All incremental files use `UniqueRowID` as the deduplication key. New rows are a
 | `FractionsDelivered` | int | Fractions delivered |
 | `TreatingPhysician` | string | Treating physician |
 | `FractionsPrescribed` | int | Prescribed fractions |
+| `FxOverride` | int | Fraction override count (0 if none) |
 | `ConsultPhysician` | string | Consult physician |
 | `ReferringPhysicianID` | int | FK to Lookup - Referring |
 | `PlanCount` | int | Number of plans in course |
@@ -364,11 +420,15 @@ All incremental files use `UniqueRowID` as the deduplication key. New rows are a
 | `Machines` | string | Machine(s), can be comma-separated |
 | `DiagnosisCodes` | string | ICD codes |
 | `DiagnosisDescriptions` | string | Diagnosis descriptions |
+| `InPatientFlag` | string | Whether patient is inpatient |
+| `LastDayActivityFlag` | string | Flag for last-day-of-treatment activity |
+| `DCActivityFlag` | string | Flag for discontinuation activity |
 
 **Business rules:**
 - `CourseId` follows pattern: `C{N}_{Site}` (e.g., C1_H&N = first course, head & neck)
 - `Departments` and `Machines` can be multi-valued for patients who transfer sites
 - `TreatmentTechniques`: 3D, IMRT, VMAT
+- `LastDayActivityFlag` and `DCActivityFlag` track end-of-course events
 - Join to `Lookup - Patients` via `PatientId` for payor mix per course
 
 ---
@@ -419,45 +479,97 @@ All incremental files use `UniqueRowID` as the deduplication key. New rows are a
 
 ---
 
+### Procedures
+
+- **File:** `Incremental/Procedures/Procedures.csv`
+- **Size:** ~617 KB (~2,200 rows)
+- **Refresh:** Incremental append
+- **Used by:** TBD (new dataset)
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `UniqueRowID` | int | Deduplication key |
+| `ActivityName` | string | Procedure name (e.g., "SBRT Prostate (SpaceOAR/Fiducial) implant @ SPH", "Lupron", "Gold Seed Placement") |
+| `PatientId` | string | Patient identifier |
+| `PatientFullName` | string | Patient name (LAST, FIRST) |
+| `DepartmentName` | string | Department name |
+| `AppointmentCreatedDate` | date (MM/DD/YYYY) | When appointment was created |
+| `ScheduledDateTime` | datetime (M/D/YYYY H:MM:SS AM/PM) | Scheduled procedure time |
+| `DaysFromCreatedToAppt` | int | Lead time in days |
+| `DurationMinutes` | int | Procedure duration (typically 30 or 60 minutes) |
+| `ProcedureCategory` | string | Category: Rectal Spacer, Lupron, Gold Seeds, Prostate LDR, Volume Study |
+| `ActivityStatus` | string | Status (Manually Completed, Open, Cancelled) |
+| `AppointmentNotes` | string | Clinical notes |
+| `InPatientFlag` | string | Whether patient is inpatient (Yes/No) |
+| `AppointmentPhysician` | string | Physician performing procedure |
+| `SupervisingPhysician` | string | Supervising physician |
+| `AttendingPhysician` | string | Attending physician |
+| `ReferringPhysicianDimDoctorID` | int | FK to Lookup - Referring |
+| `ReferringPhysician` | string | Referring physician name |
+| `ReferringPhysicianSpecialty` | string | Referring physician specialty |
+| `ProcedureCodes` | string | CPT codes (can be comma-separated) |
+| `ProcedureDescriptions` | string | CPT descriptions |
+| `DiagnosisCodes` | string | ICD codes |
+| `DiagnosisDescriptions` | string | Diagnosis descriptions |
+
+**Business rules:**
+- Tracks ancillary procedures performed alongside radiation treatment courses
+- `ProcedureCategory` groups procedures: Rectal Spacer (SpaceOAR), Lupron injections, Gold Seed fiducial placement, Prostate LDR brachytherapy, Volume Studies
+- Small dataset — these are supplementary procedures, not daily treatments
+- Join to `Lookup - Referring` via `ReferringPhysicianDimDoctorID`
+
+---
+
 ### Simulations
 
 - **File:** `Incremental/Simulations/Simulations.csv`
-- **Size:** ~5.8 MB
+- **Size:** ~11 MB
 - **Used by:** Simulations page
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `UniqueRowID` | int | Deduplication key |
+| `SimulationResource` | string | Simulation resource (CT_Sim) |
 | `PatientId` | string | Patient identifier |
 | `PatientFullName` | string | Patient name (LAST, FIRST) |
 | `AppointmentCreatedDate` | date (MM/DD/YYYY) | When appointment was created |
 | `ScheduledDateTime` | datetime (M/D/YYYY H:MM:SS AM/PM) | Scheduled sim time |
-| `DurationMinutes` | int | Duration (60 or 90 minutes) |
 | `DaysFromCreatedToAppt` | int | Lead time in days |
-| `ActivityName` | string | Sim type (Initial Simulation, Stereotactic Simulation, Initial Centralia-in Lacey, Initial Aberdeen Simulation, Re-Simulation) |
-| `ActivityStatus` | string | Status (Manually Completed) |
-| `PriorClinicExamActivityName` | string | Prior clinic exam type |
+| `DurationMinutes` | int | Duration (30, 60, or 90 minutes) |
+| `ActivityName` | string | Sim type (Initial Simulation, HOLD SIM TIME, Treatment Device Fabrication, Re-Simulation, Initial Aberdeen Simulation, Initial Centralia-in Lacey, etc.) |
+| `ActivityStatus` | string | Status (Manually Completed, Open, Cancelled) |
+| `ActivityNote` | string | Free text clinical notes about the simulation |
+| `InPatientFlag` | string | Whether patient is inpatient (Yes/No) |
+| `PriorClinicExamActivityName` | string | Prior clinic exam type (Consult, Re-eval) |
 | `PriorClinicExamAppointmentDate` | date | Prior clinic exam date |
-| `SupervisingPhysician` | string | Supervising physician |
-| `ConsultPhysician` | string | Consult physician |
 | `DaysFromClinicExamToSimulation` | int | Days from consult to sim |
-| `AttendingPhysician` | string | Attending physician |
+| `ConsultPhysician` | string | Consult physician |
+| `TreatmentStatus` | string | Downstream treatment status: None, Scheduled, Completed, Cancelled |
 | `FirstTreatmentDate` | datetime | First treatment date |
-| `DaysFromClinicExamToTreatment` | int | Days from consult to first treatment |
 | `DaysFromSimToTreatment` | int | Days from sim to first treatment |
+| `TreatmentModality` | string | Treatment modality: EBRT, Brachytherapy, or empty |
+| `ScheduledTreatmentDate` | datetime | Scheduled first treatment date (may be future) |
+| `DaysToScheduledTreatment` | int | Days from sim to scheduled treatment |
+| `DaysFromClinicExamToTreatment` | int | Days from consult to first treatment |
+| `SupervisingPhysician` | string | Supervising physician |
+| `AttendingPhysician` | string | Attending physician |
 | `ReferringPhysicianDimDoctorID` | int | FK to Lookup - Referring |
-| `ProcedureCodes` | string | CPT codes |
 | `ReferringPhysician` | string | Referring physician name |
-| `ProcedureDescriptions` | string | CPT descriptions |
 | `ReferringPhysicianSpecialty` | string | Referring specialty |
+| `ProcedureCodes` | string | CPT codes |
+| `ProcedureDescriptions` | string | CPT descriptions |
 | `DiagnosisCodes` | string | ICD codes |
 | `DiagnosisDescriptions` | string | Diagnosis descriptions |
+| `Department` | string | Department name (no `*` prefix) |
 
 **Business rules:**
 - `ActivityName` indicates simulation type and cross-site patterns
 - "Initial Centralia-in Lacey" = Centralia patient simulated at Lacey
 - Key timing metrics: exam→sim, sim→treatment, exam→treatment
-- Duration: 60 min (standard) or 90 min (complex/cross-site)
+- `TreatmentStatus` tracks whether the simulation led to actual treatment (None, Scheduled, Completed, Cancelled)
+- `TreatmentModality` indicates EBRT vs Brachytherapy pathway
+- `ScheduledTreatmentDate` + `DaysToScheduledTreatment` enable forward-looking pipeline analysis
+- `Department` is now included directly in the source (previously had to merge via `_patient_department_map()`)
 
 ---
 
@@ -503,7 +615,7 @@ All incremental files use `UniqueRowID` as the deduplication key. New rows are a
 ### Treatment - Detail
 
 - **File:** `Incremental/TreatmentDetail/Treatment - Detail.csv`
-- **Size:** ~141 MB (largest file)
+- **Size:** ~166 MB (largest file)
 - **Used by:** Home page (physician census), Operations (drilldown)
 
 | Column | Type | Description |
@@ -530,8 +642,10 @@ All incremental files use `UniqueRowID` as the deduplication key. New rows are a
 | `FieldGating` | int (0/1) | Field gating flag |
 | `RxGating` | string | Gating type ("BREATH HOLD" or empty) |
 | `HasOSMS` | int (0/1) | Optical surface monitoring flag |
+| `InPatientFlag` | string | Whether patient is inpatient (Yes/No) |
 | `TotalFractions` | int | Total prescribed fractions |
 | `FractionNumber` | int | Current fraction number |
+| `FxOverride` | int | Fraction override count (0 if none) |
 | `FractionsDelivered` | int | Fractions delivered so far |
 | `UniqueIsocenters` | int | Number of isocenters |
 | `IsNewStart_ByFraction` | int (0/1) | New start flag (by fraction) |
@@ -557,7 +671,7 @@ All incremental files use `UniqueRowID` as the deduplication key. New rows are a
 ### Weekly Visits
 
 - **File:** `Incremental/WeeklyVisits/Weekly Visits.csv`
-- **Size:** ~19 MB
+- **Size:** ~20 MB
 - **Used by:** OTVs page
 
 | Column | Type | Description |
@@ -571,6 +685,7 @@ All incremental files use `UniqueRowID` as the deduplication key. New rows are a
 | `ActivityStatus` | string | Status (Manually Completed) |
 | `DepartmentName` | string | Department name |
 | `AppointmentPhysician` | string | Physician on the appointment |
+| `InPatientFlag` | string | Whether patient is inpatient (Yes/No) |
 | `TreatingPhysician` | string | Treating physician |
 | `ConsultPhysician` | string | Consult physician |
 | `ReferringPhysicianID` | int | FK to Lookup - Referring |
@@ -592,64 +707,55 @@ All incremental files use `UniqueRowID` as the deduplication key. New rows are a
 ### Workflow
 
 - **File:** `Incremental/Workflow/Workflow.csv`
-- **Size:** ~15 MB
+- **Size:** ~36 MB
 - **Used by:** Workflow page
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `UniqueRowID` | int | Deduplication key |
 | `PatientId` | string | Patient identifier |
-| `PatientFullName` | string | Patient name (LAST, FIRST) |
-| `AppointmentCreatedDate` | date | Appointment creation date |
-| `ScheduledDateTime` | datetime | Scheduled appointment time |
-| `DurationMinutes` | int | Appointment duration |
-| `DaysFromCreatedToAppt` | int | Lead time in days |
-| `ActivityName` | string | Visit type (Consult, Follow-Up, Virtual Consult/Follow Up) |
-| `ActivityStatus` | string | Status (Manually Completed, Cancelled) |
-| `AppointmentNotes` | string | Clinical notes |
+| `PatientName` | string | Patient name (LAST, FIRST) |
+| `StageName` | string | Workflow stage: Exam, Simulation, Draw, ContourReview, Isodose, ReviewPlan, Treatment |
+| `StageTypeOrder` | int | Stage type ordering (1=Exam, 2=Simulation, 3=Draw, 4=ContourReview, 5=Isodose, 6=ReviewPlan, 7=Treatment) |
+| `StageActivityName` | string | Activity name within the stage (e.g., Consult, Follow-Up, Initial Simulation, Draw Volumes / Add Rx) |
+| `StageDateTime` | datetime (M/D/YYYY H:MM:SS AM/PM) | When the stage occurred/is scheduled |
+| `StageEndDateTime` | datetime (M/D/YYYY H:MM:SS AM/PM) | Stage end time (if applicable) |
+| `StageDueDateTime` | datetime (M/D/YYYY H:MM:SS AM/PM) | SLA deadline for this stage |
+| `StageCreationDateTime` | datetime (M/D/YYYY H:MM:SS AM/PM) | When this stage record was created |
+| `CompletedBy` | string | Person who completed this stage |
+| `StageStatus` | string | Status: Manually Completed, Completed, Open, Scheduled, In Progress, Cancelled, Cancelled - Patient No-Show, Deleted |
+| `BaselineDateTime` | datetime | Baseline reference datetime for SLA calculations |
+| `AttributedSimOccurrence` | int | Which simulation occurrence this stage is attributed to |
+| `DimCourseID` | int | Course dimension ID |
+| `ExamCreatedDate` | date (MM/DD/YYYY) | When the originating exam was created |
+| `ExamDurationMinutes` | int | Duration of the originating exam |
+| `ExamActivityStatus` | string | Status of the originating exam |
+| `ExamNotes` | string | Clinical notes from the originating exam |
 | `AppointmentPhysician` | string | Appointment physician |
 | `TreatingPhysician` | string | Treating physician |
 | `ReferringPhysician` | string | Referring physician |
 | `ReferringPhysicianSpecialty` | string | Referring specialty |
 | `ReferringPhysicianRecordID` | int | FK to Lookup - Referring |
 | `ProcedureCodes` | string | CPT codes |
-| `DiagnosisCodes` | string | ICD codes |
 | `ProcedureDescriptions` | string | CPT descriptions |
+| `DiagnosisCodes` | string | ICD codes |
 | `DiagnosisDescriptions` | string | Diagnosis descriptions |
-| `SimulationActivityName` | string | Linked simulation type |
-| `SimulationCreatedDate` | date | Sim creation date |
-| `SimulationDateTime` | datetime | Sim appointment time |
-| `DaysToSimulation` | int | Days from consult to sim |
-| `DrawStartDateTime` | datetime | Draw volumes task start |
-| `DrawDueDateTime` | datetime | Draw volumes task deadline |
-| `DrawCompletedDateTime` | datetime | Draw volumes completion |
-| `DrawMinutesToComplete` | float | Draw volumes actual minutes |
-| `DrawMinutesAllowed` | float | Draw volumes SLA minutes |
-| `DrawCompletingMD` | string | MD who completed draw volumes |
-| `MinutesFromSimToDrawCompletion` | float | Minutes from sim to draw completion |
-| `IsodosePlanStartDateTime` | datetime | Isodose plan task start |
-| `IsodosePlanDueDateTime` | datetime | Isodose plan deadline |
-| `IsodosePlanCompletedDateTime` | datetime | Isodose plan completion |
-| `IsodosePlanMinutesToComplete` | float | Isodose plan actual minutes (wall-clock) |
-| `IsodosePlanMinutesAllowed` | float | Isodose plan SLA minutes |
-| `IsodosePlanCompletingUser` | string | User who completed isodose plan |
-| `DaysFromSimToIsodose` | int | Days from sim to isodose completion |
-| `ReviewPlanStartDateTime` | datetime | Review plan task start |
-| `ReviewPlanDueDateTime` | datetime | Review plan deadline |
-| `ReviewPlanCompletedDateTime` | datetime | Review plan completion |
-| `ReviewPlanMinutesToComplete` | float | Review plan actual minutes |
-| `ReviewPlanMinutesAllowed` | float | Review plan SLA minutes |
-| `ReviewPlanCompletingMD` | string | MD who completed review |
-| `DaysFromSimToReview` | int | Days from sim to review completion |
-| `FirstTreatmentDate` | datetime | First treatment date |
-| `DaysFromReviewToTreatment` | int | Days from review to first treatment |
+| `Department` | string | Department name (no `*` prefix) |
+| `ExamDateTime` | datetime (M/D/YYYY H:MM:SS AM/PM) | Originating exam appointment datetime |
+| `ModalityType` | string | Treatment modality: EBRT, Brachytherapy, or Undetermined |
+| `StageOccurrence` | int | Occurrence number for repeated stages |
+| `StageOrder` | int | Ordering within the patient's workflow sequence |
 
 **Business rules:**
-- Tracks the complete patient journey: Consult → Sim → Draw → Isodose → Review → Treatment
-- Each workflow step has start/due/completed datetimes plus minutes to complete and SLA
-- `IsodosePlanMinutesToComplete` is wall-clock elapsed time, not active work time (can be thousands of minutes = days)
-- Many fields are empty for Follow-Up visits (no new treatment workflow triggered)
-- Only Consult rows with downstream sim/treatment data are relevant for Sankey/funnel analysis
+- **Restructured format:** Each row represents one stage in the patient workflow (previously each row contained all stages as separate column groups)
+- Tracks the complete patient journey: Exam → Simulation → Draw → ContourReview → Isodose → ReviewPlan → Treatment
+- `StageTypeOrder` provides canonical stage ordering (1-7)
+- `StageOccurrence` handles patients with multiple simulations/courses — groups related stages
+- `StageOrder` provides sequence ordering within a patient's full workflow
+- To reconstruct the old per-patient timeline view, pivot on `PatientId` + `StageOccurrence` with `StageName` as columns
+- `ExamCreatedDate`, `ExamDurationMinutes`, `ExamActivityStatus`, `ExamNotes`, `ExamDateTime` carry forward the originating exam context to all downstream stages
+- `Department` is now included directly (previously had to merge via `_patient_department_map()`)
+- `ModalityType` classifies the treatment pathway (EBRT vs Brachytherapy)
 
 ---
 
@@ -658,7 +764,7 @@ All incremental files use `UniqueRowID` as the deduplication key. New rows are a
 ### Lookup - Diagnosis
 
 - **File:** `Lookup/Lookup - Diagnosis.csv`
-- **Size:** ~204 KB
+- **Size:** ~205 KB
 - **Join key:** `DiagnosisCode` (join to `DiagnosisCodes` column in other tables — note: other tables may have comma-separated codes)
 
 | Column | Type | Description |
@@ -719,7 +825,7 @@ All incremental files use `UniqueRowID` as the deduplication key. New rows are a
 ### Lookup - Referring
 
 - **File:** `Lookup/Lookup - Referring.csv`
-- **Size:** ~916 KB
+- **Size:** ~917 KB
 - **Join key:** `DimDoctorID` (matches `ReferringPhysicianDimDoctorID` or `ReferringPhysicianID` in other tables)
 
 | Column | Type | Description |
@@ -769,6 +875,7 @@ Lookup - Patients (PatientId)
   ├── Simulations (PatientId)
   ├── Weekly Visits (PatientId)
   ├── Workflow (PatientId)
+  ├── Procedures (PatientId)
   ├── Treatment - Detail (PatientMRN)  ← different column name
   └── Machine Errors (PatientId)
 
@@ -776,6 +883,7 @@ Lookup - Referring (DimDoctorID)
   ├── Clinic Visits (ReferringPhysicianDimDoctorID)
   ├── Billing (ReferringPhysicianDimDoctorID)
   ├── Simulations (ReferringPhysicianDimDoctorID)
+  ├── Procedures (ReferringPhysicianDimDoctorID)
   ├── Courses (ReferringPhysicianID)           ← different name
   ├── Plans (ReferringPhysicianID)             ← different name
   ├── Weekly Visits (ReferringPhysicianID)     ← different name
@@ -818,6 +926,19 @@ Four radiation oncologists appear across all data:
 | Aberdeen | 21iX_AB | |
 
 Additional location values in Daily Volume / Treatment:
-- `Simulation` (CT sim room)
+- `Simulation` / `CT_Sim` / `CT_CEN` (CT sim rooms)
 - `6EX` (appears inactive — no appointments)
-- `Lacey - 21EX`, `Lacey - TrueBeamNorth` (machine-level breakdowns)
+- `Lacey - 21EX`, `Lacey - TrueBeamNorth` (machine-level breakdowns in Treatment.csv)
+
+---
+
+## Common New Columns Across Files
+
+Several columns were added across multiple datasets in recent CSV format updates:
+
+| Column | Found in | Description |
+|--------|----------|-------------|
+| `FxOverride` | CPT Audit, OTV Audit, Courses, Treatment Detail | Fraction override count — indicates manual fraction adjustments |
+| `InPatientFlag` | Clinic Visits, Courses, Simulations, Procedures, Treatment Detail, Weekly Visits | Whether patient is inpatient (Yes/No) |
+| `Department` | Simulations, Workflow | Department added directly to source (previously required merge via `_patient_department_map()`) |
+| `ModalityType` | Clinic Visits, Workflow | Treatment modality classification (EBRT, Brachytherapy) |

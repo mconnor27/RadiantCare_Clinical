@@ -135,11 +135,12 @@ def _parse_dates(df, cols):
 def _load_incremental(folder, base_name, dedup_key):
     """Load and merge all incremental CSV files from a folder.
 
-    Reads base_name.csv, base_name_1.csv, base_name_2.csv, etc.,
-    concatenates them in numeric order, and deduplicates by *dedup_key*.
-    The row from the highest-numbered file wins, **except** referring-
-    physician columns are preserved: if an earlier file has a non-null
-    referring value and a later file has null, the earlier value is kept.
+    Reads files matching ``base_name_yyyymmdd.csv`` (date-suffixed
+    increments), concatenates them in date order, and deduplicates by
+    *dedup_key*.  The row from the latest-dated file wins, **except**
+    referring-physician columns are preserved: if an earlier file has a
+    non-null referring value and a later file has null, the earlier value
+    is kept.
 
     Parameters
     ----------
@@ -153,11 +154,8 @@ def _load_incremental(folder, base_name, dedup_key):
     folder = Path(folder)
     key_cols = [dedup_key] if isinstance(dedup_key, str) else list(dedup_key)
 
-    # Gather base file + numbered increments
+    # Gather date-suffixed increments (base_name_yyyymmdd.csv)
     files = []
-    base_path = folder / f"{base_name}.csv"
-    if base_path.exists():
-        files.append((0, base_path))
     for f in folder.glob(f"{base_name}_*.csv"):
         suffix = f.stem[len(base_name) + 1:]
         try:
@@ -301,13 +299,28 @@ def load_daily_volume_future():
 
 
 @lru_cache(maxsize=1)
+def load_daily_volume_by_resource():
+    """Load Daily Volume - Past.csv at resource (machine) granularity.
+
+    Keeps Treatment + Simulation Category rows with Resource as the key.
+    Used by Operations efficiency chart.
+    """
+    df = _read_csv_safe(DATA_COMPLETE / "Daily Volume - Past.csv")
+    df = _normalize_columns(df, {"Date": "ScheduledDate"})
+    df = _parse_dates(df, ["ScheduledDate"])
+    # Keep only rows with a specific Resource (drop aggregate/Total rows)
+    df = df[df["Resource"].notna() & (df["Category"] != "Total")]
+    return df
+
+
+@lru_cache(maxsize=1)
 def load_availability():
-    """Load Availability.csv.
+    """Load Availability.csv (incremental with UniqueRowID).
 
     Columns: DepartmentName→Department, AppointmentDateTime→SlotDate,
     Category, ScheduledEndTime, DurationMinutes, ActivityName, etc.
     """
-    df = _read_csv_safe(DATA_INCREMENTAL / "Availability" / "Availability.csv")
+    df = _load_incremental(DATA_INCREMENTAL / "Availability", "Availability", "UniqueRowID")
     df = _normalize_columns(df, {"DepartmentName": "Department"})
     df = _clean_department(df)
     df = _parse_dates(df, ["AppointmentDateTime", "ScheduledEndTime"])
@@ -321,7 +334,8 @@ def load_availability():
 def load_clinic_visits():
     """Load Clinic Visits.csv.
 
-    Columns: DepartmentName→Department, ActivityStatus→Status
+    Columns: DepartmentName→Department, ActivityStatus→Status.
+    Includes SimulationStatus, SimActivityName, ModalityType for pipeline tracking.
     """
     df = _load_incremental(DATA_INCREMENTAL / "ClinicVisits", "Clinic Visits", "UniqueRowID")
     df = _normalize_columns(df, {
@@ -329,7 +343,8 @@ def load_clinic_visits():
         "ActivityStatus": "Status",
     })
     df = _clean_department(df)
-    df = _parse_dates(df, ["ScheduledDateTime", "AppointmentCreatedDate"])
+    df = _parse_dates(df, ["ScheduledDateTime", "AppointmentCreatedDate",
+                           "SimulationDateTime"])
     return df
 
 
@@ -337,14 +352,14 @@ def load_clinic_visits():
 def load_simulations():
     """Load Simulations.csv.
 
-    No Department column in source data.
-    Has ActivityStatus (not Status) for filtering.
+    Department now included in source. ActivityStatus→Status for filtering.
     """
     df = _load_incremental(DATA_INCREMENTAL / "Simulations", "Simulations", "UniqueRowID")
     df = _normalize_columns(df, {"ActivityStatus": "Status"})
     df = _parse_dates(df, ["ScheduledDateTime", "AppointmentCreatedDate",
-                           "PriorClinicExamAppointmentDate", "FirstTreatmentDate"])
-    # Add Department from Treatment Detail (source CSV has none)
+                           "PriorClinicExamAppointmentDate", "FirstTreatmentDate",
+                           "ScheduledTreatmentDate"])
+    # Department is now in source; fall back to Treatment Detail map if missing
     if "Department" not in df.columns and "PatientId" in df.columns:
         dept_map = _patient_department_map()
         if not dept_map.empty:
@@ -355,27 +370,17 @@ def load_simulations():
 
 @lru_cache(maxsize=1)
 def load_workflow():
-    """Load Workflow.csv.
+    """Load Workflow.csv — stage-based format.
 
-    Columns: SimulationDateTime→SimulationDate,
-    DrawCompletedDateTime→DrawVolumesCompletedDate,
-    IsodosePlanCompletedDateTime→IsodosePlanCompletedDate,
-    ReviewPlanCompletedDateTime→ReviewPlanCompletedDate
-    No Department column in source data.
+    Each row is one workflow stage (Exam, Simulation, Draw, ContourReview,
+    Isodose, ReviewPlan, Treatment). Department now included in source.
     """
     df = _load_incremental(DATA_INCREMENTAL / "Workflow", "Workflow", "UniqueRowID")
-    df = _normalize_columns(df, {
-        "SimulationDateTime": "SimulationDate",
-        "DrawCompletedDateTime": "DrawVolumesCompletedDate",
-        "IsodosePlanCompletedDateTime": "IsodosePlanCompletedDate",
-        "ReviewPlanCompletedDateTime": "ReviewPlanCompletedDate",
-    })
     df = _parse_dates(df, [
-        "ScheduledDateTime", "SimulationDate",
-        "DrawVolumesCompletedDate", "IsodosePlanCompletedDate",
-        "ReviewPlanCompletedDate", "FirstTreatmentDate",
+        "StageDateTime", "StageEndDateTime", "StageDueDateTime",
+        "StageCreationDateTime", "BaselineDateTime", "ExamDateTime",
     ])
-    # Add Department from Treatment Detail (source CSV has none)
+    # Department is now in source; fall back to Treatment Detail map if missing
     if "Department" not in df.columns and "PatientId" in df.columns:
         dept_map = _patient_department_map()
         if not dept_map.empty:
@@ -388,11 +393,16 @@ def load_workflow():
 def load_tasks():
     """Load Tasks.csv.
 
-    Columns: PatientName→PatientFullName
+    Columns: PatientName→PatientFullName.
+    Includes simulation linkage columns for draw/review turnaround analysis.
     """
     df = _read_csv_safe(DATA_COMPLETE / "Tasks.csv")
     df = _normalize_columns(df, {"PatientName": "PatientFullName"})
-    df = _parse_dates(df, ["StartDateTime", "DueDateTime", "CompletedDateTime"])
+    df = _parse_dates(df, [
+        "StartDateTime", "DueDateTime", "CompletedDateTime",
+        "DrawCreationDateTime", "SimulationDateTime",
+        "SimScheduledEndDateTime", "SimActualEndDateTime",
+    ])
     if "UniqueRowID" in df.columns:
         df = df.drop_duplicates(subset=["UniqueRowID"], keep="last")
     return df
@@ -473,12 +483,26 @@ def load_machines():
 def load_billing():
     """Load Billing.csv.
 
-    Columns: DepartmentName→Department
+    Columns: DepartmentName→Department.
+    Includes ActivityCategory, billing workflow status columns, etc.
     """
     df = _load_incremental(DATA_INCREMENTAL / "Billing", "Billing", "UniqueRowID")
     df = _normalize_columns(df, {"DepartmentName": "Department"})
     df = _clean_department(df)
-    df = _parse_dates(df, ["DateOfService"])
+    df = _parse_dates(df, ["DateOfService", "ActivityDateTime"])
+    return df
+
+
+@lru_cache(maxsize=1)
+def load_procedures():
+    """Load Procedures.csv — ancillary procedures (SpaceOAR, Lupron, etc.).
+
+    Columns: DepartmentName→Department.
+    """
+    df = _load_incremental(DATA_INCREMENTAL / "Procedures", "Procedures", "UniqueRowID")
+    df = _normalize_columns(df, {"DepartmentName": "Department"})
+    df = _clean_department(df)
+    df = _parse_dates(df, ["ScheduledDateTime", "AppointmentCreatedDate"])
     return df
 
 
@@ -512,19 +536,19 @@ def load_diagnosis():
 
 @lru_cache(maxsize=1)
 def load_physician_schedule():
-    """Load Physician Schedule.csv."""
+    """Load Physician Schedule.csv.
+
+    DepartmentName (with * prefix) now in source.
+    """
     df = _read_csv_safe(DATA_COMPLETE / "Physician Schedule.csv")
+    df = _normalize_columns(df, {"DepartmentName": "Department"})
+    df = _clean_department(df)
     df = _parse_dates(df, ["ScheduledDate"])
     df = df.rename(columns={
         "ScheduledDate": "Date",
         "PhysicianName": "Physician",
         "ActivityName": "Status",
     })
-    # Derive Department from Status (site assignment activities)
-    site_map = {"CENTRALIA": "Centralia", "ABERDEEN": "Aberdeen"}
-    upper = df["Status"].str.upper()
-    df["Department"] = upper.map(site_map)
-    df.loc[upper.isin(["ON CALL", "WEEKEND CALL"]), "Department"] = "Lacey"
     return df
 
 
@@ -535,11 +559,12 @@ def clear_cache():
     for fn in [
         _patient_department_map,
         load_treatment, load_treatment_detail, load_daily_volume,
-        load_daily_volume_future, load_availability, load_clinic_visits,
+        load_daily_volume_future, load_daily_volume_by_resource,
+        load_availability, load_clinic_visits,
         load_simulations, load_workflow, load_tasks, load_otvs,
         load_weekly_visits, load_courses, load_plans, load_machines,
-        load_billing, load_cpt_audit, load_patients, load_referring,
-        load_diagnosis, load_physician_schedule,
+        load_billing, load_cpt_audit, load_procedures, load_patients,
+        load_referring, load_diagnosis, load_physician_schedule,
         load_geocode_cache,
     ]:
         fn.cache_clear()

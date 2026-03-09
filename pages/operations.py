@@ -293,6 +293,77 @@ layout = dmc.Stack(
             p="md", radius="md", shadow="xs", withBorder=True,
         ),
 
+        # Resource Utilization Chart (full-width)
+        dmc.Paper(
+            children=[
+                dmc.Group(
+                    justify="space-between", mb="sm",
+                    children=[
+                        dmc.Group(gap="sm", align="center", children=[
+                            dmc.Text("Resource Utilization", size="sm", fw=500, c="#6B7280"),
+                            dmc.SegmentedControl(
+                                id="ops-efficiency-agg",
+                                data=[
+                                    {"value": "D", "label": "Daily"},
+                                    {"value": "W", "label": "Weekly"},
+                                    {"value": "M", "label": "Monthly"},
+                                ],
+                                value="D",
+                                size="xs",
+                            ),
+                        ]),
+                        dmc.Group(gap="xs", align="center", children=[
+                            dmc.SegmentedControl(
+                                id="ops-efficiency-range",
+                                data=[
+                                    {"value": "30", "label": "30d"},
+                                    {"value": "60", "label": "60d"},
+                                    {"value": "90", "label": "90d"},
+                                    {"value": "180", "label": "6mo"},
+                                    {"value": "365", "label": "1y"},
+                                    {"value": "0", "label": "All"},
+                                ],
+                                value="90",
+                                size="xs",
+                            ),
+                            chart_settings_popover(
+                                "ops-efficiency",
+                                chart_types=[
+                                    {"value": "line", "label": "Line"},
+                                    {"value": "area", "label": "Area"},
+                                    {"value": "bar", "label": "Bar"},
+                                ],
+                                show_smooth=True,
+                                smooth_max=30,
+                                smooth_default=7,
+                            ),
+                        ]),
+                    ],
+                ),
+                dmc.Box(
+                    pos="relative",
+                    children=[
+                        dmc.LoadingOverlay(
+                            id="ops-efficiency-loading",
+                            visible=False,
+                            loaderProps={"type": "dots", "color": "#7C2A83"},
+                            overlayProps={"radius": "sm", "blur": 2},
+                        ),
+                        dcc.Graph(
+                            id="ops-chart-efficiency",
+                            config={
+                                "displayModeBar": False,
+                                "scrollZoom": False,
+                                "doubleClick": "reset",
+                            },
+                            style={"height": "380px"},
+                        ),
+                    ],
+                ),
+            ],
+            p="md", radius="md", shadow="xs", withBorder=True,
+        ),
+
         # Daily Detail Table (full-width)
         dmc.Paper(
             children=[
@@ -346,6 +417,7 @@ layout = dmc.Stack(
         # Stores for clientside rendering
         dcc.Store(id="ops-store-volume"),
         dcc.Store(id="ops-store-ribbon"),
+        dcc.Store(id="ops-store-efficiency"),
         dcc.Store(id="ops-store-kpi-sparklines"),
     ],
 )
@@ -529,6 +601,119 @@ def _prepare_hours_data(departments, machines, days_back=90, aggregate_weekly=Fa
 
 
 # ---------------------------------------------------------------------------
+# Helper: Resource Utilization Data (for clientside smoothing)
+# ---------------------------------------------------------------------------
+
+# Machine → department for filtering; sim resources mapped separately
+_RESOURCE_DEPT = {}
+for _dept, _machines in MACHINE_MAP.items():
+    for _m in _machines:
+        _RESOURCE_DEPT[_m] = _dept
+_SIM_RESOURCES = ["CT_Sim", "CT_CEN"]
+
+# Colors: department color for treatment machines, colorway for sim resources
+_RESOURCE_COLORS = {
+    "TrueBeamNorth": "#1976D2",   # Lacey darker blue
+    "21EX": "#64B5F6",            # Lacey lighter blue
+    "21iX_CEN": DEPARTMENT_COLORS["Centralia"],
+    "21iX_AB": DEPARTMENT_COLORS["Aberdeen"],
+    "CT_Sim": CHART_COLORWAY[4],  # orange
+    "CT_CEN": CHART_COLORWAY[5],  # cyan
+}
+
+
+def _prepare_efficiency_data(departments, machines, agg, start, end):
+    """Prepare resource utilization data (Actual/Scheduled active minutes) for clientside rendering."""
+    from data.loader import load_daily_volume_by_resource
+
+    try:
+        dv = load_daily_volume_by_resource()
+        if dv.empty:
+            return None
+
+        # Determine which resources to include based on department filter
+        sites = departments if departments else DEPARTMENTS
+
+        # Treatment resources: filter by department selection + machine sub-filter
+        tx_resources = []
+        for site in sites:
+            tx_resources.extend(MACHINE_MAP.get(site, []))
+
+        # Apply machine sub-filter for Lacey (only if strict subset selected)
+        lacey_machines = set(MACHINE_MAP.get("Lacey", []))
+        if machines and "Lacey" in sites:
+            selected_lacey = lacey_machines & set(machines)
+            if selected_lacey and selected_lacey != lacey_machines:
+                tx_resources = [r for r in tx_resources if r not in lacey_machines or r in selected_lacey]
+
+        # Sim resources: always include (not department-specific)
+        all_resources = tx_resources + _SIM_RESOURCES
+
+        # Filter data
+        dv = dv[dv["Resource"].isin(all_resources)].copy()
+
+        # Need both columns for the ratio
+        for col in ["ScheduledActiveMinutes", "ActualActiveMinutes"]:
+            if col not in dv.columns:
+                return None
+
+        # Date filter
+        dv = dv[(dv["ScheduledDate"] >= start) & (dv["ScheduledDate"] <= end)]
+        if dv.empty:
+            return None
+
+        # Period aggregation
+        dv["period"] = dv["ScheduledDate"].dt.to_period(agg).dt.to_timestamp()
+        if agg == "D":
+            dv = dv[dv["ScheduledDate"].dt.weekday < 5]
+
+        # Sum minutes per period per resource, then compute ratio
+        grouped = dv.groupby(["period", "Resource"]).agg(
+            actual=("ActualActiveMinutes", "sum"),
+            scheduled=("ScheduledActiveMinutes", "sum"),
+        ).reset_index()
+        grouped["utilization"] = np.where(
+            grouped["scheduled"] > 0,
+            (grouped["actual"] / grouped["scheduled"]) * 100,
+            np.nan,
+        )
+        # Cap at 150% — anything higher is bad data (e.g. ActualActiveMinutes = 230k)
+        grouped["utilization"] = grouped["utilization"].clip(upper=150)
+
+        all_periods = sorted(grouped["period"].unique())
+        date_range = [d.isoformat() for d in all_periods]
+
+        # Build series for each resource that has meaningful data
+        series = []
+        for resource in all_resources:
+            res_data = grouped[grouped["Resource"] == resource].set_index("period")["utilization"]
+            non_null = res_data.dropna()
+            if non_null.empty or len(non_null) < 5:
+                continue  # Skip resources with too little data (e.g. CT_CEN, 6EX)
+            res_data = res_data.reindex(all_periods, fill_value=0)
+            series.append({
+                "name": resource,
+                "values": [round(v, 1) if pd.notna(v) and v > 0 else 0 for v in res_data.tolist()],
+                "color": _RESOURCE_COLORS.get(resource, CHART_COLORWAY[0]),
+            })
+
+        if not series:
+            return None
+
+        return {
+            "chartId": "ops-chart-efficiency",
+            "dates": date_range,
+            "series": series,
+            "height": 380,
+            "yTitle": "Utilization %",
+            "stacked": False,
+        }
+
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Helper: Treatment Volume Data (for clientside smoothing)
 # ---------------------------------------------------------------------------
 
@@ -582,6 +767,7 @@ def _prepare_volume_data(departments, machines, agg, start, end):
             })
 
         return {
+            "chartId": "ops-chart-volume",
             "dates": date_range,
             "series": series,
             "height": 380,
@@ -1076,15 +1262,8 @@ def update_volume_data(_n, agg, departments, machines):
         result = _prepare_volume_data(departments, machines, agg, start, last_date)
 
         # Debug logging
-        if result and result.get('dates'):
-            print(f"[DEBUG] Volume data prepared: {len(result['dates'])} dates from {result['dates'][0]} to {result['dates'][-1]}")
-            print(f"[DEBUG] Last 5 dates: {result['dates'][-5:]}")
-
         return result
-    except Exception as e:
-        print(f"[ERROR] update_volume_data: {e}")
-        import traceback
-        traceback.print_exc()
+    except Exception:
         return None
 
 
@@ -1379,6 +1558,72 @@ clientside_callback(
 
 
 # ---------------------------------------------------------------------------
+# Efficiency Chart Callback — outputs raw data to store
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("ops-store-efficiency", "data"),
+    Input("ops-interval", "n_intervals"),
+    Input("ops-efficiency-agg", "value"),
+    Input("operations-filter-department", "value"),
+    Input("operations-filter-machine", "value"),
+    running=[(Output("ops-efficiency-loading", "visible"), True, False)],
+)
+def update_efficiency_data(_n, agg, departments, machines):
+    """Load resource utilization data to store (time window applied clientside)."""
+    from data.loader import load_daily_volume_by_resource
+
+    try:
+        dv = load_daily_volume_by_resource()
+        if dv.empty:
+            return None
+        start = dv["ScheduledDate"].min()
+        last_date = dv["ScheduledDate"].max()
+        return _prepare_efficiency_data(departments, machines, agg, start, last_date)
+    except Exception:
+        return None
+
+
+# Clientside callback for efficiency chart smoothing with chart type and time window
+clientside_callback(
+    ClientsideFunction(namespace="census", function_name="smoothChartWithTypeAndRange"),
+    Output("ops-chart-efficiency", "figure"),
+    Input("ops-store-efficiency", "data"),
+    Input("ops-efficiency-settings-smooth", "value"),
+    Input("ops-efficiency-settings-type", "value"),
+    Input("ops-efficiency-range", "value"),
+    State("ops-chart-efficiency", "figure"),
+)
+
+# Dynamically adjust smoothing slider range for efficiency chart
+clientside_callback(
+    _SMOOTH_MAX_JS,
+    Output("ops-efficiency-settings-smooth", "max"),
+    Output("ops-efficiency-settings-smooth", "value"),
+    Input("ops-efficiency-range", "value"),
+    State("ops-efficiency-settings-smooth", "value"),
+)
+
+
+# ---------------------------------------------------------------------------
+# Efficiency Settings Panel Toggle
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("ops-efficiency-settings-panel", "style"),
+    Input("ops-efficiency-settings-btn", "n_clicks"),
+    State("ops-efficiency-settings-panel", "style"),
+    prevent_initial_call=True,
+)
+def toggle_efficiency_settings(n, style):
+    if not n:
+        return style
+    current = style or {}
+    is_hidden = current.get("display") == "none"
+    return {"display": "block"} if is_hidden else {"display": "none"}
+
+
+# ---------------------------------------------------------------------------
 # Daily Detail Table Column Definitions Callback
 # ---------------------------------------------------------------------------
 
@@ -1420,17 +1665,12 @@ def update_table(_n, range_days, departments, machines, include_future, view_by)
     """Build daily detail table data with optional future data and machine-level detail."""
     from data.loader import load_daily_volume, load_daily_volume_future, load_treatment
 
-    print(f"[DEBUG TABLE] Called with: range_days={range_days}, departments={departments}, machines={machines}, include_future={include_future}, view_by={view_by}")
-
     try:
         dv_past = load_daily_volume()
         dv_future = load_daily_volume_future() if include_future else pd.DataFrame()
         tx = load_treatment()
 
-        print(f"[DEBUG TABLE] Loaded: dv_past={len(dv_past)} rows, dv_future={len(dv_future)} rows, tx={len(tx)} rows")
-
         if dv_past.empty and dv_future.empty:
-            print("[DEBUG TABLE] Both past and future daily volume are empty, returning []")
             return []
 
         # Combine past and future data
@@ -1442,7 +1682,6 @@ def update_table(_n, range_days, departments, machines, include_future, view_by)
         # For range calculation, use last_date_past for historical data
         # For future data, include up to 14 days ahead if enabled
         days = int(range_days) if range_days else 90
-        print(f"[DEBUG TABLE] Date range: last_date_past={last_date_past}, days={days}")
 
         if days > 0:
             start = last_date_past - timedelta(days=days - 1)
@@ -1514,10 +1753,7 @@ def update_table(_n, range_days, departments, machines, include_future, view_by)
         # Date filter
         dv = dv[(dv["ScheduledDate"] >= start) & (dv["ScheduledDate"] <= end)]
 
-        print(f"[DEBUG TABLE] After filtering: dv={len(dv)} rows")
-
         if dv.empty:
-            print("[DEBUG TABLE] No data after filtering, returning []")
             return []
 
         # Build row data
@@ -1587,13 +1823,9 @@ def update_table(_n, range_days, departments, machines, include_future, view_by)
                 "New Starts": new_starts,
             })
 
-        print(f"[DEBUG TABLE] Returning {len(rows)} rows")
         return sorted(rows, key=lambda x: x["Date"], reverse=True)
 
-    except Exception as e:
-        print(f"[ERROR TABLE] Exception: {e}")
-        import traceback
-        traceback.print_exc()
+    except Exception:
         return []
 
 
@@ -1660,6 +1892,21 @@ clientside_callback(
     }""",
     Output("ops-ribbon-settings-export", "n_clicks"),
     Input("ops-ribbon-settings-export", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        var wrapper = document.getElementById('ops-chart-efficiency');
+        var graphEl = wrapper ? wrapper.querySelector('.js-plotly-plot') : null;
+        if (graphEl) {
+            Plotly.downloadImage(graphEl, {format: 'png', width: 1200, height: 600, filename: 'resource_utilization'});
+        }
+        return window.dash_clientside.no_update;
+    }""",
+    Output("ops-efficiency-settings-export", "n_clicks"),
+    Input("ops-efficiency-settings-export", "n_clicks"),
     prevent_initial_call=True,
 )
 

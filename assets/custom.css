@@ -160,12 +160,12 @@ body {
     top: 0;
     z-index: 50;
     background-color: #F5F6F8;
-    padding-top: 8px;
-    padding-bottom: 16px;
-    margin-top: -8px;
+    padding-top: 4px;
+    padding-bottom: 0;
+    margin-top: -4px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 8px;
 }
 
 /* Add shadow when scrolled */

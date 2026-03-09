@@ -256,13 +256,17 @@ def _prepare_hours_data(departments, days_back=30):
 # Helper: Slot Availability Calendar (Dual - Exam & Sim)
 # ---------------------------------------------------------------------------
 
-def _build_availability_calendar(departments):
+def _build_availability_calendar(departments, consults_only=True):
     """Build 4-week availability calendar with Exam and Sim side by side.
 
     Layout: Mon-Fri as columns (like a calendar), weeks as rows.
     Shows % booked (scheduled / total capacity) for each day.
     Green (<50%), Yellow (50-80%), Red (>80%)
     Includes median lead time for future scheduled appointments.
+
+    Args:
+        departments: list of departments to filter by, or None/empty for all.
+        consults_only: if True, filter consult calendar to Consult activities only.
     """
     from data.loader import load_availability, load_clinic_visits, load_simulations
 
@@ -270,32 +274,48 @@ def _build_availability_calendar(departments):
         today = pd.Timestamp.now().normalize()
         four_weeks = today + timedelta(days=28)
 
-        # Load open holds from Availability
+        # Load open holds from Availability (only unfilled slots)
         avail = load_availability()
-        if departments and "Department" in avail.columns:
-            avail = avail[avail["Department"].isin(departments)]
+        if "SlotTaken" in avail.columns:
+            avail = avail[avail["SlotTaken"] != "Yes"]
+        # Drop 8:00 AM sim buffer slots (30-min setup holds, not bookable)
+        avail = avail[
+            ~(
+                (avail["Category"].str.contains("Simulation", case=False, na=False))
+                & (avail["AppointmentDateTime"].dt.hour == 8)
+                & (avail["AppointmentDateTime"].dt.minute == 0)
+                & (avail["DurationMinutes"] == 30)
+            )
+        ]
         avail_future = avail[
             (avail["SlotDate"] >= today) &
             (avail["SlotDate"] <= four_weeks)
         ]
+        # Department filter applies to exams only (sims are one location)
+        if departments and "Department" in avail_future.columns:
+            avail_future_dept = avail_future[avail_future["Department"].isin(departments)]
+        else:
+            avail_future_dept = avail_future
 
-        # Load clinic visits for exams
+        # Load clinic visits for exams (department-filtered, exclude cancelled)
         cv = load_clinic_visits()
+        if "Status" in cv.columns:
+            cv = cv[cv["Status"] != "Cancelled"]
         if departments and "Department" in cv.columns:
             cv = cv[cv["Department"].isin(departments) | cv["Department"].isna()]
         cv_future = cv[
             (cv["ScheduledDateTime"] >= today) &
             (cv["ScheduledDateTime"] <= four_weeks)
         ]
-        if "ActivityName" in cv_future.columns:
+        if consults_only and "ActivityName" in cv_future.columns:
             cv_future = cv_future[
-                cv_future["ActivityName"].str.contains("Consult|Follow", case=False, na=False)
+                cv_future["ActivityName"].str.contains("Consult", case=False, na=False)
             ]
 
-        # Load simulations
+        # Load simulations (no department filter — one location, exclude cancelled)
         sims = load_simulations()
-        if departments and "Department" in sims.columns:
-            sims = sims[sims["Department"].isin(departments) | sims["Department"].isna()]
+        if "Status" in sims.columns:
+            sims = sims[sims["Status"] != "Cancelled"]
         sims_future = sims[
             (sims["ScheduledDateTime"] >= today) &
             (sims["ScheduledDateTime"] <= four_weeks)
@@ -305,10 +325,15 @@ def _build_availability_calendar(departments):
         exam_scheduled = cv_future.groupby(cv_future["ScheduledDateTime"].dt.normalize()).size()
         sim_scheduled = sims_future.groupby(sims_future["ScheduledDateTime"].dt.normalize()).size()
 
-        # Open holds by category
-        exam_open = avail_future[
-            avail_future["Category"].str.contains("Exam", case=False, na=False)
-        ].groupby("SlotDate").size()
+        # Open holds by category — exams use dept filter, sims do not
+        exam_avail = avail_future_dept[
+            avail_future_dept["Category"].str.contains("Exam", case=False, na=False)
+        ]
+        if consults_only and "ActivityName" in exam_avail.columns:
+            exam_avail = exam_avail[
+                exam_avail["ActivityName"].str.contains("Consult", case=False, na=False)
+            ]
+        exam_open = exam_avail.groupby("SlotDate").size()
         sim_open = avail_future[
             avail_future["Category"].str.contains("Simulation", case=False, na=False)
         ].groupby("SlotDate").size()
@@ -360,7 +385,24 @@ def _build_availability_calendar(departments):
 
         # Build calendar grids - TRANSPOSED: weeks as rows, Mon-Fri as columns
         x_labels = ["Mon", "Tue", "Wed", "Thu", "Fri"]
-        y_labels = [f"Wk {ws.strftime('%m/%d')}" for ws in weeks]
+
+        # Compute weekly scheduled/total summaries
+        def _week_summary(sched_series, total_series, week_start):
+            ws = wt = 0
+            for d in range(5):
+                td = week_start + timedelta(days=d)
+                ws += int(sched_series.get(td, 0))
+                wt += int(total_series.get(td, 0))
+            return ws, wt
+
+        y_labels_exam = []
+        y_labels_sim = []
+        for ws in weeks:
+            base = f"Wk {ws.strftime('%m/%d')}"
+            es, et = _week_summary(exam_scheduled, exam_total, ws)
+            ss, st = _week_summary(sim_scheduled, sim_total, ws)
+            y_labels_exam.append(f"{base}<br><span style='font-size:9px;color:#6B7280'>{es}/{et}</span>")
+            y_labels_sim.append(f"{base}<br><span style='font-size:9px;color:#6B7280'>{ss}/{st}</span>")
 
         def build_grid(pct_series, sched_series, total_series):
             z_data = []
@@ -387,23 +429,51 @@ def _build_availability_calendar(departments):
         sim_z, sim_hover = build_grid(sim_pct, sim_scheduled, sim_total)
 
         # Create subplots - two heatmaps side by side
+        exam_title = "Consults" if consults_only else "All Clinic Visits"
         fig = make_subplots(
             rows=1, cols=2,
-            subplot_titles=["Consults", "Simulations"],
+            subplot_titles=[exam_title, "Simulations"],
             horizontal_spacing=0.12,
         )
 
         colorscale = [
-            [0, "#4CAF50"],      # Green - plenty available
-            [0.5, "#FFC107"],    # Yellow - filling up
-            [1, "#F44336"],      # Red - nearly full
+            [0, "#4CAF50"],       # Green - wide open
+            [0.50, "#8BC34A"],    # Light green - half full
+            [0.75, "#FFC107"],    # Amber - filling up
+            [0.90, "#FF9800"],    # Orange - almost full
+            [1, "#D32F2F"],       # Dark red - no availability
         ]
+
+        def _cell_labels(pct_series, sched_series, total_series):
+            """Build text grid showing open slot count or 'Full'."""
+            labels = []
+            for week_start in weeks:
+                row = []
+                for day_idx in range(5):
+                    target_date = week_start + timedelta(days=day_idx)
+                    if target_date in pct_series.index:
+                        total = int(total_series.get(target_date, 0))
+                        sched = int(sched_series.get(target_date, 0))
+                        remaining = max(0, total - sched)
+                        if total == 0:
+                            row.append("")
+                        elif remaining == 0:
+                            row.append("Full")
+                        else:
+                            row.append(str(remaining))
+                    else:
+                        row.append("")
+                labels.append(row)
+            return labels
+
+        exam_labels = _cell_labels(exam_pct, exam_scheduled, exam_total)
+        sim_labels = _cell_labels(sim_pct, sim_scheduled, sim_total)
 
         # Exam heatmap
         fig.add_trace(go.Heatmap(
             z=exam_z,
             x=x_labels,
-            y=y_labels,
+            y=y_labels_exam,
             colorscale=colorscale,
             zmin=0, zmax=100,
             text=exam_hover,
@@ -415,7 +485,7 @@ def _build_availability_calendar(departments):
         fig.add_trace(go.Heatmap(
             z=sim_z,
             x=x_labels,
-            y=y_labels,
+            y=y_labels_sim,
             colorscale=colorscale,
             zmin=0, zmax=100,
             text=sim_hover,
@@ -429,6 +499,32 @@ def _build_availability_calendar(departments):
         for ann in annotations:
             ann.y = 1.08
             ann.font = dict(size=12, color="#374151")
+
+        # Overlay cell labels as annotations
+        for row_idx, week_start in enumerate(weeks):
+            for col_idx in range(5):
+                for subplot_col, labels, ylbls in [
+                    (1, exam_labels, y_labels_exam),
+                    (2, sim_labels, y_labels_sim),
+                ]:
+                    label = labels[row_idx][col_idx]
+                    if not label:
+                        continue
+                    is_full = label == "Full"
+                    ax_suffix = "" if subplot_col == 1 else "2"
+                    annotations.append(dict(
+                        text=f"<b>{label}</b>" if is_full else label,
+                        xref=f"x{ax_suffix}",
+                        yref=f"y{ax_suffix}",
+                        x=x_labels[col_idx],
+                        y=ylbls[row_idx],
+                        showarrow=False,
+                        font=dict(
+                            size=10 if is_full else 11,
+                            color="#FFFFFF" if is_full else "rgba(0,0,0,0.6)",
+                            family=FONT_FAMILY,
+                        ),
+                    ))
 
         # Add lead time below each chart
         if exam_lead is not None:
@@ -655,7 +751,7 @@ layout = dmc.Stack(
 
         # Operating hours + Availability row
         dmc.Grid(
-            gutter=16,
+            gutter=16, align="stretch",
             children=[
                 # Left: Operating Hours Ribbon
                 dmc.GridCol(
@@ -719,7 +815,7 @@ layout = dmc.Stack(
                                 ],
                             ),
                         ],
-                        p="sm", radius="md", shadow="xs", withBorder=True,
+                        p="sm", radius="md", shadow="xs", withBorder=True, h="100%",
                     ),
                 ),
                 # Right: Availability Calendar
@@ -730,7 +826,17 @@ layout = dmc.Stack(
                             dmc.Group(
                                 justify="space-between", mb="sm",
                                 children=[
-                                    dmc.Text("Slot Availability (4 Weeks)", size="sm", fw=500, c="#6B7280"),
+                                    dmc.Group(gap="sm", align="center", children=[
+                                        dmc.Text("Slot Availability (4 Weeks)", size="sm", fw=500, c="#6B7280"),
+                                        dmc.SegmentedControl(
+                                            id="home-avail-scope",
+                                            data=[
+                                                {"value": "consults", "label": "Consults"},
+                                                {"value": "all", "label": "All"},
+                                            ],
+                                            value="consults", size="xs",
+                                        ),
+                                    ]),
                                     chart_settings_popover(
                                         "home-avail",
                                         chart_types=None,
@@ -751,7 +857,7 @@ layout = dmc.Stack(
                                 ],
                             ),
                         ],
-                        p="sm", radius="md", shadow="xs", withBorder=True,
+                        p="sm", radius="md", shadow="xs", withBorder=True, h="100%",
                     ),
                 ),
             ],
@@ -1166,11 +1272,10 @@ clientside_callback(
 @callback(
     Output("home-store-md-census", "data"),
     Input("home-interval", "n_intervals"),
-    Input("home-md-range", "value"),
     Input("home-filter-department", "value"),
     running=[(Output("home-md-loading", "visible"), True, False)],
 )
-def update_physician_data(_n, range_days, departments):
+def update_physician_data(_n, departments):
     from data.loader import load_treatment_detail
 
     try:
@@ -1179,11 +1284,6 @@ def update_physician_data(_n, range_days, departments):
             td = td[td["Department"].isin(departments)]
         if td.empty or "ScheduledDateTime" not in td.columns:
             return None
-
-        last_date = td["ScheduledDateTime"].dt.normalize().max()
-        days = int(range_days) if int(range_days) > 0 else None
-        if days:
-            td = td[td["ScheduledDateTime"] >= last_date - timedelta(days=days)]
 
         # Get physicians dynamically from data, prioritizing the 4 main ones first
         if "TreatingPhysician" in td.columns:
@@ -1203,13 +1303,14 @@ def update_physician_data(_n, range_days, departments):
         return None
 
 
-# Clientside callback for physician chart smoothing with chart type
+# Clientside callback for physician chart smoothing with chart type and range
 clientside_callback(
-    ClientsideFunction(namespace="census", function_name="smoothChartWithType"),
+    ClientsideFunction(namespace="census", function_name="smoothChartWithTypeAndRange"),
     Output("home-chart-physician", "figure"),
     Input("home-store-md-census", "data"),
     Input("home-md-settings-smooth", "value"),
     Input("home-md-settings-type", "value"),
+    Input("home-md-range", "value"),
     State("home-chart-physician", "figure"),
 )
 
@@ -1221,11 +1322,10 @@ clientside_callback(
 @callback(
     Output("home-store-site-census", "data"),
     Input("home-interval", "n_intervals"),
-    Input("home-site-range", "value"),
     Input("home-filter-department", "value"),
     running=[(Output("home-site-loading", "visible"), True, False)],
 )
-def update_site_data(_n, range_days, departments):
+def update_site_data(_n, departments):
     from data.loader import load_daily_volume, load_daily_volume_future
 
     try:
@@ -1241,24 +1341,20 @@ def update_site_data(_n, range_days, departments):
         if dv_past.empty or "ScheduledDate" not in dv_past.columns:
             return None
 
-        last_date = dv_past["ScheduledDate"].max()
-        days = int(range_days) if int(range_days) > 0 else None
-        if days:
-            dv_past = dv_past[dv_past["ScheduledDate"] >= last_date - timedelta(days=days)]
-
         colors = [DEPARTMENT_COLORS.get(d, "#999") for d in sites]
         return _build_treatment_census_data(dv_past, dv_future, sites, colors)
     except Exception:
         return None
 
 
-# Clientside callback for site chart smoothing with chart type
+# Clientside callback for site chart smoothing with chart type and range
 clientside_callback(
-    ClientsideFunction(namespace="census", function_name="smoothChartWithType"),
+    ClientsideFunction(namespace="census", function_name="smoothChartWithTypeAndRange"),
     Output("home-chart-site", "figure"),
     Input("home-store-site-census", "data"),
     Input("home-site-settings-smooth", "value"),
     Input("home-site-settings-type", "value"),
+    Input("home-site-range", "value"),
     State("home-chart-site", "figure"),
 )
 
@@ -1452,11 +1548,13 @@ clientside_callback(
     Output("home-chart-availability", "figure"),
     Input("home-interval", "n_intervals"),
     Input("home-filter-department", "value"),
+    Input("home-avail-scope", "value"),
     running=[(Output("home-avail-loading", "visible"), True, False)],
 )
-def update_availability_calendar(_n, departments):
+def update_availability_calendar(_n, departments, scope):
     """Update slot availability calendar (shows both Exam and Sim)."""
-    return _build_availability_calendar(departments)
+    consults_only = scope != "all"
+    return _build_availability_calendar(departments, consults_only=consults_only)
 
 
 # ---------------------------------------------------------------------------
