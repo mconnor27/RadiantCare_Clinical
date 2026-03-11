@@ -2,7 +2,8 @@
 
 import dash
 import dash_mantine_components as dmc
-from dash import callback, Input, Output, State, dcc, clientside_callback, ClientsideFunction
+from dash import callback, Input, Output, State, dcc, html, clientside_callback, ClientsideFunction
+from dash_iconify import DashIconify
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas as pd
@@ -16,6 +17,7 @@ from config.settings import (
 from components.filter_bar import department_chips
 from components.kpi_card import kpi_card
 from components.chart_settings import chart_settings_popover
+from components.hours_ribbon import hours_ribbon_card, register_hours_ribbon_callbacks
 from utils.charts import apply_default_layout, empty_figure, dept_color
 from statsmodels.nonparametric.smoothers_lowess import lowess as _lowess
 
@@ -654,6 +656,15 @@ layout = dmc.Stack(
                                     dmc.Text("Active Patients by Physician", size="sm", fw=500, c="#6B7280"),
                                     dmc.Group(gap="xs", align="center", children=[
                                         dmc.SegmentedControl(
+                                            id="home-md-agg",
+                                            data=[
+                                                {"value": "D", "label": "Daily"},
+                                                {"value": "W", "label": "Weekly"},
+                                                {"value": "M", "label": "Monthly"},
+                                            ],
+                                            value="D", size="xs",
+                                        ),
+                                        dmc.SegmentedControl(
                                             id="home-md-range",
                                             data=[
                                                 {"value": "30", "label": "30d"},
@@ -704,6 +715,15 @@ layout = dmc.Stack(
                                 children=[
                                     dmc.Text("Treatments by Site", size="sm", fw=500, c="#6B7280"),
                                     dmc.Group(gap="xs", align="center", children=[
+                                        dmc.SegmentedControl(
+                                            id="home-site-agg",
+                                            data=[
+                                                {"value": "D", "label": "Daily"},
+                                                {"value": "W", "label": "Weekly"},
+                                                {"value": "M", "label": "Monthly"},
+                                            ],
+                                            value="D", size="xs",
+                                        ),
                                         dmc.SegmentedControl(
                                             id="home-site-range",
                                             data=[
@@ -756,67 +776,7 @@ layout = dmc.Stack(
                 # Left: Operating Hours Ribbon
                 dmc.GridCol(
                     span={"base": 12, "md": 6},
-                    children=dmc.Paper(
-                        children=[
-                            dmc.Group(
-                                justify="space-between", mb="sm",
-                                children=[
-                                    dmc.Group(gap="sm", align="center", children=[
-                                        dmc.Text("Operating Hours", size="sm", fw=500, c="#6B7280"),
-                                        dmc.SegmentedControl(
-                                            id="home-hours-site",
-                                            data=[
-                                                {"value": "all", "label": "All"},
-                                                {"value": "Lacey", "label": "Lacey"},
-                                                {"value": "Centralia", "label": "Centralia"},
-                                                {"value": "Aberdeen", "label": "Aberdeen"},
-                                            ],
-                                            value="all", size="xs",
-                                        ),
-                                    ]),
-                                    dmc.Group(gap="xs", align="center", children=[
-                                        dmc.SegmentedControl(
-                                            id="home-hours-range",
-                                            data=[
-                                                {"value": "thisweek", "label": "This Week"},
-                                                {"value": "7", "label": "7d"},
-                                                {"value": "30", "label": "30d"},
-                                                {"value": "60", "label": "60d"},
-                                                {"value": "90", "label": "90d"},
-                                                {"value": "365", "label": "1y"},
-                                                {"value": "0", "label": "All"},
-                                            ],
-                                            value="thisweek", size="xs",
-                                        ),
-                                        chart_settings_popover(
-                                            "home-hours",
-                                            chart_types=[
-                                                {"value": "ribbon", "label": "Ribbon"},
-                                                {"value": "line", "label": "Line"},
-                                                {"value": "bar", "label": "Bar"},
-                                            ],
-                                            show_smooth=True,
-                                            smooth_max=7,
-                                            smooth_default=3,
-                                        ),
-                                    ]),
-                                ],
-                            ),
-                            dmc.Box(
-                                pos="relative",
-                                children=[
-                                    dmc.LoadingOverlay(
-                                        id="home-hours-loading",
-                                        visible=False,
-                                        loaderProps={"type": "dots", "color": "#7C2A83"},
-                                        overlayProps={"radius": "sm", "blur": 2},
-                                    ),
-                                    dcc.Graph(id="home-chart-hours", config={"displayModeBar": False}),
-                                ],
-                            ),
-                        ],
-                        p="sm", radius="md", shadow="xs", withBorder=True, h="100%",
-                    ),
+                    children=hours_ribbon_card("home"),
                 ),
                 # Right: Availability Calendar
                 dmc.GridCol(
@@ -872,9 +832,6 @@ layout = dmc.Stack(
 
         # Store for KPI sparkline data (clientside smoothing)
         dcc.Store(id="home-store-kpi-sparklines"),
-
-        # Store for operating hours ribbon (clientside smoothing)
-        dcc.Store(id="home-store-hours"),
 
         # Store for sims scope toggle (bridges dynamically-created control → callback)
         dcc.Store(id="home-store-sims-scope", data="initial"),
@@ -1273,9 +1230,10 @@ clientside_callback(
     Output("home-store-md-census", "data"),
     Input("home-interval", "n_intervals"),
     Input("home-filter-department", "value"),
+    Input("home-md-agg", "value"),
     running=[(Output("home-md-loading", "visible"), True, False)],
 )
-def update_physician_data(_n, departments):
+def update_physician_data(_n, departments, agg):
     from data.loader import load_treatment_detail
 
     try:
@@ -1306,6 +1264,7 @@ def update_physician_data(_n, departments):
             physicians,
             colors,
             render_groups=render_physicians,
+            agg=agg or "D",
         )
     except Exception:
         return None
@@ -1320,6 +1279,16 @@ clientside_callback(
     Input("home-md-settings-type", "value"),
     Input("home-md-range", "value"),
     State("home-chart-physician", "figure"),
+)
+
+# Dynamic y-axis rescaling on pan for physician chart
+clientside_callback(
+    ClientsideFunction(namespace="censusYAxis", function_name="updateOnPan"),
+    Output("home-chart-physician", "figure", allow_duplicate=True),
+    Input("home-chart-physician", "relayoutData"),
+    State("home-chart-physician", "figure"),
+    State("home-store-md-census", "data"),
+    prevent_initial_call=True,
 )
 
 
@@ -1362,9 +1331,10 @@ def update_md_smooth_slider(range_days, current_value):
     Output("home-store-site-census", "data"),
     Input("home-interval", "n_intervals"),
     Input("home-filter-department", "value"),
+    Input("home-site-agg", "value"),
     running=[(Output("home-site-loading", "visible"), True, False)],
 )
-def update_site_data(_n, departments):
+def update_site_data(_n, departments, agg):
     from data.loader import load_daily_volume, load_daily_volume_future
 
     try:
@@ -1381,7 +1351,7 @@ def update_site_data(_n, departments):
             return None
 
         colors = [DEPARTMENT_COLORS.get(d, "#999") for d in sites]
-        return _build_treatment_census_data(dv_past, dv_future, sites, colors)
+        return _build_treatment_census_data(dv_past, dv_future, sites, colors, agg=agg or "D")
     except Exception:
         return None
 
@@ -1395,6 +1365,16 @@ clientside_callback(
     Input("home-site-settings-type", "value"),
     Input("home-site-range", "value"),
     State("home-chart-site", "figure"),
+)
+
+# Dynamic y-axis rescaling on pan for site chart
+clientside_callback(
+    ClientsideFunction(namespace="censusYAxis", function_name="updateOnPan"),
+    Output("home-chart-site", "figure", allow_duplicate=True),
+    Input("home-chart-site", "relayoutData"),
+    State("home-chart-site", "figure"),
+    State("home-store-site-census", "data"),
+    prevent_initial_call=True,
 )
 
 
@@ -1413,11 +1393,14 @@ def update_site_smooth_slider(range_days, current_value):
 # Census data builder (for clientside smoothing)
 # ---------------------------------------------------------------------------
 
-def _build_census_data(df, group_col, groups, colors, height=380, render_groups=None):
+def _build_census_data(df, group_col, groups, colors, height=380, render_groups=None, agg="D"):
     """Build raw census data dict for clientside smoothing.
 
     Returns dict with dates, series (name, values, color), optional renderOrder,
     height, yTitle.
+
+    Args:
+        agg: aggregation period — "D" (daily), "W" (weekly), "M" (monthly).
     """
     df = df.copy()
     df["Date"] = df["ScheduledDateTime"].dt.normalize()
@@ -1429,25 +1412,44 @@ def _build_census_data(df, group_col, groups, colors, height=380, render_groups=
     if patient_col is None:
         return None
 
-    # Business days only (no weekends), excluding days with zero total patients
-    date_range = pd.bdate_range(df["Date"].min(), df["Date"].max())
-    total_per_day = df.groupby("Date")[patient_col].nunique()
-    active_days = total_per_day[total_per_day > 0].index
-    date_range = date_range[date_range.isin(active_days)]
+    if agg in ("W", "M"):
+        # Aggregate to period — count unique patients per period per group
+        df["period"] = df["Date"].dt.to_period(agg).dt.to_timestamp()
+        daily = df.groupby(["period", group_col])[patient_col].nunique().reset_index(name="count")
+        date_range = sorted(daily["period"].unique())
+    else:
+        # Daily: business days only, excluding days with zero total patients
+        date_range = pd.bdate_range(df["Date"].min(), df["Date"].max())
+        total_per_day = df.groupby("Date")[patient_col].nunique()
+        active_days = total_per_day[total_per_day > 0].index
+        date_range = date_range[date_range.isin(active_days)]
+        daily = df.groupby(["Date", group_col])[patient_col].nunique().reset_index(name="count")
 
-    # Per-group daily counts
-    daily = df.groupby(["Date", group_col])[patient_col].nunique().reset_index(name="count")
+    date_col = "period" if agg in ("W", "M") else "Date"
 
     series = []
     for i, grp in enumerate(groups):
-        grp_data = daily[daily[group_col] == grp].set_index("Date")["count"]
-        grp_data = grp_data.reindex(date_range, fill_value=0)
+        grp_raw = daily[daily[group_col] == grp].set_index(date_col)["count"]
         display_name = grp.split(",")[0] if "," in grp else grp
         c = colors[i % len(colors)]
 
+        # None outside active range so traces don't extend before/after data exists
+        if not grp_raw.empty:
+            positive = grp_raw[grp_raw > 0]
+            first_active = positive.index.min() if not positive.empty else grp_raw.index.min()
+            last_active = positive.index.max() if not positive.empty else grp_raw.index.max()
+            grp_full = grp_raw.reindex(date_range)
+            values = [
+                None if (p < first_active or p > last_active)
+                else (int(v) if pd.notna(v) else 0)
+                for p, v in zip(date_range, grp_full)
+            ]
+        else:
+            values = [None] * len(date_range)
+
         series.append({
             "name": display_name,
-            "values": grp_data.tolist(),
+            "values": values,
             "color": c,
         })
 
@@ -1463,11 +1465,14 @@ def _build_census_data(df, group_col, groups, colors, height=380, render_groups=
     }
 
 
-def _build_treatment_census_data(df_past, df_future, groups, colors, height=380):
+def _build_treatment_census_data(df_past, df_future, groups, colors, height=380, agg="D"):
     """Build treatment census data with future projections.
 
     Uses Daily Volume data (AppointmentCount) instead of unique patients.
     Returns dict with dates, futureDates, series (with values and futureValues).
+
+    Args:
+        agg: aggregation period — "D" (daily), "W" (weekly), "M" (monthly).
     """
     df_past = df_past.copy()
     df_future = df_future.copy()
@@ -1480,34 +1485,65 @@ def _build_treatment_census_data(df_past, df_future, groups, colors, height=380)
     if past_daily.empty:
         return None
 
-    past_dates = pd.bdate_range(past_daily["ScheduledDate"].min(), past_daily["ScheduledDate"].max())
-    # Filter to days with activity
-    total_per_day = past_daily.groupby("ScheduledDate")["AppointmentCount"].sum()
-    active_days = total_per_day[total_per_day > 0].index
-    past_dates = past_dates[past_dates.isin(active_days)]
+    if agg in ("W", "M"):
+        # Aggregate to period
+        past_daily["period"] = past_daily["ScheduledDate"].dt.to_period(agg).dt.to_timestamp()
+        past_daily = past_daily.groupby(["period", "Department"])["AppointmentCount"].sum().reset_index()
+        past_dates = sorted(past_daily["period"].unique())
 
-    # Future dates (next 2 weeks / ~10 business days)
-    if not future_daily.empty:
-        last_past = past_daily["ScheduledDate"].max()
-        future_start = last_past + timedelta(days=1)
-        future_end = future_daily["ScheduledDate"].max()
-        future_dates = pd.bdate_range(future_start, min(future_end, last_past + timedelta(days=14)))
-        # Filter to days with scheduled appointments
-        future_totals = future_daily.groupby("ScheduledDate")["AppointmentCount"].sum()
-        future_active = future_totals[future_totals > 0].index
-        future_dates = future_dates[future_dates.isin(future_active)]
+        if not future_daily.empty:
+            future_daily["period"] = future_daily["ScheduledDate"].dt.to_period(agg).dt.to_timestamp()
+            future_daily = future_daily.groupby(["period", "Department"])["AppointmentCount"].sum().reset_index()
+            # Exclude periods already in past
+            past_period_set = set(past_dates)
+            future_daily = future_daily[~future_daily["period"].isin(past_period_set)]
+            future_dates = sorted(future_daily["period"].unique())
+        else:
+            future_dates = []
+
+        date_col = "period"
     else:
-        future_dates = pd.DatetimeIndex([])
+        past_dates = pd.bdate_range(past_daily["ScheduledDate"].min(), past_daily["ScheduledDate"].max())
+        # Filter to days with activity
+        total_per_day = past_daily.groupby("ScheduledDate")["AppointmentCount"].sum()
+        active_days = total_per_day[total_per_day > 0].index
+        past_dates = past_dates[past_dates.isin(active_days)]
+
+        # Future dates (next 2 weeks / ~10 business days)
+        if not future_daily.empty:
+            last_past = past_daily["ScheduledDate"].max()
+            future_start = last_past + timedelta(days=1)
+            future_end = future_daily["ScheduledDate"].max()
+            future_dates = pd.bdate_range(future_start, min(future_end, last_past + timedelta(days=14)))
+            # Filter to days with scheduled appointments
+            future_totals = future_daily.groupby("ScheduledDate")["AppointmentCount"].sum()
+            future_active = future_totals[future_totals > 0].index
+            future_dates = future_dates[future_dates.isin(future_active)]
+        else:
+            future_dates = pd.DatetimeIndex([])
+
+        date_col = "ScheduledDate"
 
     series = []
     for i, grp in enumerate(groups):
-        # Past values
-        grp_past = past_daily[past_daily["Department"] == grp].set_index("ScheduledDate")["AppointmentCount"]
-        grp_past = grp_past.reindex(past_dates, fill_value=0)
+        # Past values — None outside active range so traces don't extend before/after data
+        grp_past_raw = past_daily[past_daily["Department"] == grp].set_index(date_col)["AppointmentCount"]
+        if not grp_past_raw.empty:
+            positive = grp_past_raw[grp_past_raw > 0]
+            first_active = positive.index.min() if not positive.empty else grp_past_raw.index.min()
+            last_active = positive.index.max() if not positive.empty else grp_past_raw.index.max()
+            grp_past_full = grp_past_raw.reindex(past_dates)
+            past_values = [
+                None if (p < first_active or p > last_active)
+                else (int(v) if pd.notna(v) else 0)
+                for p, v in zip(past_dates, grp_past_full)
+            ]
+        else:
+            past_values = [None] * len(past_dates)
 
         # Future values
         if len(future_dates) > 0:
-            grp_future = future_daily[future_daily["Department"] == grp].set_index("ScheduledDate")["AppointmentCount"]
+            grp_future = future_daily[future_daily["Department"] == grp].set_index(date_col)["AppointmentCount"]
             grp_future = grp_future.reindex(future_dates, fill_value=0)
         else:
             grp_future = pd.Series([], dtype=float)
@@ -1515,7 +1551,7 @@ def _build_treatment_census_data(df_past, df_future, groups, colors, height=380)
         c = colors[i % len(colors)]
         series.append({
             "name": grp,
-            "values": grp_past.tolist(),
+            "values": past_values,
             "futureValues": grp_future.tolist(),
             "color": c,
         })
@@ -1530,69 +1566,24 @@ def _build_treatment_census_data(df_past, df_future, groups, colors, height=380)
 
 
 # ---------------------------------------------------------------------------
-# Operating Hours Ribbon Callbacks (store + clientside pattern)
+# Operating Hours Ribbon — reusable component callbacks + server data
 # ---------------------------------------------------------------------------
 
-@callback(
-    Output("home-hours-settings-smooth", "max"),
-    Output("home-hours-settings-smooth", "value"),
-    Input("home-hours-range", "value"),
-    State("home-hours-settings-smooth", "value"),
-)
-def update_smooth_slider_range(range_days, current_value):
-    """Adjust smoothing slider max based on selected time range."""
-    if range_days == "thisweek":
-        return 3, min(current_value or 0, 3)
-    days = int(range_days) if range_days else 30
-    # Scale max smoothing window to ~20% of the time range
-    # 7d -> max 3, 30d -> max 7, 60d -> max 12, 90d -> max 18, 365d -> max 30, All -> max 50
-    if days == 0:  # All
-        max_val = 50
-    elif days <= 7:
-        max_val = 3
-    elif days <= 30:
-        max_val = 7
-    elif days <= 60:
-        max_val = 12
-    elif days <= 90:
-        max_val = 18
-    elif days <= 365:
-        max_val = 30
-    else:
-        max_val = 50
-    # Clamp current value to new max
-    new_value = min(current_value or 0, max_val)
-    return max_val, new_value
-
+register_hours_ribbon_callbacks("home")
 
 @callback(
     Output("home-store-hours", "data"),
     Input("home-interval", "n_intervals"),
-    Input("home-hours-range", "value"),
     Input("home-hours-site", "value"),
     running=[(Output("home-hours-loading", "visible"), True, False)],
 )
-def update_hours_data(_n, range_days, site_filter):
-    """Load operating hours data to store (smoothing is clientside)."""
-    # "thisweek" sends all data; JS filters to current week clientside
-    days = 0 if range_days == "thisweek" else (int(range_days) if range_days else 30)
-    # Use chart's own site selector (independent of global filter)
+def update_hours_data(_n, site_filter):
+    """Load ALL operating hours data to store (range applied clientside)."""
     if site_filter and site_filter != "all":
         sites = [site_filter]
     else:
-        sites = None  # All departments
-    return _prepare_hours_data(sites, days_back=days)
-
-
-# Clientside callback for hours ribbon smoothing with chart type and range
-clientside_callback(
-    ClientsideFunction(namespace="hoursRibbon", function_name="smoothChartWithTypeAndRange"),
-    Output("home-chart-hours", "figure"),
-    Input("home-store-hours", "data"),
-    Input("home-hours-settings-smooth", "value"),
-    Input("home-hours-settings-type", "value"),
-    Input("home-hours-range", "value"),
-)
+        sites = None
+    return _prepare_hours_data(sites, days_back=0)
 
 
 # ---------------------------------------------------------------------------
@@ -1645,20 +1636,6 @@ def toggle_site_settings(n, style):
 
 
 @callback(
-    Output("home-hours-settings-panel", "style"),
-    Input("home-hours-settings-btn", "n_clicks"),
-    State("home-hours-settings-panel", "style"),
-    prevent_initial_call=True,
-)
-def toggle_hours_settings(n, style):
-    if not n:
-        return style
-    current = style or {}
-    is_hidden = current.get("display") == "none"
-    return {"display": "block"} if is_hidden else {"display": "none"}
-
-
-@callback(
     Output("home-avail-settings-panel", "style"),
     Input("home-avail-settings-btn", "n_clicks"),
     State("home-avail-settings-panel", "style"),
@@ -1703,21 +1680,6 @@ clientside_callback(
     }""",
     Output("home-site-settings-export", "n_clicks"),
     Input("home-site-settings-export", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    """function(n) {
-        if (!n) return window.dash_clientside.no_update;
-        var wrapper = document.getElementById('home-chart-hours');
-        var graphEl = wrapper ? wrapper.querySelector('.js-plotly-plot') : null;
-        if (graphEl) {
-            Plotly.downloadImage(graphEl, {format: 'png', width: 1200, height: 600, filename: 'operating_hours'});
-        }
-        return window.dash_clientside.no_update;
-    }""",
-    Output("home-hours-settings-export", "n_clicks"),
-    Input("home-hours-settings-export", "n_clicks"),
     prevent_initial_call=True,
 )
 

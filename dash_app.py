@@ -2,7 +2,8 @@
 
 import dash
 import dash_mantine_components as dmc
-from dash import Dash, html, dcc, page_container
+from dash import Dash, html, dcc, page_container, callback, Input, Output, no_update
+from dash_iconify import DashIconify
 
 from config.settings import DMC_THEME, NEUTRAL, PRIMARY, MAPBOX_TOKEN
 from components.nav import create_sidebar
@@ -69,6 +70,23 @@ app.layout = dmc.MantineProvider(
                 "zIndex": 9999,
             },
         ),
+        # Refresh data button — fixed top-right corner
+        dmc.ActionIcon(
+            DashIconify(icon="tabler:refresh", width=20),
+            id="global-refresh-btn",
+            variant="subtle",
+            color="gray",
+            size="lg",
+            radius="xl",
+            style={
+                "position": "fixed",
+                "top": 10,
+                "right": 16,
+                "zIndex": 1000,
+            },
+        ),
+        # Hidden div to trigger page reload via clientside callback
+        html.Div(id="global-refresh-trigger", style={"display": "none"}),
         dmc.AppShell(
             children=[
                 create_sidebar(),
@@ -89,6 +107,26 @@ app.layout = dmc.MantineProvider(
             padding="md",
         ),
     ],
+)
+
+# ---------------------------------------------------------------------------
+# Refresh-data callback — clears LRU caches, then reloads the page
+# ---------------------------------------------------------------------------
+@callback(
+    Output("global-refresh-trigger", "children"),
+    Input("global-refresh-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def _refresh_data(_n):
+    from data.loader import clear_cache
+    clear_cache()
+    return ""
+
+app.clientside_callback(
+    """function(children) { location.reload(); return window.dash_clientside.no_update; }""",
+    Output("global-refresh-btn", "loading"),
+    Input("global-refresh-trigger", "children"),
+    prevent_initial_call=True,
 )
 
 # ---------------------------------------------------------------------------

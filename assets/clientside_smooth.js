@@ -114,8 +114,11 @@ window.dash_clientside.sparklines = {
     smoothOpsHoursAberdeen: function(data, smoothPct) {
         return buildSparkline(data, smoothPct, "hours_aberdeen");
     },
-    smoothOpsLead: function(data, smoothPct) {
-        return buildSparkline(data, smoothPct, "lead");
+    smoothOpsConsultLead: function(data, smoothPct) {
+        return buildSparkline(data, smoothPct, "consult_lead");
+    },
+    smoothOpsSimLead: function(data, smoothPct) {
+        return buildSparkline(data, smoothPct, "sim_lead");
     },
     smoothOpsNewStarts: function(data, smoothPct) {
         return buildSparkline(data, smoothPct, "newstarts");
@@ -192,27 +195,59 @@ window.dash_clientside.census = {
         var totals = new Array(displayDates.length).fill(0);
         var rawTotals = new Array(displayDates.length).fill(0);
         var futureTotals = hasFuture ? new Array(futureDates.length).fill(0) : [];
+        var futureRawValsByName = {};
 
         // Past data traces (hoverinfo:"skip" — hover handled by summary trace)
         for (var i = 0; i < renderSeries.length; i++) {
             var s = renderSeries[i];
             var displayVals = step > 1 ? downsampleAvg(s.values, step) : s.values.slice();
+            // For stacked area, replace nulls with 0 before smoothing so the
+            // rolling average creates a smooth ramp at go-live instead of a cliff.
+            // In a stacked area, 0 is invisible (contributes nothing to the stack).
+            if (stacked && chartType === "area") {
+                for (var di = 0; di < displayVals.length; di++) {
+                    if (displayVals[di] === null || displayVals[di] === undefined) displayVals[di] = 0;
+                }
+            }
             var yVals = smoothPct > 0 ? rollingAvg(displayVals, windowSize) : displayVals;
             var isVisible = !visibilityMap.hasOwnProperty(s.name) || visibilityMap[s.name] === true;
 
             rawValsByName[s.name] = displayVals;
 
             // Sum for total trace (smoothed for rendering, raw for hover) — only when stacked
+            // Guard against null values (pre/post-active periods)
             if (stacked && isVisible) {
                 for (var k = 0; k < yVals.length; k++) {
-                    totals[k] += yVals[k];
-                    rawTotals[k] += displayVals[k];
+                    totals[k] += (yVals[k] || 0);
+                    rawTotals[k] += (displayVals[k] || 0);
+                }
+            }
+
+            // Trim leading/trailing nulls so traces start/end at their active range.
+            // Only for non-stacked charts — stacked area needs aligned x-axes.
+            var traceDates = displayDates;
+            var traceY = yVals;
+            var traceRaw = displayVals;
+            if (chartType === "line" || (chartType === "area" && !stacked)) {
+                var ts = 0, te = yVals.length - 1;
+                while (ts < yVals.length && (yVals[ts] === null || yVals[ts] === undefined)) ts++;
+                while (te >= 0 && (yVals[te] === null || yVals[te] === undefined)) te--;
+                if (ts > 0 || te < yVals.length - 1) {
+                    if (ts <= te) {
+                        traceDates = displayDates.slice(ts, te + 1);
+                        traceY = yVals.slice(ts, te + 1);
+                        traceRaw = displayVals.slice(ts, te + 1);
+                    } else {
+                        traceDates = [];
+                        traceY = [];
+                        traceRaw = [];
+                    }
                 }
             }
 
             var traceObj;
             if (chartType === "bar") {
-                // Bar chart (stacked or grouped)
+                // Bar chart (stacked or grouped) — null bars naturally invisible
                 var filteredY = filterByIndices(yVals, barData.validIndices);
                 var filteredRaw = filterByIndices(displayVals, barData.validIndices);
                 traceObj = {
@@ -228,9 +263,9 @@ window.dash_clientside.census = {
             } else if (chartType === "line") {
                 // Line chart (always non-stacked)
                 traceObj = {
-                    x: displayDates,
-                    y: yVals,
-                    customdata: displayVals,
+                    x: traceDates,
+                    y: traceY,
+                    customdata: traceRaw,
                     name: s.name,
                     mode: "lines",
                     line: {color: s.color, width: 2},
@@ -240,9 +275,9 @@ window.dash_clientside.census = {
             } else {
                 // Area chart (stacked by default, overlay when stacked:false)
                 traceObj = {
-                    x: displayDates,
-                    y: yVals,
-                    customdata: displayVals,
+                    x: traceDates,
+                    y: traceY,
+                    customdata: traceRaw,
                     name: s.name,
                     mode: "lines",
                     line: {color: s.color, width: stacked ? 1.5 : 2},
@@ -252,6 +287,7 @@ window.dash_clientside.census = {
                 };
                 if (stacked) {
                     traceObj.stackgroup = "one";
+                    traceObj.stackgaps = "interpolate";
                 } else {
                     traceObj.fill = "tozeroy";
                 }
@@ -274,13 +310,14 @@ window.dash_clientside.census = {
                 var s = renderSeries[i];
                 var futureVals = s.futureValues || [];
                 if (futureVals.length === 0) continue;
+                futureRawValsByName[s.name] = futureVals.slice();
 
                 var isVisible = !visibilityMap.hasOwnProperty(s.name) || visibilityMap[s.name] === true;
 
-                // Sum for future total
+                // Sum for future total (guard against nulls)
                 if (isVisible) {
                     for (var k = 0; k < futureVals.length; k++) {
-                        futureTotals[k] += futureVals[k];
+                        futureTotals[k] += (futureVals[k] || 0);
                     }
                 }
 
@@ -299,8 +336,9 @@ window.dash_clientside.census = {
                         hoverinfo: "skip"
                     };
                 } else {
-                    // Line/area: connect to last past point
-                    var lastPastDate = displayDates[displayDates.length - 1];
+                    // Line/area: connect to last past point (use trimmed trace's end)
+                    if (traces[i].x.length === 0) continue;
+                    var lastPastDate = traces[i].x[traces[i].x.length - 1];
                     var lastPastVal = traces[i].y[traces[i].y.length - 1];
 
                     futureTraceObj = {
@@ -329,11 +367,13 @@ window.dash_clientside.census = {
         // Build summary hover text per date point (only for stacked mode)
         if (stacked) {
         var monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-        var summaryX = chartType === "bar" ? barData.labels : displayDates;
+        var summaryX = chartType === "bar" ? barData.labels.slice() : displayDates.slice();
         var summaryHover = [];
-        var nPts = chartType === "bar" ? barData.labels.length : displayDates.length;
-        for (var idx = 0; idx < nPts; idx++) {
-            var rawDate = chartType === "bar" ? barData.labels[idx] : displayDates[idx];
+        var summaryY = chartType === "bar"
+            ? filterByIndices(totals, barData.validIndices)
+            : totals.slice();
+
+        function buildSummaryEntry(rawDate, rawIdx, rawLookup) {
             var dateStr = "";
             if (rawDate) {
                 var d = new Date(rawDate);
@@ -346,9 +386,8 @@ window.dash_clientside.census = {
             var parts = dateStr ? ["<b>" + dateStr + "</b>"] : [];
             var total = 0;
             for (var si = 0; si < rawData.series.length; si++) {
-                var rawIdx = chartType === "bar" ? barData.validIndices[idx] : idx;
                 var seriesName = rawData.series[si].name;
-                var seriesRawVals = rawValsByName[seriesName] || [];
+                var seriesRawVals = rawLookup[seriesName] || [];
                 var val = Math.round(seriesRawVals[rawIdx] || 0);
                 var isVis = !visibilityMap.hasOwnProperty(rawData.series[si].name) ||
                             visibilityMap[rawData.series[si].name] === true;
@@ -360,12 +399,39 @@ window.dash_clientside.census = {
             if (total > 0) {
                 parts.push("<b>Total: " + total + "</b>");
             }
-            summaryHover.push(parts.join("<br>"));
+            return parts.join("<br>");
         }
 
-        var summaryY = chartType === "bar"
-            ? filterByIndices(totals, barData.validIndices)
-            : totals;
+        var nPts = chartType === "bar" ? barData.labels.length : displayDates.length;
+        for (var idx = 0; idx < nPts; idx++) {
+            var rawDate = chartType === "bar" ? barData.labels[idx] : displayDates[idx];
+            var rawIdx = chartType === "bar" ? barData.validIndices[idx] : idx;
+            summaryHover.push(buildSummaryEntry(rawDate, rawIdx, rawValsByName));
+        }
+
+        if (hasFuture) {
+            if (chartType === "bar") {
+                for (var fidx = 0; fidx < futureBarData.labels.length; fidx++) {
+                    summaryX.push(futureBarData.labels[fidx]);
+                    summaryY.push(futureTotals[futureBarData.validIndices[fidx]] || 0);
+                    summaryHover.push(buildSummaryEntry(
+                        futureBarData.labels[fidx],
+                        futureBarData.validIndices[fidx],
+                        futureRawValsByName
+                    ));
+                }
+            } else {
+                for (var fidx = 0; fidx < futureDates.length; fidx++) {
+                    summaryX.push(futureDates[fidx]);
+                    summaryY.push(futureTotals[fidx] || 0);
+                    summaryHover.push(buildSummaryEntry(
+                        futureDates[fidx],
+                        fidx,
+                        futureRawValsByName
+                    ));
+                }
+            }
+        }
 
         // Invisible summary trace carries the hover tooltip
         traces.push({
@@ -385,7 +451,7 @@ window.dash_clientside.census = {
             height: height,
             xaxis: {showgrid: false, showspikes: false},
             yaxis: {gridcolor: "#E5E7EB"},
-            showlegend: !stacked,
+            showlegend: rawData.hideLegend ? false : !stacked,
             margin: {l: stacked ? 28 : 40, r: 8, t: 8, b: 32},
             plot_bgcolor: "white",
             paper_bgcolor: "white",
@@ -455,24 +521,76 @@ window.dash_clientside.census = {
         }
 
         var days = parseInt(rangeDays) || 0;
-        if (days > 0) {
-            var lastDate = rawData.dates[rawData.dates.length - 1].split('T')[0];
-            var lastDateObj = new Date(lastDate);
-            var startDateObj = new Date(lastDateObj);
-            startDateObj.setDate(startDateObj.getDate() - days);
-            var startDate = startDateObj.toISOString().split('T')[0];
+        var stacked = rawData.stacked !== false;
+        var hasFuture = (rawData.futureDates || []).length > 0;
 
-            fig.layout.xaxis = fig.layout.xaxis || {};
-            fig.layout.xaxis.range = [startDate, lastDate];
-            fig.layout.dragmode = 'pan';
-            fig.layout.yaxis = fig.layout.yaxis || {};
-            fig.layout.yaxis.fixedrange = true;
+        // Determine the visible x-range
+        var lastDate, startDate, startDateObj;
+        if (hasFuture && rawData.futureDates.length > 0) {
+            // Include future dates as the end of visible range
+            lastDate = rawData.futureDates[rawData.futureDates.length - 1].split('T')[0];
         } else {
-            fig.layout.xaxis = fig.layout.xaxis || {};
+            lastDate = rawData.dates[rawData.dates.length - 1].split('T')[0];
+        }
+
+        if (days > 0) {
+            startDateObj = new Date(rawData.dates[rawData.dates.length - 1].split('T')[0]);
+            startDateObj.setDate(startDateObj.getDate() - days);
+            startDate = startDateObj.toISOString().split('T')[0];
+        }
+
+        // Compute y-axis max from visible data only
+        var yMax = 0;
+        if (stacked && chartType !== "line") {
+            // For stacked charts, sum across visible series per date point
+            var allDates = rawData.dates.slice();
+            var allValues = rawData.series.map(function(s) { return s.values.slice(); });
+            if (hasFuture) {
+                allDates = allDates.concat(rawData.futureDates);
+                allValues = allValues.map(function(vals, i) {
+                    return vals.concat(rawData.series[i].futureValues || []);
+                });
+            }
+            for (var di = 0; di < allDates.length; di++) {
+                var d = allDates[di].split('T')[0];
+                if (days > 0 && d < startDate) continue;
+                if (days > 0 && d > lastDate) continue;
+                var stackTotal = 0;
+                for (var si = 0; si < allValues.length; si++) {
+                    stackTotal += (allValues[si][di] || 0);
+                }
+                if (stackTotal > yMax) yMax = stackTotal;
+            }
+        } else {
+            // Non-stacked: find max across all individual traces
+            for (var ti = 0; ti < fig.data.length; ti++) {
+                var trace = fig.data[ti];
+                if (!trace.x || !trace.y || trace.line && trace.line.color === "transparent") continue;
+                for (var pi = 0; pi < trace.x.length; pi++) {
+                    var px = String(trace.x[pi]).split('T')[0];
+                    if (days > 0 && px < startDate) continue;
+                    if (days > 0 && px > lastDate) continue;
+                    var val = trace.y[pi];
+                    if (val != null && val > yMax) yMax = val;
+                }
+            }
+        }
+
+        fig.layout.xaxis = fig.layout.xaxis || {};
+        fig.layout.yaxis = fig.layout.yaxis || {};
+        fig.layout.dragmode = 'pan';
+        fig.layout.yaxis.fixedrange = true;
+
+        if (days > 0) {
+            fig.layout.xaxis.range = [startDate, lastDate];
+        } else {
             fig.layout.xaxis.autorange = true;
-            fig.layout.dragmode = 'pan';
-            fig.layout.yaxis = fig.layout.yaxis || {};
-            fig.layout.yaxis.fixedrange = true;
+        }
+
+        // Set dynamic y-axis range with 10% headroom
+        if (yMax > 0) {
+            fig.layout.yaxis.range = [0, Math.ceil(yMax * 1.1)];
+            fig.layout.yaxis.autorange = false;
         }
 
         return fig;
@@ -889,7 +1007,8 @@ function downsampleAvg(arr, step) {
 
 /**
  * Centered rolling average using prefix sums — O(n).
- * sum(rolling_avg(series)) = rolling_avg(sum(series))
+ * Null-aware: preserves null values (e.g. pre-go-live periods) and only
+ * averages over non-null neighbors so smoothing doesn't bleed before go-live.
  */
 function rollingAvg(arr, windowSize) {
     if (windowSize <= 1) return arr.slice();
@@ -897,7 +1016,34 @@ function rollingAvg(arr, windowSize) {
     var result = new Array(n);
     var halfW = Math.floor(windowSize / 2);
 
-    // Build prefix sum array: prefix[i] = arr[0] + ... + arr[i-1]
+    // Check if array has nulls (e.g. pre-go-live periods)
+    var hasNulls = false;
+    for (var i = 0; i < n; i++) {
+        if (arr[i] === null || arr[i] === undefined) { hasNulls = true; break; }
+    }
+
+    if (hasNulls) {
+        // Null-aware path: preserve nulls, only average non-null neighbors
+        for (var i = 0; i < n; i++) {
+            if (arr[i] === null || arr[i] === undefined) {
+                result[i] = null;
+                continue;
+            }
+            var left = Math.max(0, i - halfW);
+            var right = Math.min(n - 1, i + halfW);
+            var sum = 0, count = 0;
+            for (var j = left; j <= right; j++) {
+                if (arr[j] !== null && arr[j] !== undefined) {
+                    sum += arr[j];
+                    count++;
+                }
+            }
+            result[i] = count > 0 ? sum / count : null;
+        }
+        return result;
+    }
+
+    // Fast prefix-sum path for arrays without nulls
     var prefix = new Array(n + 1);
     prefix[0] = 0;
     for (var i = 0; i < n; i++) {
@@ -1158,22 +1304,19 @@ window.dash_clientside.hoursRibbon = {
                         showlegend: false
                     });
                 } else {
-                    // Ribbon chart - prepend past end point to connect
+                    // Ribbon chart - prepend past end point to connect visually
                     var pastEnd = pastEndPoints[s.name];
+                    var hasConn = false;
                     if (pastEnd && dates.length > 0) {
                         dates.unshift(pastEnd.date);
                         startHours.unshift(pastEnd.start);
                         endHours.unshift(pastEnd.end);
-                        // Update hover text for connection point
-                        var d = new Date(pastEnd.date);
-                        var dateStr = d.toLocaleDateString("en-US", {month: "short", day: "numeric"});
-                        hoverText.unshift("<b>" + s.name + "</b><br>" + dateStr + ": " +
-                            hourToTimeStr(pastEnd.start) + " - " + hourToTimeStr(pastEnd.end));
+                        hasConn = true;
                     }
 
                     var fillColor = hexToRgba(color, futureFillOpacity);
 
-                    // Upper bound trace
+                    // Upper bound trace (fill anchor, no hover)
                     traces.push({
                         x: dates,
                         y: endHours,
@@ -1183,7 +1326,7 @@ window.dash_clientside.hoursRibbon = {
                         hoverinfo: "skip"
                     });
 
-                    // Lower bound trace with lighter fill
+                    // Lower bound trace with lighter fill (no hover — separate trace handles it)
                     traces.push({
                         x: dates,
                         y: startHours,
@@ -1193,9 +1336,23 @@ window.dash_clientside.hoursRibbon = {
                         fillcolor: fillColor,
                         name: s.name + " (scheduled)",
                         showlegend: false,
-                        text: hoverText,
-                        hovertemplate: "%{text}<extra></extra>"
+                        hoverinfo: "skip"
                     });
+
+                    // Hover-only trace for future points (excludes connection point)
+                    var hoverDates = hasConn ? dates.slice(1) : dates;
+                    var hoverY = hasConn ? startHours.slice(1) : startHours;
+                    if (hoverDates.length > 0) {
+                        traces.push({
+                            x: hoverDates,
+                            y: hoverY,
+                            mode: "lines",
+                            line: {width: 0},
+                            showlegend: false,
+                            text: hoverText,
+                            hovertemplate: "%{text}<extra></extra>"
+                        });
+                    }
 
                     // Edge line - top (dashed for future)
                     traces.push({
@@ -1220,10 +1377,17 @@ window.dash_clientside.hoursRibbon = {
             }
         }
 
-        // Build layout with today line as shape (shifted back 1 day since data lags)
-        var todayDate = new Date(today);
-        todayDate.setDate(todayDate.getDate() - 1);
-        var adjustedToday = todayDate.toISOString().split('T')[0];
+        // Place divider at the last past data point (not calendar today,
+        // which may fall on a weekend with no data)
+        var adjustedToday = "";
+        for (var pi = 0; pi < rawData.pastSeries.length; pi++) {
+            var pd = rawData.pastSeries[pi].dates;
+            if (pd && pd.length > 0) {
+                var d = pd[pd.length - 1].split('T')[0];
+                if (d > adjustedToday) adjustedToday = d;
+            }
+        }
+        if (!adjustedToday) adjustedToday = today.split('T')[0];
 
         var shapes = [{
             type: "line",
@@ -1363,11 +1527,11 @@ window.dash_clientside.hoursRibbon = {
         return fig;
     },
 
-    smoothChartWithTypeAndRange: function(rawData, smoothVal, chartType, rangeDays) {
+    smoothChartWithTypeAndRange: function(rawData, smoothVal, chartType, rangeDays, weekOffset) {
         // Calendar mode: no debounce needed
         if (rangeDays === "thisweek") {
             window._ribbonChartData = rawData;
-            var calFig = window.dash_clientside.hoursRibbon.renderCalendarWeek(rawData);
+            var calFig = window.dash_clientside.hoursRibbon.renderCalendarWeek(rawData, weekOffset || 0);
             setTimeout(window.dash_clientside.hoursRibbon._setupCalendarHover, 150);
             return calFig;
         }
@@ -1406,7 +1570,7 @@ window.dash_clientside.hoursRibbon = {
      * @param {Object} rawData - {pastSeries, futureSeries, yAxis, today}
      * @returns {Object} Plotly figure
      */
-    renderCalendarWeek: function(rawData) {
+    renderCalendarWeek: function(rawData, weekOffset) {
         var calHeight = (rawData && rawData.height) || 570;
         if (!rawData || (!rawData.pastSeries && !rawData.futureSeries)) {
             return {
@@ -1423,12 +1587,12 @@ window.dash_clientside.hoursRibbon = {
             };
         }
 
-        // Calculate current week Mon-Fri
+        // Calculate target week Mon-Fri (offset in weeks from current)
         var now = new Date();
         var dayOfWeek = now.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
         var mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
         var monday = new Date(now);
-        monday.setDate(now.getDate() + mondayOffset);
+        monday.setDate(now.getDate() + mondayOffset + (weekOffset || 0) * 7);
         monday.setHours(0, 0, 0, 0);
 
         // Build day labels and date strings for Mon-Fri
@@ -1909,6 +2073,185 @@ window.dash_clientside.ribbonYAxis = {
 };
 
 // ---------------------------------------------------------------------------
+// Dynamic Y-Axis Scaling for Census Charts on Pan
+// ---------------------------------------------------------------------------
+
+window.dash_clientside.censusYAxis = {
+    /**
+     * Recalculate y-axis range when user pans a census chart horizontally.
+     * Passed rawData via State so no global storage needed.
+     * @param {Object} relayoutData - Plotly relayout event data
+     * @param {Object} currentFigure - Current figure state
+     * @param {Object} rawData - Raw census data from dcc.Store
+     */
+    updateOnPan: function(relayoutData, currentFigure, rawData) {
+        if (!relayoutData || !currentFigure || !rawData ||
+            !rawData.dates || rawData.dates.length === 0) {
+            return window.dash_clientside.no_update;
+        }
+
+        // Extract x-axis range from relayout data
+        var startDate, endDate;
+        if (relayoutData['xaxis.range[0]'] !== undefined &&
+            relayoutData['xaxis.range[1]'] !== undefined) {
+            startDate = relayoutData['xaxis.range[0]'];
+            endDate = relayoutData['xaxis.range[1]'];
+        } else if (relayoutData['xaxis.range'] &&
+                   relayoutData['xaxis.range'].length === 2) {
+            startDate = relayoutData['xaxis.range'][0];
+            endDate = relayoutData['xaxis.range'][1];
+        } else {
+            return window.dash_clientside.no_update;
+        }
+
+        // Convert to YYYY-MM-DD for comparison
+        var startStr = String(startDate).split('T')[0].split(' ')[0];
+        var endStr = String(endDate).split('T')[0].split(' ')[0];
+
+        // Skip if dates look like category indices (bar chart panning)
+        if (/^\d+(\.\d+)?$/.test(startStr)) {
+            return window.dash_clientside.no_update;
+        }
+
+        var stacked = rawData.stacked !== false;
+        var yMax = 0;
+
+        // Combine past and future dates/values
+        var allDates = rawData.dates.slice();
+        var allValues = rawData.series.map(function(s) { return s.values.slice(); });
+        if (rawData.futureDates && rawData.futureDates.length > 0) {
+            allDates = allDates.concat(rawData.futureDates);
+            allValues = allValues.map(function(vals, i) {
+                return vals.concat(rawData.series[i].futureValues || []);
+            });
+        }
+
+        if (stacked) {
+            // Sum across all series per date point
+            for (var di = 0; di < allDates.length; di++) {
+                var d = allDates[di].split('T')[0];
+                if (d < startStr || d > endStr) continue;
+                var stackTotal = 0;
+                for (var si = 0; si < allValues.length; si++) {
+                    stackTotal += (allValues[si][di] || 0);
+                }
+                if (stackTotal > yMax) yMax = stackTotal;
+            }
+        } else {
+            // Max across individual series
+            for (var di = 0; di < allDates.length; di++) {
+                var d = allDates[di].split('T')[0];
+                if (d < startStr || d > endStr) continue;
+                for (var si = 0; si < allValues.length; si++) {
+                    var val = allValues[si][di] || 0;
+                    if (val > yMax) yMax = val;
+                }
+            }
+        }
+
+        if (yMax <= 0) return window.dash_clientside.no_update;
+
+        var newYMax = Math.ceil(yMax * 1.1);
+
+        // Skip if y-axis range hasn't changed (prevent relayout loop)
+        if (currentFigure.layout && currentFigure.layout.yaxis &&
+            currentFigure.layout.yaxis.range &&
+            currentFigure.layout.yaxis.range[1] === newYMax) {
+            return window.dash_clientside.no_update;
+        }
+
+        var newFigure = JSON.parse(JSON.stringify(currentFigure));
+        newFigure.layout.yaxis = newFigure.layout.yaxis || {};
+        newFigure.layout.yaxis.range = [0, newYMax];
+        newFigure.layout.yaxis.autorange = false;
+
+        return newFigure;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Dynamic Y-Axis Scaling for Hours Ribbon Charts on Pan
+// ---------------------------------------------------------------------------
+
+window.dash_clientside.hoursYAxis = {
+    /**
+     * Recalculate y-axis range when user pans the hours ribbon chart.
+     * Hours data uses startHours/endHours arrays (decimal hours, e.g. 8.5 = 8:30am).
+     */
+    updateOnPan: function(relayoutData, currentFigure, rawData) {
+        if (!relayoutData || !currentFigure || !rawData ||
+            (!rawData.pastSeries && !rawData.futureSeries)) {
+            return window.dash_clientside.no_update;
+        }
+
+        // Extract x-axis range from relayout data
+        var startDate, endDate;
+        if (relayoutData['xaxis.range[0]'] !== undefined &&
+            relayoutData['xaxis.range[1]'] !== undefined) {
+            startDate = relayoutData['xaxis.range[0]'];
+            endDate = relayoutData['xaxis.range[1]'];
+        } else if (relayoutData['xaxis.range'] &&
+                   relayoutData['xaxis.range'].length === 2) {
+            startDate = relayoutData['xaxis.range'][0];
+            endDate = relayoutData['xaxis.range'][1];
+        } else {
+            return window.dash_clientside.no_update;
+        }
+
+        var startStr = String(startDate).split('T')[0].split(' ')[0];
+        var endStr = String(endDate).split('T')[0].split(' ')[0];
+
+        // Skip if dates look like category indices
+        if (/^\d+(\.\d+)?$/.test(startStr)) {
+            return window.dash_clientside.no_update;
+        }
+
+        // Find min/max hours in visible range
+        var minHour = 24, maxHour = 0;
+        var allSeries = (rawData.pastSeries || []).concat(rawData.futureSeries || []);
+        for (var i = 0; i < allSeries.length; i++) {
+            var s = allSeries[i];
+            if (!s.dates) continue;
+            for (var j = 0; j < s.dates.length; j++) {
+                var d = s.dates[j].split('T')[0];
+                if (d < startStr || d > endStr) continue;
+                if (s.startHours[j] < minHour) minHour = s.startHours[j];
+                if (s.endHours[j] > maxHour) maxHour = s.endHours[j];
+            }
+        }
+
+        if (minHour >= maxHour) return window.dash_clientside.no_update;
+
+        var yMin = Math.max(0, Math.floor(minHour * 2) / 2 - 0.5);
+        var yMax = Math.min(24, Math.ceil(maxHour * 2) / 2 + 0.5);
+
+        // Build tick labels
+        var tickvals = [], ticktext = [];
+        for (var h = Math.ceil(yMin); h <= Math.floor(yMax); h++) {
+            tickvals.push(h);
+            ticktext.push(h === 0 ? "12am" : h < 12 ? h + "am" : h === 12 ? "12pm" : (h - 12) + "pm");
+        }
+
+        // Skip if unchanged (prevent relayout loop)
+        if (currentFigure.layout && currentFigure.layout.yaxis &&
+            currentFigure.layout.yaxis.range &&
+            currentFigure.layout.yaxis.range[0] === yMin &&
+            currentFigure.layout.yaxis.range[1] === yMax) {
+            return window.dash_clientside.no_update;
+        }
+
+        var newFigure = JSON.parse(JSON.stringify(currentFigure));
+        newFigure.layout.yaxis = newFigure.layout.yaxis || {};
+        newFigure.layout.yaxis.range = [yMin, yMax];
+        newFigure.layout.yaxis.tickvals = tickvals;
+        newFigure.layout.yaxis.ticktext = ticktext;
+        newFigure.layout.yaxis.autorange = false;
+
+        return newFigure;
+    }
+};
+
+// ---------------------------------------------------------------------------
 // Click Outside to Close Settings Panels
 // ---------------------------------------------------------------------------
 
@@ -2031,6 +2374,534 @@ window.dash_clientside.heatmapHover = {
         el._hmCleanup = function() {
             el.removeListener("plotly_hover", onHover);
             el.removeListener("plotly_unhover", onUnhover);
+        };
+    }
+};
+
+
+// ---------------------------------------------------------------------------
+// Efficiency chart — machine filter + metric toggle wrapper
+// ---------------------------------------------------------------------------
+window.dash_clientside.efficiency = {
+    /**
+     * Filter machines, swap metric, then delegate to census renderer.
+     */
+    renderWithFilters: function(rawData, smoothPct, chartType, rangeDays, activeMachines, metric, currentFig) {
+        if (!rawData || !rawData.series) {
+            return window.dash_clientside.no_update;
+        }
+
+        // Deep-copy to avoid mutating the store
+        var filtered = JSON.parse(JSON.stringify(rawData));
+
+        // 1. Filter series to only active machines
+        if (activeMachines && activeMachines.length > 0) {
+            filtered.series = filtered.series.filter(function(s) {
+                return activeMachines.indexOf(s.name) >= 0;
+            });
+        } else {
+            filtered.series = [];
+        }
+
+        // 2. Swap metric if showing raw minutes or beam-on minutes
+        if (metric === "minutes") {
+            for (var i = 0; i < filtered.series.length; i++) {
+                if (filtered.series[i].rawMinutes) {
+                    filtered.series[i].values = filtered.series[i].rawMinutes;
+                }
+            }
+            filtered.yTitle = "Active Minutes";
+        } else if (metric === "beam") {
+            for (var i = 0; i < filtered.series.length; i++) {
+                if (filtered.series[i].beamMinutes) {
+                    filtered.series[i].values = filtered.series[i].beamMinutes;
+                }
+            }
+            filtered.yTitle = "Beam On Minutes";
+        } else {
+            filtered.yTitle = "Utilization %";
+        }
+
+        // 3. If no series remain after filtering, return empty figure
+        if (filtered.series.length === 0) {
+            return {
+                data: [],
+                layout: {
+                    height: filtered.height || 380,
+                    xaxis: {visible: false},
+                    yaxis: {visible: false},
+                    annotations: [{
+                        text: "No machines selected",
+                        xref: "paper", yref: "paper",
+                        x: 0.5, y: 0.5,
+                        showarrow: false,
+                        font: {size: 14, color: "#9CA3AF"}
+                    }],
+                    plot_bgcolor: "white",
+                    paper_bgcolor: "white"
+                }
+            };
+        }
+
+        // 4. Hide legend (chips serve as legend) and delegate to census renderer
+        filtered.hideLegend = true;
+        return window.dash_clientside.census.smoothChartWithTypeAndRange(
+            filtered, smoothPct, chartType, rangeDays, currentFig
+        );
+    },
+
+    /**
+     * Y-axis rescaling on pan — applies same filter/swap before delegating.
+     */
+    updateOnPan: function(relayoutData, currentFigure, rawData, activeMachines, metric) {
+        if (!rawData || !rawData.series) {
+            return window.dash_clientside.no_update;
+        }
+
+        var filtered = JSON.parse(JSON.stringify(rawData));
+
+        if (activeMachines && activeMachines.length > 0) {
+            filtered.series = filtered.series.filter(function(s) {
+                return activeMachines.indexOf(s.name) >= 0;
+            });
+        }
+
+        if (metric === "minutes") {
+            for (var i = 0; i < filtered.series.length; i++) {
+                if (filtered.series[i].rawMinutes) {
+                    filtered.series[i].values = filtered.series[i].rawMinutes;
+                }
+            }
+        } else if (metric === "beam") {
+            for (var i = 0; i < filtered.series.length; i++) {
+                if (filtered.series[i].beamMinutes) {
+                    filtered.series[i].values = filtered.series[i].beamMinutes;
+                }
+            }
+        }
+
+        return window.dash_clientside.censusYAxis.updateOnPan(
+            relayoutData, currentFigure, filtered
+        );
+    }
+};
+
+
+// ---------------------------------------------------------------------------
+// Flow-Gantt (time-proportional Sankey) for Workflow page
+// ---------------------------------------------------------------------------
+
+window.dash_clientside.flowGantt = {
+
+    renderFlowGantt: function(rawData, showLoopbacks) {
+        if (!rawData || !rawData.stages || rawData.stages.length < 2) {
+            return {
+                data: [],
+                layout: {
+                    xaxis: {visible: false}, yaxis: {visible: false},
+                    annotations: [{text: "No workflow data", x: 0.5, y: 0.5,
+                        xref: "paper", yref: "paper", showarrow: false,
+                        font: {size: 14, color: "#9CA3AF"}}],
+                    plot_bgcolor: "#FFFFFF", paper_bgcolor: "#FFFFFF",
+                    margin: {l: 0, r: 0, t: 0, b: 0}
+                }
+            };
+        }
+
+        var stages = rawData.stages;
+        var counts = rawData.stageCounts;
+        var flows = rawData.flowValues;
+        var drops = rawData.dropoffs;
+        var pending = rawData.pendingCounts || drops;
+        var cancelled = rawData.cancelledCounts || [];
+        var mDays = rawData.medianDays;
+        var xPos = rawData.xPositions;
+        var colors = rawData.colors;
+        var loopbacks = rawData.loopbacks || [];
+        var total = rawData.totalPatients;
+        var nStages = stages.length;
+        var height = rawData.height || 600;
+        var fontFamily = "system-ui, -apple-system, sans-serif";
+
+        // ─── Geometry ─────────────────────────────────────────────────
+        var plotL = 0.05, plotR = 0.95, plotW = plotR - plotL;
+        var yCenter = 0.45;
+        var maxBarH = 0.62;      // height of tallest bar
+        var barW = 0.020;        // narrow fixed bar width
+        var pendingColor = "#F59E0B";    // amber
+        var cancelledColor = "#EF4444";  // red
+
+        function xMap(t) { return plotL + t * plotW; }
+
+        // Cubic bezier evaluation
+        function cubic(t, p0, p1, p2, p3) {
+            var u = 1 - t;
+            return u * u * u * p0 + 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t * p3;
+        }
+
+        // Build a filled polygon tracing a bezier band between two vertical
+        // segments: src (x0, y0top→y0bot) and tgt (x1, y1top→y1bot).
+        function bezierBand(x0, y0t, y0b, x1, y1t, y1b, nPts) {
+            var n = nPts || 32;
+            var dx = x1 - x0;
+            var cp1 = x0 + dx * 0.38;
+            var cp2 = x0 + dx * 0.62;
+            var xs = [], yt = [], yb = [];
+            for (var p = 0; p <= n; p++) {
+                var t = p / n;
+                xs.push(cubic(t, x0, cp1, cp2, x1));
+                yt.push(cubic(t, y0t, y0t, y1t, y1t));
+                yb.push(cubic(t, y0b, y0b, y1b, y1b));
+            }
+            return { x: xs.concat(xs.slice().reverse()), y: yt.concat(yb.slice().reverse()) };
+        }
+
+        // ─── Bar geometry ─────────────────────────────────────────────
+        var maxCount = Math.max.apply(null, counts);
+        var bars = [];
+        for (var i = 0; i < nStages; i++) {
+            var cx = xMap(xPos[i]);
+            var ratio = maxCount > 0 ? counts[i] / maxCount : 0.5;
+            var h = Math.max(ratio * maxBarH, 0.035);
+            bars.push({
+                cx: cx,
+                l: cx - barW / 2,
+                r: cx + barW / 2,
+                top: yCenter + h / 2,
+                bot: yCenter - h / 2,
+                h: h,
+            });
+        }
+
+        // ─── Edge trackers ────────────────────────────────────────────
+        var rightEdge = [], leftEdge = [];
+        for (var i = 0; i < nStages; i++) {
+            rightEdge.push(bars[i].top);
+            leftEdge.push(bars[i].top);
+        }
+
+        var traces = [];
+        var shapes = [];
+        var annotations = [];
+
+        // ─── 1. FLOW BANDS + hover per band ──────────────────────────
+        for (var i = 0; i < nStages - 1; i++) {
+            if (flows[i] <= 0) continue;
+
+            var srcH = bars[i].h * Math.min(flows[i] / Math.max(counts[i], 1), 1);
+            var tgtH = bars[i + 1].h * Math.min(flows[i] / Math.max(counts[i + 1], 1), 1);
+
+            var s0 = rightEdge[i];
+            var s1 = Math.max(s0 - srcH, bars[i].bot);
+            var t0 = leftEdge[i + 1];
+            var t1 = Math.max(t0 - tgtH, bars[i + 1].bot);
+
+            rightEdge[i] = s1;
+            leftEdge[i + 1] = t1;
+
+            var poly = bezierBand(bars[i].r, s0, s1, bars[i + 1].l, t0, t1, 36);
+            traces.push({
+                type: "scatter", x: poly.x, y: poly.y,
+                fill: "toself",
+                fillcolor: hexToRgba(colors[i], 0.20),
+                line: { color: hexToRgba(colors[i], 0.35), width: 0.5 },
+                mode: "lines", hoverinfo: "skip", showlegend: false,
+            });
+
+            // Hover grid across flow band (3 columns × 3 rows)
+            var fDx = bars[i + 1].l - bars[i].r;
+            var fCp1 = bars[i].r + fDx * 0.38;
+            var fCp2 = bars[i].r + fDx * 0.62;
+            var fhX = [], fhY = [];
+            for (var hc = 1; hc <= 3; hc++) {
+                var ht = hc / 4;
+                var hxc = cubic(ht, bars[i].r, fCp1, fCp2, bars[i + 1].l);
+                var yT = cubic(ht, s0, s0, t0, t0);
+                var yB = cubic(ht, s1, s1, t1, t1);
+                // 3 vertical positions: top-third, center, bottom-third
+                fhX.push(hxc, hxc, hxc);
+                fhY.push(yT - (yT - yB) * 0.2, (yT + yB) / 2, yB + (yT - yB) * 0.2);
+            }
+            var flowPct = total > 0 ? (flows[i] / total * 100).toFixed(1) : "0";
+            var flowTip = "<b>" + stages[i] + " \u2192 " + stages[i + 1] + "</b><br>"
+                + flows[i].toLocaleString() + " patients (" + flowPct + "%)<br>"
+                + "Median wait: " + mDays[i] + " days";
+            var flowTips = [];
+            for (var ft = 0; ft < fhX.length; ft++) flowTips.push(flowTip);
+            traces.push({
+                type: "scatter", x: fhX, y: fhY,
+                mode: "markers",
+                marker: { size: 28, color: "rgba(0,0,0,0)" },
+                hovertext: flowTips,
+                hoverinfo: "text",
+                hoverlabel: {
+                    bgcolor: "#FFFFFF", bordercolor: colors[i],
+                    font: { size: 12, color: "#1A1A2E", family: fontFamily },
+                },
+                showlegend: false,
+            });
+        }
+
+        // ─── 2. EXIT FLOWS — pending (amber) & cancelled (red) ──────
+        for (var i = 0; i < nStages - 1; i++) {
+            var nPend = (pending && pending[i]) || 0;
+            var nCanc = (cancelled && cancelled[i]) || 0;
+            if (nPend + nCanc <= 0) continue;
+
+            var exitLen = barW * 1.5;
+            var exitDropY = 0.07;
+
+            // ── Pending exit ──
+            if (nPend > 0) {
+                var pH = bars[i].h * Math.min(nPend / Math.max(counts[i], 1), 1);
+                var pTop = rightEdge[i];
+                var pBot = Math.max(pTop - pH, bars[i].bot);
+                rightEdge[i] = pBot;
+
+                var taper = pH * 0.12;
+                var px1 = bars[i].r + exitLen;
+                var py = pBot - exitDropY;
+
+                var pPoly = bezierBand(bars[i].r, pTop, pBot, px1, py + taper, py, 20);
+                traces.push({
+                    type: "scatter", x: pPoly.x, y: pPoly.y,
+                    fill: "toself",
+                    fillcolor: hexToRgba(pendingColor, 0.18),
+                    line: { color: hexToRgba(pendingColor, 0.30), width: 0.5 },
+                    mode: "lines", hoverinfo: "skip", showlegend: false,
+                });
+                // Hover on pending exit
+                traces.push({
+                    type: "scatter",
+                    x: [(bars[i].r + px1) / 2],
+                    y: [(pTop + py) / 2],
+                    mode: "markers",
+                    marker: { size: 18, color: "rgba(0,0,0,0)" },
+                    hovertext: ["<b>" + stages[i] + " \u2192 Pending</b><br>" + nPend.toLocaleString() + " patients still in pipeline"],
+                    hoverinfo: "text",
+                    hoverlabel: { bgcolor: "#FFFBEB", bordercolor: pendingColor, font: { size: 11, color: "#92400E", family: fontFamily } },
+                    showlegend: false,
+                });
+
+                annotations.push({
+                    x: px1 + 0.006, y: py + taper / 2,
+                    xref: "x", yref: "y",
+                    text: "<span style='color:" + pendingColor + ";font-size:9px'>" + nPend.toLocaleString() + " pending</span>",
+                    showarrow: false, font: { size: 9, color: pendingColor },
+                    xanchor: "left",
+                });
+            }
+
+            // ── Cancelled exit ──
+            if (nCanc > 0) {
+                var cH = bars[i].h * Math.min(nCanc / Math.max(counts[i], 1), 1);
+                var cTop = rightEdge[i];
+                var cBot = Math.max(cTop - cH, bars[i].bot);
+                rightEdge[i] = cBot;
+
+                var cTaper = cH * 0.12;
+                var cx1 = bars[i].r + exitLen;
+                var cy = cBot - exitDropY - 0.02;  // offset below pending
+
+                var cPoly = bezierBand(bars[i].r, cTop, cBot, cx1, cy + cTaper, cy, 20);
+                traces.push({
+                    type: "scatter", x: cPoly.x, y: cPoly.y,
+                    fill: "toself",
+                    fillcolor: hexToRgba(cancelledColor, 0.15),
+                    line: { color: hexToRgba(cancelledColor, 0.28), width: 0.5 },
+                    mode: "lines", hoverinfo: "skip", showlegend: false,
+                });
+                // Hover on cancelled exit
+                traces.push({
+                    type: "scatter",
+                    x: [(bars[i].r + cx1) / 2],
+                    y: [(cTop + cy) / 2],
+                    mode: "markers",
+                    marker: { size: 18, color: "rgba(0,0,0,0)" },
+                    hovertext: ["<b>" + stages[i] + " \u2192 Cancelled / Unscheduled</b><br>" + nCanc.toLocaleString() + " patients"],
+                    hoverinfo: "text",
+                    hoverlabel: { bgcolor: "#FEF2F2", bordercolor: cancelledColor, font: { size: 11, color: "#991B1B", family: fontFamily } },
+                    showlegend: false,
+                });
+
+                annotations.push({
+                    x: cx1 + 0.006, y: cy + cTaper / 2,
+                    xref: "x", yref: "y",
+                    text: "<span style='color:" + cancelledColor + ";font-size:9px'>" + nCanc.toLocaleString() + " canc/unsched</span>",
+                    showarrow: false, font: { size: 9, color: cancelledColor },
+                    xanchor: "left",
+                });
+            }
+        }
+
+        // ─── 3. BAR RECTANGLES ───────────────────────────────────────
+        for (var i = 0; i < nStages; i++) {
+            shapes.push({
+                type: "rect",
+                x0: bars[i].l, y0: bars[i].bot,
+                x1: bars[i].r, y1: bars[i].top,
+                xref: "x", yref: "y",
+                fillcolor: colors[i],
+                line: { color: colors[i], width: 0 },
+                layer: "above",
+                opacity: 0.88,
+            });
+        }
+
+        // ─── 4. LABELS & ANNOTATIONS ─────────────────────────────────
+        for (var i = 0; i < nStages; i++) {
+            // Stage name above bar
+            annotations.push({
+                x: bars[i].cx, y: bars[i].top + 0.035,
+                xref: "x", yref: "y",
+                text: "<b>" + stages[i] + "</b>",
+                showarrow: false,
+                font: { size: 12, color: colors[i], family: fontFamily },
+            });
+
+            // Count + percentage below bar
+            var pct = total > 0 ? Math.round(counts[i] / total * 100) : 0;
+            annotations.push({
+                x: bars[i].cx, y: bars[i].bot - 0.035,
+                xref: "x", yref: "y",
+                text: "<b>" + counts[i].toLocaleString() + "</b>"
+                    + " <span style='color:#9CA3AF;font-size:10px'>(" + pct + "%)</span>",
+                showarrow: false,
+                font: { size: 12, color: "#374151", family: fontFamily },
+            });
+
+            // Median inter-stage days — fixed row above all bars
+            if (i < nStages - 1) {
+                var midX = (bars[i].r + bars[i + 1].l) / 2;
+                // Use tallest bar top + offset so all labels sit on the same line
+                var daysRowY = bars[0].top + 0.065;
+                annotations.push({
+                    x: midX, y: daysRowY,
+                    xref: "x", yref: "y",
+                    text: "<b>" + mDays[i] + "</b> " + (mDays[i] === 1 ? "day" : "days"),
+                    showarrow: false,
+                    font: { size: 13, color: "#4B5563", family: fontFamily },
+                });
+            }
+        }
+
+        // ─── 5. LOOPBACK ARCS ────────────────────────────────────────
+        // Uses actual source→target pairs computed from stage sequence data.
+        // Each pair shows which stage a patient was at before repeating.
+        if (showLoopbacks && rawData.loopbackPairs && rawData.loopbackPairs.length > 0) {
+            var pairs = rawData.loopbackPairs.slice().sort(function(a, b) {
+                // Longer arcs higher, shorter arcs lower
+                return Math.abs(b.fromIdx - b.toIdx) - Math.abs(a.fromIdx - a.toIdx);
+            });
+
+            for (var p = 0; p < pairs.length; p++) {
+                var pair = pairs[p];
+                if (pair.count <= 0) continue;
+
+                var fi = pair.fromIdx, ti = pair.toIdx;
+                var fromX = bars[fi].cx;
+                var toX = bars[ti].cx;
+                var peakY = bars[0].top + 0.05 + p * 0.025;
+                var arcColor = colors[ti];
+
+                // Bezier arc above the chart
+                shapes.push({
+                    type: "path",
+                    xref: "x", yref: "y",
+                    path: "M " + fromX + " " + bars[fi].top
+                        + " C " + fromX + " " + peakY
+                        + ", " + toX + " " + peakY
+                        + ", " + toX + " " + bars[ti].top,
+                    line: { color: hexToRgba(arcColor, 0.50), width: 1.5, dash: "dot" },
+                    fillcolor: "rgba(0,0,0,0)",
+                    layer: "above",
+                });
+
+                // Arrow at target
+                var arrowSize = 0.012;
+                shapes.push({
+                    type: "path",
+                    xref: "x", yref: "y",
+                    path: "M " + toX + " " + bars[ti].top
+                        + " L " + (toX - arrowSize) + " " + (bars[ti].top + arrowSize * 1.5)
+                        + " L " + (toX + arrowSize) + " " + (bars[ti].top + arrowSize * 1.5)
+                        + " Z",
+                    fillcolor: hexToRgba(arcColor, 0.50),
+                    line: { width: 0 },
+                    layer: "above",
+                });
+
+                // Label: "↩ N  Source → Target"
+                annotations.push({
+                    x: (fromX + toX) / 2, y: peakY + 0.015,
+                    xref: "x", yref: "y",
+                    text: "<span style='font-size:9px'>\u21A9 " + pair.count.toLocaleString()
+                        + "  " + stages[fi] + "\u2192" + stages[ti] + "</span>",
+                    showarrow: false,
+                    font: { size: 9, color: arcColor },
+                });
+            }
+        }
+
+        // ─── 6. BAR HOVER TRACES ─────────────────────────────────────
+        // Vertical column of invisible markers per bar so hover triggers
+        // anywhere along the bar height.
+        var hx = [], hy = [], ht = [];
+        for (var i = 0; i < nStages; i++) {
+            var pct2 = total > 0 ? (counts[i] / total * 100).toFixed(1) : "0";
+            var tip = "<b>" + stages[i] + "</b><br>"
+                + counts[i].toLocaleString() + " patients (" + pct2 + "%)";
+            if (i < nStages - 1) {
+                tip += "<br>\u2192 " + flows[i].toLocaleString() + " progressed (" + mDays[i] + "d median)";
+                var pi = (pending && pending[i]) || 0;
+                var ci = (cancelled && cancelled[i]) || 0;
+                if (pi > 0) tip += "<br>\u23F3 " + pi.toLocaleString() + " pending";
+                if (ci > 0) tip += "<br>\u2715 " + ci.toLocaleString() + " cancelled/unsched";
+            }
+            if (loopbacks[i] > 0) tip += "<br>\u21A9 " + loopbacks[i].toLocaleString() + " repeats";
+            // 5 markers stacked vertically across bar height
+            for (var v = 0; v < 5; v++) {
+                var vy = bars[i].bot + (bars[i].h * (v + 0.5) / 5);
+                hx.push(bars[i].cx);
+                hy.push(vy);
+                ht.push(tip);
+            }
+        }
+        traces.push({
+            type: "scatter", x: hx, y: hy,
+            mode: "markers",
+            marker: { size: 20, color: "rgba(0,0,0,0)" },
+            hovertext: ht, hoverinfo: "text",
+            hoverlabel: {
+                bgcolor: "#FFFFFF", bordercolor: "#E0E0E0",
+                font: { size: 12, color: "#1A1A2E", family: fontFamily },
+            },
+            showlegend: false,
+        });
+
+        // ─── Return figure ────────────────────────────────────────────
+        return {
+            data: traces,
+            layout: {
+                height: height,
+                xaxis: {
+                    range: [-0.02, 1.02], visible: false, fixedrange: true,
+                    showgrid: false, zeroline: false,
+                },
+                yaxis: {
+                    range: [0.02, 0.87], visible: false, fixedrange: true,
+                    showgrid: false, zeroline: false,
+                },
+                shapes: shapes,
+                annotations: annotations,
+                plot_bgcolor: "#FFFFFF",
+                paper_bgcolor: "#FFFFFF",
+                margin: { l: 6, r: 6, t: 6, b: 6 },
+                showlegend: false,
+                hovermode: "closest",
+                hoverdistance: 20,
+                font: { family: fontFamily },
+            }
         };
     }
 };

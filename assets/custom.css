@@ -1,5 +1,8 @@
 /* RadiantCare Clinical Dashboard — minimal overrides (DMC handles most styling) */
 
+/* Pointer cursor on heatmap cells */
+#ops-chart-heatmap .heatmaplayer { cursor: pointer; }
+
 body {
     background-color: #F5F6F8;
     margin: 0;
@@ -195,5 +198,18 @@ body {
 
 #home-sims-scope .mantine-SegmentedControl-indicator {
     height: calc(100% - 4px);
+}
+
+/* Efficiency machine chips — horizontal compact row */
+#ops-efficiency-machines {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+#ops-efficiency-machines .mantine-Chip-label {
+    padding: 0 10px;
+    min-height: 24px;
+    font-size: 11px;
 }
 

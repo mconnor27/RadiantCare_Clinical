@@ -375,7 +375,10 @@ def load_workflow():
     Each row is one workflow stage (Exam, Simulation, Draw, ContourReview,
     Isodose, ReviewPlan, Treatment). Department now included in source.
     """
-    df = _load_incremental(DATA_INCREMENTAL / "Workflow", "Workflow", "UniqueRowID")
+    df = _load_incremental(
+        DATA_INCREMENTAL / "Workflow", "Workflow",
+        ["UniqueRowID", "StageName", "StageOccurrence"],
+    )
     df = _parse_dates(df, [
         "StageDateTime", "StageEndDateTime", "StageDueDateTime",
         "StageCreationDateTime", "BaselineDateTime", "ExamDateTime",
@@ -476,6 +479,22 @@ def load_machines():
     df = _read_csv_safe(DATA_COMPLETE / "Machine Errors.csv")
     df = _normalize_columns(df, {"PatientName": "PatientFullName"})
     df = _parse_dates(df, ["TreatmentStartTime", "TreatmentEndTime"])
+    return df
+
+
+@lru_cache(maxsize=1)
+def load_machine_downtime():
+    """Load Machine Downtime incremental files.
+
+    Columns: Site, Date, Machine, TreatmentCount, MachineErrorCount,
+    TotalAppointments, CancelledCount, CancelledMinutes,
+    MachineDownNoteCount, OtherMachinesActiveGlobally, DowntimeConfidence.
+    """
+    df = _load_incremental(
+        DATA_INCREMENTAL / "MachineDowntime", "Machine Downtime",
+        ["Site", "Date", "Machine"],
+    )
+    df = _parse_dates(df, ["Date"])
     return df
 
 

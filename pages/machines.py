@@ -324,9 +324,10 @@ def _wrap_chart(title, figure, chart_id):
     Input("machines-filter-field-category", "value"),
 )
 def update_machines(_n, date_preset, machines, field_category):
-    from data.loader import load_machines
+    from data.loader import load_machines, load_machine_downtime
 
     df = load_machines()
+    dt_df = load_machine_downtime()
     if df.empty:
         empty_kpis = [
             dmc.GridCol(kpi_card("Total Errors", "N/A"), span={"base": 12, "sm": 6, "md": 2.4}),
@@ -334,6 +335,8 @@ def update_machines(_n, date_preset, machines, field_category):
             dmc.GridCol(kpi_card("Median Recovery", "N/A"), span={"base": 12, "sm": 6, "md": 2.4}),
             dmc.GridCol(kpi_card("Worst Machine", "N/A"), span={"base": 12, "sm": 6, "md": 2.4}),
             dmc.GridCol(kpi_card("Avg MU Deficit", "N/A"), span={"base": 12, "sm": 6, "md": 2.4}),
+            dmc.GridCol(kpi_card("Cancelled Appts", "N/A"), span={"base": 12, "sm": 6, "md": 2.4}),
+            dmc.GridCol(kpi_card("Cancelled Time", "N/A"), span={"base": 12, "sm": 6, "md": 2.4}),
         ]
         empty_msg = empty_figure("No machine error data available")
         return (
@@ -369,6 +372,14 @@ def update_machines(_n, date_preset, machines, field_category):
     if field_category and field_category != "all":
         df = df[df["FieldCategory"] == field_category]
 
+    # ---- Filter downtime data to match date/machine selections ----
+    if not dt_df.empty:
+        dt_df = dt_df.copy()
+        dt_df["_date"] = dt_df["Date"].dt.normalize()
+        dt_df = dt_df[dt_df["_date"] >= start]
+        if machines:
+            dt_df = dt_df[dt_df["Machine"].isin(machines)]
+
     # Guard against fully-filtered-out data
     if df.empty:
         empty_kpis = [
@@ -377,6 +388,8 @@ def update_machines(_n, date_preset, machines, field_category):
             dmc.GridCol(kpi_card("Median Recovery", "N/A"), span={"base": 12, "sm": 6, "md": 2.4}),
             dmc.GridCol(kpi_card("Worst Machine", "N/A"), span={"base": 12, "sm": 6, "md": 2.4}),
             dmc.GridCol(kpi_card("Avg MU Deficit", "N/A"), span={"base": 12, "sm": 6, "md": 2.4}),
+            dmc.GridCol(kpi_card("Cancelled Appts", "N/A"), span={"base": 12, "sm": 6, "md": 2.4}),
+            dmc.GridCol(kpi_card("Cancelled Time", "N/A"), span={"base": 12, "sm": 6, "md": 2.4}),
         ]
         empty_msg = empty_figure("No data for selected filters")
         return (
@@ -401,6 +414,14 @@ def update_machines(_n, date_preset, machines, field_category):
 
     mu_deficit_vals = df["MU_Deficit_Pct"].dropna()
     avg_mu_deficit = mu_deficit_vals.mean() if len(mu_deficit_vals) > 0 else None
+
+    # Downtime-sourced KPIs
+    if not dt_df.empty:
+        cancelled_count = int(dt_df["CancelledCount"].sum())
+        cancelled_hrs = dt_df["CancelledMinutes"].sum() / 60
+    else:
+        cancelled_count = 0
+        cancelled_hrs = 0.0
 
     kpi_children = [
         dmc.GridCol(
@@ -437,6 +458,22 @@ def update_machines(_n, date_preset, machines, field_category):
                 "Avg MU Deficit",
                 f"{avg_mu_deficit:.1f}%" if avg_mu_deficit is not None else "N/A",
                 accent_color=CHART_COLORWAY[3],
+            ),
+            span={"base": 12, "sm": 6, "md": 2.4},
+        ),
+        dmc.GridCol(
+            kpi_card(
+                "Cancelled Appts",
+                f"{cancelled_count:,}",
+                accent_color=CHART_COLORWAY[5],
+            ),
+            span={"base": 12, "sm": 6, "md": 2.4},
+        ),
+        dmc.GridCol(
+            kpi_card(
+                "Cancelled Time",
+                f"{cancelled_hrs:,.1f} hrs",
+                accent_color=CHART_COLORWAY[6],
             ),
             span={"base": 12, "sm": 6, "md": 2.4},
         ),
