@@ -315,12 +315,26 @@ def load_daily_volume_by_resource():
 
 @lru_cache(maxsize=1)
 def load_availability():
-    """Load Availability.csv (incremental with UniqueRowID).
+    """Load the most recent Availability snapshot.
+
+    Availability files are full snapshots (not deltas), so only the latest
+    file should be used — older files contain stale slot states.
 
     Columns: DepartmentName→Department, AppointmentDateTime→SlotDate,
     Category, ScheduledEndTime, DurationMinutes, ActivityName, etc.
     """
-    df = _load_incremental(DATA_INCREMENTAL / "Availability", "Availability", "UniqueRowID")
+    folder = DATA_INCREMENTAL / "Availability"
+    files = []
+    for f in folder.glob("Availability_*.csv"):
+        suffix = f.stem[len("Availability") + 1:]
+        try:
+            files.append((int(suffix), f))
+        except ValueError:
+            continue
+    if not files:
+        return pd.DataFrame()
+    files.sort(key=lambda x: x[0])
+    df = _read_csv_safe(files[-1][1])  # Latest file only
     df = _normalize_columns(df, {"DepartmentName": "Department"})
     df = _clean_department(df)
     df = _parse_dates(df, ["AppointmentDateTime", "ScheduledEndTime"])

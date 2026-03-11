@@ -1,7 +1,10 @@
 /* RadiantCare Clinical Dashboard — minimal overrides (DMC handles most styling) */
 
-/* Pointer cursor on heatmap cells */
-#ops-chart-heatmap .heatmaplayer { cursor: pointer; }
+/* Pointer cursor on heatmap cells (override Plotly's crosshair from drag layer) */
+#ops-chart-heatmap .nsewdrag,
+#ops-chart-heatmap .heatmaplayer,
+#home-chart-availability .nsewdrag,
+#home-chart-availability .heatmaplayer { cursor: pointer !important; }
 
 body {
     background-color: #F5F6F8;
@@ -47,7 +50,8 @@ body {
 /* Hide Plotly's separate axis hover label on the home census charts.
    This leaves the custom tooltip body without unified-hover indentation. */
 #home-chart-physician .hoverlayer .axistext,
-#home-chart-site .hoverlayer .axistext {
+#home-chart-site .hoverlayer .axistext,
+#ops-chart-efficiency .hoverlayer .axistext {
     display: none;
 }
 

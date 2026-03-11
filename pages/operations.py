@@ -11,13 +11,14 @@ import numpy as np
 from datetime import datetime, timedelta
 
 from config.settings import (
-    DEPARTMENTS, DEPARTMENT_COLORS, MACHINE_MAP, CHART_COLORWAY,
+    PHYSICIANS, DEPARTMENTS, DEPARTMENT_COLORS, MACHINE_MAP, CHART_COLORWAY,
     PRIMARY, DEFAULT_LAYOUT, FONT_FAMILY,
 )
 from components.filter_bar import filter_bar, department_chips
 from components.kpi_card import kpi_card
 from components.chart_settings import chart_settings_popover
 from components.hours_ribbon import hours_ribbon_card, register_hours_ribbon_callbacks
+from dash_iconify import DashIconify
 from utils.charts import apply_default_layout, empty_figure, dept_color
 
 dash.register_page(__name__, path="/operations", name="Operations", order=1)
@@ -260,6 +261,24 @@ layout = dmc.Stack(
                                             value="utilization",
                                             size="xs",
                                         ),
+                                        dmc.Tooltip(
+                                            label=dmc.Stack(gap=2, children=[
+                                                dmc.Text("Active Min*: Total minutes from setup imaging to last treated field", size="xs"),
+                                                dmc.Text("Util %: Active Min / Scheduled Appt Duration", size="xs"),
+                                                dmc.Text("Beam On: Sum of elapsed time for all treated fields", size="xs"),
+                                                dmc.Text("* = Available Oct 6, 2025 to present", size="xs", fs="italic", c="dimmed"),
+                                            ]),
+                                            position="top",
+                                            withArrow=True,
+                                            openDelay=150,
+                                            multiline=True,
+                                            w=340,
+                                            children=DashIconify(
+                                                icon="mdi:information-outline",
+                                                width=16, color="#9CA3AF",
+                                                style={"cursor": "help"},
+                                            ),
+                                        ),
                                     ]),
                                     dmc.Group(gap="xs", align="center", children=[
                                         dmc.SegmentedControl(
@@ -338,51 +357,64 @@ layout = dmc.Stack(
             ],
         ),
 
-        # Daily Detail Table (full-width)
-        dmc.Paper(
+        # Daily Detail Table (full-width, collapsible)
+        dmc.Accordion(
+            variant="contained",
+            radius="md",
+            chevronPosition="left",
             children=[
-                dmc.Group(
-                    justify="space-between", mb="sm", wrap="wrap", gap="sm",
+                dmc.AccordionItem(
+                    value="daily-detail",
                     children=[
-                        dmc.Text("Daily Detail", size="sm", fw=500, c="#6B7280"),
-                        dmc.Group(gap="md", align="center", children=[
-                            dmc.Group(gap="xs", align="center", children=[
-                                dmc.Text("Include Future", size="xs", c="#6B7280"),
-                                dmc.Switch(
-                                    id="ops-table-include-future",
-                                    checked=True,
-                                    size="sm",
+                        dmc.AccordionControl(
+                            dmc.Text("Daily Detail", size="sm", fw=500, c="#6B7280"),
+                        ),
+                        dmc.AccordionPanel(
+                            children=[
+                                dmc.Group(
+                                    justify="flex-end", mb="sm", wrap="wrap", gap="sm",
+                                    children=[
+                                        dmc.Group(gap="md", align="center", children=[
+                                            dmc.Group(gap="xs", align="center", children=[
+                                                dmc.Text("Include Future", size="xs", c="#6B7280"),
+                                                dmc.Switch(
+                                                    id="ops-table-include-future",
+                                                    checked=True,
+                                                    size="sm",
+                                                ),
+                                            ]),
+                                            dmc.SegmentedControl(
+                                                id="ops-table-view-by",
+                                                data=[
+                                                    {"value": "location", "label": "By Location"},
+                                                    {"value": "machine", "label": "By Machine"},
+                                                ],
+                                                value="location",
+                                                size="xs",
+                                            ),
+                                            dmc.Button(
+                                                "Export CSV",
+                                                id="ops-table-export",
+                                                size="compact-xs",
+                                                variant="light",
+                                                leftSection=dmc.Text("↓", size="xs"),
+                                            ),
+                                        ]),
+                                    ],
                                 ),
-                            ]),
-                            dmc.SegmentedControl(
-                                id="ops-table-view-by",
-                                data=[
-                                    {"value": "location", "label": "By Location"},
-                                    {"value": "machine", "label": "By Machine"},
-                                ],
-                                value="location",
-                                size="xs",
-                            ),
-                            dmc.Button(
-                                "Export CSV",
-                                id="ops-table-export",
-                                size="compact-xs",
-                                variant="light",
-                                leftSection=dmc.Text("↓", size="xs"),
-                            ),
-                        ]),
+                                dag.AgGrid(
+                                    id="ops-table",
+                                    columnDefs=[],  # Will be set by callback
+                                    defaultColDef={"resizable": True, "sortable": True, "filter": True},
+                                    dashGridOptions={"pagination": True, "paginationPageSize": 50},
+                                    style={"height": 800},
+                                    className="ag-theme-quartz",
+                                ),
+                            ],
+                        ),
                     ],
                 ),
-                dag.AgGrid(
-                    id="ops-table",
-                    columnDefs=[],  # Will be set by callback
-                    defaultColDef={"resizable": True, "sortable": True, "filter": True},
-                    dashGridOptions={"pagination": True, "paginationPageSize": 50},
-                    style={"height": 800},
-                    className="ag-theme-quartz",
-                ),
             ],
-            p="md", radius="md", shadow="xs", withBorder=True,
         ),
 
         # Interval for periodic refresh
@@ -630,6 +662,10 @@ def _prepare_efficiency_data(departments, machines, agg, start, end):
             if col not in dv.columns:
                 return None
 
+        # ActualActiveMinutes only accurate from 2025-10-06 onward
+        _ACTIVE_MIN_CUTOFF = pd.Timestamp("2025-10-06")
+        dv.loc[dv["ScheduledDate"] < _ACTIVE_MIN_CUTOFF, "ActualActiveMinutes"] = np.nan
+
         # Date filter
         dv = dv[(dv["ScheduledDate"] >= start) & (dv["ScheduledDate"] <= end)]
         if dv.empty:
@@ -672,15 +708,21 @@ def _prepare_efficiency_data(departments, machines, agg, start, end):
             # Find machine go-live: first period with actual data
             first_period = non_null.index.min()
 
+            # ActualActiveMinutes only accurate from Oct 6 2025 onward;
+            # values/rawMinutes use the later of go-live and cutoff,
+            # beamMinutes is unaffected and still uses first_period.
+            _ACTIVE_MIN_CUTOFF = pd.Timestamp("2025-10-06")
+            active_start = max(first_period, _ACTIVE_MIN_CUTOFF)
+
             # Reindex to all periods (NaN for missing)
             res_data_full = res_data.reindex(all_periods)
             res_minutes_full = res_grp["actual"].reindex(all_periods)
 
-            # None before go-live (no trace drawn), 0 for post-go-live gaps
+            # None before active_start (no trace drawn), 0 for post-start gaps
             values = []
             raw_minutes = []
             for p, util_val, min_val in zip(all_periods, res_data_full, res_minutes_full):
-                if p < first_period:
+                if p < active_start:
                     values.append(None)
                     raw_minutes.append(None)
                 else:
@@ -1392,6 +1434,19 @@ clientside_callback(
     Input("ops-chart-volume", "relayoutData"),
     State("ops-chart-volume", "figure"),
     State("ops-store-volume", "data"),
+    State("ops-volume-settings-type", "value"),
+    prevent_initial_call=True,
+)
+
+
+# Disable Daily aggregation for bar charts with long ranges (volume)
+clientside_callback(
+    ClientsideFunction(namespace="barAggGuard", function_name="update"),
+    Output("ops-volume-agg", "data"),
+    Output("ops-volume-agg", "value"),
+    Input("ops-volume-settings-type", "value"),
+    Input("ops-volume-range", "value"),
+    State("ops-volume-agg", "value"),
     prevent_initial_call=True,
 )
 
@@ -1494,16 +1549,16 @@ def update_heatmap(_n, departments, machines, scope):
             (avail["SlotDate"] >= today) & (avail["SlotDate"] <= four_weeks)
         ] if not avail.empty and "SlotDate" in avail.columns else pd.DataFrame()
 
-        # Drop 8:00 AM sim buffer slots (30-min setup holds, not bookable)
+        # Drop non-bookable sim holds: 8:00 AM 30-min setup + lunch holds
         if not avail_future.empty and "Category" in avail_future.columns:
-            avail_future = avail_future[
-                ~(
-                    (avail_future["Category"].str.contains("Simulation", case=False, na=False))
-                    & (avail_future["AppointmentDateTime"].dt.hour == 8)
-                    & (avail_future["AppointmentDateTime"].dt.minute == 0)
-                    & (avail_future["DurationMinutes"] == 30)
-                )
-            ]
+            _is_sim = avail_future["Category"].str.contains("Simulation", case=False, na=False)
+            _hour = avail_future["AppointmentDateTime"].dt.hour
+            _minute = avail_future["AppointmentDateTime"].dt.minute
+            _dur = avail_future["DurationMinutes"]
+            avail_future = avail_future[~(_is_sim & (
+                ((_hour == 8) & (_minute == 0) & (_dur == 30)) |
+                (_hour == 12)
+            ))]
 
         # Exam availability: open holds per dept per day
         exam_avail = avail_future[
@@ -1517,7 +1572,7 @@ def update_heatmap(_n, departments, machines, scope):
             (cv["ScheduledDateTime"] >= today) & (cv["ScheduledDateTime"] <= four_weeks)
         ] if not cv.empty and "ScheduledDateTime" in cv.columns else pd.DataFrame()
         if not cv_future.empty and "Status" in cv_future.columns:
-            cv_future = cv_future[cv_future["Status"] != "Cancelled"]
+            cv_future = cv_future[~cv_future["Status"].str.contains("Cancel|Deleted", case=False, na=False)]
         if consults_only and not cv_future.empty and "ActivityName" in cv_future.columns:
             cv_future = cv_future[cv_future["ActivityName"].str.contains("Consult", case=False, na=False)]
         if departments and not cv_future.empty and "Department" in cv_future.columns:
@@ -1533,9 +1588,10 @@ def update_heatmap(_n, departments, machines, scope):
             (sims_all["ScheduledDateTime"] >= today) & (sims_all["ScheduledDateTime"] <= four_weeks)
         ] if not sims_all.empty and "ScheduledDateTime" in sims_all.columns else pd.DataFrame()
         if not sims_future.empty and "Status" in sims_future.columns:
-            sims_future = sims_future[sims_future["Status"] != "Cancelled"]
+            sims_future = sims_future[~sims_future["Status"].str.contains("Cancel|Deleted", case=False, na=False)]
 
         # Build exam matrices: z_pct (for color), text (cell label), hover text
+        _md_set = set(PHYSICIANS)
         z_exam_pct = np.full((n_exams, n_dates), 100.0)
         text_exams = np.full((n_exams, n_dates), "", dtype=object)
         hover_exams = np.full((n_exams, n_dates), "", dtype=object)
@@ -1550,20 +1606,31 @@ def update_heatmap(_n, departments, machines, scope):
             dept_cv = cv_future[cv_future["Department"] == dept] if not cv_future.empty and "Department" in cv_future.columns else cv_future
 
             for j, date in enumerate(date_range):
-                open_count = len(dept_open_only[dept_open_only["SlotDate"] == date]) if not dept_open_only.empty else 0
+                day_open = dept_open_only[dept_open_only["SlotDate"] == date] if not dept_open_only.empty else pd.DataFrame()
+                open_count = len(day_open)
                 sched_count = len(dept_cv[dept_cv["ScheduledDateTime"].dt.normalize() == date]) if not dept_cv.empty else 0
                 total = sched_count + open_count
                 pct = (sched_count / total * 100) if total > 0 else 100
                 z_exam_pct[dept_i, j] = pct
+
+                # Extract physician names from open slots
+                mds = []
+                if not day_open.empty and "AssignedResource" in day_open.columns:
+                    for res in day_open["AssignedResource"].dropna().unique():
+                        if res in _md_set:
+                            mds.append(res.split(",")[0].strip())
+                md_str = ", ".join(sorted(set(mds)))
+
                 if total == 0:
                     text_exams[dept_i, j] = "—"
                     hover_exams[dept_i, j] = f"{x_hover_labels[j]}: no slots"
                 elif open_count == 0:
                     text_exams[dept_i, j] = "Full"
-                    hover_exams[dept_i, j] = f"{x_hover_labels[j]}: {sched_count}/{total}"
+                    hover_exams[dept_i, j] = f"{x_hover_labels[j]}: {sched_count}/{total} — Full"
                 else:
                     text_exams[dept_i, j] = str(open_count)
-                    hover_exams[dept_i, j] = f"{x_hover_labels[j]}: {sched_count}/{total}"
+                    detail = f"{open_count} open — {md_str}" if md_str else f"{open_count} open"
+                    hover_exams[dept_i, j] = f"{x_hover_labels[j]}: {sched_count}/{total}<br>{detail}"
 
         # Build sim matrix
         z_sim_pct = np.full((n_sim, n_dates), 100.0)
@@ -1586,10 +1653,10 @@ def update_heatmap(_n, departments, machines, scope):
                 hover_sim[0, j] = f"{x_hover_labels[j]}: no slots"
             elif open_count == 0:
                 text_sim[0, j] = "Full"
-                hover_sim[0, j] = f"{x_hover_labels[j]}: {sched_count}/{total}"
+                hover_sim[0, j] = f"{x_hover_labels[j]}: {sched_count}/{total} — Full"
             else:
                 text_sim[0, j] = str(open_count)
-                hover_sim[0, j] = f"{x_hover_labels[j]}: {sched_count}/{total}"
+                hover_sim[0, j] = f"{x_hover_labels[j]}: {sched_count}/{total}<br>{open_count} open"
 
         # ── Build figure ──────────────────────────────────────────────
         fig = make_subplots(
@@ -1724,6 +1791,12 @@ def update_heatmap(_n, departments, machines, scope):
             margin=dict(l=76, r=8, t=24, b=16),
             annotations=annotations,
             shapes=shapes,
+            hoverlabel=dict(
+                bgcolor="white",
+                bordercolor="#D1D5DB",
+                font=dict(family=FONT_FAMILY, size=11, color="#374151"),
+                align="left",
+            ),
         )
 
         # Style each subplot's axes — hide x tick labels, use annotations instead
@@ -1826,6 +1899,7 @@ clientside_callback(
     State("ops-store-efficiency", "data"),
     State("ops-efficiency-machines", "value"),
     State("ops-efficiency-metric", "value"),
+    State("ops-efficiency-settings-type", "value"),
     prevent_initial_call=True,
 )
 
@@ -1837,6 +1911,17 @@ clientside_callback(
 )
 def update_efficiency_smooth_slider(range_days, current_value):
     return _ops_smooth_limits(range_days, current_value)
+
+# Disable Daily aggregation for bar charts with long ranges (efficiency)
+clientside_callback(
+    ClientsideFunction(namespace="barAggGuard", function_name="update"),
+    Output("ops-efficiency-agg", "data"),
+    Output("ops-efficiency-agg", "value"),
+    Input("ops-efficiency-settings-type", "value"),
+    Input("ops-efficiency-range", "value"),
+    State("ops-efficiency-agg", "value"),
+    prevent_initial_call=True,
+)
 
 
 # ---------------------------------------------------------------------------
