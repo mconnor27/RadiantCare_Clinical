@@ -30,7 +30,6 @@ window.dash_clientside.census = {
         chartType = chartType || "area";
         var dates = rawData.dates;
         var futureDates = rawData.futureDates || [];
-        var height = rawData.height || 380;
         var yTitle = rawData.yTitle || "Unique Patients";
         var hasFuture = futureDates.length > 0;
         var stacked = rawData.stacked !== false;  // default true, opt-out with stacked:false
@@ -98,12 +97,18 @@ window.dash_clientside.census = {
 
             rawValsByName[s.name] = displayVals;
 
-            // Sum for total trace (smoothed for rendering, raw for hover) — only when stacked
+            // Sum for total trace (smoothed for rendering, raw for hover)
             // Guard against null values (pre/post-active periods)
-            if (stacked && isVisible) {
+            if (isVisible) {
                 for (var k = 0; k < yVals.length; k++) {
-                    totals[k] += (yVals[k] || 0);
-                    rawTotals[k] += (displayVals[k] || 0);
+                    if (stacked) {
+                        totals[k] += (yVals[k] || 0);
+                        rawTotals[k] += (displayVals[k] || 0);
+                    } else {
+                        // For non-stacked, track the max across series for summary trace positioning
+                        totals[k] = Math.max(totals[k], (yVals[k] || 0));
+                        rawTotals[k] = Math.max(rawTotals[k], (displayVals[k] || 0));
+                    }
                 }
             }
 
@@ -141,11 +146,10 @@ window.dash_clientside.census = {
                     name: s.name,
                     type: "bar",
                     marker: {color: s.color, line: {width: 0}},
-                    hoverinfo: stacked ? "skip" : undefined,
-                    hovertemplate: stacked ? undefined : s.name + ": %{customdata:.1f}" + (rawData.yTitle && rawData.yTitle.indexOf('%') >= 0 ? "%" : "") + "<extra></extra>"
+                    hoverinfo: "skip"
                 };
             } else if (chartType === "line") {
-                // Line chart (always non-stacked)
+                // Line chart — hover handled by summary trace
                 traceObj = {
                     x: traceDates,
                     y: traceY,
@@ -153,8 +157,8 @@ window.dash_clientside.census = {
                     name: s.name,
                     mode: "lines",
                     line: {color: s.color, width: 2},
-                    hoverinfo: stacked ? "skip" : undefined,
-                    hovertemplate: stacked ? undefined : s.name + ": %{customdata:.1f}" + (rawData.yTitle && rawData.yTitle.indexOf('%') >= 0 ? "%" : "") + "<extra></extra>"
+                    connectgaps: true,
+                    hoverinfo: "skip"
                 };
             } else {
                 // Area chart (stacked by default, overlay when stacked:false)
@@ -166,8 +170,8 @@ window.dash_clientside.census = {
                     mode: "lines",
                     line: {color: s.color, width: stacked ? 1.5 : 2},
                     fillcolor: hexToRgba(s.color, stacked ? 0.5 : 0.15),
-                    hoverinfo: stacked ? "skip" : undefined,
-                    hovertemplate: stacked ? undefined : s.name + ": %{customdata:.1f}" + (rawData.yTitle && rawData.yTitle.indexOf('%') >= 0 ? "%" : "") + "<extra></extra>"
+                    connectgaps: true,
+                    hoverinfo: "skip"
                 };
                 if (stacked) {
                     traceObj.stackgroup = "one";
@@ -230,6 +234,7 @@ window.dash_clientside.census = {
                         customdata: [lastPastVal].concat(futureVals),
                         name: s.name + " (scheduled)",
                         mode: "lines",
+                        connectgaps: true,
                         line: {color: s.color, width: 1, dash: "dot"},
                         fillcolor: chartType === "line" ? "transparent" : hexToRgba(s.color, 0.2),
                         stackgroup: chartType === "line" ? undefined : "future",
@@ -247,14 +252,28 @@ window.dash_clientside.census = {
             }
         }
 
-        // Build summary hover text per date point (only for stacked mode)
-        if (stacked) {
+        // Build summary hover text per date point (unified tooltip for all modes)
         var monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
         var summaryX = chartType === "bar" ? barData.labels.slice() : displayDates.slice();
         var summaryHover = [];
         var summaryY = chartType === "bar"
             ? filterByIndices(totals, barData.validIndices)
             : totals.slice();
+
+        // Detect if values are fractional (e.g. median days, percentages) vs integer counts
+        var isPercent = rawData.yTitle && rawData.yTitle.indexOf('%') >= 0;
+        var isFractional = isPercent || (rawData.yTitle && (
+            rawData.yTitle.toLowerCase().indexOf('median') >= 0 ||
+            rawData.yTitle.toLowerCase().indexOf('rate') >= 0 ||
+            rawData.yTitle.toLowerCase().indexOf('days') >= 0
+        ));
+        var valueSuffix = isPercent ? "%" : "";
+
+        function formatVal(v) {
+            if (v === null || v === undefined || isNaN(v)) return "0";
+            if (isFractional) return v.toFixed(1) + valueSuffix;
+            return Math.round(v) + valueSuffix;
+        }
 
         function buildSummaryEntry(rawDate, rawIdx, rawLookup) {
             var dateStr = "";
@@ -268,19 +287,22 @@ window.dash_clientside.census = {
             }
             var parts = dateStr ? ["<b>" + dateStr + "</b>"] : [];
             var total = 0;
+            var visCount = 0;
             for (var si = 0; si < rawData.series.length; si++) {
                 var seriesName = rawData.series[si].name;
                 var seriesRawVals = rawLookup[seriesName] || [];
-                var val = Math.round(seriesRawVals[rawIdx] || 0);
+                var rawVal = seriesRawVals[rawIdx];
                 var isVis = !visibilityMap.hasOwnProperty(rawData.series[si].name) ||
                             visibilityMap[rawData.series[si].name] === true;
-                if (val > 0 && isVis) {
-                    parts.push("<span style='color:" + rawData.series[si].color + "'>\u25A0</span> " + rawData.series[si].name + ": " + val);
-                    total += val;
+                if (rawVal !== null && rawVal !== undefined && rawVal !== 0 && isVis) {
+                    parts.push("<span style='color:" + rawData.series[si].color + "'>\u25A0</span> " + rawData.series[si].name + ": " + formatVal(rawVal));
+                    total += rawVal;
+                    visCount++;
                 }
             }
-            if (total > 0) {
-                parts.push("<b>Total: " + total + "</b>");
+            // Only show total line for stacked charts with multiple visible series
+            if (stacked && visCount > 1 && total > 0) {
+                parts.push("<b>Total: " + formatVal(total) + "</b>");
             }
             return parts.join("<br>");
         }
@@ -317,7 +339,22 @@ window.dash_clientside.census = {
             }
         }
 
-        // Invisible summary trace carries the hover tooltip
+        // For bar charts: attach summary hover to the first real bar trace
+        // For line/area: use invisible summary trace
+        if (chartType === "bar") {
+            var attachedFirst = false;
+            for (var bti = 0; bti < traces.length; bti++) {
+                var bt = traces[bti];
+                if (bt.type === "bar" && bt.hoverinfo === "skip" && bt.showlegend !== false) {
+                    if (!attachedFirst) {
+                        bt.customdata = summaryHover.slice(0, bt.x.length);
+                        bt.hovertemplate = "%{customdata}<extra></extra>";
+                        delete bt.hoverinfo;
+                        attachedFirst = true;
+                    }
+                }
+            }
+        }
         traces.push({
             x: summaryX,
             y: summaryY,
@@ -325,18 +362,24 @@ window.dash_clientside.census = {
             name: "",
             mode: "lines",
             line: {color: "transparent", width: 0},
-            hovertemplate: "%{customdata}<extra></extra>",
+            hovertemplate: chartType === "bar" ? undefined : "%{customdata}<extra></extra>",
+            hoverinfo: chartType === "bar" ? "skip" : undefined,
             showlegend: false
         });
-        }  // end if (stacked)
 
         var smoothed = smoothPct > 0;
         var layout = {
-            height: height,
-            xaxis: {showgrid: false, showspikes: false},
+            xaxis: {showgrid: false, showspikes: false, nticks: 12},
             yaxis: {gridcolor: "#E5E7EB"},
-            showlegend: rawData.hideLegend ? false : !stacked,
-            margin: {l: stacked ? 28 : 40, r: 8, t: 8, b: 32},
+            showlegend: rawData.hideLegend ? false : true,
+            legend: {
+                orientation: "h",
+                yanchor: "bottom",
+                y: 1.02,
+                xanchor: "left",
+                x: 0
+            },
+            margin: {l: stacked ? 28 : 40, r: 8, t: rawData.hideLegend ? 4 : 8, b: 20},
             plot_bgcolor: "white",
             paper_bgcolor: "white",
             font: {family: "Inter, system-ui, sans-serif", size: 12, color: "#374151"},
@@ -349,32 +392,76 @@ window.dash_clientside.census = {
             }
         };
 
-        // Show legend above chart for non-stacked mode
-        if (!stacked) {
-            layout.legend = {
-                orientation: "h",
-                yanchor: "bottom",
-                y: 1.02,
-                xanchor: "left",
-                x: 0
-            };
-            layout.margin.t = 28;
-            // Suffix for y-axis
-            if (rawData.yTitle && rawData.yTitle.indexOf('%') >= 0) {
-                layout.yaxis.ticksuffix = '%';
-            }
+        // Suffix for y-axis on percentage charts
+        if (!stacked && rawData.yTitle && rawData.yTitle.indexOf('%') >= 0) {
+            layout.yaxis.ticksuffix = '%';
         }
 
         // Add barmode for bar charts
         if (chartType === "bar") {
             layout.barmode = stacked ? "stack" : "group";
             // Tighten gaps as bar count increases to keep bars visible
-            var nBars = displayDates.length + (futureDates ? futureDates.length : 0);
-            layout.bargap = nBars > 80 ? 0 : nBars > 40 ? 0.05 : 0.15;
+            var nBars = barData.labels.length + (futureDates ? formatDatesForBars(futureDates).labels.length : 0);
+            if (nBars > 80) {
+                layout.bargap = 0;
+            } else if (nBars > 40) {
+                layout.bargap = 0.08;
+            } else {
+                layout.bargap = 0.15;
+            }
             layout.bargroupgap = stacked ? 0 : 0.05;
             layout.xaxis.type = "category";
             layout.xaxis.tickangle = 0;
-            layout.xaxis.nticks = 8;
+            // Scale tick count to bar density — fewer ticks at higher density
+            layout.xaxis.nticks = nBars > 60 ? 6 : nBars > 30 ? 8 : 12;
+            // Prevent rightmost label from being clipped
+            layout.xaxis.automargin = true;
+            layout.margin.r = 20;
+        }
+
+        // Dynamic y-axis range with 10% headroom
+        // Use stacked totals only when visually stacked (area/bar); for line mode use individual trace max
+        var yMaxSCWT = 0;
+        if (stacked && chartType !== "line") {
+            for (var yi = 0; yi < totals.length; yi++) {
+                if (totals[yi] > yMaxSCWT) yMaxSCWT = totals[yi];
+            }
+        } else {
+            for (var ti = 0; ti < traces.length; ti++) {
+                var tr = traces[ti];
+                // Skip only the invisible summary trace
+                if (tr.line && tr.line.color === "transparent") continue;
+                var isVis = !tr.name || !visibilityMap.hasOwnProperty(tr.name) || visibilityMap[tr.name] === true;
+                if (!isVis) continue;
+                var yArr = tr.y || [];
+                for (var yj = 0; yj < yArr.length; yj++) {
+                    if (yArr[yj] !== null && yArr[yj] !== undefined && yArr[yj] > yMaxSCWT) yMaxSCWT = yArr[yj];
+                }
+            }
+        }
+        if (yMaxSCWT > 0) {
+            var headroom = (rawData.showBarTotals && chartType === "bar") ? 1.13 : 1.1;
+            layout.yaxis.range = [0, Math.ceil(yMaxSCWT * headroom)];
+            layout.yaxis.autorange = false;
+        }
+
+        // Bar total annotations on top of stacked bars
+        if (rawData.showBarTotals && chartType === "bar" && stacked) {
+            var barTotalAnnotations = [];
+            var barXLabels = barData.labels;
+            for (var ai = 0; ai < barXLabels.length; ai++) {
+                var origIdx = barData.validIndices[ai];
+                var t = totals[origIdx];
+                if (t > 0) {
+                    barTotalAnnotations.push({
+                        x: barXLabels[ai], y: t,
+                        text: "<b>" + Math.round(t).toLocaleString() + "</b>",
+                        showarrow: false, yshift: 8,
+                        font: {size: 11, color: "#374151", family: "Inter, system-ui, sans-serif"}
+                    });
+                }
+            }
+            layout.annotations = barTotalAnnotations;
         }
 
         return {
@@ -690,7 +777,6 @@ window.dash_clientside.efficiency = {
             return {
                 data: [],
                 layout: {
-                    height: filtered.height || 380,
                     xaxis: {visible: false},
                     yaxis: {visible: false},
                     annotations: [{
@@ -886,5 +972,471 @@ window.dash_clientside.barAggGuard = {
             agg = 'W';
         }
         return [data, agg];
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Cumulative overlay chart — prior periods or slice-by mode
+// ---------------------------------------------------------------------------
+
+window.dash_clientside.cumulative = {
+    /**
+     * Render a cumulative visit volume chart.
+     * Supports two modes:
+     *   - "prior": current period (bold purple) + up to 5 prior periods (thin gray)
+     *   - "slice": multiple colored cumulative lines per dimension
+     *
+     * @param {Object} rawData - Data from _prepare_cumulative_data
+     * @param {number} smoothPct - Unused (cumulative data is inherently smooth)
+     * @param {string} chartType - "line" or "area"
+     * @param {Object} currentFig - Current figure (to preserve visibility)
+     * @returns {Object} Plotly figure
+     */
+    renderCumulative: function(rawData, smoothPct, chartType, currentFig) {
+        if (!rawData) {
+            return window.dash_clientside.no_update;
+        }
+
+        chartType = chartType || "line";
+
+        // Build visibility map from current figure
+        var visibilityMap = {};
+        if (currentFig && currentFig.data) {
+            for (var j = 0; j < currentFig.data.length; j++) {
+                var trace = currentFig.data[j];
+                if (trace.name && trace.visible !== undefined) {
+                    visibilityMap[trace.name] = trace.visible;
+                }
+            }
+        }
+
+        var traces = [];
+        var yTitle = rawData.yTitle || "Cumulative Visits";
+
+        // Smoothing window
+        var windowSize = Math.max(1, Math.floor(smoothPct) + 1);
+
+        if (rawData.mode === "prior") {
+            // --- Prior Periods Mode ---
+            var dayIndices = rawData.dayIndices || [];
+            var tickPositions = rawData.tickPositions || [];
+            var tickLabels = rawData.tickLabels || [];
+            var current = rawData.current || {};
+            var prior = rawData.prior || [];
+
+            if (chartType === "bar") {
+                // --- Bar: stacked bars per period, broken down by slice ---
+                var bd = rawData.sliceBreakdown || {};
+                var periods = bd.periods || [];
+                var slices = bd.slices || [];
+
+                if (slices.length > 0 && periods.length > 0) {
+                    // One trace per slice (stacked) — each carries full summary tooltip
+                    var barTotals = [];
+                    for (var pi = 0; pi < periods.length; pi++) {
+                        var parts = ["<b>" + periods[pi] + "</b>"];
+                        var total = 0;
+                        for (var sj = 0; sj < slices.length; sj++) {
+                            var val = slices[sj].values[pi] || 0;
+                            if (val > 0) {
+                                parts.push("<span style='color:" + slices[sj].color + "'>\u25A0</span> " +
+                                    slices[sj].name + ": " + val.toLocaleString());
+                                total += val;
+                            }
+                        }
+                        parts.push("<b>Total: " + total.toLocaleString() + "</b>");
+                        barTotals.push({total: total, html: parts.join("<br>")});
+                    }
+                    for (var si = 0; si < slices.length; si++) {
+                        var sl = slices[si];
+                        traces.push({
+                            x: periods, y: sl.values, name: sl.name,
+                            type: "bar", marker: {color: sl.color},
+                            customdata: barTotals.map(function(b) { return b.html; }),
+                            hovertemplate: "%{customdata}<extra></extra>"
+                        });
+                    }
+                }
+
+                // Dynamic y-range + annotations for totals on top
+                var yMaxBar = 0;
+                var barAnnotations = [];
+                for (var pi = 0; pi < periods.length; pi++) {
+                    var colTotal = 0;
+                    for (var sj = 0; sj < slices.length; sj++) {
+                        colTotal += (slices[sj].values[pi] || 0);
+                    }
+                    if (colTotal > yMaxBar) yMaxBar = colTotal;
+                    barAnnotations.push({
+                        x: periods[pi], y: colTotal,
+                        text: "<b>" + colTotal.toLocaleString() + "</b>",
+                        showarrow: false, yshift: 8,
+                        font: {size: 11, color: "#374151", family: "Inter, system-ui, sans-serif"}
+                    });
+                }
+
+                return {
+                    data: traces,
+                    layout: {
+                        barmode: "stack",
+                        xaxis: {showgrid: false, showspikes: false, type: "category"},
+                        yaxis: {
+                            gridcolor: "#E5E7EB", title: "",
+                            range: [0, Math.ceil(yMaxBar * 1.13)],
+                            autorange: false
+                        },
+                        showlegend: slices.length > 0,
+                        legend: {
+                            orientation: "h", yanchor: "bottom", y: 1.02,
+                            xanchor: "left", x: 0
+                        },
+                        margin: {l: 50, r: 16, t: 28, b: 20},
+                        plot_bgcolor: "white",
+                        paper_bgcolor: "white",
+                        font: {family: "Inter, system-ui, sans-serif", size: 12, color: "#374151"},
+                        hovermode: "x",
+                        hoverlabel: {
+                            align: "left", bgcolor: "white", bordercolor: "#E5E7EB",
+                            font: {color: "#374151", size: 12, family: "Inter, system-ui, sans-serif"}
+                        },
+                        annotations: barAnnotations
+                    }
+                };
+            }
+
+            // --- Line / Area mode ---
+            // Collect raw values per trace for summary hover
+            var lineValsByName = {};
+
+            // Prior period traces (thin gray lines)
+            for (var i = 0; i < prior.length; i++) {
+                var p = prior[i];
+                var pVals = smoothPct > 0 ? rollingAvg(p.values, windowSize) : p.values;
+                lineValsByName[p.label] = pVals;
+                var traceObj = {
+                    x: dayIndices, y: pVals, name: p.label,
+                    mode: "lines",
+                    connectgaps: true,
+                    line: {color: "#D1D5DB", width: 1.5},
+                    hoverinfo: "skip",
+                    opacity: 0.7
+                };
+                if (chartType === "area") {
+                    traceObj.fill = "tozeroy";
+                    traceObj.fillcolor = "rgba(209, 213, 219, 0.08)";
+                }
+                if (visibilityMap.hasOwnProperty(p.label)) {
+                    traceObj.visible = visibilityMap[p.label];
+                }
+                traces.push(traceObj);
+            }
+
+            // Current period trace (bold, on top)
+            var currentVals = current.values || [];
+            var trimmedX = [];
+            var trimmedY = [];
+            for (var k = 0; k < currentVals.length; k++) {
+                if (currentVals[k] !== null && currentVals[k] !== undefined) {
+                    trimmedX.push(k);
+                    trimmedY.push(currentVals[k]);
+                }
+            }
+            var smoothedY = smoothPct > 0 ? rollingAvg(trimmedY, windowSize) : trimmedY;
+            lineValsByName[current.label || "Current"] = smoothedY;
+
+            var currentTrace = {
+                x: trimmedX, y: smoothedY,
+                name: current.label || "Current",
+                mode: "lines",
+                connectgaps: true,
+                line: {color: current.color || "#7C2A83", width: 3},
+                hoverinfo: "skip"
+            };
+            if (chartType === "area") {
+                currentTrace.fill = "tozeroy";
+                currentTrace.fillcolor = hexToRgba(current.color || "#7C2A83", 0.15);
+            }
+            if (visibilityMap.hasOwnProperty(current.label)) {
+                currentTrace.visible = visibilityMap[current.label];
+            }
+            traces.push(currentTrace);
+
+            // Summary hover trace — current period first, then prior (oldest last)
+            var allTraceEntries = [{name: current.label || "Current", color: current.color || "#7C2A83"}];
+            for (var pi = 0; pi < prior.length; pi++) {
+                allTraceEntries.push({name: prior[pi].label, color: "#D1D5DB"});
+            }
+
+            var summaryXL = [];
+            var summaryYL = [];
+            var summaryHL = [];
+            var monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+            var startDateMs = rawData.startDate ? new Date(rawData.startDate).getTime() : null;
+            for (var di = 0; di < dayIndices.length; di++) {
+                var dateLabel = "";
+                if (startDateMs) {
+                    var dd = new Date(startDateMs + di * 86400000);
+                    dateLabel = monthNames[dd.getMonth()] + " " + dd.getDate();
+                }
+                var parts = ["<b>" + (dateLabel || "Day " + di) + "</b>"];
+                var ptMax = 0;
+                for (var tn = 0; tn < allTraceEntries.length; tn++) {
+                    var entry = allTraceEntries[tn];
+                    var vals = lineValsByName[entry.name] || [];
+                    var isVis = !visibilityMap.hasOwnProperty(entry.name) || visibilityMap[entry.name] === true;
+                    var v = di < vals.length ? vals[di] : null;
+                    if (v !== null && v !== undefined && isVis) {
+                        parts.push("<span style='color:" + entry.color + "'>\u25A0</span> " +
+                            entry.name + ": " + Math.round(v).toLocaleString());
+                        if (v > ptMax) ptMax = v;
+                    }
+                }
+                summaryXL.push(di);
+                summaryYL.push(ptMax);
+                summaryHL.push(parts.join("<br>"));
+            }
+            traces.push({
+                x: summaryXL, y: summaryYL, customdata: summaryHL,
+                name: "", mode: "lines", line: {color: "transparent", width: 0},
+                hovertemplate: "%{customdata}<extra></extra>",
+                showlegend: false
+            });
+
+            // Endpoint annotation
+            var annotations = [];
+            if (smoothedY.length > 0) {
+                var endVal = smoothedY[smoothedY.length - 1];
+                var endX = trimmedX[trimmedX.length - 1];
+                if (endVal !== null && endVal !== undefined) {
+                    var fmtVal = endVal.toLocaleString();
+                    annotations.push({
+                        x: endX,
+                        y: endVal,
+                        text: "<b>" + fmtVal + "</b>",
+                        showarrow: false,
+                        xanchor: "left",
+                        yanchor: "bottom",
+                        xshift: 6,
+                        yshift: 2,
+                        font: {color: current.color || "#7C2A83", size: 13, family: "Inter, system-ui, sans-serif"},
+                        bgcolor: "rgba(255,255,255,0.85)",
+                        borderpad: 3
+                    });
+                }
+            }
+
+            // Compute dynamic y-range from visible traces
+            var yMaxLine = 0;
+            for (var ti = 0; ti < traces.length; ti++) {
+                var t = traces[ti];
+                if (t.line && t.line.color === "transparent") continue; // skip summary
+                var isVis = !t.name || !visibilityMap.hasOwnProperty(t.name) || visibilityMap[t.name] === true;
+                if (!isVis) continue;
+                var yArr = t.y || [];
+                for (var yi = 0; yi < yArr.length; yi++) {
+                    if (yArr[yi] !== null && yArr[yi] !== undefined && yArr[yi] > yMaxLine) yMaxLine = yArr[yi];
+                }
+            }
+
+            return {
+                data: traces,
+                layout: {
+                    xaxis: {
+                        showgrid: false,
+                        showspikes: false,
+                        tickvals: tickPositions,
+                        ticktext: tickLabels,
+                        tickangle: 0
+                    },
+                    yaxis: {
+                        gridcolor: "#E5E7EB", title: "",
+                        range: [0, Math.ceil(yMaxLine * 1.1)],
+                        autorange: false
+                    },
+                    showlegend: true,
+                    legend: {
+                        orientation: "h",
+                        yanchor: "bottom",
+                        y: 1.02,
+                        xanchor: "left",
+                        x: 0
+                    },
+                    margin: {l: 50, r: 16, t: 28, b: 20},
+                    plot_bgcolor: "white",
+                    paper_bgcolor: "white",
+                    font: {family: "Inter, system-ui, sans-serif", size: 12, color: "#374151"},
+                    hovermode: "x",
+                    hoverlabel: {
+                        align: "left",
+                        bgcolor: "white",
+                        bordercolor: "#E5E7EB",
+                        font: {color: "#374151", size: 12, family: "Inter, system-ui, sans-serif"}
+                    },
+                    annotations: annotations
+                }
+            };
+
+        } else {
+            // --- Slice Mode ---
+            var sliceSeries = rawData.series || [];
+
+            if (chartType === "bar") {
+                // Bar always uses sliceBreakdown (periods × slices stacked)
+                // Fall through handled by prior mode bar block above won't reach here
+                // but if it does, use sliceBreakdown from the data
+                var bd = rawData.sliceBreakdown || {};
+                var periods = bd.periods || [];
+                var slices = bd.slices || [];
+                if (slices.length > 0 && periods.length > 0) {
+                    // Build summary per period, then attach to each bar trace
+                    var barTotals2 = [];
+                    for (var pi = 0; pi < periods.length; pi++) {
+                        var parts = ["<b>" + periods[pi] + "</b>"];
+                        var total = 0;
+                        for (var sj = 0; sj < slices.length; sj++) {
+                            var val = slices[sj].values[pi] || 0;
+                            if (val > 0) {
+                                parts.push("<span style='color:" + slices[sj].color + "'>\u25A0</span> " +
+                                    slices[sj].name + ": " + val.toLocaleString());
+                                total += val;
+                            }
+                        }
+                        parts.push("<b>Total: " + total.toLocaleString() + "</b>");
+                        barTotals2.push({total: total, html: parts.join("<br>")});
+                    }
+                    for (var si = 0; si < slices.length; si++) {
+                        var sl = slices[si];
+                        traces.push({
+                            x: periods, y: sl.values, name: sl.name,
+                            type: "bar", marker: {color: sl.color},
+                            customdata: barTotals2.map(function(b) { return b.html; }),
+                            hovertemplate: "%{customdata}<extra></extra>"
+                        });
+                    }
+                }
+                // Dynamic y-range + annotations
+                var yMaxBar2 = 0;
+                var barAnnotations2 = [];
+                for (var pi2 = 0; pi2 < periods.length; pi2++) {
+                    var ct = 0;
+                    for (var sj2 = 0; sj2 < slices.length; sj2++) ct += (slices[sj2].values[pi2] || 0);
+                    if (ct > yMaxBar2) yMaxBar2 = ct;
+                    barAnnotations2.push({
+                        x: periods[pi2], y: ct,
+                        text: "<b>" + ct.toLocaleString() + "</b>",
+                        showarrow: false, yshift: 8,
+                        font: {size: 11, color: "#374151", family: "Inter, system-ui, sans-serif"}
+                    });
+                }
+
+                return {
+                    data: traces,
+                    layout: {
+                        barmode: "stack",
+                        xaxis: {showgrid: false, showspikes: false, type: "category"},
+                        yaxis: {
+                            gridcolor: "#E5E7EB", title: "",
+                            range: [0, Math.ceil(yMaxBar2 * 1.13)],
+                            autorange: false
+                        },
+                        showlegend: slices.length > 0,
+                        legend: {orientation: "h", yanchor: "bottom", y: 1.02, xanchor: "left", x: 0},
+                        margin: {l: 50, r: 16, t: 8, b: 20},
+                        plot_bgcolor: "white", paper_bgcolor: "white",
+                        font: {family: "Inter, system-ui, sans-serif", size: 12, color: "#374151"},
+                        hovermode: "x",
+                        hoverlabel: {
+                            align: "left", bgcolor: "white", bordercolor: "#E5E7EB",
+                            font: {color: "#374151", size: 12, family: "Inter, system-ui, sans-serif"}
+                        },
+                        annotations: barAnnotations2
+                    }
+                };
+            }
+
+            // Line/Area: build traces with summary hover (not delegated, to get unified tooltip)
+            var sliceDates = rawData.dates || [];
+            var windowSize2 = Math.max(1, Math.floor(smoothPct) + 1);
+            var monthNames2 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+            var sliceValsByName = {};
+
+            for (var si = 0; si < sliceSeries.length; si++) {
+                var ss = sliceSeries[si];
+                var sVals = (smoothPct > 0) ? rollingAvg(ss.values, windowSize2) : ss.values;
+                sliceValsByName[ss.name] = sVals;
+                var sTrace = {
+                    x: sliceDates, y: sVals, name: ss.name,
+                    mode: "lines", connectgaps: true, line: {color: ss.color, width: 2},
+                    hoverinfo: "skip"
+                };
+                if (chartType === "area") {
+                    sTrace.fill = "tozeroy";
+                    sTrace.fillcolor = hexToRgba(ss.color, 0.15);
+                }
+                if (visibilityMap.hasOwnProperty(ss.name)) {
+                    sTrace.visible = visibilityMap[ss.name];
+                }
+                traces.push(sTrace);
+            }
+
+            // Summary hover trace
+            var sSummaryX = [], sSummaryY = [], sSummaryH = [];
+            for (var di = 0; di < sliceDates.length; di++) {
+                var d2 = new Date(sliceDates[di]);
+                var dlabel = !isNaN(d2) ? monthNames2[d2.getMonth()] + " " + d2.getDate() + ", " + d2.getFullYear() : sliceDates[di];
+                var pts = ["<b>" + dlabel + "</b>"];
+                var ptMax2 = 0, total2 = 0;
+                for (var sn = 0; sn < sliceSeries.length; sn++) {
+                    var entry2 = sliceSeries[sn];
+                    var sv = sliceValsByName[entry2.name];
+                    var isV = !visibilityMap.hasOwnProperty(entry2.name) || visibilityMap[entry2.name] === true;
+                    var val2 = di < sv.length ? sv[di] : null;
+                    if (val2 !== null && val2 !== undefined && isV) {
+                        pts.push("<span style='color:" + entry2.color + "'>\u25A0</span> " +
+                            entry2.name + ": " + Math.round(val2).toLocaleString());
+                        total2 += Math.round(val2);
+                        if (val2 > ptMax2) ptMax2 = val2;
+                    }
+                }
+                if (sliceSeries.length > 1) pts.push("<b>Total: " + total2.toLocaleString() + "</b>");
+                sSummaryX.push(sliceDates[di]);
+                sSummaryY.push(ptMax2);
+                sSummaryH.push(pts.join("<br>"));
+            }
+            traces.push({
+                x: sSummaryX, y: sSummaryY, customdata: sSummaryH,
+                name: "", mode: "lines", line: {color: "transparent", width: 0},
+                hovertemplate: "%{customdata}<extra></extra>",
+                showlegend: false
+            });
+
+            // Dynamic y-range
+            var yMaxSlice = 0;
+            for (var yi2 = 0; yi2 < sSummaryY.length; yi2++) {
+                if (sSummaryY[yi2] > yMaxSlice) yMaxSlice = sSummaryY[yi2];
+            }
+
+            return {
+                data: traces,
+                layout: {
+                    xaxis: {showgrid: false, showspikes: false, nticks: 12},
+                    yaxis: {
+                        gridcolor: "#E5E7EB", title: "",
+                        range: [0, Math.ceil(yMaxSlice * 1.1)],
+                        autorange: false
+                    },
+                    showlegend: true,
+                    legend: {orientation: "h", yanchor: "bottom", y: 1.02, xanchor: "left", x: 0},
+                    margin: {l: 50, r: 16, t: 28, b: 20},
+                    plot_bgcolor: "white", paper_bgcolor: "white",
+                    font: {family: "Inter, system-ui, sans-serif", size: 12, color: "#374151"},
+                    hovermode: "x",
+                    hoverlabel: {
+                        align: "left", bgcolor: "white", bordercolor: "#E5E7EB",
+                        font: {color: "#374151", size: 12, family: "Inter, system-ui, sans-serif"}
+                    }
+                }
+            };
+        }
     }
 };

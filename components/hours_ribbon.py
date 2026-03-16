@@ -17,19 +17,19 @@ from dash_iconify import DashIconify
 from components.chart_settings import chart_settings_popover
 
 
-def hours_ribbon_card(prefix, *, card_height="100%", chart_height="380px"):
+def hours_ribbon_card(prefix, *, card_height="100%", chart_height=None):
     """Return a Paper card with Operating Hours ribbon chart and week navigation.
 
     Args:
         prefix: ID prefix (e.g. "home" or "ops"). All component IDs will be
                 ``{prefix}-hours-*``.
         card_height: CSS height for the outer Paper.
-        chart_height: CSS height for the dcc.Graph.
+        chart_height: CSS height for the dcc.Graph (default: fills remaining space).
     """
     return dmc.Paper(
         children=[
             dmc.Group(
-                justify="space-between", mb="sm",
+                justify="space-between", mb=8,
                 children=[
                     dmc.Group(gap="sm", align="center", children=[
                         dmc.Text("Operating Hours", size="sm", fw=500, c="#6B7280"),
@@ -93,21 +93,27 @@ def hours_ribbon_card(prefix, *, card_height="100%", chart_height="380px"):
             ),
             dmc.Box(
                 pos="relative",
+                style={"flex": "1", "minHeight": 0},
                 children=[
-                    dmc.LoadingOverlay(
-                        id=f"{prefix}-hours-loading",
-                        visible=False,
-                        loaderProps={"type": "dots", "color": "#7C2A83"},
-                        overlayProps={"radius": "sm", "blur": 2},
-                    ),
-                    dcc.Graph(
-                        id=f"{prefix}-chart-hours",
-                        config={
-                            "displayModeBar": False,
-                            "scrollZoom": False,
-                            "doubleClick": "reset",
-                        },
-                        style={"height": chart_height},
+                    dmc.Box(
+                        style={"position": "absolute", "top": 0, "left": 0, "right": 0, "bottom": 0},
+                        children=[
+                            dmc.LoadingOverlay(
+                                id=f"{prefix}-hours-loading",
+                                visible=False,
+                                loaderProps={"type": "dots", "color": "#7C2A83"},
+                                overlayProps={"radius": "sm", "blur": 2},
+                            ),
+                            dcc.Graph(
+                                id=f"{prefix}-chart-hours",
+                                config={
+                                    "displayModeBar": False,
+                                    "scrollZoom": False,
+                                    "doubleClick": "reset",
+                                },
+                                style={"height": "100%"},
+                            ),
+                        ],
                     ),
                 ],
             ),
@@ -115,7 +121,8 @@ def hours_ribbon_card(prefix, *, card_height="100%", chart_height="380px"):
             dcc.Store(id=f"{prefix}-store-hours"),
             dcc.Store(id=f"{prefix}-hours-week-offset", data=0),
         ],
-        p="sm", radius="md", shadow="xs", withBorder=True, h=card_height,
+        p="sm", pb=8, radius="md", shadow="xs", withBorder=True, h=card_height,
+        style={"display": "flex", "flexDirection": "column"},
     )
 
 

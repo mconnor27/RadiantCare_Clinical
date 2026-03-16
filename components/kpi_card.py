@@ -172,6 +172,7 @@ def kpi_card(
                 f"{trend_icon}{trend_text}",
                 size="xs",
                 c=trend_color or NEUTRAL["text_muted"],
+                mb=4,
             )
         )
 
@@ -211,7 +212,7 @@ def kpi_card(
         children=paper_children,
         pt="sm",
         px="md",
-        pb=8,
+        pb=4,
         radius="md",
         shadow="xs",
         withBorder=True,

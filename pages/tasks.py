@@ -14,40 +14,20 @@ from config.settings import (
 )
 from components.filter_bar import filter_bar, date_presets, physician_select
 from components.kpi_card import kpi_card
-from components.chart_settings import chart_settings_popover
+from components.chart_card import chart_card, register_chart_callbacks
 from utils.charts import apply_default_layout, empty_figure, color_for_index
 
 dash.register_page(__name__, path="/tasks", name="Tasks", order=5)
 
 
-def _chart_card(chart_id: str, title: str, with_settings: bool = False):
-    """Build a chart card with optional settings popover and loading overlay."""
-    header_children = [
-        dmc.Text(title, size="sm", fw=500, c=NEUTRAL["text_secondary"]),
-    ]
-    if with_settings:
-        header_children.append(chart_settings_popover(chart_id))
-
-    return dmc.Paper(
-        children=[
-            dmc.Group(header_children, justify="space-between", mb="sm"),
-            dmc.Box(
-                pos="relative",
-                children=[
-                    dmc.LoadingOverlay(
-                        id=f"{chart_id}-loading",
-                        visible=False,
-                        loaderProps={"type": "dots", "color": PRIMARY},
-                    ),
-                    dcc.Graph(
-                        id=chart_id,
-                        config={"displayModeBar": False},
-                        style={"height": "320px"},
-                    ),
-                ],
-            ),
-        ],
-        p="md", radius="md", shadow="xs", withBorder=True,
+def _tasks_chart_card(chart_id, title, with_settings=False, chart_types=None):
+    """Build a chart card using shared chart_card component."""
+    return chart_card(
+        chart_id,
+        title,
+        chart_types=chart_types,
+        show_smooth=False,
+        show_settings=with_settings,
     )
 
 
@@ -99,17 +79,19 @@ layout = dmc.Stack(
 
         # Charts row 1: Volume trend + Time to Complete
         dmc.Grid(gutter="md", children=[
-            dmc.GridCol(_chart_card("tasks-chart-volume", "Task Volume Trend", with_settings=True),
+            dmc.GridCol(_tasks_chart_card("tasks-chart-volume", "Task Volume Trend", with_settings=True,
+                                   chart_types=[{"value": "bar", "label": "Bar"}, {"value": "line", "label": "Line"}, {"value": "area", "label": "Area"}]),
                         span={"base": 12, "md": 6}),
-            dmc.GridCol(_chart_card("tasks-chart-histogram", "Time to Complete (minutes)"),
+            dmc.GridCol(_tasks_chart_card("tasks-chart-histogram", "Time to Complete (minutes)"),
                         span={"base": 12, "md": 6}),
         ]),
 
         # Charts row 2: Physician comparison + SLA trend
         dmc.Grid(gutter="md", children=[
-            dmc.GridCol(_chart_card("tasks-chart-physician", "Physician Comparison (median min)"),
+            dmc.GridCol(_tasks_chart_card("tasks-chart-physician", "Physician Comparison (median min)"),
                         span={"base": 12, "md": 6}),
-            dmc.GridCol(_chart_card("tasks-chart-sla", "SLA Compliance Trend", with_settings=True),
+            dmc.GridCol(_tasks_chart_card("tasks-chart-sla", "SLA Compliance Trend", with_settings=True,
+                                   chart_types=[{"value": "line", "label": "Line"}, {"value": "area", "label": "Area"}]),
                         span={"base": 12, "md": 6}),
         ]),
 
@@ -468,7 +450,9 @@ def _build_sla_store(df, is_completed):
 
     # Per physician
     if "AssignedMD" in completed.columns:
-        for i, md in enumerate(completed["AssignedMD"].unique()[:4]):
+        for i, md in enumerate(completed["AssignedMD"].dropna().unique()[:4]):
+            if not md:
+                continue
             md_data = completed[completed["AssignedMD"] == md]
             md_monthly = md_data.groupby("month")["on_time"].mean().reset_index()
             md_monthly["on_time"] *= 100
@@ -585,7 +569,7 @@ clientside_callback(
     Output("tasks-chart-volume", "figure"),
     Input("tasks-store-volume", "data"),
     Input("tasks-chart-volume-settings-type", "value"),
-    Input("tasks-chart-volume-settings-smooth", "checked"),
+    Input("tasks-chart-volume-settings-smooth", "value"),
 )
 
 clientside_callback(
@@ -593,7 +577,7 @@ clientside_callback(
     Output("tasks-chart-sla", "figure"),
     Input("tasks-store-sla", "data"),
     Input("tasks-chart-sla-settings-type", "value"),
-    Input("tasks-chart-sla-settings-smooth", "checked"),
+    Input("tasks-chart-sla-settings-smooth", "value"),
 )
 
 # ---------------------------------------------------------------------------
@@ -633,3 +617,8 @@ clientside_callback(
     Input("tasks-store-kpi-sparklines", "data"),
     Input("tasks-spark-afterhours", "id"),
 )
+
+# ---------------------------------------------------------------------------
+# Register settings toggle + PNG export callbacks for charts with settings
+# ---------------------------------------------------------------------------
+register_chart_callbacks(["tasks-chart-volume", "tasks-chart-sla"])

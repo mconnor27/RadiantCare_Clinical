@@ -112,14 +112,41 @@ window.dash_clientside.sparklines = {
     smoothOpsNewStarts: function(data, smoothPct) {
         return buildSparkline(data, smoothPct, "newstarts");
     },
+    // Clinic Visits page sparklines
+    smoothCvTotal: function(data, smoothPct) {
+        return buildSparkline(data, smoothPct, "total");
+    },
+    smoothCvConsults: function(data, smoothPct) {
+        return buildSparkline(data, smoothPct, "consults");
+    },
+    smoothCvFollowups: function(data, smoothPct) {
+        return buildSparkline(data, smoothPct, "followups");
+    },
+    smoothCvLead: function(data, smoothPct) {
+        return buildSparkline(data, smoothPct, "lead_time");
+    },
+    smoothCvSimConv: function(data, smoothPct) {
+        return buildSparkline(data, smoothPct, "sim_conv");
+    },
+    smoothCvDaysToSim: function(data, smoothPct) {
+        return buildSparkline(data, smoothPct, "days_to_sim");
+    },
 
     /**
      * Generic sparkline updater keyed by component ID suffix.
-     * Used by tasks page KPI cards where the data key is derived from
-     * the graph component's ID (e.g., "tasks-spark-open" → key "open").
-     * Data format: { key: { x: [...], y: [...] } }
+     * Used by pages that don't need individual named wrappers.
+     * Delegates to buildSparkline() for full visual quality (gradient fill,
+     * spike crosshair, styled hoverlabel, LOESS smoothing, y-axis padding).
+     *
+     * Accepts two data formats:
+     *   - Named wrapper format: { key: { values: [...], labels: [...], color, hover_fmt } }
+     *   - Simple format:        { key: { x: [...], y: [...], color } }
+     *
+     * @param {object} data        - Store data keyed by sparkline name
+     * @param {string} componentId - Graph component ID (e.g., "tasks-spark-open")
+     * @param {number} [smoothPct] - Smoothing value (0-1), default 0.3. Optional.
      */
-    updateFromStore: function(data, componentId) {
+    updateFromStore: function(data, componentId, smoothPct) {
         if (!data || !componentId) return window.dash_clientside.no_update;
 
         // Extract key from component ID: "tasks-spark-open" → "open"
@@ -127,28 +154,21 @@ window.dash_clientside.sparklines = {
         var key = parts[parts.length - 1];
 
         var spark = data[key];
-        if (!spark || !spark.x || !spark.y) return window.dash_clientside.no_update;
+        if (!spark) return window.dash_clientside.no_update;
 
-        var color = spark.color || "#7C2A83";
-        return {
-            data: [{
-                x: spark.x,
-                y: spark.y,
-                mode: "lines",
-                line: {color: color, width: 1.5},
-                hovertemplate: "%{x|%b %d}: %{y:,.0f}<extra></extra>"
-            }],
-            layout: {
-                margin: {l: 0, r: 0, t: 0, b: 0},
-                height: 44,
-                plot_bgcolor: "rgba(0,0,0,0)",
-                paper_bgcolor: "rgba(0,0,0,0)",
-                xaxis: {visible: false},
-                yaxis: {visible: false},
-                showlegend: false,
-                dragmode: false,
-                hovermode: "x"
-            }
+        // Normalize: convert {x, y} format to {values, labels} for buildSparkline
+        var normalized = {};
+        normalized[key] = {
+            values: spark.values || spark.y,
+            labels: spark.labels || spark.x,
+            color: spark.color || "#7C2A83",
+            hover_fmt: spark.hover_fmt
         };
+
+        if (!normalized[key].values || normalized[key].values.length === 0) {
+            return window.dash_clientside.no_update;
+        }
+
+        return buildSparkline(normalized, smoothPct || 0.3, key);
     }
 };

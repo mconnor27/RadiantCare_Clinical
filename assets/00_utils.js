@@ -252,6 +252,26 @@ function hourToTimeStr(hour) {
 // PNG Export Utility
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Chart Settings Toggle
+// ---------------------------------------------------------------------------
+
+window.dash_clientside.chartSettings = {
+    /**
+     * Toggle a settings panel's visibility.
+     * Used by register_chart_callbacks() to replace per-chart Python callbacks.
+     */
+    toggle: function(n_clicks, current_style) {
+        if (!n_clicks) return window.dash_clientside.no_update;
+        var hidden = !current_style || current_style.display === "none";
+        return {display: hidden ? "block" : "none"};
+    }
+};
+
+// ---------------------------------------------------------------------------
+// PNG Export Utility
+// ---------------------------------------------------------------------------
+
 window.dash_clientside.chartExport = {
     /**
      * Export a Plotly chart to PNG.
@@ -262,11 +282,14 @@ window.dash_clientside.chartExport = {
     exportPng: function(n_clicks, graphId, filename) {
         if (!n_clicks) return window.dash_clientside.no_update;
 
-        var graphEl = document.getElementById(graphId);
-        if (!graphEl) {
+        var el = document.getElementById(graphId);
+        if (!el) {
             console.warn("Chart not found:", graphId);
             return window.dash_clientside.no_update;
         }
+
+        // dcc.Graph wraps the plot in a div — find the actual Plotly element
+        var graphEl = el.querySelector(".js-plotly-plot") || el;
 
         filename = filename || graphId;
         Plotly.downloadImage(graphEl, {

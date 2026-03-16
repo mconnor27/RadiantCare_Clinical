@@ -37,6 +37,11 @@ body {
     background-color: #F3E8F5 !important;
 }
 
+/* Tighten gap between chart card header and Plotly legend */
+.js-plotly-plot {
+    margin-top: -6px;
+}
+
 /* Plotly modebar hide by default, show on hover */
 .js-plotly-plot .plotly .modebar {
     opacity: 0;
@@ -47,11 +52,9 @@ body {
     opacity: 1;
 }
 
-/* Hide Plotly's separate axis hover label on the home census charts.
+/* Hide Plotly's separate axis hover label on all charts.
    This leaves the custom tooltip body without unified-hover indentation. */
-#home-chart-physician .hoverlayer .axistext,
-#home-chart-site .hoverlayer .axistext,
-#ops-chart-efficiency .hoverlayer .axistext {
+.js-plotly-plot .hoverlayer .axistext {
     display: none;
 }
 
@@ -172,7 +175,7 @@ body {
 .page-sticky-header {
     position: sticky;
     top: 0;
-    z-index: 50;
+    z-index: 400;
     background-color: #F5F6F8;
     padding-top: 4px;
     padding-bottom: 0;
@@ -180,6 +183,14 @@ body {
     display: flex;
     flex-direction: column;
     gap: 8px;
+}
+
+/* Mantine Tooltip/Popover portals above sticky header */
+.mantine-Tooltip-tooltip {
+    z-index: 500 !important;
+}
+.mantine-Popover-dropdown {
+    z-index: 500 !important;
 }
 
 /* Add shadow when scrolled */
@@ -215,5 +226,318 @@ body {
     padding: 0 10px;
     min-height: 24px;
     font-size: 11px;
+}
+
+/* ─── Flow-Gantt SVG chart ────────────────────────────────── */
+
+#wf-flow-gantt {
+    aspect-ratio: 2.2;
+    min-height: 300px;
+    max-height: 600px;
+}
+
+.flow-gantt-band,
+.flow-gantt-exit,
+.flow-gantt-stage {
+    cursor: pointer;
+    transition: fill 0.15s ease, stroke 0.15s ease, stroke-width 0.15s ease;
+}
+
+.flow-gantt-stage {
+    transition: fill 0.15s ease, stroke 0.15s ease, stroke-width 0.15s ease, filter 0.15s ease;
+}
+
+.flow-gantt-stage.is-hovered {
+    filter: brightness(1.05);
+}
+
+.flow-gantt-band.is-selected {
+    filter: brightness(1.05);
+}
+
+.flow-gantt-band.is-dimmed {
+    transition: opacity 0.2s ease, fill 0.15s ease;
+}
+
+.flow-gantt-tooltip {
+    position: fixed;
+    pointer-events: none;
+    z-index: 10000;
+    background: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    border-radius: 6px;
+    padding: 8px 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+    font-family: system-ui, -apple-system, sans-serif;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #1A1A2E;
+    max-width: 280px;
+    border-left: 3px solid #7C2A83;
+    display: none;
+}
+
+/* ─── Workflow Date Range Slider ─────────────────────────── */
+#wf-date-slider .mantine-Slider-bar,
+#wf-b-date-slider .mantine-Slider-bar,
+#cv-date-slider .mantine-Slider-bar {
+    background: linear-gradient(90deg, #9B40A9, #7C2A83);
+}
+#wf-date-slider .mantine-Slider-markLabel,
+#wf-b-date-slider .mantine-Slider-markLabel,
+#cv-date-slider .mantine-Slider-markLabel {
+    font-size: 10px;
+    color: #9CA3AF;
+    margin-top: 2px;
+}
+#wf-date-slider,
+#wf-b-date-slider,
+#cv-date-slider {
+    margin-bottom: 20px;  /* room for mark labels */
+}
+#wf-date-range-label,
+#wf-b-date-range-label,
+#cv-date-range-label {
+    letter-spacing: 0.5px;
+}
+/* Slider thumb hover label styling */
+#wf-date-slider .mantine-Slider-label,
+#wf-b-date-slider .mantine-Slider-label,
+#cv-date-slider .mantine-Slider-label {
+    font-size: 11px;
+    white-space: nowrap;
+    padding: 2px 6px;
+}
+
+/* ─── Workflow date-preset dropdown — above sticky header ── */
+#workflow-filter-date-preset .mantine-Select-dropdown {
+    z-index: 500;
+    max-height: none !important;
+}
+#workflow-filter-date-preset .mantine-Select-options {
+    max-height: none !important;
+}
+
+/* ─── Workflow Chip Dropdowns ────────────────────────────── */
+.wf-chip-dropdown {
+    position: absolute;
+    z-index: 9999;
+    top: calc(100% + 4px);
+    left: 0;
+    background-color: white;
+    min-width: 220px;
+    max-width: 320px;
+}
+
+/* ─── Workflow dcc.DatePickerRange compact styling ─────────── */
+/* Match Mantine Select size="xs" input: same height, border, radius */
+.wf-datepicker-wrapper.mantine-Paper-root {
+    display: flex;
+    align-items: center;
+    border: 1px solid var(--mantine-color-default-border) !important;
+    border-radius: var(--mantine-radius-sm);
+    height: 30px;
+    box-shadow: none;
+}
+/* Match same height on the Select wrapper */
+#workflow-filter-date-preset .mantine-Select-input {
+    height: 30px;
+    min-height: 30px;
+}
+.wf-date-picker-range {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+.wf-date-picker-range .DateInput {
+    width: 98px;
+    background: transparent;
+}
+.wf-date-picker-range .DateInput_input {
+    font-size: 12px;
+    padding: 4px 8px;
+    line-height: 1.4;
+    font-weight: 500;
+    color: #374151;
+    border: none;
+    background: transparent;
+}
+.wf-date-picker-range .DateInput_input__focused {
+    border: none;
+    border-bottom: 2px solid #9B40A9;
+}
+.wf-date-picker-range .DateRangePickerInput {
+    background: transparent;
+    border: none;
+    display: flex;
+    align-items: center;
+}
+.wf-date-picker-range .DateRangePickerInput_arrow_svg {
+    fill: #9CA3AF;
+    width: 14px;
+    height: 14px;
+}
+.wf-date-picker-range .DateRangePickerInput_clearDates {
+    padding: 0;
+    margin: 0 4px;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+}
+.wf-date-picker-range .DateRangePickerInput_clearDates:hover {
+    background: #F3E8F5;
+}
+.wf-date-picker-range .DateRangePickerInput_clearDates svg {
+    width: 12px;
+    height: 12px;
+}
+/* Calendar popup positioning — tighten gap to input */
+.wf-date-picker-range .DateRangePicker_picker {
+    top: 38px !important;
+}
+.wf-date-picker-range .DateRangePicker_picker__directionLeft .DateRangePicker_picker::before,
+.wf-date-picker-range .DateInput_fang {
+    top: 30px !important;
+}
+/* Calendar popup styling */
+.wf-date-picker-range .DayPicker {
+    box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+    border-radius: 8px;
+}
+.wf-date-picker-range .CalendarMonth_caption {
+    font-size: 14px;
+    color: #374151;
+}
+.wf-date-picker-range .CalendarDay__selected,
+.wf-date-picker-range .CalendarDay__selected:hover {
+    background: #7C2A83;
+    border-color: #7C2A83;
+    color: white;
+}
+.wf-date-picker-range .CalendarDay__selected_span {
+    background: #F3E8F5;
+    border-color: #E8D5EC;
+    color: #7C2A83;
+}
+.wf-date-picker-range .CalendarDay__hovered_span,
+.wf-date-picker-range .CalendarDay__hovered_span:hover {
+    background: #F3E8F5;
+    border-color: #E8D5EC;
+    color: #7C2A83;
+}
+.wf-date-picker-range .DayPickerNavigation_button {
+    border: 1px solid #E5E7EB;
+    border-radius: 4px;
+    padding: 4px 8px;
+}
+.wf-date-picker-range .CalendarDay__default:hover {
+    background: #F3E8F5;
+    border-color: #E8D5EC;
+    color: #7C2A83;
+}
+
+/* ─── Workflow Outlier Caps Panel ──────────────────────────── */
+#wf-outlier-panel .mantine-Slider-root {
+    margin-bottom: 4px;
+}
+#wf-outlier-panel .mantine-Slider-label {
+    font-size: 11px;
+    padding: 2px 6px;
+}
+/* Dim sliders when outlier caps are disabled */
+#wf-outlier-panel .wf-outlier-sliders.is-disabled {
+    opacity: 0.35;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+}
+#wf-outlier-panel .wf-outlier-sliders {
+    transition: opacity 0.2s ease;
+}
+
+/* ─── Compare mode ──────────────────────────────────── */
+/* Dataset badges */
+.wf-dataset-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    font-weight: 700;
+    font-size: 13px;
+    flex-shrink: 0;
+}
+.wf-dataset-badge-a {
+    border: 2px solid #2196F3;
+    color: #2196F3;
+}
+.wf-dataset-badge-b {
+    border: 2px solid #FF9800;
+    color: #FF9800;
+}
+
+/* Filter bar left borders */
+.wf-filter-bar-a { border-left: 3px solid #2196F3; }
+.wf-filter-bar-b { border-left: 3px solid #FF9800; }
+
+/* Clear button inside filter trigger buttons */
+.wf-filter-clear-btn {
+    position: absolute;
+    right: 5px;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 10;
+    display: none;
+    cursor: pointer;
+    pointer-events: auto;
+    min-width: 28px;
+    min-height: 28px;
+}
+.wf-filter-clear-btn:hover {
+    color: var(--mantine-color-red-6) !important;
+    background-color: rgba(0, 0, 0, 0.04);
+}
+.wf-filter-clear-btn:active,
+.wf-filter-clear-btn[data-active] {
+    transform: translateY(-50%) !important;
+}
+/* Hide the dropdown chevron when clear button is visible */
+div:has(> .wf-filter-clear-btn[style*="inline-flex"]) > .mantine-Button-root .mantine-Button-section[data-position="right"] {
+    visibility: hidden;
+}
+
+/* Gantt compare divider */
+.flow-gantt-compare-divider {
+    stroke: #E5E7EB;
+    stroke-dasharray: 4 3;
+    stroke-width: 1;
+}
+
+/* Pipeline dataset labels in SVG */
+.flow-gantt-dataset-label {
+    font-size: 16px;
+    font-weight: 700;
+    fill: #6B7280;
+}
+
+/* Slice-by toggle dimming: dim the "other side" to show what's inactive.
+   Target by input value attribute since :first-child is unreliable
+   (Mantine inserts an indicator element before the controls). */
+/* When Total is active, dim the group options */
+.slice-total-active .mantine-SegmentedControl-input:not([value=""]) + .mantine-SegmentedControl-label {
+    opacity: 0.4;
+    transition: opacity 0.15s ease;
+}
+.slice-total-active .mantine-SegmentedControl-input:not([value=""]) + .mantine-SegmentedControl-label:hover {
+    opacity: 0.75;
+}
+/* When a group option is active, dim Total */
+.slice-group-active .mantine-SegmentedControl-input[value=""] + .mantine-SegmentedControl-label {
+    opacity: 0.4;
+    transition: opacity 0.15s ease;
+}
+.slice-group-active .mantine-SegmentedControl-input[value=""] + .mantine-SegmentedControl-label:hover {
+    opacity: 0.75;
 }
 

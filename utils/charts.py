@@ -39,3 +39,33 @@ def dept_color(dept_name):
 def color_for_index(i):
     """Get a color from the chart colorway by index."""
     return CHART_COLORWAY[i % len(CHART_COLORWAY)]
+
+
+def smooth_limits(range_days, current_value):
+    """Scale smoothing slider max to the selected visible range.
+
+    Args:
+        range_days: String like "30", "90", "365", "0" (all), or "thisweek".
+        current_value: Current slider value (clamped to new max).
+
+    Returns:
+        (max_val, clamped_value) tuple for slider max and value.
+    """
+    if range_days == "thisweek":
+        return 3, min(current_value or 0, 3)
+    days = int(range_days) if range_days else 90
+    if days == 0:
+        max_val = 180
+    elif days <= 30:
+        max_val = 12
+    elif days <= 60:
+        max_val = 20
+    elif days <= 90:
+        max_val = 30
+    elif days <= 180:
+        max_val = 60
+    elif days <= 365:
+        max_val = 120
+    else:
+        max_val = 180
+    return max_val, min(current_value or 0, max_val)

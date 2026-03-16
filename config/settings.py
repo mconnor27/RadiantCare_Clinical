@@ -106,6 +106,21 @@ DMC_THEME = {
 # ---------------------------------------------------------------------------
 # Plotly defaults
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Chart card defaults
+# ---------------------------------------------------------------------------
+DEFAULT_GRAPH_CONFIG = {
+    "displayModeBar": False,
+    "scrollZoom": False,
+    "doubleClick": "reset",
+}
+CHART_PAPER_HEIGHT = "466px"     # Standard Paper height (half-width / row of 2)
+CHART_PAPER_HEIGHT_SM = "380px"  # Compact Paper height (third-width / row of 3)
+CHART_GRAPH_HEIGHT = "380px"     # Graph area height within card (legacy, unused by flex layout)
+
+# ---------------------------------------------------------------------------
+# Plotly defaults
+# ---------------------------------------------------------------------------
 DEFAULT_LAYOUT = dict(
     font=dict(family=FONT_FAMILY, size=13),
     plot_bgcolor="#FFFFFF",

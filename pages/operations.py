@@ -14,12 +14,12 @@ from config.settings import (
     PHYSICIANS, DEPARTMENTS, DEPARTMENT_COLORS, MACHINE_MAP, CHART_COLORWAY,
     PRIMARY, DEFAULT_LAYOUT, FONT_FAMILY,
 )
-from components.filter_bar import filter_bar, department_chips
 from components.kpi_card import kpi_card
-from components.chart_settings import chart_settings_popover
+from components.chart_card import chart_card, register_chart_callbacks
 from components.hours_ribbon import hours_ribbon_card, register_hours_ribbon_callbacks
+from components.detail_table import detail_table
 from dash_iconify import DashIconify
-from utils.charts import apply_default_layout, empty_figure, dept_color
+from utils.charts import apply_default_layout, empty_figure, dept_color, smooth_limits
 
 dash.register_page(__name__, path="/operations", name="Operations", order=1)
 
@@ -35,47 +35,6 @@ MACHINES = ["TrueBeamNorth", "21EX", "21iX_CEN", "21iX_AB"]
 # Filter Bar Components
 # ---------------------------------------------------------------------------
 
-def _machine_select():
-    """Machine multi-select dropdown."""
-    return dmc.MultiSelect(
-        id="operations-filter-machine",
-        data=[{"value": m, "label": m} for m in MACHINES],
-        placeholder="All Machines",
-        clearable=True,
-        size="sm",
-        w=280,
-    )
-
-
-def _ops_filter_bar():
-    """Operations page filter bar with department chips, machine select, and smoothing slider."""
-    return dmc.Paper(
-        children=[
-            dmc.Group(
-                children=[
-                    department_chips("operations"),
-                    _machine_select(),
-                    dmc.Group(gap=8, align="center", children=[
-                        dmc.Text("Smoothing", size="sm", c="#9CA3AF", fw=500),
-                        dmc.Slider(
-                            id="ops-filter-smoothing",
-                            min=0, max=1, step=0.01, value=0.7,
-                            size="xs", w=120,
-                            showLabelOnHover=False,
-                            updatemode="drag",
-                        ),
-                    ]),
-                ],
-                gap="lg",
-                wrap="wrap",
-            ),
-        ],
-        p="sm",
-        px="md",
-        radius="md",
-        shadow="xs",
-        withBorder=True,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -86,24 +45,43 @@ layout = dmc.Stack(
     gap=16,
     className="page-content",
     children=[
-        # Sticky header with title and filter bar
+        # Sticky header with centered title + smoothing slider pinned right
         dmc.Box(
             className="page-sticky-header",
+            pos="relative",
+            pb=0,
+            style={"gap": 0},
             children=[
                 dmc.Title("Operations", order=2, className="page-title"),
-                _ops_filter_bar(),
+                dmc.Group(
+                    gap=8, align="center",
+                    style={"position": "absolute", "right": 40, "bottom": 0},
+                    children=[
+                        dmc.Text("Smoothing", size="xs", c="#9CA3AF", fw=500),
+                        dmc.Slider(
+                            id="ops-filter-smoothing",
+                            min=0, max=1, step=0.01, value=0.7,
+                            size="xs", w=100,
+                            showLabelOnHover=False,
+                            updatemode="drag",
+                        ),
+                    ],
+                ),
             ],
         ),
 
-        # Hidden dummy inputs for filter bar IDs required by other pages/callbacks
+        # Hidden inputs for filter IDs required by callbacks (no visible filter bar)
         dcc.Store(id="operations-filter-daterange", data=None),
         dcc.Store(id="operations-filter-physician", data=None),
         dcc.Store(id="operations-filter-date-preset", data=None),
+        dcc.Store(id="operations-filter-department", data=None),
+        dcc.Store(id="operations-filter-machine", data=None),
 
-        # KPI row — 7 cards
+        # KPI row — 7 cards (negative margin to close gap left by missing filter bar)
         dmc.Grid(
             gutter=16,
             columns=7,
+            mt=-8,
             children=[
                 dmc.GridCol(id="ops-kpi-today", span={"base": 7, "sm": 2, "md": 1}),
                 dmc.GridCol(id="ops-kpi-hours-lacey", span={"base": 7, "sm": 2, "md": 1}),
@@ -122,111 +100,64 @@ layout = dmc.Stack(
                 # Treatment Appointments (completed)
                 dmc.GridCol(
                     span={"base": 12, "md": 6},
-                    children=dmc.Paper(
-                        children=[
-                            dmc.Group(
-                                justify="space-between", mb="sm",
-                                children=[
-                                    dmc.Text("Treatments", size="sm", fw=500, c="#6B7280"),
-                                    dmc.Group(gap="xs", align="center", children=[
-                                        dmc.SegmentedControl(
-                                            id="ops-volume-agg",
-                                            data=[
-                                                {"value": "D", "label": "Daily"},
-                                                {"value": "W", "label": "Weekly"},
-                                                {"value": "M", "label": "Monthly"},
-                                            ],
-                                            value="D",
-                                            size="xs",
-                                        ),
-                                        dmc.SegmentedControl(
-                                            id="ops-volume-range",
-                                            data=[
-                                                {"value": "30", "label": "30d"},
-                                                {"value": "60", "label": "60d"},
-                                                {"value": "90", "label": "90d"},
-                                                {"value": "180", "label": "6mo"},
-                                                {"value": "365", "label": "1y"},
-                                                {"value": "0", "label": "All"},
-                                            ],
-                                            value="90",
-                                            size="xs",
-                                        ),
-                                        chart_settings_popover(
-                                            "ops-volume",
-                                            chart_types=[
-                                                {"value": "area", "label": "Area"},
-                                                {"value": "line", "label": "Line"},
-                                                {"value": "bar", "label": "Bar"},
-                                            ],
-                                            show_smooth=True,
-                                            smooth_max=30,
-                                            smooth_default=7,
-                                        ),
-                                    ]),
+                    children=chart_card(
+                        "ops-chart-volume",
+                        "Treatments",
+                        settings_id="ops-volume",
+                        chart_types=[
+                            {"value": "area", "label": "Area"},
+                            {"value": "line", "label": "Line"},
+                            {"value": "bar", "label": "Bar"},
+                        ],
+                        show_smooth=True,
+                        smooth_max=30,
+                        smooth_default=7,
+                        extra_controls=[
+                            dmc.SegmentedControl(
+                                id="ops-volume-agg",
+                                data=[
+                                    {"value": "D", "label": "Daily"},
+                                    {"value": "W", "label": "Weekly"},
+                                    {"value": "M", "label": "Monthly"},
                                 ],
+                                value="D",
+                                size="xs",
                             ),
-                            dmc.Box(
-                                pos="relative",
-                                children=[
-                                    dmc.LoadingOverlay(
-                                        id="ops-volume-loading",
-                                        visible=False,
-                                        loaderProps={"type": "dots", "color": "#7C2A83"},
-                                        overlayProps={"radius": "sm", "blur": 2},
-                                    ),
-                                    dcc.Graph(
-                                        id="ops-chart-volume",
-                                        config={
-                                            "displayModeBar": False,
-                                            "scrollZoom": False,
-                                            "doubleClick": "reset",
-                                        },
-                                        style={"height": "380px"}
-                                    ),
+                            dmc.SegmentedControl(
+                                id="ops-volume-range",
+                                data=[
+                                    {"value": "30", "label": "30d"},
+                                    {"value": "60", "label": "60d"},
+                                    {"value": "90", "label": "90d"},
+                                    {"value": "180", "label": "6mo"},
+                                    {"value": "365", "label": "1y"},
+                                    {"value": "0", "label": "All"},
                                 ],
+                                value="90",
+                                size="xs",
                             ),
                         ],
-                        p="sm", radius="md", shadow="xs", withBorder=True, h="466px",
                     ),
                 ),
                 # Upcoming 2 Weeks Heatmap
                 dmc.GridCol(
                     span={"base": 12, "md": 6},
-                    children=dmc.Paper(
-                        children=[
-                            dmc.Group(
-                                justify="space-between", mb="sm",
-                                children=[
-                                    dmc.Text("Upcoming 4 Weeks — Schedule & Availability", size="sm", fw=500, c="#6B7280"),
-                                    dmc.SegmentedControl(
-                                        id="ops-heatmap-scope",
-                                        data=[
-                                            {"value": "consults", "label": "Consults"},
-                                            {"value": "all", "label": "All"},
-                                        ],
-                                        value="consults", size="xs",
-                                    ),
+                    children=chart_card(
+                        "ops-chart-heatmap",
+                        "Upcoming 4 Weeks — Schedule & Availability",
+                        show_settings=False,
+                        show_smooth=False,
+                        graph_config={"displayModeBar": False},
+                        extra_controls=[
+                            dmc.SegmentedControl(
+                                id="ops-heatmap-scope",
+                                data=[
+                                    {"value": "consults", "label": "Consults"},
+                                    {"value": "all", "label": "All"},
                                 ],
-                            ),
-                            dmc.Box(
-                                pos="relative",
-                                children=[
-                                    dmc.LoadingOverlay(
-                                        id="ops-heatmap-loading",
-                                        visible=False,
-                                        loaderProps={"type": "dots", "color": "#7C2A83"},
-                                        overlayProps={"radius": "sm", "blur": 2},
-                                    ),
-                                    dcc.Graph(
-                                        id="ops-chart-heatmap",
-                                        config={"displayModeBar": False},
-                                        style={"height": "380px"}
-                                    ),
-                                ],
+                                value="consults", size="xs",
                             ),
                         ],
-                        p="sm", radius="md", shadow="xs", withBorder=True, h="466px",
                     ),
                 ),
             ],
@@ -244,175 +175,113 @@ layout = dmc.Stack(
                 # Resource Utilization
                 dmc.GridCol(
                     span={"base": 12, "md": 6},
-                    children=dmc.Paper(
-                        children=[
-                            dmc.Group(
-                                justify="space-between", mb="xs",
-                                children=[
-                                    dmc.Group(gap="sm", align="center", children=[
-                                        dmc.Text("Resource Utilization", size="sm", fw=500, c="#6B7280"),
-                                        dmc.SegmentedControl(
-                                            id="ops-efficiency-metric",
-                                            data=[
-                                                {"value": "utilization", "label": "Util %"},
-                                                {"value": "minutes", "label": "Active Min"},
-                                                {"value": "beam", "label": "Beam On"},
-                                            ],
-                                            value="utilization",
-                                            size="xs",
-                                        ),
-                                        dmc.Tooltip(
-                                            label=dmc.Stack(gap=2, children=[
-                                                dmc.Text("Active Min*: Total minutes from setup imaging to last treated field", size="xs"),
-                                                dmc.Text("Util %: Active Min / Scheduled Appt Duration", size="xs"),
-                                                dmc.Text("Beam On: Sum of elapsed time for all treated fields", size="xs"),
-                                                dmc.Text("* = Available Oct 6, 2025 to present", size="xs", fs="italic", c="dimmed"),
-                                            ]),
-                                            position="top",
-                                            withArrow=True,
-                                            openDelay=150,
-                                            multiline=True,
-                                            w=340,
-                                            children=DashIconify(
-                                                icon="mdi:information-outline",
-                                                width=16, color="#9CA3AF",
-                                                style={"cursor": "help"},
-                                            ),
-                                        ),
-                                    ]),
-                                    dmc.Group(gap="xs", align="center", children=[
-                                        dmc.SegmentedControl(
-                                            id="ops-efficiency-agg",
-                                            data=[
-                                                {"value": "D", "label": "Daily"},
-                                                {"value": "W", "label": "Weekly"},
-                                                {"value": "M", "label": "Monthly"},
-                                            ],
-                                            value="D",
-                                            size="xs",
-                                        ),
-                                        dmc.SegmentedControl(
-                                            id="ops-efficiency-range",
-                                            data=[
-                                                {"value": "30", "label": "30d"},
-                                                {"value": "90", "label": "90d"},
-                                                {"value": "365", "label": "1y"},
-                                                {"value": "0", "label": "All"},
-                                            ],
-                                            value="90",
-                                            size="xs",
-                                        ),
-                                        chart_settings_popover(
-                                            "ops-efficiency",
-                                            chart_types=[
-                                                {"value": "line", "label": "Line"},
-                                                {"value": "area", "label": "Area"},
-                                                {"value": "bar", "label": "Bar"},
-                                            ],
-                                            show_smooth=True,
-                                            smooth_max=30,
-                                            smooth_default=7,
-                                        ),
-                                    ]),
+                    children=chart_card(
+                        "ops-chart-efficiency",
+                        "Resource Utilization",
+                        settings_id="ops-efficiency",
+                        chart_types=[
+                            {"value": "line", "label": "Line"},
+                            {"value": "area", "label": "Area"},
+                            {"value": "bar", "label": "Bar"},
+                        ],
+                        show_smooth=True,
+                        smooth_max=30,
+                        smooth_default=7,
+                        paper_style={"overflow": "visible"},
+                        extra_controls_left=[
+                            dmc.SegmentedControl(
+                                id="ops-efficiency-metric",
+                                data=[
+                                    {"value": "utilization", "label": "Util %"},
+                                    {"value": "minutes", "label": "Active Min"},
+                                    {"value": "beam", "label": "Beam On"},
                                 ],
+                                value="utilization",
+                                size="xs",
                             ),
-                            dmc.Group(
-                                gap=6, mb=4,
-                                children=dmc.ChipGroup(
-                                    id="ops-efficiency-machines",
-                                    children=[
-                                        dmc.Chip("TrueBeam", value="TrueBeamNorth", size="xs", variant="filled", color="#1976D2"),
-                                        dmc.Chip("21EX", value="21EX", size="xs", variant="filled", color="#64B5F6"),
-                                        dmc.Chip("21iX CEN", value="21iX_CEN", size="xs", variant="filled", color="red"),
-                                        dmc.Chip("21iX AB", value="21iX_AB", size="xs", variant="filled", color="green"),
-                                    ],
-                                    value=["TrueBeamNorth", "21EX", "21iX_CEN", "21iX_AB"],
-                                    multiple=True,
+                            dmc.Tooltip(
+                                label=dmc.Stack(gap=2, children=[
+                                    dmc.Text("Active Min*: Total minutes from setup imaging to last treated field", size="xs"),
+                                    dmc.Text("Util %: Active Min / Scheduled Appt Duration", size="xs"),
+                                    dmc.Text("Beam On: Sum of elapsed time for all treated fields", size="xs"),
+                                    dmc.Text("* = Available Oct 6, 2025 to present", size="xs", fs="italic", c="dimmed"),
+                                ]),
+                                position="top",
+                                withArrow=True,
+                                openDelay=150,
+                                multiline=True,
+                                w=340,
+                                children=DashIconify(
+                                    icon="mdi:information-outline",
+                                    width=16, color="#9CA3AF",
+                                    style={"cursor": "help"},
                                 ),
                             ),
-                            dmc.Box(
-                                pos="relative",
-                                children=[
-                                    dmc.LoadingOverlay(
-                                        id="ops-efficiency-loading",
-                                        visible=False,
-                                        loaderProps={"type": "dots", "color": "#7C2A83"},
-                                        overlayProps={"radius": "sm", "blur": 2},
-                                    ),
-                                    dcc.Graph(
-                                        id="ops-chart-efficiency",
-                                        config={
-                                            "displayModeBar": False,
-                                            "scrollZoom": False,
-                                            "doubleClick": "reset",
-                                        },
-                                        style={"height": "380px"},
-                                    ),
+                        ],
+                        extra_controls=[
+                            dmc.SegmentedControl(
+                                id="ops-efficiency-agg",
+                                data=[
+                                    {"value": "D", "label": "Daily"},
+                                    {"value": "W", "label": "Weekly"},
+                                    {"value": "M", "label": "Monthly"},
                                 ],
+                                value="D",
+                                size="xs",
+                            ),
+                            dmc.SegmentedControl(
+                                id="ops-efficiency-range",
+                                data=[
+                                    {"value": "30", "label": "30d"},
+                                    {"value": "90", "label": "90d"},
+                                    {"value": "365", "label": "1y"},
+                                    {"value": "0", "label": "All"},
+                                ],
+                                value="90",
+                                size="xs",
                             ),
                         ],
-                        p="sm", radius="md", shadow="xs", withBorder=True, h="466px",
+                        sub_header=dmc.Group(
+                            gap=6, mb=4, style={"position": "relative", "zIndex": 2},
+                            children=dmc.ChipGroup(
+                                id="ops-efficiency-machines",
+                                children=[
+                                    dmc.Chip("TrueBeam", value="TrueBeamNorth", size="xs", variant="filled", color="#1976D2"),
+                                    dmc.Chip("21EX", value="21EX", size="xs", variant="filled", color="#64B5F6"),
+                                    dmc.Chip("21iX CEN", value="21iX_CEN", size="xs", variant="filled", color="red"),
+                                    dmc.Chip("21iX AB", value="21iX_AB", size="xs", variant="filled", color="green"),
+                                ],
+                                value=["TrueBeamNorth", "21EX", "21iX_CEN", "21iX_AB"],
+                                multiple=True,
+                            ),
+                        ),
                     ),
                 ),
             ],
         ),
 
         # Daily Detail Table (full-width, collapsible)
-        dmc.Accordion(
-            variant="contained",
-            radius="md",
-            chevronPosition="left",
-            children=[
-                dmc.AccordionItem(
-                    value="daily-detail",
-                    children=[
-                        dmc.AccordionControl(
-                            dmc.Text("Daily Detail", size="sm", fw=500, c="#6B7280"),
-                        ),
-                        dmc.AccordionPanel(
-                            children=[
-                                dmc.Group(
-                                    justify="flex-end", mb="sm", wrap="wrap", gap="sm",
-                                    children=[
-                                        dmc.Group(gap="md", align="center", children=[
-                                            dmc.Group(gap="xs", align="center", children=[
-                                                dmc.Text("Include Future", size="xs", c="#6B7280"),
-                                                dmc.Switch(
-                                                    id="ops-table-include-future",
-                                                    checked=True,
-                                                    size="sm",
-                                                ),
-                                            ]),
-                                            dmc.SegmentedControl(
-                                                id="ops-table-view-by",
-                                                data=[
-                                                    {"value": "location", "label": "By Location"},
-                                                    {"value": "machine", "label": "By Machine"},
-                                                ],
-                                                value="location",
-                                                size="xs",
-                                            ),
-                                            dmc.Button(
-                                                "Export CSV",
-                                                id="ops-table-export",
-                                                size="compact-xs",
-                                                variant="light",
-                                                leftSection=dmc.Text("↓", size="xs"),
-                                            ),
-                                        ]),
-                                    ],
-                                ),
-                                dag.AgGrid(
-                                    id="ops-table",
-                                    columnDefs=[],  # Will be set by callback
-                                    defaultColDef={"resizable": True, "sortable": True, "filter": True},
-                                    dashGridOptions={"pagination": True, "paginationPageSize": 50},
-                                    style={"height": 800},
-                                    className="ag-theme-quartz",
-                                ),
-                            ],
-                        ),
+        detail_table(
+            "ops-table",
+            title="Daily Detail",
+            export_id="ops-table-export",
+            extra_controls=[
+                dmc.Group(gap="xs", align="center", children=[
+                    dmc.Text("Include Future", size="xs", c="#6B7280"),
+                    dmc.Switch(
+                        id="ops-table-include-future",
+                        checked=True,
+                        size="sm",
+                    ),
+                ]),
+                dmc.SegmentedControl(
+                    id="ops-table-view-by",
+                    data=[
+                        {"value": "location", "label": "By Location"},
+                        {"value": "machine", "label": "By Machine"},
                     ],
+                    value="location",
+                    size="xs",
                 ),
             ],
         ),
@@ -1394,7 +1263,7 @@ clientside_callback(
     Input("ops-volume-agg", "value"),
     Input("operations-filter-department", "value"),
     Input("operations-filter-machine", "value"),
-    running=[(Output("ops-volume-loading", "visible"), True, False)],
+    running=[(Output("ops-chart-volume-loading", "visible"), True, False)],
 )
 def update_volume_data(_n, agg, departments, machines):
     """Load ALL treatment volume data to store (time window applied clientside)."""
@@ -1451,27 +1320,6 @@ clientside_callback(
 )
 
 
-def _ops_smooth_limits(range_days, current_value):
-    """Scale smoothing max to the selected visible range (matches home page logic)."""
-    if range_days == "thisweek":
-        return 3, min(current_value or 0, 3)
-    days = int(range_days) if range_days else 90
-    if days == 0:
-        max_val = 180
-    elif days <= 30:
-        max_val = 12
-    elif days <= 60:
-        max_val = 20
-    elif days <= 90:
-        max_val = 30
-    elif days <= 180:
-        max_val = 60
-    elif days <= 365:
-        max_val = 120
-    else:
-        max_val = 180
-    return max_val, min(current_value or 0, max_val)
-
 
 @callback(
     Output("ops-volume-settings-smooth", "max"),
@@ -1480,7 +1328,7 @@ def _ops_smooth_limits(range_days, current_value):
     State("ops-volume-settings-smooth", "value"),
 )
 def update_volume_smooth_slider(range_days, current_value):
-    return _ops_smooth_limits(range_days, current_value)
+    return smooth_limits(range_days, current_value)
 
 
 # ---------------------------------------------------------------------------
@@ -1493,7 +1341,7 @@ def update_volume_smooth_slider(range_days, current_value):
     Input("operations-filter-department", "value"),
     Input("operations-filter-machine", "value"),
     Input("ops-heatmap-scope", "value"),
-    running=[(Output("ops-heatmap-loading", "visible"), True, False)],
+    running=[(Output("ops-chart-heatmap-loading", "visible"), True, False)],
 )
 def update_heatmap(_n, departments, machines, scope):
     """Build combined heatmap of treatment schedule + exam/sim availability."""
@@ -1860,7 +1708,7 @@ clientside_callback(
     Input("ops-efficiency-agg", "value"),
     Input("operations-filter-department", "value"),
     Input("operations-filter-machine", "value"),
-    running=[(Output("ops-efficiency-loading", "visible"), True, False)],
+    running=[(Output("ops-chart-efficiency-loading", "visible"), True, False)],
 )
 def update_efficiency_data(_n, agg, departments, machines):
     """Load resource utilization data to store (time window applied clientside)."""
@@ -1910,7 +1758,7 @@ clientside_callback(
     State("ops-efficiency-settings-smooth", "value"),
 )
 def update_efficiency_smooth_slider(range_days, current_value):
-    return _ops_smooth_limits(range_days, current_value)
+    return smooth_limits(range_days, current_value)
 
 # Disable Daily aggregation for bar charts with long ranges (efficiency)
 clientside_callback(
@@ -1923,23 +1771,6 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
-
-# ---------------------------------------------------------------------------
-# Efficiency Settings Panel Toggle
-# ---------------------------------------------------------------------------
-
-@callback(
-    Output("ops-efficiency-settings-panel", "style"),
-    Input("ops-efficiency-settings-btn", "n_clicks"),
-    State("ops-efficiency-settings-panel", "style"),
-    prevent_initial_call=True,
-)
-def toggle_efficiency_settings(n, style):
-    if not n:
-        return style
-    current = style or {}
-    is_hidden = current.get("display") == "none"
-    return {"display": "block"} if is_hidden else {"display": "none"}
 
 
 # ---------------------------------------------------------------------------
@@ -2149,56 +1980,10 @@ def update_table(_n, range_days, departments, machines, include_future, view_by)
 
 
 # ---------------------------------------------------------------------------
-# Settings Panel Toggle Callbacks
+# Chart Card Callbacks (settings toggle + PNG export)
 # ---------------------------------------------------------------------------
 
-@callback(
-    Output("ops-volume-settings-panel", "style"),
-    Input("ops-volume-settings-btn", "n_clicks"),
-    State("ops-volume-settings-panel", "style"),
-    prevent_initial_call=True,
-)
-def toggle_volume_settings(n, style):
-    if not n:
-        return style
-    current = style or {}
-    is_hidden = current.get("display") == "none"
-    return {"display": "block"} if is_hidden else {"display": "none"}
-
-
-# ---------------------------------------------------------------------------
-# PNG Export Callbacks
-# ---------------------------------------------------------------------------
-
-clientside_callback(
-    """function(n) {
-        if (!n) return window.dash_clientside.no_update;
-        var wrapper = document.getElementById('ops-chart-volume');
-        var graphEl = wrapper ? wrapper.querySelector('.js-plotly-plot') : null;
-        if (graphEl) {
-            Plotly.downloadImage(graphEl, {format: 'png', width: 1200, height: 600, filename: 'treatment_appointments'});
-        }
-        return window.dash_clientside.no_update;
-    }""",
-    Output("ops-volume-settings-export", "n_clicks"),
-    Input("ops-volume-settings-export", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    """function(n) {
-        if (!n) return window.dash_clientside.no_update;
-        var wrapper = document.getElementById('ops-chart-efficiency');
-        var graphEl = wrapper ? wrapper.querySelector('.js-plotly-plot') : null;
-        if (graphEl) {
-            Plotly.downloadImage(graphEl, {format: 'png', width: 1200, height: 600, filename: 'resource_utilization'});
-        }
-        return window.dash_clientside.no_update;
-    }""",
-    Output("ops-efficiency-settings-export", "n_clicks"),
-    Input("ops-efficiency-settings-export", "n_clicks"),
-    prevent_initial_call=True,
-)
+register_chart_callbacks([("ops-volume", "ops-chart-volume"), ("ops-efficiency", "ops-chart-efficiency")])
 
 
 # ---------------------------------------------------------------------------

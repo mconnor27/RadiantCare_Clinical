@@ -16,9 +16,9 @@ from config.settings import (
 )
 from components.filter_bar import department_chips
 from components.kpi_card import kpi_card
-from components.chart_settings import chart_settings_popover
+from components.chart_card import chart_card, register_chart_callbacks
 from components.hours_ribbon import hours_ribbon_card, register_hours_ribbon_callbacks
-from utils.charts import apply_default_layout, empty_figure, dept_color
+from utils.charts import apply_default_layout, empty_figure, dept_color, smooth_limits
 from statsmodels.nonparametric.smoothers_lowess import lowess as _lowess
 
 
@@ -719,122 +719,76 @@ layout = dmc.Stack(
             children=[
                 dmc.GridCol(
                     span={"base": 12, "md": 6},
-                    children=dmc.Paper(
-                        children=[
-                            dmc.Group(
-                                justify="space-between", mb="sm",
-                                children=[
-                                    dmc.Text("Active Patients by Physician", size="sm", fw=500, c="#6B7280"),
-                                    dmc.Group(gap="xs", align="center", children=[
-                                        dmc.SegmentedControl(
-                                            id="home-md-agg",
-                                            data=[
-                                                {"value": "D", "label": "Daily"},
-                                                {"value": "W", "label": "Weekly"},
-                                                {"value": "M", "label": "Monthly"},
-                                            ],
-                                            value="D", size="xs",
-                                        ),
-                                        dmc.SegmentedControl(
-                                            id="home-md-range",
-                                            data=[
-                                                {"value": "30", "label": "30d"},
-                                                {"value": "60", "label": "60d"},
-                                                {"value": "90", "label": "90d"},
-                                                {"value": "180", "label": "6mo"},
-                                                {"value": "365", "label": "1y"},
-                                                {"value": "0", "label": "All"},
-                                            ],
-                                            value="90", size="xs",
-                                        ),
-                                        chart_settings_popover(
-                                            "home-md",
-                                            chart_types=[
-                                                {"value": "area", "label": "Area"},
-                                                {"value": "line", "label": "Line"},
-                                                {"value": "bar", "label": "Bar"},
-                                            ],
-                                            show_smooth=True,
-                                            smooth_max=50,
-                                            smooth_default=15,
-                                        ),
-                                    ]),
+                    children=chart_card(
+                        "home-chart-physician",
+                        "Active Patients by Physician",
+                        settings_id="home-md",
+                        chart_types=[
+                            {"value": "area", "label": "Area"},
+                            {"value": "line", "label": "Line"},
+                            {"value": "bar", "label": "Bar"},
+                        ],
+                        smooth_max=50, smooth_default=15,
+                        extra_controls=[
+                            dmc.SegmentedControl(
+                                id="home-md-agg",
+                                data=[
+                                    {"value": "D", "label": "Daily"},
+                                    {"value": "W", "label": "Weekly"},
+                                    {"value": "M", "label": "Monthly"},
                                 ],
+                                value="D", size="xs",
                             ),
-                            dmc.Box(
-                                pos="relative",
-                                children=[
-                                    dmc.LoadingOverlay(
-                                        id="home-md-loading",
-                                        visible=False,
-                                        loaderProps={"type": "dots", "color": "#7C2A83"},
-                                        overlayProps={"radius": "sm", "blur": 2},
-                                    ),
-                                    dcc.Graph(id="home-chart-physician", config={"displayModeBar": False}),
+                            dmc.SegmentedControl(
+                                id="home-md-range",
+                                data=[
+                                    {"value": "30", "label": "30d"},
+                                    {"value": "60", "label": "60d"},
+                                    {"value": "90", "label": "90d"},
+                                    {"value": "180", "label": "6mo"},
+                                    {"value": "365", "label": "1y"},
+                                    {"value": "0", "label": "All"},
                                 ],
+                                value="90", size="xs",
                             ),
                         ],
-                        p="sm", radius="md", shadow="xs", withBorder=True,
                     ),
                 ),
                 dmc.GridCol(
                     span={"base": 12, "md": 6},
-                    children=dmc.Paper(
-                        children=[
-                            dmc.Group(
-                                justify="space-between", mb="sm",
-                                children=[
-                                    dmc.Text("Treatments by Site", size="sm", fw=500, c="#6B7280"),
-                                    dmc.Group(gap="xs", align="center", children=[
-                                        dmc.SegmentedControl(
-                                            id="home-site-agg",
-                                            data=[
-                                                {"value": "D", "label": "Daily"},
-                                                {"value": "W", "label": "Weekly"},
-                                                {"value": "M", "label": "Monthly"},
-                                            ],
-                                            value="D", size="xs",
-                                        ),
-                                        dmc.SegmentedControl(
-                                            id="home-site-range",
-                                            data=[
-                                                {"value": "30", "label": "30d"},
-                                                {"value": "60", "label": "60d"},
-                                                {"value": "90", "label": "90d"},
-                                                {"value": "180", "label": "6mo"},
-                                                {"value": "365", "label": "1y"},
-                                                {"value": "0", "label": "All"},
-                                            ],
-                                            value="90", size="xs",
-                                        ),
-                                        chart_settings_popover(
-                                            "home-site",
-                                            chart_types=[
-                                                {"value": "area", "label": "Area"},
-                                                {"value": "line", "label": "Line"},
-                                                {"value": "bar", "label": "Bar"},
-                                            ],
-                                            show_smooth=True,
-                                            smooth_max=50,
-                                            smooth_default=15,
-                                        ),
-                                    ]),
+                    children=chart_card(
+                        "home-chart-site",
+                        "Treatments by Site",
+                        settings_id="home-site",
+                        chart_types=[
+                            {"value": "area", "label": "Area"},
+                            {"value": "line", "label": "Line"},
+                            {"value": "bar", "label": "Bar"},
+                        ],
+                        smooth_max=50, smooth_default=15,
+                        extra_controls=[
+                            dmc.SegmentedControl(
+                                id="home-site-agg",
+                                data=[
+                                    {"value": "D", "label": "Daily"},
+                                    {"value": "W", "label": "Weekly"},
+                                    {"value": "M", "label": "Monthly"},
                                 ],
+                                value="D", size="xs",
                             ),
-                            dmc.Box(
-                                pos="relative",
-                                children=[
-                                    dmc.LoadingOverlay(
-                                        id="home-site-loading",
-                                        visible=False,
-                                        loaderProps={"type": "dots", "color": "#7C2A83"},
-                                        overlayProps={"radius": "sm", "blur": 2},
-                                    ),
-                                    dcc.Graph(id="home-chart-site", config={"displayModeBar": False}),
+                            dmc.SegmentedControl(
+                                id="home-site-range",
+                                data=[
+                                    {"value": "30", "label": "30d"},
+                                    {"value": "60", "label": "60d"},
+                                    {"value": "90", "label": "90d"},
+                                    {"value": "180", "label": "6mo"},
+                                    {"value": "365", "label": "1y"},
+                                    {"value": "0", "label": "All"},
                                 ],
+                                value="90", size="xs",
                             ),
                         ],
-                        p="sm", radius="md", shadow="xs", withBorder=True,
                     ),
                 ),
             ],
@@ -847,48 +801,28 @@ layout = dmc.Stack(
                 # Left: Operating Hours Ribbon
                 dmc.GridCol(
                     span={"base": 12, "md": 6},
-                    children=hours_ribbon_card("home"),
+                    children=hours_ribbon_card("home", card_height="466px"),
                 ),
                 # Right: Availability Calendar
                 dmc.GridCol(
                     span={"base": 12, "md": 6},
-                    children=dmc.Paper(
-                        children=[
-                            dmc.Group(
-                                justify="space-between", mb="sm",
-                                children=[
-                                    dmc.Group(gap="sm", align="center", children=[
-                                        dmc.Text("Slot Availability (4 Weeks)", size="sm", fw=500, c="#6B7280"),
-                                        dmc.SegmentedControl(
-                                            id="home-avail-scope",
-                                            data=[
-                                                {"value": "consults", "label": "Consults"},
-                                                {"value": "all", "label": "All"},
-                                            ],
-                                            value="consults", size="xs",
-                                        ),
-                                    ]),
-                                    chart_settings_popover(
-                                        "home-avail",
-                                        chart_types=None,
-                                        show_smooth=False,
-                                    ),
+                    children=chart_card(
+                        "home-chart-availability",
+                        "Slot Availability (4 Weeks)",
+                        settings_id="home-avail",
+                        chart_types=None,
+                        show_smooth=False,
+                        paper_height="466px",
+                        extra_controls_left=[
+                            dmc.SegmentedControl(
+                                id="home-avail-scope",
+                                data=[
+                                    {"value": "consults", "label": "Consults"},
+                                    {"value": "all", "label": "All"},
                                 ],
-                            ),
-                            dmc.Box(
-                                pos="relative",
-                                children=[
-                                    dmc.LoadingOverlay(
-                                        id="home-avail-loading",
-                                        visible=False,
-                                        loaderProps={"type": "dots", "color": "#7C2A83"},
-                                        overlayProps={"radius": "sm", "blur": 2},
-                                    ),
-                                    dcc.Graph(id="home-chart-availability", config={"displayModeBar": False}),
-                                ],
+                                value="consults", size="xs",
                             ),
                         ],
-                        p="sm", radius="md", shadow="xs", withBorder=True, h="100%",
                     ),
                 ),
             ],
@@ -1302,7 +1236,7 @@ clientside_callback(
     Input("home-interval", "n_intervals"),
     Input("home-filter-department", "value"),
     Input("home-md-agg", "value"),
-    running=[(Output("home-md-loading", "visible"), True, False)],
+    running=[(Output("home-chart-physician-loading", "visible"), True, False)],
 )
 def update_physician_data(_n, departments, agg):
     from data.loader import load_treatment_detail
@@ -1376,26 +1310,6 @@ clientside_callback(
 )
 
 
-def _home_census_smooth_limits(range_days, current_value):
-    """Scale Home census smoothing max to the selected visible range."""
-    days = int(range_days) if range_days else 90
-    if days == 0:  # All history
-        max_val = 180
-    elif days <= 30:
-        max_val = 12
-    elif days <= 60:
-        max_val = 20
-    elif days <= 90:
-        max_val = 30
-    elif days <= 180:
-        max_val = 60
-    elif days <= 365:
-        max_val = 120
-    else:
-        max_val = 180
-    return max_val, min(current_value or 0, max_val)
-
-
 @callback(
     Output("home-md-settings-smooth", "max"),
     Output("home-md-settings-smooth", "value"),
@@ -1404,7 +1318,7 @@ def _home_census_smooth_limits(range_days, current_value):
 )
 def update_md_smooth_slider(range_days, current_value):
     """Adjust physician chart smoothing slider for the selected range."""
-    return _home_census_smooth_limits(range_days, current_value)
+    return smooth_limits(range_days, current_value)
 
 
 # ---------------------------------------------------------------------------
@@ -1416,7 +1330,7 @@ def update_md_smooth_slider(range_days, current_value):
     Input("home-interval", "n_intervals"),
     Input("home-filter-department", "value"),
     Input("home-site-agg", "value"),
-    running=[(Output("home-site-loading", "visible"), True, False)],
+    running=[(Output("home-chart-site-loading", "visible"), True, False)],
 )
 def update_site_data(_n, departments, agg):
     from data.loader import load_daily_volume, load_daily_volume_future
@@ -1483,7 +1397,7 @@ clientside_callback(
 )
 def update_site_smooth_slider(range_days, current_value):
     """Adjust site chart smoothing slider for the selected range."""
-    return _home_census_smooth_limits(range_days, current_value)
+    return smooth_limits(range_days, current_value)
 
 
 # ---------------------------------------------------------------------------
@@ -1692,7 +1606,7 @@ def update_hours_data(_n, site_filter):
     Input("home-interval", "n_intervals"),
     Input("home-filter-department", "value"),
     Input("home-avail-scope", "value"),
-    running=[(Output("home-avail-loading", "visible"), True, False)],
+    running=[(Output("home-chart-availability-loading", "visible"), True, False)],
 )
 def update_availability_calendar(_n, departments, scope):
     """Update slot availability calendar (shows both Exam and Sim)."""
@@ -1713,93 +1627,11 @@ clientside_callback(
 # Settings Panel Toggle Callbacks
 # ---------------------------------------------------------------------------
 
-@callback(
-    Output("home-md-settings-panel", "style"),
-    Input("home-md-settings-btn", "n_clicks"),
-    State("home-md-settings-panel", "style"),
-    prevent_initial_call=True,
-)
-def toggle_md_settings(n, style):
-    if not n:
-        return style
-    current = style or {}
-    is_hidden = current.get("display") == "none"
-    return {"display": "block"} if is_hidden else {"display": "none"}
-
-
-@callback(
-    Output("home-site-settings-panel", "style"),
-    Input("home-site-settings-btn", "n_clicks"),
-    State("home-site-settings-panel", "style"),
-    prevent_initial_call=True,
-)
-def toggle_site_settings(n, style):
-    if not n:
-        return style
-    current = style or {}
-    is_hidden = current.get("display") == "none"
-    return {"display": "block"} if is_hidden else {"display": "none"}
-
-
-@callback(
-    Output("home-avail-settings-panel", "style"),
-    Input("home-avail-settings-btn", "n_clicks"),
-    State("home-avail-settings-panel", "style"),
-    prevent_initial_call=True,
-)
-def toggle_avail_settings(n, style):
-    if not n:
-        return style
-    current = style or {}
-    is_hidden = current.get("display") == "none"
-    return {"display": "block"} if is_hidden else {"display": "none"}
-
-
 # ---------------------------------------------------------------------------
-# PNG Export Callbacks (clientside)
+# Settings toggle + PNG export (clientside via shared helpers)
 # ---------------------------------------------------------------------------
-
-clientside_callback(
-    """function(n) {
-        if (!n) return window.dash_clientside.no_update;
-        var wrapper = document.getElementById('home-chart-physician');
-        var graphEl = wrapper ? wrapper.querySelector('.js-plotly-plot') : null;
-        if (graphEl) {
-            Plotly.downloadImage(graphEl, {format: 'png', width: 1200, height: 600, filename: 'active_patients_by_physician'});
-        }
-        return window.dash_clientside.no_update;
-    }""",
-    Output("home-md-settings-export", "n_clicks"),
-    Input("home-md-settings-export", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    """function(n) {
-        if (!n) return window.dash_clientside.no_update;
-        var wrapper = document.getElementById('home-chart-site');
-        var graphEl = wrapper ? wrapper.querySelector('.js-plotly-plot') : null;
-        if (graphEl) {
-            Plotly.downloadImage(graphEl, {format: 'png', width: 1200, height: 600, filename: 'treatments_by_site'});
-        }
-        return window.dash_clientside.no_update;
-    }""",
-    Output("home-site-settings-export", "n_clicks"),
-    Input("home-site-settings-export", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    """function(n) {
-        if (!n) return window.dash_clientside.no_update;
-        var wrapper = document.getElementById('home-chart-availability');
-        var graphEl = wrapper ? wrapper.querySelector('.js-plotly-plot') : null;
-        if (graphEl) {
-            Plotly.downloadImage(graphEl, {format: 'png', width: 1200, height: 600, filename: 'slot_availability'});
-        }
-        return window.dash_clientside.no_update;
-    }""",
-    Output("home-avail-settings-export", "n_clicks"),
-    Input("home-avail-settings-export", "n_clicks"),
-    prevent_initial_call=True,
-)
+register_chart_callbacks([
+    ("home-md", "home-chart-physician"),
+    ("home-site", "home-chart-site"),
+    ("home-avail", "home-chart-availability"),
+])

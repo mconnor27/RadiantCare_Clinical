@@ -479,13 +479,17 @@ window.dash_clientside.hoursRibbon = {
             return window.dash_clientside.hoursRibbon.smoothChartWithType(rawData, smoothVal, chartType);
         }
 
+        // Find the active chart element (home or ops page)
+        var chartEl = document.getElementById('home-chart-hours')
+                   || document.getElementById('ops-chart-hours');
+
         // Debounce: skip intermediate slider ticks, yield to browser for paint before render
         if (window._ribbonDebounce) clearTimeout(window._ribbonDebounce);
         window._ribbonDebounce = setTimeout(function() {
             requestAnimationFrame(function() { setTimeout(function() {
                 var fig = window.dash_clientside.hoursRibbon._buildWithRange(rawData, smoothVal, chartType, rangeDays);
                 if (fig && fig !== window.dash_clientside.no_update) {
-                    var el = document.getElementById('ops-chart-ribbon');
+                    var el = chartEl;
                     var plotEl = el && el.querySelector('.js-plotly-plot');
                     if (plotEl) Plotly.react(plotEl, fig.data, fig.layout);
                 }
@@ -493,8 +497,7 @@ window.dash_clientside.hoursRibbon = {
         }, 150);
 
         // First render (no existing plot) — render immediately
-        var el = document.getElementById('ops-chart-ribbon');
-        var plotEl = el && el.querySelector('.js-plotly-plot');
+        var plotEl = chartEl && chartEl.querySelector('.js-plotly-plot');
         if (!plotEl || !plotEl.data || !plotEl.data.length) {
             return window.dash_clientside.hoursRibbon._buildWithRange(rawData, smoothVal, chartType, rangeDays);
         }
@@ -721,16 +724,20 @@ window.dash_clientside.hoursRibbon = {
             }
         }
 
-        // Store shape info for hover highlight handler
-        window._calendarShapeInfo = bandShapeMap.map(function(si) {
+        // Store shape info for hover highlight handler (per-element)
+        window._calendarHoverData = window._calendarHoverData || {};
+        var shapeInfo = bandShapeMap.map(function(si) {
             var orig = shapes[si].fillcolor;
             var hover = orig.replace(/[\d.]+\)$/, function(m) {
                 return Math.min(0.85, parseFloat(m) + 0.25) + ")";
             });
             return {idx: si, orig: orig, hover: hover};
         });
-        window._calendarBandMap = hoverBandIdx; // point index -> band index
-        window._calendarLastHovered = -1;
+        // Store under a key that _setupCalendarHover will pick up
+        window._calendarHoverData._pending = {
+            shapeInfo: shapeInfo,
+            bandMap: hoverBandIdx,
+        };
 
         // Invisible scatter points distributed within each band for hover tooltips
         var traces = [];
@@ -793,33 +800,36 @@ window.dash_clientside.hoursRibbon = {
     /**
      * Attach plotly_hover / plotly_unhover listeners that brighten the
      * hovered shape rectangle via Plotly.relayout (lightweight, no re-render).
+     * Supports multiple chart instances by storing hover data per element.
      */
-    _setupCalendarHover: function() {
-        // Find the actual Plotly div — Dash wraps it inside dcc.Graph
-        // Check both home page and operations page element IDs
-        var wrapper = document.getElementById("home-chart-hours")
-                   || document.getElementById("ops-chart-ribbon");
+    _setupCalendarHover: function(targetId) {
+        var pending = window._calendarHoverData && window._calendarHoverData._pending;
+        if (!pending) return;
+
+        // Find the target element — try provided ID, then known IDs
+        var ids = targetId ? [targetId] : ["home-chart-hours", "ops-chart-hours"];
+        var wrapper = null;
+        for (var i = 0; i < ids.length; i++) {
+            wrapper = document.getElementById(ids[i]);
+            if (wrapper) break;
+        }
         if (!wrapper) {
-            requestAnimationFrame(window.dash_clientside.hoursRibbon._setupCalendarHover);
+            requestAnimationFrame(function() {
+                window.dash_clientside.hoursRibbon._setupCalendarHover(targetId);
+            });
             return;
         }
 
         // The Plotly div is the child with class "js-plotly-plot", or the wrapper itself
         var el = wrapper.querySelector(".js-plotly-plot") || wrapper;
 
-        if (!el._fullData && !el.on) {
-            // Not ready yet
-            requestAnimationFrame(window.dash_clientside.hoursRibbon._setupCalendarHover);
-            return;
-        }
-
-        // Also check if .on exists (Plotly adds it after newPlot)
         if (typeof el.on !== "function") {
-            // Maybe Dash puts Plotly on the wrapper directly
             if (typeof wrapper.on === "function") {
                 el = wrapper;
             } else {
-                requestAnimationFrame(window.dash_clientside.hoursRibbon._setupCalendarHover);
+                requestAnimationFrame(function() {
+                    window.dash_clientside.hoursRibbon._setupCalendarHover(targetId);
+                });
                 return;
             }
         }
@@ -827,22 +837,25 @@ window.dash_clientside.hoursRibbon = {
         // Tear down previous listeners
         if (el._calCleanup) el._calCleanup();
 
-        var info = window._calendarShapeInfo;
-        if (!info || !info.length) {
-            return;
-        }
+        // Consume pending data and store on the element
+        var info = pending.shapeInfo;
+        var bandMap = pending.bandMap;
+        delete window._calendarHoverData._pending;
+
+        if (!info || !info.length) return;
+
+        var lastHovered = -1;
 
         function onHover(data) {
             if (!data.points || !data.points.length) return;
             var ptIdx = data.points[0].pointIndex;
-            // Map point index to band index (multiple points per band)
-            var bandIdx = (window._calendarBandMap && window._calendarBandMap[ptIdx] !== undefined)
-                ? window._calendarBandMap[ptIdx] : ptIdx;
-            if (bandIdx === window._calendarLastHovered) return;
+            var bandIdx = (bandMap && bandMap[ptIdx] !== undefined)
+                ? bandMap[ptIdx] : ptIdx;
+            if (bandIdx === lastHovered) return;
 
             // Restore previous
-            if (window._calendarLastHovered >= 0 && window._calendarLastHovered < info.length) {
-                var prev = info[window._calendarLastHovered];
+            if (lastHovered >= 0 && lastHovered < info.length) {
+                var prev = info[lastHovered];
                 var u = {};
                 u["shapes[" + prev.idx + "].fillcolor"] = prev.orig;
                 Plotly.relayout(el, u);
@@ -854,17 +867,17 @@ window.dash_clientside.hoursRibbon = {
                 var u2 = {};
                 u2["shapes[" + curr.idx + "].fillcolor"] = curr.hover;
                 Plotly.relayout(el, u2);
-                window._calendarLastHovered = bandIdx;
+                lastHovered = bandIdx;
             }
         }
 
         function onUnhover() {
-            if (window._calendarLastHovered >= 0 && window._calendarLastHovered < info.length) {
-                var prev = info[window._calendarLastHovered];
+            if (lastHovered >= 0 && lastHovered < info.length) {
+                var prev = info[lastHovered];
                 var u = {};
                 u["shapes[" + prev.idx + "].fillcolor"] = prev.orig;
                 Plotly.relayout(el, u);
-                window._calendarLastHovered = -1;
+                lastHovered = -1;
             }
         }
 
@@ -874,7 +887,7 @@ window.dash_clientside.hoursRibbon = {
         el._calCleanup = function() {
             el.removeListener("plotly_hover", onHover);
             el.removeListener("plotly_unhover", onUnhover);
-            window._calendarLastHovered = -1;
+            lastHovered = -1;
         };
     }
 };
