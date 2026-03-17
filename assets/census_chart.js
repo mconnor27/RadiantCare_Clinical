@@ -40,6 +40,9 @@ window.dash_clientside.census = {
         var step = dates.length > maxPoints ? Math.ceil(dates.length / maxPoints) : 1;
         var displayDates = step > 1 ? downsample(dates, step) : dates;
 
+        // Detect aggregation level for smart x-axis formatting and hover labels
+        var aggLevel = detectAggLevel(displayDates);
+
         // For bar charts, format dates and filter to valid ones only
         var barData = null;
         if (chartType === "bar") {
@@ -155,11 +158,12 @@ window.dash_clientside.census = {
                     y: traceY,
                     customdata: traceRaw,
                     name: s.name,
-                    mode: "lines",
+                    mode: traceDates.length <= 3 ? "lines+markers" : "lines",
                     line: {color: s.color, width: 2},
                     connectgaps: true,
                     hoverinfo: "skip"
                 };
+                if (traceDates.length <= 3) traceObj.marker = {size: 8};
             } else {
                 // Area chart (stacked by default, overlay when stacked:false)
                 traceObj = {
@@ -167,12 +171,13 @@ window.dash_clientside.census = {
                     y: traceY,
                     customdata: traceRaw,
                     name: s.name,
-                    mode: "lines",
+                    mode: traceDates.length <= 3 ? "lines+markers" : "lines",
                     line: {color: s.color, width: stacked ? 1.5 : 2},
                     fillcolor: hexToRgba(s.color, stacked ? 0.5 : 0.15),
                     connectgaps: true,
                     hoverinfo: "skip"
                 };
+                if (traceDates.length <= 3) traceObj.marker = {size: 8};
                 if (stacked) {
                     traceObj.stackgroup = "one";
                 } else {
@@ -267,7 +272,8 @@ window.dash_clientside.census = {
             rawData.yTitle.toLowerCase().indexOf('rate') >= 0 ||
             rawData.yTitle.toLowerCase().indexOf('days') >= 0
         ));
-        var valueSuffix = isPercent ? "%" : "";
+        var isDays = rawData.yTitle && rawData.yTitle.toLowerCase().indexOf('days') >= 0;
+        var valueSuffix = isPercent ? "%" : isDays ? " days" : "";
 
         function formatVal(v) {
             if (v === null || v === undefined || isNaN(v)) return "0";
@@ -280,7 +286,13 @@ window.dash_clientside.census = {
             if (rawDate) {
                 var d = new Date(rawDate);
                 if (!isNaN(d)) {
-                    dateStr = monthNames[d.getMonth()] + " " + d.getDate() + ", " + d.getFullYear();
+                    if (aggLevel === "Y") {
+                        dateStr = String(d.getFullYear());
+                    } else if (aggLevel === "M") {
+                        dateStr = monthNames[d.getMonth()] + " " + d.getFullYear();
+                    } else {
+                        dateStr = monthNames[d.getMonth()] + " " + d.getDate() + ", " + d.getFullYear();
+                    }
                 } else {
                     dateStr = String(rawDate);
                 }
@@ -339,22 +351,9 @@ window.dash_clientside.census = {
             }
         }
 
-        // For bar charts: attach summary hover to the first real bar trace
-        // For line/area: use invisible summary trace
-        if (chartType === "bar") {
-            var attachedFirst = false;
-            for (var bti = 0; bti < traces.length; bti++) {
-                var bt = traces[bti];
-                if (bt.type === "bar" && bt.hoverinfo === "skip" && bt.showlegend !== false) {
-                    if (!attachedFirst) {
-                        bt.customdata = summaryHover.slice(0, bt.x.length);
-                        bt.hovertemplate = "%{customdata}<extra></extra>";
-                        delete bt.hoverinfo;
-                        attachedFirst = true;
-                    }
-                }
-            }
-        }
+        // Invisible summary hover trace — same pattern for all chart types.
+        // Uses hovermode "x" so the tooltip is a clean left-aligned card
+        // with bold date header, matching line/area style.
         traces.push({
             x: summaryX,
             y: summaryY,
@@ -362,12 +361,12 @@ window.dash_clientside.census = {
             name: "",
             mode: "lines",
             line: {color: "transparent", width: 0},
-            hovertemplate: chartType === "bar" ? undefined : "%{customdata}<extra></extra>",
-            hoverinfo: chartType === "bar" ? "skip" : undefined,
+            hovertemplate: "%{customdata}<extra></extra>",
             showlegend: false
         });
 
         var smoothed = smoothPct > 0;
+
         var layout = {
             xaxis: {showgrid: false, showspikes: false, nticks: 12},
             yaxis: {gridcolor: "#E5E7EB"},
@@ -412,11 +411,27 @@ window.dash_clientside.census = {
             layout.bargroupgap = stacked ? 0 : 0.05;
             layout.xaxis.type = "category";
             layout.xaxis.tickangle = 0;
-            // Scale tick count to bar density — fewer ticks at higher density
-            layout.xaxis.nticks = nBars > 60 ? 6 : nBars > 30 ? 8 : 12;
-            // Prevent rightmost label from being clipped
+            // Scale tick count to bar density — labels are already abbreviated
+            // by formatDatesForBars so we just need enough spacing
+            if (aggLevel === "Y") {
+                layout.xaxis.nticks = Math.min(nBars, 20);
+            } else if (aggLevel === "M") {
+                layout.xaxis.nticks = nBars > 36 ? 6 : nBars > 24 ? 8 : nBars > 12 ? 10 : nBars;
+            } else {
+                layout.xaxis.nticks = nBars > 50 ? 6 : nBars > 24 ? 8 : nBars > 12 ? 10 : nBars;
+            }
             layout.xaxis.automargin = true;
             layout.margin.r = 20;
+        } else {
+            // Line/area charts — keep Plotly's native datetime axis
+            // Just control tick density and format
+            if (aggLevel === "Y") {
+                // Yearly: force year-only tick format
+                layout.xaxis.tickformat = "%Y";
+                layout.xaxis.dtick = "M12";
+            }
+            layout.xaxis.tickangle = 0;
+            layout.xaxis.automargin = true;
         }
 
         // Dynamic y-axis range with 10% headroom
@@ -994,7 +1009,12 @@ window.dash_clientside.cumulative = {
      */
     renderCumulative: function(rawData, smoothPct, chartType, currentFig) {
         if (!rawData) {
-            return window.dash_clientside.no_update;
+            return {data: [], layout: Object.assign({}, window.dmc_default_layout || {}, {
+                xaxis: {visible: false}, yaxis: {visible: false},
+                annotations: [{text: "No data for selected filters", xref: "paper", yref: "paper",
+                    x: 0.5, y: 0.5, showarrow: false, font: {size: 14, color: "#9CA3AF"}}],
+                height: 350, margin: {l: 40, r: 20, t: 20, b: 40}
+            })};
         }
 
         chartType = chartType || "line";
@@ -1026,13 +1046,17 @@ window.dash_clientside.cumulative = {
 
             if (chartType === "bar") {
                 // --- Bar: stacked bars per period, broken down by slice ---
+                // Use numeric indices as x-values to prevent Plotly from coercing
+                // year-only labels like "2021" to numbers on the axis.
                 var bd = rawData.sliceBreakdown || {};
                 var periods = bd.periods || [];
                 var slices = bd.slices || [];
+                var barIndices = periods.map(function(_, i) { return i; });
 
+                // Compute per-period totals and summary HTML for hover
+                var barTotals = [];
+                var barTotalYs = [];
                 if (slices.length > 0 && periods.length > 0) {
-                    // One trace per slice (stacked) — each carries full summary tooltip
-                    var barTotals = [];
                     for (var pi = 0; pi < periods.length; pi++) {
                         var parts = ["<b>" + periods[pi] + "</b>"];
                         var total = 0;
@@ -1045,30 +1069,36 @@ window.dash_clientside.cumulative = {
                             }
                         }
                         parts.push("<b>Total: " + total.toLocaleString() + "</b>");
-                        barTotals.push({total: total, html: parts.join("<br>")});
+                        barTotals.push(parts.join("<br>"));
+                        barTotalYs.push(total);
                     }
+                    // Bar traces — use numeric indices, no individual hover
                     for (var si = 0; si < slices.length; si++) {
                         var sl = slices[si];
                         traces.push({
-                            x: periods, y: sl.values, name: sl.name,
+                            x: barIndices, y: sl.values, name: sl.name,
                             type: "bar", marker: {color: sl.color},
-                            customdata: barTotals.map(function(b) { return b.html; }),
-                            hovertemplate: "%{customdata}<extra></extra>"
+                            hoverinfo: "skip"
                         });
                     }
+                    // Invisible summary hover trace at the top of each stack
+                    traces.push({
+                        x: barIndices, y: barTotalYs, customdata: barTotals,
+                        type: "scatter", mode: "markers",
+                        marker: {size: 0.1, opacity: 0},
+                        hovertemplate: "%{customdata}<extra></extra>",
+                        showlegend: false
+                    });
                 }
 
                 // Dynamic y-range + annotations for totals on top
                 var yMaxBar = 0;
                 var barAnnotations = [];
                 for (var pi = 0; pi < periods.length; pi++) {
-                    var colTotal = 0;
-                    for (var sj = 0; sj < slices.length; sj++) {
-                        colTotal += (slices[sj].values[pi] || 0);
-                    }
+                    var colTotal = barTotalYs[pi] || 0;
                     if (colTotal > yMaxBar) yMaxBar = colTotal;
                     barAnnotations.push({
-                        x: periods[pi], y: colTotal,
+                        x: pi, y: colTotal,
                         text: "<b>" + colTotal.toLocaleString() + "</b>",
                         showarrow: false, yshift: 8,
                         font: {size: 11, color: "#374151", family: "Inter, system-ui, sans-serif"}
@@ -1079,12 +1109,19 @@ window.dash_clientside.cumulative = {
                     data: traces,
                     layout: {
                         barmode: "stack",
-                        xaxis: {showgrid: false, showspikes: false, type: "category"},
+                        xaxis: {
+                            showgrid: false, showspikes: false,
+                            type: "linear",
+                            tickvals: barIndices, ticktext: periods,
+                            tickangle: 0, autorange: true,
+                            categoryorder: null, categoryarray: null
+                        },
                         yaxis: {
                             gridcolor: "#E5E7EB", title: "",
                             range: [0, Math.ceil(yMaxBar * 1.13)],
                             autorange: false
                         },
+                        bargap: 0.15,
                         showlegend: slices.length > 0,
                         legend: {
                             orientation: "h", yanchor: "bottom", y: 1.02,
@@ -1244,9 +1281,12 @@ window.dash_clientside.cumulative = {
                     xaxis: {
                         showgrid: false,
                         showspikes: false,
+                        type: "linear",
                         tickvals: tickPositions,
                         ticktext: tickLabels,
-                        tickangle: 0
+                        tickangle: 0,
+                        // Clear bar-mode properties (Plotly.react merges layouts)
+                        categoryorder: null, categoryarray: null
                     },
                     yaxis: {
                         gridcolor: "#E5E7EB", title: "",
@@ -1282,14 +1322,15 @@ window.dash_clientside.cumulative = {
 
             if (chartType === "bar") {
                 // Bar always uses sliceBreakdown (periods × slices stacked)
-                // Fall through handled by prior mode bar block above won't reach here
-                // but if it does, use sliceBreakdown from the data
+                // Use numeric indices to prevent Plotly coercing year labels to numbers
                 var bd = rawData.sliceBreakdown || {};
                 var periods = bd.periods || [];
                 var slices = bd.slices || [];
+                var barIndices2 = periods.map(function(_, i) { return i; });
+
+                var barTotals2 = [];
+                var barTotalYs2 = [];
                 if (slices.length > 0 && periods.length > 0) {
-                    // Build summary per period, then attach to each bar trace
-                    var barTotals2 = [];
                     for (var pi = 0; pi < periods.length; pi++) {
                         var parts = ["<b>" + periods[pi] + "</b>"];
                         var total = 0;
@@ -1302,27 +1343,32 @@ window.dash_clientside.cumulative = {
                             }
                         }
                         parts.push("<b>Total: " + total.toLocaleString() + "</b>");
-                        barTotals2.push({total: total, html: parts.join("<br>")});
+                        barTotals2.push(parts.join("<br>"));
+                        barTotalYs2.push(total);
                     }
                     for (var si = 0; si < slices.length; si++) {
                         var sl = slices[si];
                         traces.push({
-                            x: periods, y: sl.values, name: sl.name,
+                            x: barIndices2, y: sl.values, name: sl.name,
                             type: "bar", marker: {color: sl.color},
-                            customdata: barTotals2.map(function(b) { return b.html; }),
-                            hovertemplate: "%{customdata}<extra></extra>"
+                            hoverinfo: "skip"
                         });
                     }
+                    traces.push({
+                        x: barIndices2, y: barTotalYs2, customdata: barTotals2,
+                        type: "scatter", mode: "markers",
+                        marker: {size: 0.1, opacity: 0},
+                        hovertemplate: "%{customdata}<extra></extra>",
+                        showlegend: false
+                    });
                 }
-                // Dynamic y-range + annotations
                 var yMaxBar2 = 0;
                 var barAnnotations2 = [];
                 for (var pi2 = 0; pi2 < periods.length; pi2++) {
-                    var ct = 0;
-                    for (var sj2 = 0; sj2 < slices.length; sj2++) ct += (slices[sj2].values[pi2] || 0);
+                    var ct = barTotalYs2[pi2] || 0;
                     if (ct > yMaxBar2) yMaxBar2 = ct;
                     barAnnotations2.push({
-                        x: periods[pi2], y: ct,
+                        x: pi2, y: ct,
                         text: "<b>" + ct.toLocaleString() + "</b>",
                         showarrow: false, yshift: 8,
                         font: {size: 11, color: "#374151", family: "Inter, system-ui, sans-serif"}
@@ -1333,12 +1379,19 @@ window.dash_clientside.cumulative = {
                     data: traces,
                     layout: {
                         barmode: "stack",
-                        xaxis: {showgrid: false, showspikes: false, type: "category"},
+                        xaxis: {
+                            showgrid: false, showspikes: false,
+                            type: "linear",
+                            tickvals: barIndices2, ticktext: periods,
+                            tickangle: 0, autorange: true,
+                            categoryorder: null, categoryarray: null
+                        },
                         yaxis: {
                             gridcolor: "#E5E7EB", title: "",
                             range: [0, Math.ceil(yMaxBar2 * 1.13)],
                             autorange: false
                         },
+                        bargap: 0.15,
                         showlegend: slices.length > 0,
                         legend: {orientation: "h", yanchor: "bottom", y: 1.02, xanchor: "left", x: 0},
                         margin: {l: 50, r: 16, t: 8, b: 20},
@@ -1416,10 +1469,17 @@ window.dash_clientside.cumulative = {
                 if (sSummaryY[yi2] > yMaxSlice) yMaxSlice = sSummaryY[yi2];
             }
 
+            var effXAxis = {
+                showgrid: false, showspikes: false, nticks: 12, automargin: true,
+                // Clear bar-mode properties (Plotly.react merges layouts)
+                categoryorder: null, categoryarray: null,
+                tickvals: null, ticktext: null
+            };
+
             return {
                 data: traces,
                 layout: {
-                    xaxis: {showgrid: false, showspikes: false, nticks: 12},
+                    xaxis: effXAxis,
                     yaxis: {
                         gridcolor: "#E5E7EB", title: "",
                         range: [0, Math.ceil(yMaxSlice * 1.1)],

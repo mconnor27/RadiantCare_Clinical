@@ -1958,7 +1958,14 @@ window.dash_clientside.flowGantt = {
         ["wf-b-body-system-trigger", "wf-b-body-system-panel"],
         ["wf-b-outlier-trigger",     "wf-b-outlier-panel"],
         ["cv-physician-trigger",   "cv-physician-panel"],
-        ["cv-body-system-trigger", "cv-body-system-panel"]
+        ["cv-body-system-trigger", "cv-body-system-panel"],
+        ["sim-physician-trigger",  "sim-physician-panel"],
+        ["sim-simtype-trigger",    "sim-simtype-panel"],
+        ["sim-machine-trigger",    "sim-machine-panel"],
+        ["sim-bodysite-trigger",   "sim-bodysite-panel"],
+        ["tasks-physician-trigger",  "tasks-physician-panel"],
+        ["tasks-diagnosis-trigger",  "tasks-diagnosis-panel"],
+        ["tasks-tasktype-trigger",   "tasks-tasktype-panel"]
     ];
 
     function closeAll(except) {

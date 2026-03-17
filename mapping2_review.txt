@@ -1,0 +1,1314 @@
+
+====================================================================================================
+  Benign Diseases
+====================================================================================================
+
+  --- Dupuytren / Plantar ---
+    728.6               1 pts   Contracture of palmar fascia
+    M72.0              22 pts   Palmar fascial fibromatosis [Dupuytren]
+    M72.2               1 pts   Plantar fascial fibromatosis
+
+  --- Gynecomastia ---
+    611.1              11 pts   Hypertrophy of breast
+    N62                 6 pts   Hypertrophy of breast
+
+  --- Hemangioma ---
+    228.00              2 pts   Hemangioma of unspecified site
+    D18.00              1 pts   Hemangioma unspecified site
+    D18.02              2 pts   Hemangioma of intracranial structures
+    D18.09              3 pts   Hemangioma of other sites
+
+  --- Heterotopic Ossification ---
+    728.13             17 pts   Postoperative heterotopic calcification
+    M61.40              3 pts   Other calcification of muscle, unspecified site
+    M61.451             1 pts   Other calcification of muscle, right thigh
+    M61.452             2 pts   Other calcification of muscle, left thigh
+    M61.49              1 pts   Other calcification of muscle, multiple sites
+
+  --- Keloid / Scar ---
+    701.4              11 pts   Keloid scar
+    L91.0              11 pts   Hypertrophic scar
+
+  --- Neurofibromatosis ---
+    Q85.00              1 pts   Neurofibromatosis, unspecified
+
+  --- Orbital Granuloma ---
+    376.11              4 pts   Orbital granuloma
+
+  --- Osteoarthritis ---
+    M16.10              1 pts   Unilateral primary osteoarthritis, unspecified hip
+    M17.0               4 pts   Bilateral primary osteoarthritis of knee
+    M17.11              2 pts   Unilateral primary osteoarthritis, right knee
+    M18.0               1 pts   Bilateral primary osteoarthritis of first carpometacarpal joints
+    M19.011             1 pts   Primary osteoarthritis, right shoulder
+    M19.012             2 pts   Primary osteoarthritis, left shoulder
+    M19.031             1 pts   Primary osteoarthritis, right wrist
+    M19.041             3 pts   Primary osteoarthritis, right hand
+    M19.042             3 pts   Primary osteoarthritis, left hand
+    M19.90              2 pts   Unspecified osteoarthritis, unspecified site
+
+  --- Rheumatoid Arthritis ---
+    M06.9               1 pts   Rheumatoid arthritis, unspecified
+
+  --- (unmapped) ---
+    D24.1               1 pts   Benign neoplasm of right breast
+    M65.221             1 pts   Calcific tendinitis, right upper arm
+    N60.92              1 pts   Unspecified benign mammary dysplasia of left breast
+    N60.99              1 pts   Unspecified benign mammary dysplasia of unspecified breast
+
+====================================================================================================
+  Breast
+====================================================================================================
+
+  --- Left ---
+    C50.012            11 pts   Malignant neoplasm of nipple and areola, left female breast
+    C50.112           159 pts   Malignant neoplasm of central portion of left female breast
+    C50.212           156 pts   Malignant neoplasm of upper-inner quadrant of left female breast
+    C50.312            98 pts   Malignant neoplasm of lower-inner quadrant of left female breast
+    C50.412           602 pts   Malignant neoplasm of upper-outer quadrant of left female breast
+    C50.512           120 pts   Malignant neoplasm of lower-outer quadrant of left female breast
+    C50.612            11 pts   Malignant neoplasm of axillary tail of left female breast
+    C50.812           180 pts   Malignant neoplasm of overlapping sites of left female breast
+    C50.912            70 pts   Malignant neoplasm of unspecified site of left female breast
+    D05.02              1 pts   Lobular carcinoma in situ of left breast
+    D05.12            111 pts   Intraductal carcinoma in situ of left breast
+    D05.82              1 pts   Other specified type of carcinoma in situ of left breast
+    D48.62              1 pts   Neoplasm of uncertain behavior of left breast
+
+  --- Male ---
+    175.0               6 pts   Malignant neoplasm of nipple and areola of male breast
+    175.9               3 pts   Malignant neoplasm of other and unspecified sites of male breast
+    C50.021             2 pts   Malignant neoplasm of nipple and areola, right male breast
+    C50.022             4 pts   Malignant neoplasm of nipple and areola, left male breast
+    C50.121             5 pts   Malignant neoplasm of central portion of right male breast
+    C50.122             6 pts   Malignant neoplasm of central portion of left male breast
+    C50.821             2 pts   Malignant neoplasm of overlapping sites of right male breast
+    C50.822             1 pts   Malignant neoplasm of overlapping sites of left male breast
+    C50.921             1 pts   Malignant neoplasm of unspecified site of right male breast
+
+  --- Right ---
+    C50.011             8 pts   Malignant neoplasm of nipple and areola, right female breast
+    C50.111           147 pts   Malignant neoplasm of central portion of right female breast
+    C50.211           138 pts   Malignant neoplasm of upper-inner quadrant of right female breast
+    C50.311            65 pts   Malignant neoplasm of lower-inner quadrant of right female breast
+    C50.411           642 pts   Malignant neoplasm of upper-outer quadrant of right female breast
+    C50.511           116 pts   Malignant neoplasm of lower-outer quadrant of right female breast
+    C50.611             7 pts   Malignant neoplasm of axillary tail of right female breast
+    C50.811           198 pts   Malignant neoplasm of overlapping sites of right female breast
+    C50.911            70 pts   Malignant neoplasm of unspecified site of right female breast
+    D05.11            126 pts   Intraductal carcinoma in situ of right breast
+    D48.61              1 pts   Neoplasm of uncertain behavior of right breast
+
+  --- Unspecified Laterality ---
+    174                 1 pts   Malignant neoplasm of female breast
+    174.0              21 pts   Malignant neoplasm of nipple and areola of female breast
+    174.1             191 pts   Malignant neoplasm of central portion of female breast
+    174.2             279 pts   Malignant neoplasm of upper-inner quadrant of female breast
+    174.3             169 pts   Malignant neoplasm of lower-inner quadrant of female breast
+    174.4           1,162 pts   Malignant neoplasm of upper-outer quadrant of female breast
+    174.5             206 pts   Malignant neoplasm of lower-outer quadrant of female breast
+    174.6              13 pts   Malignant neoplasm of axillary tail of female breast
+    174.8             358 pts   Malignant neoplasm of other specified sites of female breast
+    174.9             120 pts   Malignant neoplasm of breast (female), unspecified site
+    233.0              22 pts   Carcinoma in situ of breast
+    C50.219             1 pts   Malignant neoplasm of upper-inner quadrant of unspecified female breast
+    C50.419             1 pts   Malignant neoplasm of upper-outer quadrant of unspecified female breast
+    C50.519             1 pts   Malignant neoplasm of lower-outer quadrant of unspecified female breast
+    C50.819             1 pts   Malignant neoplasm of overlapping sites of unspecified female breast
+    C50.919            30 pts   Malignant neoplasm of unspecified site of unspecified female breast
+    D05.10              1 pts   Intraductal carcinoma in situ of unspecified breast
+    D49.3               1 pts   Neoplasm of unspecified behavior of breast
+
+====================================================================================================
+  Central Nervous System
+====================================================================================================
+
+  --- AVM ---
+    228.02              2 pts   Hemangioma of intracranial structures
+    747.81              1 pts   Congenital anomalies of cerebrovascular system
+    Q28.2               3 pts   Arteriovenous malformation of cerebral vessels
+
+  --- Benign CNS Neoplasm ---
+    225.1              10 pts   Benign neoplasm of cranial nerves
+    225.2              19 pts   Benign neoplasm of cerebral meninges
+    227.5               1 pts   Benign neoplasm of carotid body
+    D33.3              11 pts   Benign neoplasm of cranial nerves
+    D33.4               1 pts   Benign neoplasm of spinal cord
+
+  --- CNS — Uncertain ---
+    237.0               1 pts   Neoplasm of uncertain behavior of pituitary gland and craniopharyngeal duct
+    D43.2               2 pts   Neoplasm of uncertain behavior of brain, unspecified
+    D49.6               3 pts   Neoplasm of unspecified behavior of brain
+
+  --- Glioma / Primary Brain ---
+    191.0               7 pts   Malignant neoplasm of cerebrum, except lobes and ventricles
+    191.1              83 pts   Malignant neoplasm of frontal lobe
+    191.2              51 pts   Malignant neoplasm of temporal lobe
+    191.3              48 pts   Malignant neoplasm of parietal lobe
+    191.4              12 pts   Malignant neoplasm of occipital lobe
+    191.6               8 pts   Malignant neoplasm of cerebellum nos
+    191.7               4 pts   Malignant neoplasm of brain stem
+    191.8              38 pts   Malignant neoplasm of other parts of brain
+    191.9               5 pts   Malignant neoplasm of brain, unspecified site
+    C71.0               9 pts   Malignant neoplasm of cerebrum, except lobes and ventricles
+    C71.1              69 pts   Malignant neoplasm of frontal lobe
+    C71.2              52 pts   Malignant neoplasm of temporal lobe
+    C71.3              37 pts   Malignant neoplasm of parietal lobe
+    C71.4               7 pts   Malignant neoplasm of occipital lobe
+    C71.5               1 pts   Malignant neoplasm of cerebral ventricle
+    C71.6               8 pts   Malignant neoplasm of cerebellum
+    C71.7               1 pts   Malignant neoplasm of brain stem
+    C71.8              32 pts   Malignant neoplasm of overlapping sites of brain
+    C71.9              20 pts   Malignant neoplasm of brain, unspecified
+
+  --- Meningioma ---
+    192.1              27 pts   Malignant neoplasm of cerebral meninges
+    D32.0              60 pts   Benign neoplasm of cerebral meninges
+    D32.9              13 pts   Benign neoplasm of meninges, unspecified
+
+  --- Ocular / Orbit ---
+    190.0               1 pts   Malignant neoplasm of eyeball, except conjunctiva, cornea, retina, and choroid
+    190.1               3 pts   Malignant neoplasm of orbit
+    C69.31              1 pts   Malignant neoplasm of right choroid
+    C69.60              3 pts   Malignant neoplasm of unspecified orbit
+    C69.61              2 pts   Malignant neoplasm of right orbit
+    C69.62              1 pts   Malignant neoplasm of left orbit
+
+  --- Peripheral Nerve Sheath ---
+    C47.21              1 pts   Malignant neoplasm of peripheral nerves of right lower limb, including hip
+    C47.22              1 pts   Malignant neoplasm of peripheral nerves of left lower limb, including hip
+
+  --- Pituitary / Pineal ---
+    194.0               2 pts   Malignant neoplasm of adrenal gland
+    194.3               5 pts   Malignant neoplasm of pituitary gland and craniopharyngeal duct
+    194.4               1 pts   Malignant neoplasm of pineal gland
+    227.3               9 pts   Benign neoplasm of pituitary gland and craniopharyngeal duct
+    C75.1               1 pts   Malignant neoplasm of pituitary gland
+
+  --- Spinal Cord / Cranial Nerves ---
+    192.0               1 pts   Malignant neoplasm of cranial nerves
+    192.2               7 pts   Malignant neoplasm of spinal cord
+    192.3               1 pts   Malignant neoplasm of spinal meninges
+    C72.0               2 pts   Malignant neoplasm of spinal cord
+    C72.31              1 pts   Malignant neoplasm of right optic nerve
+
+  --- (unmapped) ---
+    237.7               1 pts   Neurofibromatosis
+    C70.0              29 pts   Malignant neoplasm of cerebral meninges
+    D31.62              1 pts   Benign neoplasm of unspecified site of left orbit
+    D35.2              16 pts   Benign neoplasm of pituitary gland
+    D35.3               1 pts   Benign neoplasm of craniopharyngeal duct
+    D35.5               2 pts   Benign neoplasm of carotid body
+    D42.0               2 pts   Neoplasm of uncertain behavior of cerebral meninges
+    D42.9               2 pts   Neoplasm of uncertain behavior of meninges, unspecified
+    D49.7               2 pts   Neoplasm of unspecified behavior of endocrine glands and other parts of nervous system
+
+====================================================================================================
+  GU – Non-Prostate
+====================================================================================================
+
+  --- Adrenal ---
+    237.2               1 pts   Neoplasm of uncertain behavior of adrenal gland
+    C74.02              1 pts   Malignant neoplasm of cortex of left adrenal gland
+    C74.11              1 pts   Malignant neoplasm of medulla of right adrenal gland
+
+  --- Bladder ---
+    188.0               5 pts   Malignant neoplasm of trigone of urinary bladder
+    188.1              10 pts   Malignant neoplasm of dome of urinary bladder
+    188.2              28 pts   Malignant neoplasm of lateral wall of urinary bladder
+    188.3               6 pts   Malignant neoplasm of anterior wall of urinary bladder
+    188.4              16 pts   Malignant neoplasm of posterior wall of urinary bladder
+    188.5               9 pts   Malignant neoplasm of bladder neck
+    188.6               6 pts   Malignant neoplasm of ureteric orifice
+    188.8              55 pts   Malignant neoplasm of other specified sites of bladder
+    188.9               8 pts   Malignant neoplasm of bladder, part unspecified
+    233.7               1 pts   Carcinoma in situ of bladder
+    C67.0               8 pts   Malignant neoplasm of trigone of bladder
+    C67.1              11 pts   Malignant neoplasm of dome of bladder
+    C67.2              38 pts   Malignant neoplasm of lateral wall of bladder
+    C67.3              11 pts   Malignant neoplasm of anterior wall of bladder
+    C67.4              16 pts   Malignant neoplasm of posterior wall of bladder
+    C67.5               8 pts   Malignant neoplasm of bladder neck
+    C67.6               2 pts   Malignant neoplasm of ureteric orifice
+    C67.8              58 pts   Malignant neoplasm of overlapping sites of bladder
+    C67.9               8 pts   Malignant neoplasm of bladder, unspecified
+
+  --- GU — Other ---
+    187.7               1 pts   Malignant neoplasm of scrotum
+
+  --- Kidney / RCC ---
+    189.0               4 pts   Malignant neoplasm of kidney, except pelvis
+    189.1               3 pts   Malignant neoplasm of renal pelvis
+    189.2               9 pts   Malignant neoplasm of ureter
+    189.3               1 pts   Malignant neoplasm of urethra
+    189.9               1 pts   Malignant neoplasm of urinary organ, site unspecified
+    C64.1               2 pts   Malignant neoplasm of right kidney, except renal pelvis
+    C64.2               6 pts   Malignant neoplasm of left kidney, except renal pelvis
+    C64.9               2 pts   Malignant neoplasm of unspecified kidney, except renal pelvis
+
+  --- Penile ---
+    187.2               1 pts   Malignant neoplasm of glans penis
+    187.4               1 pts   Malignant neoplasm of penis, part unspecified
+    233.5               1 pts   Carcinoma in situ of penis
+    C60.0               1 pts   Malignant neoplasm of prepuce
+    C60.1               2 pts   Malignant neoplasm of glans penis
+    C60.8               2 pts   Malignant neoplasm of overlapping sites of penis
+    C60.9               1 pts   Malignant neoplasm of penis, unspecified
+
+  --- Testicular ---
+    186.9              41 pts   Malignant neoplasm of other and unspecified testis
+    187.6               1 pts   Malignant neoplasm of spermatic cord
+    C62.11              6 pts   Malignant neoplasm of descended right testis
+    C62.12              2 pts   Malignant neoplasm of descended left testis
+    C62.91              1 pts   Malignant neoplasm of right testis, unspecified whether descended or undescended
+
+  --- Urethra / Urinary — Other ---
+    C68.0               2 pts   Malignant neoplasm of urethra
+
+  --- (unmapped) ---
+    C66.1               2 pts   Malignant neoplasm of right ureter
+    C66.2               1 pts   Malignant neoplasm of left ureter
+    C66.9               1 pts   Malignant neoplasm of unspecified ureter
+    D07.4               1 pts   Carcinoma in situ of penis
+    D09.0               3 pts   Carcinoma in situ of bladder
+    D49.4               1 pts   Neoplasm of unspecified behavior of bladder
+
+====================================================================================================
+  GU – Prostate
+====================================================================================================
+
+  --- Prostate Cancer ---
+    185             1,316 pts   Malignant neoplasm of prostate
+    C61             1,847 pts   Malignant neoplasm of prostate
+
+====================================================================================================
+  Gastrointestinal
+====================================================================================================
+
+  --- Anal ---
+    154.2              70 pts   Malignant neoplasm of anal canal
+    154.3              28 pts   Malignant neoplasm of anus, unspecified site
+    154.8             198 pts   Malignant neoplasm of other sites of rectum, rectosigmoid junction, and anus
+    C21.0              40 pts   Malignant neoplasm of anus, unspecified
+    C21.1              67 pts   Malignant neoplasm of anal canal
+    C21.2               1 pts   Malignant neoplasm of cloacogenic zone
+    C21.8              63 pts   Malignant neoplasm of overlapping sites of rectum, anus and anal canal
+
+  --- Biliary ---
+    156.0               9 pts   Malignant neoplasm of gallbladder
+    156.1               3 pts   Malignant neoplasm of extrahepatic bile ducts
+    156.2               3 pts   Malignant neoplasm of ampulla of vater
+    C24.0               7 pts   Malignant neoplasm of extrahepatic bile duct
+    C24.1               6 pts   Malignant neoplasm of ampulla of Vater
+    C24.8               1 pts   Malignant neoplasm of overlapping sites of biliary tract
+
+  --- Colon ---
+    153.0               3 pts   Malignant neoplasm of hepatic flexure
+    153.1               2 pts   Malignant neoplasm of transverse colon
+    153.2               5 pts   Malignant neoplasm of descending colon
+    153.3              18 pts   Malignant neoplasm of sigmoid colon
+    153.4               6 pts   Malignant neoplasm of cecum
+    153.5               1 pts   Malignant neoplasm of appendix vermiformis
+    153.6               6 pts   Malignant neoplasm of ascending colon
+    153.7               2 pts   Malignant neoplasm of splenic flexure
+    153.8               9 pts   Malignant neoplasm of other specified sites of large intestine
+    153.9               2 pts   Malignant neoplasm of colon, unspecified site
+    C18.0               3 pts   Malignant neoplasm of cecum
+    C18.2               7 pts   Malignant neoplasm of ascending colon
+    C18.4               1 pts   Malignant neoplasm of transverse colon
+    C18.6               2 pts   Malignant neoplasm of descending colon
+    C18.7              15 pts   Malignant neoplasm of sigmoid colon
+    C18.9               5 pts   Malignant neoplasm of colon, unspecified
+
+  --- Esophageal ---
+    150.0              56 pts   Malignant neoplasm of cervical esophagus
+    150.1               3 pts   Malignant neoplasm of thoracic esophagus
+    150.2               6 pts   Malignant neoplasm of abdominal esophagus
+    150.3               3 pts   Malignant neoplasm of upper third of esophagus
+    150.4              18 pts   Malignant neoplasm of middle third of esophagus
+    150.5              94 pts   Malignant neoplasm of lower third of esophagus
+    150.8              51 pts   Malignant neoplasm of other specified part of esophagus
+    150.9               3 pts   Malignant neoplasm of esophagus, unspecified site
+    C15.3              10 pts   Malignant neoplasm of upper third of esophagus
+    C15.4              20 pts   Malignant neoplasm of middle third of esophagus
+    C15.5             139 pts   Malignant neoplasm of lower third of esophagus
+    C15.8              19 pts   Malignant neoplasm of overlapping sites of esophagus
+    C15.9              11 pts   Malignant neoplasm of esophagus, unspecified
+
+  --- GI — Other ---
+    159.0               1 pts   Malignant neoplasm of intestinal tract, part unspecified
+
+  --- Gallbladder ---
+    C23                 5 pts   Malignant neoplasm of gallbladder
+
+  --- Gastric ---
+    151.0              14 pts   Malignant neoplasm of cardia
+    151.2               7 pts   Malignant neoplasm of pyloric antrum
+    151.3               4 pts   Malignant neoplasm of fundus of stomach
+    151.4               2 pts   Malignant neoplasm of body of stomach
+    151.5               3 pts   Malignant neoplasm of lesser curvature of stomach, unspecified
+    151.6               3 pts   Malignant neoplasm of greater curvature of stomach, unspecified
+    151.8              13 pts   Malignant neoplasm of other specified sites of stomach
+    151.9               3 pts   Malignant neoplasm of stomach, unspecified site
+    C16.0              17 pts   Malignant neoplasm of cardia
+    C16.2               3 pts   Malignant neoplasm of body of stomach
+    C16.3               3 pts   Malignant neoplasm of pyloric antrum
+    C16.4               1 pts   Malignant neoplasm of pylorus
+    C16.5               3 pts   Malignant neoplasm of lesser curvature of stomach, unspecified
+    C16.8               3 pts   Malignant neoplasm of overlapping sites of stomach
+    C16.9               2 pts   Malignant neoplasm of stomach, unspecified
+
+  --- Liver / HCC ---
+    155.0               3 pts   Malignant neoplasm of liver, primary
+    155.1               6 pts   Malignant neoplasm of intrahepatic bile ducts
+    155.2               1 pts   Malignant neoplasm of liver, not specified as primary or secondary
+    C22.0              10 pts   Liver cell carcinoma
+    C22.1              14 pts   Intrahepatic bile duct carcinoma
+    C22.8               1 pts   Malignant neoplasm of liver, primary, unspecified as to type
+
+  --- Neuroendocrine ---
+    C7A.012             1 pts   Malignant carcinoid tumor of the ileum
+    C7A.026             1 pts   Malignant carcinoid tumor of the rectum
+
+  --- Other ---
+    239.0               1 pts   Neoplasm of unspecified nature of digestive system
+
+  --- Pancreatic ---
+    157.0              59 pts   Malignant neoplasm of head of pancreas
+    157.1              22 pts   Malignant neoplasm of body of pancreas
+    157.2              14 pts   Malignant neoplasm of tail of pancreas
+    157.8               6 pts   Malignant neoplasm of other specified sites of pancreas
+    157.9               1 pts   Malignant neoplasm of pancreas, part unspecified
+    C25.0              55 pts   Malignant neoplasm of head of pancreas
+    C25.1              13 pts   Malignant neoplasm of body of pancreas
+    C25.2               3 pts   Malignant neoplasm of tail of pancreas
+    C25.7               2 pts   Malignant neoplasm of other parts of pancreas
+    C25.8               6 pts   Malignant neoplasm of overlapping sites of pancreas
+    C25.9               6 pts   Malignant neoplasm of pancreas, unspecified
+
+  --- Rectal ---
+    154.1              43 pts   Malignant neoplasm of rectum
+    C20               192 pts   Malignant neoplasm of rectum
+
+  --- Rectosigmoid ---
+    154.0              93 pts   Malignant neoplasm of rectosigmoid junction
+    C19                39 pts   Malignant neoplasm of rectosigmoid junction
+
+  --- Small Intestine ---
+    152.0               3 pts   Malignant neoplasm of duodenum
+    152.1               1 pts   Malignant neoplasm of jejunum
+    152.8               2 pts   Malignant neoplasm of other specified sites of small intestine
+    C17.1               1 pts   Malignant neoplasm of jejunum
+
+  --- Soft Tissue Sarcoma ---
+    C49.A2              1 pts   Gastrointestinal stromal tumor of stomach
+
+  --- (unmapped) ---
+    230.1               1 pts   Carcinoma in situ of esophagus
+    D49.0               2 pts   Neoplasm of unspecified behavior of digestive system
+
+====================================================================================================
+  Gynecologic
+====================================================================================================
+
+  --- Cervical ---
+    180.0              20 pts   Malignant neoplasm of endocervix
+    180.1              40 pts   Malignant neoplasm of exocervix
+    180.8               3 pts   Malignant neoplasm of other specified sites of cervix
+    180.9              33 pts   Malignant neoplasm of cervix uteri, unspecified site
+    233.1               1 pts   Carcinoma in situ of cervix uteri
+    C53.0              29 pts   Malignant neoplasm of endocervix
+    C53.1              39 pts   Malignant neoplasm of exocervix
+    C53.8              31 pts   Malignant neoplasm of overlapping sites of cervix uteri
+    C53.9               6 pts   Malignant neoplasm of cervix uteri, unspecified
+
+  --- Fallopian / Adnexal ---
+    183.5               1 pts   Malignant neoplasm of round ligament of uterus
+    183.9               1 pts   Malignant neoplasm of uterine adnexa, unspecified site
+    C57.00              1 pts   Malignant neoplasm of unspecified fallopian tube
+    C57.02              2 pts   Malignant neoplasm of left fallopian tube
+    C57.4               1 pts   Malignant neoplasm of uterine adnexa, unspecified
+    C57.7               1 pts   Malignant neoplasm of other specified female genital organs
+    C57.8               2 pts   Malignant neoplasm of overlapping sites of female genital organs
+
+  --- Gynecologic — Other ---
+    184.9               3 pts   Malignant neoplasm of female genital organ, site unspecified
+
+  --- Ovarian ---
+    183.0              11 pts   Malignant neoplasm of ovary
+    C56.1               5 pts   Malignant neoplasm of right ovary
+    C56.2               4 pts   Malignant neoplasm of left ovary
+    C56.9               6 pts   Malignant neoplasm of unspecified ovary
+
+  --- Uterine / Endometrial ---
+    179                21 pts   Malignant neoplasm of uterus, part unspecified
+    182.0              90 pts   Malignant neoplasm of corpus uteri, except isthmus
+    182.1              17 pts   Malignant neoplasm of isthmus
+    182.8              56 pts   Malignant neoplasm of other specified sites of body of uterus
+    C54.0              11 pts   Malignant neoplasm of isthmus uteri
+    C54.1             180 pts   Malignant neoplasm of endometrium
+    C54.2              13 pts   Malignant neoplasm of myometrium
+    C54.3               6 pts   Malignant neoplasm of fundus uteri
+    C54.8              17 pts   Malignant neoplasm of overlapping sites of corpus uteri
+    C54.9               7 pts   Malignant neoplasm of corpus uteri, unspecified
+    C55                15 pts   Malignant neoplasm of uterus, part unspecified
+
+  --- Uterine Leiomyoma ---
+    D25.9               1 pts   Leiomyoma of uterus, unspecified
+
+  --- Vaginal ---
+    184.0              10 pts   Malignant neoplasm of vagina
+    C52                22 pts   Malignant neoplasm of vagina
+
+  --- Vulvar ---
+    184.1               8 pts   Malignant neoplasm of labia majora
+    184.2               4 pts   Malignant neoplasm of labia minora
+    184.4              17 pts   Malignant neoplasm of vulva, unspecified site
+    C51.0               8 pts   Malignant neoplasm of labium majus
+    C51.1               5 pts   Malignant neoplasm of labium minus
+    C51.2               1 pts   Malignant neoplasm of clitoris
+    C51.8              11 pts   Malignant neoplasm of overlapping sites of vulva
+    C51.9              20 pts   Malignant neoplasm of vulva, unspecified
+
+====================================================================================================
+  Head and Neck
+====================================================================================================
+
+  --- Head & Neck — NOS ---
+    195.0              20 pts   Malignant neoplasm of head, face, and neck
+    C76.0              34 pts   Malignant neoplasm of head, face and neck
+
+  --- Hypopharynx ---
+    148.1               7 pts   Malignant neoplasm of pyriform sinus
+    148.2               2 pts   Malignant neoplasm of aryepiglottic fold, hypopharyngeal aspect
+    148.3               3 pts   Malignant neoplasm of posterior hypopharyngeal wall
+    148.8               4 pts   Malignant neoplasm of other specified sites of hypopharynx
+    148.9               4 pts   Malignant neoplasm of hypopharynx, unspecified site
+    C12                 8 pts   Malignant neoplasm of pyriform sinus
+    C13.0               2 pts   Malignant neoplasm of postcricoid region
+    C13.1               4 pts   Malignant neoplasm of aryepiglottic fold, hypopharyngeal aspect
+    C13.2               4 pts   Malignant neoplasm of posterior wall of hypopharynx
+    C13.8               7 pts   Malignant neoplasm of overlapping sites of hypopharynx
+    C13.9               3 pts   Malignant neoplasm of hypopharynx, unspecified
+
+  --- Larynx ---
+    161.0              82 pts   Malignant neoplasm of glottis
+    161.1              41 pts   Malignant neoplasm of supraglottis
+    161.3               1 pts   Malignant neoplasm of laryngeal cartilages
+    161.8               5 pts   Malignant neoplasm of other specified sites of larynx
+    C32.0              49 pts   Malignant neoplasm of glottis
+    C32.1              42 pts   Malignant neoplasm of supraglottis
+    C32.2               1 pts   Malignant neoplasm of subglottis
+    C32.3               4 pts   Malignant neoplasm of laryngeal cartilage
+    C32.8              23 pts   Malignant neoplasm of overlapping sites of larynx
+    C32.9               8 pts   Malignant neoplasm of larynx, unspecified
+    D02.0               1 pts   Carcinoma in situ of larynx
+    D38.0               1 pts   Neoplasm of uncertain behavior of larynx
+
+  --- Lip ---
+    140.1               1 pts   Malignant neoplasm of lower lip, vermilion border
+    140.8               3 pts   Malignant neoplasm of other sites of lip
+    140.9               1 pts   Malignant neoplasm of lip, unspecified, vermilion border
+    C00.0               2 pts   Malignant neoplasm of external upper lip
+    C00.1               4 pts   Malignant neoplasm of external lower lip
+    C00.3               1 pts   Malignant neoplasm of upper lip, inner aspect
+    C00.4               1 pts   Malignant neoplasm of lower lip, inner aspect
+    C00.5               1 pts   Malignant neoplasm of lip, unspecified, inner aspect
+    C00.8               1 pts   Malignant neoplasm of overlapping sites of lip
+    C00.9               1 pts   Malignant neoplasm of lip, unspecified
+
+  --- Nasal Cavity / Sinus ---
+    160.0              13 pts   Malignant neoplasm of nasal cavities
+    160.2               5 pts   Malignant neoplasm of maxillary sinus
+    160.3               6 pts   Malignant neoplasm of ethmoidal sinus
+    160.4               2 pts   Malignant neoplasm of frontal sinus
+    160.8               8 pts   Malignant neoplasm of other accessory sinuses
+    C31.0               9 pts   Malignant neoplasm of maxillary sinus
+    C31.1               4 pts   Malignant neoplasm of ethmoidal sinus
+    C31.8               4 pts   Malignant neoplasm of overlapping sites of accessory sinuses
+    C31.9               1 pts   Malignant neoplasm of accessory sinus, unspecified
+
+  --- Nasopharynx ---
+    147.0               1 pts   Malignant neoplasm of superior wall of nasopharynx
+    147.1               3 pts   Malignant neoplasm of posterior wall of nasopharynx
+    147.2               5 pts   Malignant neoplasm of lateral wall of nasopharynx
+    147.3               2 pts   Malignant neoplasm of anterior wall of nasopharynx
+    147.8               8 pts   Malignant neoplasm of other specified sites of nasopharynx
+    C11.1               3 pts   Malignant neoplasm of posterior wall of nasopharynx
+    C11.2               7 pts   Malignant neoplasm of lateral wall of nasopharynx
+    C11.8               8 pts   Malignant neoplasm of overlapping sites of nasopharynx
+    C11.9               6 pts   Malignant neoplasm of nasopharynx, unspecified
+
+  --- Oral Cavity (Floor of Mouth) ---
+    144.0               8 pts   Malignant neoplasm of anterior portion of floor of mouth
+    144.1               2 pts   Malignant neoplasm of lateral portion of floor of mouth
+    144.8              11 pts   Malignant neoplasm of other sites of floor of mouth
+    144.9               1 pts   Malignant neoplasm of floor of mouth, part unspecified
+    C04.0              10 pts   Malignant neoplasm of anterior floor of mouth
+    C04.1               4 pts   Malignant neoplasm of lateral floor of mouth
+    C04.8               9 pts   Malignant neoplasm of overlapping sites of floor of mouth
+    C04.9               4 pts   Malignant neoplasm of floor of mouth, unspecified
+
+  --- Oral Cavity (Gingiva) ---
+    143.0               2 pts   Malignant neoplasm of upper gum
+    143.1              10 pts   Malignant neoplasm of lower gum
+    143.8               2 pts   Malignant neoplasm of other sites of gum
+    143.9               2 pts   Malignant neoplasm of gum, unspecified
+    C03.0               4 pts   Malignant neoplasm of upper gum
+    C03.1               9 pts   Malignant neoplasm of lower gum
+    C03.9               3 pts   Malignant neoplasm of gum, unspecified
+
+  --- Oral Cavity (Other) ---
+    145.0               7 pts   Malignant neoplasm of cheek mucosa
+    145.1               1 pts   Malignant neoplasm of vestibule of mouth
+    145.2               4 pts   Malignant neoplasm of hard palate
+    145.3              13 pts   Malignant neoplasm of soft palate
+    145.4               1 pts   Malignant neoplasm of uvula
+    145.6               5 pts   Malignant neoplasm of retromolar area
+    145.8               5 pts   Malignant neoplasm of other specified parts of mouth
+    145.9               7 pts   Malignant neoplasm of mouth, unspecified
+    210.4               1 pts   Benign neoplasm of other and unspecified parts of mouth
+    C06.0              15 pts   Malignant neoplasm of cheek mucosa
+    C06.1               3 pts   Malignant neoplasm of vestibule of mouth
+    C06.2              11 pts   Malignant neoplasm of retromolar area
+    C06.80              1 pts   Malignant neoplasm of overlapping sites of unspecified parts of mouth
+    C06.89              1 pts   Malignant neoplasm of overlapping sites of other parts of mouth
+    C06.9               3 pts   Malignant neoplasm of mouth, unspecified
+
+  --- Oral Cavity (Palate) ---
+    C05.0               4 pts   Malignant neoplasm of hard palate
+    C05.1               7 pts   Malignant neoplasm of soft palate
+    C05.8               2 pts   Malignant neoplasm of overlapping sites of palate
+
+  --- Oral Cavity (Tongue) ---
+    C02.0               9 pts   Malignant neoplasm of dorsal surface of tongue
+    C02.1              18 pts   Malignant neoplasm of border of tongue
+    C02.2              17 pts   Malignant neoplasm of ventral surface of tongue
+    C02.3              17 pts   Malignant neoplasm of anterior two-thirds of tongue, part unspecified
+    C02.4               6 pts   Malignant neoplasm of lingual tonsil
+    C02.8              17 pts   Malignant neoplasm of overlapping sites of tongue
+    C02.9               6 pts   Malignant neoplasm of tongue, unspecified
+
+  --- Oropharynx ---
+    141                 1 pts   Malignant neoplasm of tongue
+    141.0              85 pts   Malignant neoplasm of base of tongue
+    141.1               2 pts   Malignant neoplasm of dorsal surface of tongue
+    141.2              45 pts   Malignant neoplasm of tip and lateral border of tongue
+    141.3               4 pts   Malignant neoplasm of ventral surface of tongue
+    141.4               3 pts   Malignant neoplasm of anterior two-thirds of tongue, part unspecified
+    141.5               1 pts   Malignant neoplasm of junctional zone of tongue
+    141.8               8 pts   Malignant neoplasm of other sites of tongue
+    141.9               3 pts   Malignant neoplasm of tongue, unspecified
+    146.0              65 pts   Malignant neoplasm of tonsil
+    146.1              26 pts   Malignant neoplasm of tonsillar fossa
+    146.2               3 pts   Malignant neoplasm of tonsillar pillars (anterior) (posterior)
+    146.3               2 pts   Malignant neoplasm of vallecula epiglottica
+    146.4               7 pts   Malignant neoplasm of anterior aspect of epiglottis
+    146.6               3 pts   Malignant neoplasm of lateral wall of oropharynx
+    146.7               2 pts   Malignant neoplasm of posterior wall of oropharynx
+    146.8              34 pts   Malignant neoplasm of other specified sites of oropharynx
+    146.9               7 pts   Malignant neoplasm of oropharynx, unspecified site
+    C10.0               3 pts   Malignant neoplasm of vallecula
+    C10.2               1 pts   Malignant neoplasm of lateral wall of oropharynx
+    C10.3               4 pts   Malignant neoplasm of posterior wall of oropharynx
+    C10.8              27 pts   Malignant neoplasm of overlapping sites of oropharynx
+    C10.9              11 pts   Malignant neoplasm of oropharynx, unspecified
+
+  --- Oropharynx (Base of Tongue) ---
+    C01               133 pts   Malignant neoplasm of base of tongue
+
+  --- Oropharynx (Tonsil) ---
+    C09.0              25 pts   Malignant neoplasm of tonsillar fossa
+    C09.1               2 pts   Malignant neoplasm of tonsillar pillar (anterior) (posterior)
+    C09.8              67 pts   Malignant neoplasm of overlapping sites of tonsil
+    C09.9              28 pts   Malignant neoplasm of tonsil, unspecified
+
+  --- Pharynx — Other ---
+    149.0               3 pts   Malignant neoplasm of pharynx, unspecified
+    149.8               1 pts   Malignant neoplasm of other sites within the lip and oral cavity
+    C14.0               3 pts   Malignant neoplasm of pharynx, unspecified
+    C14.8               6 pts   Malignant neoplasm of overlapping sites of lip, oral cavity and pharynx
+    D37.05              1 pts   Neoplasm of uncertain behavior of pharynx
+
+  --- Salivary Gland ---
+    142.0              38 pts   Malignant neoplasm of parotid gland
+    142.1               8 pts   Malignant neoplasm of submandibular gland
+    142.2               2 pts   Malignant neoplasm of sublingual gland
+    142.8               2 pts   Malignant neoplasm of other major salivary glands
+    C07                39 pts   Malignant neoplasm of parotid gland
+    C08.0               5 pts   Malignant neoplasm of submandibular gland
+    C08.9               4 pts   Malignant neoplasm of major salivary gland, unspecified
+    D11.0               1 pts   Benign neoplasm of parotid gland
+
+  --- Thyroid ---
+    193                18 pts   Malignant neoplasm of thyroid gland
+    C73                16 pts   Malignant neoplasm of thyroid gland
+
+====================================================================================================
+  Hematologic
+====================================================================================================
+
+  --- Hodgkin Lymphoma ---
+    201.01              1 pts   Hodgkin's paragranuloma involving lymph nodes of head, face, and neck
+    201.41              3 pts   Hodgkin's disease, lymphocytic-histiocytic predominance involving lymph nodes of head, face, and neck
+    201.42              1 pts   Hodgkin's disease, lymphocytic-histiocytic predominance involving intrathoracic lymph nodes
+    201.43              1 pts   Hodgkin's disease, lymphocytic-histiocytic predominance involving intra-abdominal lymph nodes
+    201.44              4 pts   Hodgkin's disease, lymphocytic-histiocytic predominance involving lymph nodes of axilla and upper limb
+    201.50              1 pts   Hodgkin's disease, nodular sclerosis, unspecified site
+    201.51             11 pts   Hodgkin's disease, nodular sclerosis, involving lymph nodes of head, face, and neck
+    201.52             15 pts   Hodgkin's disease, nodular sclerosis, involving intrathoracic lymph nodes
+    201.53              4 pts   Hodgkin's disease, nodular sclerosis, involving intra-abdominal lymph nodes
+    201.56              1 pts   Hodgkin's disease, nodular sclerosis, involving intrapelvic lymph nodes
+    201.57              2 pts   Hodgkin's disease, nodular sclerosis, involving spleen
+    201.58              8 pts   Hodgkin's disease, nodular sclerosis, involving lymph nodes of multiple sites
+    201.61              5 pts   Hodgkin's disease, mixed cellularity, involving lymph nodes of head, face, and neck
+    201.62              1 pts   Hodgkin's disease, mixed cellularity, involving intrathoracic lymph nodes
+    201.64              1 pts   Hodgkin's disease, mixed cellularity, involving lymph nodes of axilla and upper limb
+    201.65              2 pts   Hodgkin's disease, mixed cellularity, involving lymph nodes of inguinal region and lower limb
+    201.66              1 pts   Hodgkin's disease, mixed cellularity, involving intrapelvic lymph nodes
+    201.68              2 pts   Hodgkin's disease, mixed cellularity, involving lymph nodes of multiple sites
+    201.91              1 pts   Hodgkin's disease, unspecified type, involving lymph nodes of head, face, and neck
+    C81.01              1 pts   Nodular lymphocyte predominant Hodgkin lymphoma, lymph nodes of head, face, and neck
+    C81.11              4 pts   Nodular sclerosis Hodgkin lymphoma, lymph nodes of head, face, and neck
+    C81.12              3 pts   Nodular sclerosis Hodgkin lymphoma, intrathoracic lymph nodes
+    C81.14              2 pts   Nodular sclerosis Hodgkin lymphoma, lymph nodes of axilla and upper limb
+    C81.18              4 pts   Nodular sclerosis Hodgkin lymphoma, lymph nodes of multiple sites
+    C81.21              1 pts   Mixed cellularity Hodgkin lymphoma, lymph nodes of head, face, and neck
+    C81.22              2 pts   Mixed cellularity Hodgkin lymphoma, intrathoracic lymph nodes
+    C81.28              1 pts   Mixed cellularity Hodgkin lymphoma, lymph nodes of multiple sites
+    C81.72              1 pts   Other Hodgkin lymphoma, intrathoracic lymph nodes
+
+  --- Kaposi Sarcoma ---
+    176.0               1 pts   Kaposi's sarcoma, skin
+    C46.0               1 pts   Kaposi's sarcoma of skin
+
+  --- Lymphocytic Leukemia ---
+    204.10              4 pts   Lymphoid leukemia, chronic, without mention of remission
+    C91.00              1 pts   Acute lymphoblastic leukemia not having achieved remission
+    C91.02              1 pts   Acute lymphoblastic leukemia, in relapse
+    C91.10              8 pts   Chronic lymphocytic leukemia of B-cell type not having achieved remission
+    C91.11              1 pts   Chronic lymphocytic leukemia of B-cell type in remission
+    C91.12              1 pts   Chronic lymphocytic leukemia of B-cell type in relapse
+    C91.60              1 pts   Prolymphocytic leukemia of T-cell type not having achieved remission
+
+  --- Monocytic Leukemia ---
+    206.10              1 pts   Monocytic leukemia, chronic without mention of remission
+
+  --- Myelofibrosis ---
+    238.76              1 pts   Myelofibrosis with myeloid metaplasia
+    289.83              1 pts   Myelofibrosis
+    D75.81              3 pts   Myelofibrosis
+
+  --- Myeloid Leukemia ---
+    205.30              1 pts   Myeloid sarcoma, without mention of remission
+    C92.01              1 pts   Acute myeloblastic leukemia, in remission
+
+  --- Myeloma / Plasmacytoma ---
+    203.0               6 pts   Multiple myeloma
+    203.00             52 pts   Multiple myeloma, without mention of remission
+    203.01              1 pts   Multiple myeloma, in remission
+    203.02             11 pts   Multiple myeloma in relapse
+    203.1               1 pts   Plasma cell leukemia
+    203.10              2 pts   Plasma cell leukemia, without mention of remission
+    203.8               1 pts   Other immunoproliferative neoplasms
+    238.6               8 pts   Neoplasm of uncertain behavior of plasma cells
+    C90.00             88 pts   Multiple myeloma not having achieved remission
+    C90.02             16 pts   Multiple myeloma in relapse
+    C90.10              1 pts   Plasma cell leukemia not having achieved remission
+    C90.20              3 pts   Extramedullary plasmacytoma not having achieved remission
+    C90.30             10 pts   Solitary plasmacytoma not having achieved remission
+    C90.32              1 pts   Solitary plasmacytoma in relapse
+
+  --- Non-Hodgkin Lymphoma (Diffuse) ---
+    C83.00              2 pts   Small cell B-cell lymphoma, unspecified site
+    C83.01              3 pts   Small cell B-cell lymphoma, lymph nodes of head, face, and neck
+    C83.06              2 pts   Small cell B-cell lymphoma, intrapelvic lymph nodes
+    C83.09              2 pts   Small cell B-cell lymphoma, extranodal and solid organ sites
+    C83.11              1 pts   Mantle cell lymphoma, lymph nodes of head, face, and neck
+    C83.12              1 pts   Mantle cell lymphoma, intrathoracic lymph nodes
+    C83.13              1 pts   Mantle cell lymphoma, intra-abdominal lymph nodes
+    C83.14              1 pts   Mantle cell lymphoma, lymph nodes of axilla and upper limb
+    C83.16              1 pts   Mantle cell lymphoma, intrapelvic lymph nodes
+    C83.18              1 pts   Mantle cell lymphoma, lymph nodes of multiple sites
+    C83.19              2 pts   Mantle cell lymphoma, extranodal and solid organ sites
+    C83.30              3 pts   Diffuse large B-cell lymphoma, unspecified site
+    C83.31             15 pts   Diffuse large B-cell lymphoma, lymph nodes of head, face, and neck
+    C83.33             12 pts   Diffuse large B-cell lymphoma, intra-abdominal lymph nodes
+    C83.34              2 pts   Diffuse large B-cell lymphoma, lymph nodes of axilla and upper limb
+    C83.35              3 pts   Diffuse large B-cell lymphoma, lymph nodes of inguinal region and lower limb
+    C83.36              1 pts   Diffuse large B-cell lymphoma, intrapelvic lymph nodes
+    C83.38              5 pts   Diffuse large B-cell lymphoma, lymph nodes of multiple sites
+    C83.39             12 pts   Diffuse large B-cell lymphoma, extranodal and solid organ sites
+    C83.390             1 pts   Primary central nervous system lymphoma
+    C83.51             14 pts   Lymphoblastic (diffuse) lymphoma, lymph nodes of head, face, and neck
+    C83.52              5 pts   Lymphoblastic (diffuse) lymphoma, intrathoracic lymph nodes
+    C83.53              1 pts   Lymphoblastic (diffuse) lymphoma, intra-abdominal lymph nodes
+    C83.54              4 pts   Lymphoblastic (diffuse) lymphoma, lymph nodes of axilla and upper limb
+    C83.55              2 pts   Lymphoblastic (diffuse) lymphoma, lymph nodes of inguinal region and lower limb
+    C83.56              4 pts   Lymphoblastic (diffuse) lymphoma, intrapelvic lymph nodes
+    C83.58              3 pts   Lymphoblastic (diffuse) lymphoma, lymph nodes of multiple sites
+    C83.59              2 pts   Lymphoblastic (diffuse) lymphoma, extranodal and solid organ sites
+    C83.75              1 pts   Burkitt lymphoma, lymph nodes of inguinal region and lower limb
+    C83.81              3 pts   Other non-follicular lymphoma, lymph nodes of head, face, and neck
+    C83.82              1 pts   Other non-follicular lymphoma, intrathoracic lymph nodes
+    C83.83              4 pts   Other non-follicular lymphoma, intra-abdominal lymph nodes
+    C83.84              1 pts   Other non-follicular lymphoma, lymph nodes of axilla and upper limb
+    C83.86              1 pts   Other non-follicular lymphoma, intrapelvic lymph nodes
+    C83.89              1 pts   Other non-follicular lymphoma, extranodal and solid organ sites
+    C83.94              1 pts   Non-follicular (diffuse) lymphoma, unspecified, lymph nodes of axilla and upper limb
+
+  --- Non-Hodgkin Lymphoma (Follicular) ---
+    C82.01              8 pts   Follicular lymphoma grade I, lymph nodes of head, face, and neck
+    C82.02              1 pts   Follicular lymphoma grade I, intrathoracic lymph nodes
+    C82.03              2 pts   Follicular lymphoma grade I, intra-abdominal lymph nodes
+    C82.05              3 pts   Follicular lymphoma grade I, lymph nodes of inguinal region and lower limb
+    C82.08              1 pts   Follicular lymphoma grade I, lymph nodes of multiple sites
+    C82.09              2 pts   Follicular lymphoma grade I, extranodal and solid organ sites
+    C82.11              6 pts   Follicular lymphoma grade II, lymph nodes of head, face, and neck
+    C82.13              3 pts   Follicular lymphoma grade II, intra-abdominal lymph nodes
+    C82.14              1 pts   Follicular lymphoma grade II, lymph nodes of axilla and upper limb
+    C82.15              4 pts   Follicular lymphoma grade II, lymph nodes of inguinal region and lower limb
+    C82.18              2 pts   Follicular lymphoma grade II, lymph nodes of multiple sites
+    C82.19              1 pts   Follicular lymphoma grade II, extranodal and solid organ sites
+    C82.35              1 pts   Follicular lymphoma grade IIIa, lymph nodes of inguinal region and lower limb
+    C82.41              2 pts   Follicular lymphoma grade IIIb, lymph nodes of head, face, and neck
+    C82.51              1 pts   Diffuse follicle center lymphoma, lymph nodes of head, face, and neck
+    C82.58              1 pts   Diffuse follicle center lymphoma, lymph nodes of multiple sites
+    C82.68              1 pts   Cutaneous follicle center lymphoma, lymph nodes of multiple sites
+    C82.69              1 pts   Cutaneous follicle center lymphoma, extranodal and solid organ sites
+    C82.85              1 pts   Other types of follicular lymphoma, lymph nodes of inguinal region and lower limb
+    C82.90              1 pts   Follicular lymphoma, unspecified, unspecified site
+    C82.94              1 pts   Follicular lymphoma, unspecified, lymph nodes of axilla and upper limb
+
+  --- Non-Hodgkin Lymphoma (Other) ---
+    200.10              1 pts   Lymphosarcoma, unspecified site
+    200.11             20 pts   Lymphosarcoma involving lymph nodes of head, face, and neck
+    200.12              3 pts   Lymphosarcoma involving intrathoracic lymph nodes
+    200.13              9 pts   Lymphosarcoma involving intra-abdominal lymph nodes
+    200.14              5 pts   Lymphosarcoma involving lymph nodes of axilla and upper limb
+    200.15              5 pts   Lymphosarcoma involving lymph nodes of inguinal region and lower limb
+    200.16              4 pts   Lymphosarcoma involving intrapelvic lymph nodes
+    200.18              6 pts   Lymphosarcoma involving lymph nodes of multiple sites
+    200.31              7 pts   Marginal zone lymphoma involving lymph nodes of head face and neck
+    200.33              7 pts   Marginal zone lymphoma involving intra-abdominal lymph nodes
+    200.4               1 pts   Mantle cell lymphoma
+    200.50              1 pts   Primary central nervous system lymphoma unspecified site
+    200.61              1 pts   Anaplastic large cell lymphoma involving lymph nodes of head face and neck
+    200.63              1 pts   Anaplastic large cell lymphoma involving intra-abdominal lymph nodes
+    200.7               2 pts   Large cell lymphoma
+    200.70              3 pts   Large cell lymphoma unspecified site
+    200.80              2 pts   Other named variants of lymphosarcoma and reticulosarcoma, unspecified site
+    200.81             11 pts   Other named variants of lymphosarcoma and reticulosarcoma involving lymph nodes of head, face, and neck
+    200.82              7 pts   Other named variants of lymphosarcoma and reticulosarcoma involving intrathoracic lymph nodes
+    200.83              4 pts   Other named variants of lymphosarcoma and reticulosarcoma involving intra-abdominal lymph nodes
+    200.84              1 pts   Other named variants of lymphosarcoma and reticulosarcoma involving lymph nodes of axilla and upper limb
+    200.85              4 pts   Other named variants of lymphosarcoma and reticulosarcoma involving lymph nodes of inguinal region and lower limb
+    200.88              6 pts   Other named variants of lymphosarcoma and reticulosarcoma involving lymph nodes of multiple sites
+    202.0               1 pts   Nodular lymphoma
+    202.00              4 pts   Nodular lymphoma, unspecified site
+    202.01             29 pts   Nodular lymphoma involving lymph nodes of head, face, and neck
+    202.02              4 pts   Nodular lymphoma involving intrathoracic lymph nodes
+    202.03             18 pts   Nodular lymphoma involving intra-abdominal lymph nodes
+    202.04              1 pts   Nodular lymphoma involving lymph nodes of axilla and upper limb
+    202.05             13 pts   Nodular lymphoma involving lymph nodes of inguinal region and lower limb
+    202.06              4 pts   Nodular lymphoma involving intrapelvic lymph nodes
+    202.07              1 pts   Nodular lymphoma involving spleen
+    202.08              8 pts   Nodular lymphoma involving lymph nodes of multiple sites
+    202.1               1 pts   Mycosis fungoides
+    202.10              4 pts   Mycosis fungoides, unspecified site
+    202.11              1 pts   Mycosis fungoides involving lymph nodes of head, face, and neck
+    202.13              1 pts   Mycosis fungoides involving intra-abdominal lymph nodes
+    202.14              1 pts   Mycosis fungoides involving lymph nodes of axilla and upper limb
+    202.15              2 pts   Mycosis fungoides involving lymph nodes of inguinal region and lower limb
+    202.18              5 pts   Mycosis fungoides involving lymph nodes of multiple sites
+    202.20              1 pts   Sezary's disease, unspecified site
+    202.5               2 pts   Letterer-siwe disease
+    202.58              1 pts   Letterer-siwe disease involving lymph nodes of multiple sites
+    202.71              1 pts   Peripheral t-cell lymphoma involving lymph nodes of head face and neck
+    202.75              2 pts   Peripheral t-cell lymphoma involving lymph nodes of inguinal region and lower limb
+    202.80              4 pts   Other malignant lymphomas, unspecified site
+    202.81             17 pts   Other malignant lymphomas involving lymph nodes of head, face, and neck
+    202.82              3 pts   Other malignant lymphomas involving intrathoracic lymph nodes
+    202.83              5 pts   Other malignant lymphomas involving intra-abdominal lymph nodes
+    202.85              8 pts   Other malignant lymphomas involving lymph nodes of inguinal region and lower limb
+    202.86              2 pts   Other malignant lymphomas involving intrapelvic lymph nodes
+    202.88              6 pts   Other malignant lymphomas involving lymph nodes of multiple sites
+    202.91              3 pts   Other and unspecified malignant neoplasms of lymphoid and histiocytic tissue involving lymph nodes of head, face, and neck
+    202.92              1 pts   Other and unspecified malignant neoplasms of lymphoid and histiocytic tissue involving intrathoracic lymph nodes
+    202.94              1 pts   Other and unspecified malignant neoplasms of lymphoid and histiocytic tissue involving lymph nodes of axilla and upper limb
+    202.98              2 pts   Other and unspecified malignant neoplasms of lymphoid and histiocytic tissue involving lymph nodes of multiple sites
+    C85.11              2 pts   Unspecified B-cell lymphoma, lymph nodes of head, face, and neck
+    C85.12              2 pts   Unspecified B-cell lymphoma, intrathoracic lymph nodes
+    C85.13              1 pts   Unspecified B-cell lymphoma, intra-abdominal lymph nodes
+    C85.18              2 pts   Unspecified B-cell lymphoma, lymph nodes of multiple sites
+    C85.19              2 pts   Unspecified B-cell lymphoma, extranodal and solid organ sites
+    C85.80              2 pts   Other specified types of non-Hodgkin lymphoma, unspecified site
+    C85.81              1 pts   Other specified types of non-Hodgkin lymphoma, lymph nodes of head, face, and neck
+    C85.83              1 pts   Other specified types of non-Hodgkin lymphoma, intra-abdominal lymph nodes
+    C85.90              1 pts   Non-Hodgkin lymphoma, unspecified, unspecified site
+    C85.91              2 pts   Non-Hodgkin lymphoma, unspecified, lymph nodes of head, face, and neck
+    C85.92              1 pts   Non-Hodgkin lymphoma, unspecified, intrathoracic lymph nodes
+    C85.93              1 pts   Non-Hodgkin lymphoma, unspecified, intra-abdominal lymph nodes
+    C85.98              1 pts   Non-Hodgkin lymphoma, unspecified, lymph nodes of multiple sites
+    C85.99              3 pts   Non-Hodgkin lymphoma, unspecified, extranodal and solid organ sites
+
+  --- Other Hematologic ---
+    C88.0               1 pts   Waldenstrom macroglobulinemia
+    C88.4              10 pts   Extranodal marginal zone B-cell lymphoma of mucosa-associated lymphoid tissue [MALT-lymphoma]
+    C88.40              1 pts   Extranodal marginal zone B-cell lymphoma of mucosa-associated lymphoid tissue [MALT-lymphoma] not having achieved remission
+    C96.6               1 pts   Unifocal Langerhans-cell histiocytosis
+
+  --- Splenomegaly ---
+    789.2               1 pts   Splenomegaly
+    R16.1               3 pts   Splenomegaly, not elsewhere classified
+
+  --- T-Cell Lymphoma ---
+    C84.00              5 pts   Mycosis fungoides, unspecified site
+    C84.04              2 pts   Mycosis fungoides, lymph nodes of axilla and upper limb
+    C84.08              1 pts   Mycosis fungoides, lymph nodes of multiple sites
+    C84.09              7 pts   Mycosis fungoides, extranodal and solid organ sites
+    C84.19              1 pts   Sezary disease, extranodal and solid organ sites
+    C84.41              1 pts   Peripheral T-cell lymphoma, not elsewhere classified, lymph nodes of head, face, and neck
+    C84.44              1 pts   Peripheral T-cell lymphoma, not elsewhere classified, lymph nodes of axilla and upper limb
+    C84.61              1 pts   Anaplastic large cell lymphoma, ALK-positive, lymph nodes of head, face, and neck
+    C84.69              1 pts   Anaplastic large cell lymphoma, ALK-positive, extranodal and solid organ sites
+    C84.71              2 pts   Anaplastic large cell lymphoma, ALK-negative, lymph nodes of head, face, and neck
+    C84.93              1 pts   Mature T/NK-cell lymphomas, unspecified, intra-abdominal lymph nodes
+    C84.A0              1 pts   Cutaneous T-cell lymphoma, unspecified, unspecified site
+    C84.A5              1 pts   Cutaneous T-cell lymphoma, unspecified, lymph nodes of inguinal region and lower limb
+    C84.A8              1 pts   Cutaneous T-cell lymphoma, unspecified, lymph nodes of multiple sites
+    C84.A9              1 pts   Cutaneous T-cell lymphoma, unspecified, extranodal and solid organ sites
+
+  --- (unmapped) ---
+    D45                 2 pts   Polycythemia vera
+    D46.9               2 pts   Myelodysplastic syndrome, unspecified
+    D47.9               1 pts   Neoplasm of uncertain behavior of lymphoid, hematopoietic and related tissue, unspecified
+    D47.Z9              5 pts   Other specified neoplasms of uncertain behavior of lymphoid, hematopoietic and related tissue
+
+====================================================================================================
+  Metastases & Palliative
+====================================================================================================
+
+  --- Adrenal Metastases ---
+    198.7               8 pts   Secondary malignant neoplasm of adrenal gland
+    C79.71             17 pts   Secondary malignant neoplasm of right adrenal gland
+    C79.72             14 pts   Secondary malignant neoplasm of left adrenal gland
+
+  --- Bone Metastases ---
+    198.5             889 pts   Secondary malignant neoplasm of bone and bone marrow
+    C79.51          1,052 pts   Secondary malignant neoplasm of bone
+    C79.52             16 pts   Secondary malignant neoplasm of bone marrow
+
+  --- Bone Sarcoma ---
+    C41.4               2 pts   Malignant neoplasm of pelvic bones, sacrum and coccyx
+
+  --- Brain Metastases ---
+    198.3             814 pts   Secondary malignant neoplasm of brain and spinal cord
+    198.4              27 pts   Secondary malignant neoplasm of other parts of nervous system
+    C79.31            590 pts   Secondary malignant neoplasm of brain
+    C79.32             14 pts   Secondary malignant neoplasm of cerebral meninges
+    C79.40              4 pts   Secondary malignant neoplasm of unspecified part of nervous system
+    C79.49             20 pts   Secondary malignant neoplasm of other parts of nervous system
+
+  --- Cord Compression ---
+    336.9               6 pts   Unspecified disease of spinal cord
+    G95.20              4 pts   Unspecified cord compression
+    G95.29              2 pts   Other cord compression
+
+  --- Ill-Defined Site ---
+    195.3               3 pts   Malignant neoplasm of pelvis
+    195.4               1 pts   Malignant neoplasm of upper limb
+    195.5               2 pts   Malignant neoplasm of lower limb
+    195.8               1 pts   Malignant neoplasm of other specified sites
+    C76.2               2 pts   Malignant neoplasm of abdomen
+    C76.3               7 pts   Malignant neoplasm of pelvis
+
+  --- Liver Metastases ---
+    197.7              17 pts   Malignant neoplasm of liver, secondary
+    C78.7              25 pts   Secondary malignant neoplasm of liver and intrahepatic bile duct
+
+  --- Lung Metastases ---
+    197.0              67 pts   Secondary malignant neoplasm of lung
+    C78.00             11 pts   Secondary malignant neoplasm of unspecified lung
+    C78.01             45 pts   Secondary malignant neoplasm of right lung
+    C78.02             38 pts   Secondary malignant neoplasm of left lung
+
+  --- Lymph Node Metastases ---
+    196.0              70 pts   Secondary and unspecified malignant neoplasm of lymph nodes of head, face, and neck
+    196.1              15 pts   Secondary and unspecified malignant neoplasm of intrathoracic lymph nodes
+    196.2              16 pts   Secondary and unspecified malignant neoplasm of intra-abdominal lymph nodes
+    196.3              18 pts   Secondary and unspecified malignant neoplasm of lymph nodes of axilla and upper limb
+    196.5               3 pts   Secondary and unspecified malignant neoplasm of lymph nodes of inguinal region and lower limb
+    196.6              16 pts   Secondary and unspecified malignant neoplasm of intrapelvic lymph nodes
+    196.8               1 pts   Secondary and unspecified malignant neoplasm of lymph nodes of multiple sites
+    196.9               1 pts   Secondary and unspecified malignant neoplasm of lymph nodes, site unspecified
+    C77.0              72 pts   Secondary and unspecified malignant neoplasm of lymph nodes of head, face and neck
+    C77.1              21 pts   Secondary and unspecified malignant neoplasm of intrathoracic lymph nodes
+    C77.2              21 pts   Secondary and unspecified malignant neoplasm of intra-abdominal lymph nodes
+    C77.3              23 pts   Secondary and unspecified malignant neoplasm of axilla and upper limb lymph nodes
+    C77.4              11 pts   Secondary and unspecified malignant neoplasm of inguinal and lower limb lymph nodes
+    C77.5              13 pts   Secondary and unspecified malignant neoplasm of intrapelvic lymph nodes
+    C77.8               3 pts   Secondary and unspecified malignant neoplasm of lymph nodes of multiple regions
+    C77.9               6 pts   Secondary and unspecified malignant neoplasm of lymph node, unspecified
+
+  --- Neoplasm-Related Pain ---
+    G89.3               5 pts   Neoplasm related pain (acute) (chronic)
+
+  --- Neuroendocrine Metastases ---
+    C7B.03              1 pts   Secondary carcinoid tumors of bone
+    C7B.1               2 pts   Secondary Merkel cell carcinoma
+    C7B.8               1 pts   Other secondary neuroendocrine tumors
+
+  --- Other ---
+    234.9               1 pts   Carcinoma in situ, site unspecified
+    239.9               1 pts   Neoplasm of unspecified nature, site unspecified
+
+  --- Other Metastases ---
+    197.1              12 pts   Secondary malignant neoplasm of mediastinum
+    197.4               1 pts   Secondary malignant neoplasm of small intestine including duodenum
+    197.5               2 pts   Secondary malignant neoplasm of large intestine and rectum
+    197.6               3 pts   Secondary malignant neoplasm of retroperitoneum and peritoneum
+    198.0               3 pts   Secondary malignant neoplasm of kidney
+    198.1               5 pts   Secondary malignant neoplasm of other urinary organs
+    198.6               1 pts   Secondary malignant neoplasm of ovary
+    198.81              3 pts   Secondary malignant neoplasm of breast
+    198.82              6 pts   Secondary malignant neoplasm of genital organs
+    198.89             88 pts   Secondary malignant neoplasm of other specified sites
+    C78.1               6 pts   Secondary malignant neoplasm of mediastinum
+    C78.2               4 pts   Secondary malignant neoplasm of pleura
+    C78.5               1 pts   Secondary malignant neoplasm of large intestine and rectum
+    C78.6               6 pts   Secondary malignant neoplasm of retroperitoneum and peritoneum
+    C78.80              1 pts   Secondary malignant neoplasm of unspecified digestive organ
+    C78.89              2 pts   Secondary malignant neoplasm of other digestive organs
+    C79.02              2 pts   Secondary malignant neoplasm of left kidney and renal pelvis
+    C79.10              1 pts   Secondary malignant neoplasm of unspecified urinary organs
+    C79.11              1 pts   Secondary malignant neoplasm of bladder
+    C79.81              2 pts   Secondary malignant neoplasm of breast
+    C79.82              1 pts   Secondary malignant neoplasm of genital organs
+    C79.89             48 pts   Secondary malignant neoplasm of other specified sites
+    C79.9               8 pts   Secondary malignant neoplasm of unspecified site
+
+  --- Palliative Care ---
+    Z51.0               1 pts   Encounter for antineoplastic radiation therapy
+    Z51.5               6 pts   Encounter for palliative care
+
+  --- Skin Metastases ---
+    198.2              13 pts   Secondary malignant neoplasm of skin
+    C79.2              11 pts   Secondary malignant neoplasm of skin
+
+  --- Unknown Primary ---
+    199.0               2 pts   Disseminated malignant neoplasm
+    C80.1               5 pts   Malignant (primary) neoplasm, unspecified
+
+  --- (unmapped) ---
+    197.2               3 pts   Secondary malignant neoplasm of pleura
+    197.8               2 pts   Secondary malignant neoplasm of other digestive organs and spleen
+    T88.59XS            1 pts   Other complications of anesthesia, sequela
+
+====================================================================================================
+  Sarcomas
+====================================================================================================
+
+  --- Benign Bone Neoplasm ---
+    213.2               1 pts   Benign neoplasm of vertebral column, excluding sacrum and coccyx
+    213.4               1 pts   Benign neoplasm of scapula and long bones of upper limb
+    213.6               3 pts   Benign neoplasm of pelvic bones, sacrum, and coccyx
+
+  --- Benign Soft Tissue Neoplasm ---
+    215.0               2 pts   Other benign neoplasm of connective and other soft tissue of head, face, and neck
+    215.3               3 pts   Other benign neoplasm of connective and other soft tissue of lower limb, including hip
+    215.8               1 pts   Other benign neoplasm of connective and other soft tissue of other specified sites
+
+  --- Bone Sarcoma ---
+    170.2               3 pts   Malignant neoplasm of vertebral column, excluding sacrum and coccyx
+    170.4               2 pts   Malignant neoplasm of scapula and long bones of upper limb
+    170.6               3 pts   Malignant neoplasm of pelvic bones, sacrum, and coccyx
+    170.9               1 pts   Malignant neoplasm of bone and articular cartilage, site unspecified
+    C40.21              1 pts   Malignant neoplasm of long bones of right lower limb
+    C40.22              1 pts   Malignant neoplasm of long bones of left lower limb
+    C41.0               1 pts   Malignant neoplasm of bones of skull and face
+    C41.1               6 pts   Malignant neoplasm of mandible
+    C41.2               2 pts   Malignant neoplasm of vertebral column
+    C41.3               1 pts   Malignant neoplasm of ribs, sternum and clavicle
+    C41.9               2 pts   Malignant neoplasm of bone and articular cartilage, unspecified
+
+  --- Ill-Defined Site ---
+    C76.51              2 pts   Malignant neoplasm of right lower limb
+    C76.52              2 pts   Malignant neoplasm of left lower limb
+
+  --- Mediastinal / Heart ---
+    C38.1               8 pts   Malignant neoplasm of anterior mediastinum
+    C38.2               2 pts   Malignant neoplasm of posterior mediastinum
+    C38.3               1 pts   Malignant neoplasm of mediastinum, part unspecified
+
+  --- Peripheral Nerve Sheath ---
+    C47.9               2 pts   Malignant neoplasm of peripheral nerves and autonomic nervous system, unspecified
+
+  --- Retroperitoneal Sarcoma ---
+    158.0               1 pts   Malignant neoplasm of retroperitoneum
+    158.8               1 pts   Malignant neoplasm of specified parts of peritoneum
+    158.9               1 pts   Malignant neoplasm of peritoneum, unspecified
+    C48.0               3 pts   Malignant neoplasm of retroperitoneum
+    C48.1               3 pts   Malignant neoplasm of specified parts of peritoneum
+    C48.2               1 pts   Malignant neoplasm of peritoneum, unspecified
+    C48.8               1 pts   Malignant neoplasm of overlapping sites of retroperitoneum and peritoneum
+
+  --- Soft Tissue Sarcoma ---
+    171.0               7 pts   Malignant neoplasm of connective and other soft tissue of head, face, and neck
+    171.2              15 pts   Malignant neoplasm of connective and other soft tissue of upper limb, including shoulder
+    171.3              26 pts   Malignant neoplasm of connective and other soft tissue of lower limb, including hip
+    171.4               8 pts   Malignant neoplasm of connective and other soft tissue of thorax
+    171.5              13 pts   Malignant neoplasm of connective and other soft tissue of abdomen
+    171.6               8 pts   Malignant neoplasm of connective and other soft tissue of pelvis
+    171.7               5 pts   Malignant neoplasm of connective and other soft tissue of trunk, unspecified
+    171.8               6 pts   Malignant neoplasm of other specified sites of connective and other soft tissue
+    171.9               1 pts   Malignant neoplasm of connective and other soft tissue, site unspecified
+    C49.0              16 pts   Malignant neoplasm of connective and soft tissue of head, face and neck
+    C49.11              9 pts   Malignant neoplasm of connective and soft tissue of right upper limb, including shoulder
+    C49.12              4 pts   Malignant neoplasm of connective and soft tissue of left upper limb, including shoulder
+    C49.21             11 pts   Malignant neoplasm of connective and soft tissue of right lower limb, including hip
+    C49.22             10 pts   Malignant neoplasm of connective and soft tissue of left lower limb, including hip
+    C49.3               7 pts   Malignant neoplasm of connective and soft tissue of thorax
+    C49.4               8 pts   Malignant neoplasm of connective and soft tissue of abdomen
+    C49.5               6 pts   Malignant neoplasm of connective and soft tissue of pelvis
+    C49.6               4 pts   Malignant neoplasm of connective and soft tissue of trunk, unspecified
+    C49.8               8 pts   Malignant neoplasm of overlapping sites of connective and soft tissue
+    C49.9               2 pts   Malignant neoplasm of connective and soft tissue, unspecified
+
+  --- (unmapped) ---
+    D16.6               2 pts   Benign neoplasm of vertebral column
+    D21.11              1 pts   Benign neoplasm of connective and other soft tissue of right upper limb, including shoulder
+    D21.3               1 pts   Benign neoplasm of connective and other soft tissue of thorax
+    D36.11              1 pts   Benign neoplasm of peripheral nerves and autonomic nervous system of face, head, and neck
+    D48.1               1 pts   Neoplasm of uncertain behavior of connective and other soft tissue
+
+====================================================================================================
+  Skin
+====================================================================================================
+
+  --- Melanoma ---
+    172.1               2 pts   Malignant melanoma of skin of eyelid, including canthus
+    172.2               1 pts   Malignant melanoma of skin of ear and external auditory canal
+    172.3               5 pts   Malignant melanoma of skin of other and unspecified parts of face
+    172.4              15 pts   Malignant melanoma of skin of scalp and neck
+    172.5               3 pts   Malignant melanoma of skin of trunk, except scrotum
+    172.6               6 pts   Malignant melanoma of skin of upper limb, including shoulder
+    172.7               8 pts   Malignant melanoma of skin of lower limb, including hip
+    172.8               1 pts   Malignant melanoma of other specified sites of skin
+    172.9               5 pts   Melanoma of skin, site unspecified
+    C43.12              1 pts   Malignant melanoma of left eyelid, including canthus
+    C43.30              2 pts   Malignant melanoma of unspecified part of face
+    C43.31              1 pts   Malignant melanoma of nose
+    C43.39              1 pts   Malignant melanoma of other parts of face
+    C43.4               5 pts   Malignant melanoma of scalp and neck
+    C43.51              1 pts   Malignant melanoma of anal skin
+    C43.59              4 pts   Malignant melanoma of other part of trunk
+    C43.61              1 pts   Malignant melanoma of right upper limb, including shoulder
+    C43.62              2 pts   Malignant melanoma of left upper limb, including shoulder
+    C43.71              3 pts   Malignant melanoma of right lower limb, including hip
+    C43.72              2 pts   Malignant melanoma of left lower limb, including hip
+    C43.9               5 pts   Malignant melanoma of skin, unspecified
+
+  --- Merkel Cell ---
+    209.31              1 pts   Merkel cell carcinoma of the face
+    209.32              1 pts   Merkel cell carcinoma of the scalp and neck
+    209.33              5 pts   Merkel cell carcinoma of the upper limb
+    209.35              2 pts   Merkel cell carcinoma of the trunk
+    C4A.11              1 pts   Merkel cell carcinoma of right eyelid, including canthus
+    C4A.22              1 pts   Merkel cell carcinoma of left ear and external auricular canal
+    C4A.30              2 pts   Merkel cell carcinoma of unspecified part of face
+    C4A.39              4 pts   Merkel cell carcinoma of other parts of face
+    C4A.4               4 pts   Merkel cell carcinoma of scalp and neck
+    C4A.59              1 pts   Merkel cell carcinoma of other part of trunk
+    C4A.61              2 pts   Merkel cell carcinoma of right upper limb, including shoulder
+    C4A.71              3 pts   Merkel cell carcinoma of right lower limb, including hip
+    C4A.72              1 pts   Merkel cell carcinoma of left lower limb, including hip
+    C4A.8               2 pts   Merkel cell carcinoma of overlapping sites
+    C4A.9               1 pts   Merkel cell carcinoma, unspecified
+
+  --- Nasal Cavity / Sinus ---
+    C30.0               9 pts   Malignant neoplasm of nasal cavity
+
+  --- Non-Melanoma Skin Cancer ---
+    173.0               5 pts   Other and unspecified malignant neoplasm of skin of lip
+    173.01              4 pts   Basal cell carcinoma of skin of lip
+    173.02              3 pts   Squamous cell carcinoma of skin of lip
+    173.1              13 pts   Other malignant neoplasm of skin of eyelid, including canthus
+    173.12              2 pts   Squamous cell carcinoma of eyelid including canthus
+    173.2              31 pts   Other and unspecified malignant neoplasm of skin of ear and external auditory canal
+    173.20              1 pts   Unspecified malignant neoplasm of skin of ear and external auditory canal
+    173.21              4 pts   Basal cell carcinoma of skin of ear and external auditory canal
+    173.22             16 pts   Squamous cell carcinoma of skin of ear and external auditory canal
+    173.3              80 pts   Other and unspecified malignant neoplasm of skin of other and unspecified parts of face
+    173.30              2 pts   Unspecified malignant neoplasm of skin of other and unspecified parts of face
+    173.31             22 pts   Basal cell carcinoma of skin of other and unspecified parts of face
+    173.32             29 pts   Squamous cell carcinoma of skin of other and unspecified parts of face
+    173.39              2 pts   Other specified malignant neoplasm of skin of other and unspecified parts of face
+    173.4              31 pts   Other and unspecified malignant neoplasm of scalp and skin of neck
+    173.41              4 pts   Basal cell carcinoma of scalp and skin of neck
+    173.42             20 pts   Squamous cell carcinoma of scalp and skin of neck
+    173.49              1 pts   Other specified malignant neoplasm of scalp and skin of neck
+    173.5               7 pts   Other malignant neoplasm of skin of trunk, except scrotum
+    173.51              3 pts   Basal cell carcinoma of skin of trunk except scrotum
+    173.6              20 pts   Other malignant neoplasm of skin of upper limb, including shoulder
+    173.61              1 pts   Basal cell carcinoma of skin of upper limb including shoulder
+    173.62             13 pts   Squamous cell carcinoma of skin of upper limb including shoulder
+    173.69              2 pts   Other specified malignant neoplasm of skin of upper limb including shoulder
+    173.7              15 pts   Other malignant neoplasm of skin of lower limb, including hip
+    173.71              4 pts   Basal cell carcinoma of skin of lower limb including hip
+    173.72              7 pts   Squamous cell carcinoma of skin of lower limb including hip
+    173.79              1 pts   Other specified malignant neoplasm of skin of lower limb including hip
+    173.8               2 pts   Other and unspecified malignant neoplasm of other specified sites of skin
+    173.81              1 pts   Basal cell carcinoma of other specified sites of skin
+    173.82              2 pts   Squamous cell carcinoma of other specified sites of skin
+    173.89              2 pts   Other specified malignant neoplasm of other specified sites of skin
+    173.9               2 pts   Other malignant neoplasm of skin, site unspecified
+    C44.00              1 pts   Unspecified malignant neoplasm of skin of lip
+    C44.01              3 pts   Basal cell carcinoma of skin of lip
+    C44.02             12 pts   Squamous cell carcinoma of skin of lip
+    C44.111             1 pts   Basal cell carcinoma of skin of unspecified eyelid, including canthus
+    C44.119             1 pts   Basal cell carcinoma of skin of left eyelid, including canthus
+    C44.121             1 pts   Squamous cell carcinoma of skin of unspecified eyelid, including canthus
+    C44.129             1 pts   Squamous cell carcinoma of skin of left eyelid, including canthus
+    C44.199             1 pts   Other specified malignant neoplasm of skin of left eyelid, including canthus
+    C44.202             1 pts   Unspecified malignant neoplasm of skin of right ear and external auricular canal
+    C44.209             4 pts   Unspecified malignant neoplasm of skin of left ear and external auricular canal
+    C44.212            12 pts   Basal cell carcinoma of skin of right ear and external auricular canal
+    C44.219             8 pts   Basal cell carcinoma of skin of left ear and external auricular canal
+    C44.222            18 pts   Squamous cell carcinoma of skin of right ear and external auricular canal
+    C44.229            21 pts   Squamous cell carcinoma of skin of left ear and external auricular canal
+    C44.292             1 pts   Other specified malignant neoplasm of skin of right ear and external auricular canal
+    C44.309             3 pts   Unspecified malignant neoplasm of skin of other parts of face
+    C44.310             6 pts   Basal cell carcinoma of skin of unspecified parts of face
+    C44.311            39 pts   Basal cell carcinoma of skin of nose
+    C44.319            26 pts   Basal cell carcinoma of skin of other parts of face
+    C44.320            12 pts   Squamous cell carcinoma of skin of unspecified parts of face
+    C44.321            13 pts   Squamous cell carcinoma of skin of nose
+    C44.329            49 pts   Squamous cell carcinoma of skin of other parts of face
+    C44.399             1 pts   Other specified malignant neoplasm of skin of other parts of face
+    C44.40              2 pts   Unspecified malignant neoplasm of skin of scalp and neck
+    C44.41             15 pts   Basal cell carcinoma of skin of scalp and neck
+    C44.42             79 pts   Squamous cell carcinoma of skin of scalp and neck
+    C44.49              4 pts   Other specified malignant neoplasm of skin of scalp and neck
+    C44.509             2 pts   Unspecified malignant neoplasm of skin of other part of trunk
+    C44.511             1 pts   Basal cell carcinoma of skin of breast
+    C44.519            10 pts   Basal cell carcinoma of skin of other part of trunk
+    C44.520             3 pts   Squamous cell carcinoma of anal skin
+    C44.521             1 pts   Squamous cell carcinoma of skin of breast
+    C44.529            10 pts   Squamous cell carcinoma of skin of other part of trunk
+    C44.590             1 pts   Other specified malignant neoplasm of anal skin
+    C44.609             1 pts   Unspecified malignant neoplasm of skin of left upper limb, including shoulder
+    C44.612             5 pts   Basal cell carcinoma of skin of right upper limb, including shoulder
+    C44.619             2 pts   Basal cell carcinoma of skin of left upper limb, including shoulder
+    C44.622            11 pts   Squamous cell carcinoma of skin of right upper limb, including shoulder
+    C44.629            15 pts   Squamous cell carcinoma of skin of left upper limb, including shoulder
+    C44.692             1 pts   Other specified malignant neoplasm of skin of right upper limb, including shoulder
+    C44.699             3 pts   Other specified malignant neoplasm of skin of left upper limb, including shoulder
+    C44.702             2 pts   Unspecified malignant neoplasm of skin of right lower limb, including hip
+    C44.712             5 pts   Basal cell carcinoma of skin of right lower limb, including hip
+    C44.719             7 pts   Basal cell carcinoma of skin of left lower limb, including hip
+    C44.721             1 pts   Squamous cell carcinoma of skin of unspecified lower limb, including hip
+    C44.722            10 pts   Squamous cell carcinoma of skin of right lower limb, including hip
+    C44.729             8 pts   Squamous cell carcinoma of skin of left lower limb, including hip
+    C44.799             1 pts   Other specified malignant neoplasm of skin of left lower limb, including hip
+    C44.81              2 pts   Basal cell carcinoma of overlapping sites of skin
+    C44.82              5 pts   Squamous cell carcinoma of overlapping sites of skin
+    C44.89              1 pts   Other specified malignant neoplasm of overlapping sites of skin
+    C44.90             31 pts   Unspecified malignant neoplasm of skin, unspecified
+    C44.91              2 pts   Basal cell carcinoma of skin, unspecified
+    C44.92              9 pts   Squamous cell carcinoma of skin, unspecified
+    C44.99              3 pts   Other specified malignant neoplasm of skin, unspecified
+
+  --- Ocular / Orbit ---
+    190.3               1 pts   Malignant neoplasm of conjunctiva
+
+  --- Trachea ---
+    C33                 2 pts   Malignant neoplasm of trachea
+
+  --- (unmapped) ---
+    D04.39              5 pts   Carcinoma in situ of skin of other parts of face
+    D04.4               2 pts   Carcinoma in situ of skin of scalp and neck
+    D04.5               1 pts   Carcinoma in situ of skin of trunk
+    D04.71              2 pts   Carcinoma in situ of skin of right lower limb, including hip
+    D04.72              1 pts   Carcinoma in situ of skin of left lower limb, including hip
+    D17.1               1 pts   Benign lipomatous neoplasm of skin and subcutaneous tissue of trunk
+    D23.39              1 pts   Other benign neoplasm of skin of other parts of face
+    D23.4               1 pts   Other benign neoplasm of skin of scalp and neck
+    D49.2               2 pts   Neoplasm of unspecified behavior of bone, soft tissue, and skin
+
+====================================================================================================
+  Thoracic
+====================================================================================================
+
+  --- Ill-Defined Site ---
+    195.1               1 pts   Malignant neoplasm of thorax
+    C76.1              13 pts   Malignant neoplasm of thorax
+
+  --- Lung Cancer ---
+    162.0               2 pts   Malignant neoplasm of trachea
+    162.2              67 pts   Malignant neoplasm of main bronchus
+    162.3             589 pts   Malignant neoplasm of upper lobe, bronchus or lung
+    162.4              80 pts   Malignant neoplasm of middle lobe, bronchus or lung
+    162.5             263 pts   Malignant neoplasm of lower lobe, bronchus or lung
+    162.8             130 pts   Malignant neoplasm of other parts of bronchus or lung
+    162.9              38 pts   Malignant neoplasm of bronchus and lung, unspecified
+
+  --- Mediastinal ---
+    164.2               2 pts   Malignant neoplasm of anterior mediastinum
+    164.8               6 pts   Malignant neoplasm of other parts of mediastinum
+    164.9               1 pts   Malignant neoplasm of mediastinum, part unspecified
+    C75.5               1 pts   Malignant neoplasm of aortic body and other paraganglia
+
+  --- Mediastinal / Heart ---
+    C38.4               1 pts   Malignant neoplasm of pleura
+
+  --- Mesothelioma ---
+    163.0               1 pts   Malignant neoplasm of parietal pleura
+    163.9               7 pts   Malignant neoplasm of pleura, unspecified
+    C45.0               5 pts   Mesothelioma of pleura
+    C45.9               1 pts   Mesothelioma, unspecified
+
+  --- Neuroendocrine ---
+    C7A.090             3 pts   Malignant carcinoid tumor of the bronchus and lung
+    C7A.091             1 pts   Malignant carcinoid tumor of the thymus
+    C7A.1               1 pts   Malignant poorly differentiated neuroendocrine tumors
+    C7A.8               5 pts   Other malignant neuroendocrine tumors
+
+  --- Non-Small Cell Lung ---
+    C34.00              3 pts   Malignant neoplasm of unspecified main bronchus
+    C34.01             22 pts   Malignant neoplasm of right main bronchus
+    C34.02             13 pts   Malignant neoplasm of left main bronchus
+    C34.10             13 pts   Malignant neoplasm of upper lobe, unspecified bronchus or lung
+    C34.11            461 pts   Malignant neoplasm of upper lobe, right bronchus or lung
+    C34.12            376 pts   Malignant neoplasm of upper lobe, left bronchus or lung
+    C34.2              60 pts   Malignant neoplasm of middle lobe, bronchus or lung
+    C34.30              4 pts   Malignant neoplasm of lower lobe, unspecified bronchus or lung
+    C34.31            213 pts   Malignant neoplasm of lower lobe, right bronchus or lung
+    C34.32            192 pts   Malignant neoplasm of lower lobe, left bronchus or lung
+    C34.80              3 pts   Malignant neoplasm of overlapping sites of unspecified bronchus and lung
+    C34.81             55 pts   Malignant neoplasm of overlapping sites of right bronchus and lung
+    C34.82             32 pts   Malignant neoplasm of overlapping sites of left bronchus and lung
+    C34.90             63 pts   Malignant neoplasm of unspecified part of unspecified bronchus or lung
+    C34.91             32 pts   Malignant neoplasm of unspecified part of right bronchus or lung
+    C34.92             24 pts   Malignant neoplasm of unspecified part of left bronchus or lung
+
+  --- Other ---
+    239.1               1 pts   Neoplasm of unspecified nature of respiratory system
+
+  --- Thoracic — Other ---
+    165.8               1 pts   Malignant neoplasm of other sites within the respiratory system and intrathoracic organs
+
+  --- Thymic ---
+    164.0               6 pts   Malignant neoplasm of thymus
+    C37                 9 pts   Malignant neoplasm of thymus
+
+  --- (unmapped) ---
+    D3A.090             3 pts   Benign carcinoid tumor of the bronchus and lung
+    D49.1               1 pts   Neoplasm of unspecified behavior of respiratory system
+
+
+====================================================================================================
+  SUMMARY
+====================================================================================================
+  Subcategory coverage: 947/991 codes (95.6%)
+  Unmapped: 44 codes, 114 pts

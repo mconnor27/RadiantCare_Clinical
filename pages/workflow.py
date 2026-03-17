@@ -10,6 +10,7 @@ import numpy as np
 from datetime import timedelta
 
 from config.settings import CHART_COLORWAY, DEFAULT_GRAPH_CONFIG, DEFAULT_LAYOUT, FONT_FAMILY, PRIMARY, PHYSICIANS
+from utils.diagnosis_categories import build_code_to_category, get_categories_for_codes
 from components.filter_bar import department_chips
 from components.chart_card import register_chart_callbacks
 from components.chart_settings import chart_settings_popover
@@ -1433,14 +1434,14 @@ def _apply_dimension_filter(wf, departments, physician, techniques, body_systems
             m = tm[tc].apply(lambda s: bool(ts & {t.strip() for t in str(s).split(",")}))
             d = d[d["DimCourseID"].isin(set(tm.loc[m, "UniqueRowID"]))]
     if skip != "body_system" and body_systems and "DiagnosisCodes" in d.columns and diag_lookup is not None:
-        if "BodySystemDesc" in diag_lookup.columns:
-            c2b = diag_lookup.set_index("DiagnosisCode")["BodySystemDesc"].to_dict()
+        c2c = build_code_to_category(diag_lookup)
+        if c2c:
             bs = set(body_systems)
             cd = (d[["UniqueRowID", "DiagnosisCodes"]]
                   .dropna(subset=["DiagnosisCodes"])
                   .drop_duplicates("UniqueRowID"))
             mm = cd["DiagnosisCodes"].apply(
-                lambda s: bool(bs & {c2b.get(c.strip(), "") for c in str(s).split(",")})
+                lambda s: bool(bs & get_categories_for_codes(s, c2c))
             )
             d = d[d["UniqueRowID"].isin(set(cd.loc[mm, "UniqueRowID"]))]
     return d
@@ -1481,18 +1482,16 @@ def _compute_available_options(wf_base, departments, physician, techniques, body
     bs_opts = []
     wf_nb = _apply_dimension_filter(wf_base, departments, physician, techniques, body_systems,
                                     courses_df, diag_lookup, skip="body_system")
-    if diag_lookup is not None and "DiagnosisCodes" in wf_nb.columns and "BodySystemDesc" in diag_lookup.columns:
-        c2b = diag_lookup.set_index("DiagnosisCode")["BodySystemDesc"].to_dict()
-        cd = (wf_nb[["UniqueRowID", "DiagnosisCodes"]]
-              .dropna(subset=["DiagnosisCodes"])
-              .drop_duplicates("UniqueRowID"))
-        all_bs = set()
-        for val in cd["DiagnosisCodes"].dropna():
-            for code in str(val).split(","):
-                b = c2b.get(code.strip(), "")
-                if b:
-                    all_bs.add(b)
-        bs_opts = sorted(all_bs)
+    if diag_lookup is not None and "DiagnosisCodes" in wf_nb.columns:
+        c2c = build_code_to_category(diag_lookup)
+        if c2c:
+            cd = (wf_nb[["UniqueRowID", "DiagnosisCodes"]]
+                  .dropna(subset=["DiagnosisCodes"])
+                  .drop_duplicates("UniqueRowID"))
+            all_bs = set()
+            for val in cd["DiagnosisCodes"].dropna():
+                all_bs.update(get_categories_for_codes(val, c2c))
+            bs_opts = sorted(all_bs)
 
     return {
         "departments": dept_opts,

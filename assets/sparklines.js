@@ -25,17 +25,31 @@ function buildSparkline(data, smoothPct, key) {
     var yMax = Math.max.apply(null, yVals);
     var yRange = yMax - yMin || 1;
 
+    var yFloor = yMin - yRange * 0.3;
+    var baseline = Array(spark.labels.length).fill(yFloor);
+
     return {
-        data: [{
+        data: [
+        // Invisible baseline at y-axis bottom (fill anchor)
+        {
+            x: spark.labels,
+            y: baseline,
+            mode: "lines",
+            line: {width: 0, color: "transparent"},
+            hoverinfo: "skip",
+            showlegend: false
+        },
+        // Sparkline trace fills down to baseline
+        {
             x: spark.labels,
             y: yVals,
             customdata: rawVals,
             mode: "lines",
             line: {color: color, width: 1.5},
-            fill: "tozeroy",
+            fill: "tonexty",
             fillgradient: {
                 type: "vertical",
-                start: yMin - yRange * 0.3,
+                start: yFloor,
                 stop: yMax,
                 colorscale: [
                     [0, hexToRgba(color, 0)],
@@ -60,7 +74,7 @@ function buildSparkline(data, smoothPct, key) {
             },
             yaxis: {
                 visible: false,
-                range: [yMin - yRange * 0.3, yMax + yRange * 0.05]
+                range: [yFloor, yMax + yRange * 0.05]
             },
             showlegend: false,
             dragmode: false,
@@ -131,6 +145,22 @@ window.dash_clientside.sparklines = {
     smoothCvDaysToSim: function(data, smoothPct) {
         return buildSparkline(data, smoothPct, "days_to_sim");
     },
+    // Simulations page sparklines (prefixed "smoothSp" to avoid collision with home-page smoothSim*)
+    smoothSpTotal: function(data, smoothPct) {
+        return buildSparkline(data, smoothPct, "total");
+    },
+    smoothSpInitial: function(data, smoothPct) {
+        return buildSparkline(data, smoothPct, "initial");
+    },
+    smoothSpLead: function(data, smoothPct) {
+        return buildSparkline(data, smoothPct, "lead");
+    },
+    smoothSpTimeTx: function(data, smoothPct) {
+        return buildSparkline(data, smoothPct, "time_to_tx");
+    },
+    smoothSpResim: function(data, smoothPct) {
+        return buildSparkline(data, smoothPct, "resim");
+    },
 
     /**
      * Generic sparkline updater keyed by component ID suffix.
@@ -169,6 +199,6 @@ window.dash_clientside.sparklines = {
             return window.dash_clientside.no_update;
         }
 
-        return buildSparkline(normalized, smoothPct || 0.3, key);
+        return buildSparkline(normalized, smoothPct != null ? smoothPct : 0.3, key);
     }
 };

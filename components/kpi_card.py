@@ -48,16 +48,27 @@ def create_sparkline(past_values=None, future_values=None,
     else:
         y_min, y_max, y_range = 0, 1, 1
 
+    y_floor = y_min - y_range * 0.3
+
     if past_values:
         x_past = list(past_labels) if has_labels else list(range(len(past_values)))
+        # Invisible baseline trace at y-axis bottom (fill anchor)
+        fig.add_trace(go.Scatter(
+            x=x_past, y=[y_floor] * len(x_past),
+            mode="lines",
+            line=dict(width=0, color="transparent"),
+            hoverinfo="skip",
+            showlegend=False,
+        ))
+        # Sparkline trace fills down to baseline
         fig.add_trace(go.Scatter(
             x=x_past, y=past_values,
             mode="lines",
             line=dict(color=color, width=1.5),
-            fill="tozeroy",
+            fill="tonexty",
             fillgradient=dict(
                 type="vertical",
-                start=y_min - y_range * 0.3,
+                start=y_floor,
                 stop=y_max,
                 colorscale=[
                     [0, _hex_to_rgba(color, 0)],
@@ -98,7 +109,7 @@ def create_sparkline(past_values=None, future_values=None,
         ),
         yaxis=dict(
             visible=False,
-            range=[y_min - y_range * 0.3, y_max + y_range * 0.05],
+            range=[y_floor, y_max + y_range * 0.05],
         ),
         showlegend=False,
         dragmode=False,

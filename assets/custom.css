@@ -17,6 +17,11 @@ body {
     transition: opacity 0.2s ease;
 }
 
+/* Keep chart-card LoadingOverlays (blur) below filter dropdowns */
+.mantine-LoadingOverlay-root {
+    z-index: 5 !important;
+}
+
 /* AG Grid theme overrides */
 .ag-theme-alpine .ag-header-cell-label {
     font-weight: 600;
@@ -280,30 +285,40 @@ body {
 /* ─── Workflow Date Range Slider ─────────────────────────── */
 #wf-date-slider .mantine-Slider-bar,
 #wf-b-date-slider .mantine-Slider-bar,
-#cv-date-slider .mantine-Slider-bar {
+#cv-date-slider .mantine-Slider-bar,
+#sim-date-slider .mantine-Slider-bar,
+#tasks-date-slider .mantine-Slider-bar {
     background: linear-gradient(90deg, #9B40A9, #7C2A83);
 }
 #wf-date-slider .mantine-Slider-markLabel,
 #wf-b-date-slider .mantine-Slider-markLabel,
-#cv-date-slider .mantine-Slider-markLabel {
+#cv-date-slider .mantine-Slider-markLabel,
+#sim-date-slider .mantine-Slider-markLabel,
+#tasks-date-slider .mantine-Slider-markLabel {
     font-size: 10px;
     color: #9CA3AF;
     margin-top: 2px;
 }
 #wf-date-slider,
 #wf-b-date-slider,
-#cv-date-slider {
+#cv-date-slider,
+#sim-date-slider,
+#tasks-date-slider {
     margin-bottom: 20px;  /* room for mark labels */
 }
 #wf-date-range-label,
 #wf-b-date-range-label,
-#cv-date-range-label {
+#cv-date-range-label,
+#sim-date-range-label,
+#tasks-date-range-label {
     letter-spacing: 0.5px;
 }
 /* Slider thumb hover label styling */
 #wf-date-slider .mantine-Slider-label,
 #wf-b-date-slider .mantine-Slider-label,
-#cv-date-slider .mantine-Slider-label {
+#cv-date-slider .mantine-Slider-label,
+#sim-date-slider .mantine-Slider-label,
+#tasks-date-slider .mantine-Slider-label {
     font-size: 11px;
     white-space: nowrap;
     padding: 2px 6px;

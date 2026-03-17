@@ -200,10 +200,44 @@ function parseIsoDate(dateStr) {
 }
 
 /**
+ * Detect aggregation level from an array of ISO date strings.
+ * Returns "Y" (yearly), "M" (monthly), "W" (weekly), or "D" (daily).
+ */
+function detectAggLevel(dates) {
+    if (!dates || dates.length < 2) {
+        // Single point: check if it's Jan 1 (yearly) or day 1 (monthly)
+        if (dates && dates.length === 1) {
+            var p = parseIsoDate(dates[0]);
+            if (p.valid && p.month === 0 && p.day === 1) return "Y";
+            if (p.valid && p.day === 1) return "M";
+        }
+        return "M";
+    }
+    var first = parseIsoDate(dates[0]);
+    var second = parseIsoDate(dates[1]);
+    if (!first.valid || !second.valid) return "W";
+    // All dates on day 1 and months differ by ≥1 → monthly or yearly
+    if (first.day === 1 && second.day === 1) {
+        var monthDiff = (second.year - first.year) * 12 + (second.month - first.month);
+        if (monthDiff >= 12) return "Y";
+        if (monthDiff >= 1) return "M";
+    }
+    // Gap between first two dates
+    var d1 = new Date(first.year, first.month, first.day);
+    var d2 = new Date(second.year, second.month, second.day);
+    var gap = Math.round((d2 - d1) / 86400000);
+    if (gap >= 5) return "W";
+    return "D";
+}
+
+/**
  * Format dates for bar chart x-axis and return {labels, validIndices}.
  * Only includes dates that parse correctly.
- * Always includes the short year ('24, '25) to guarantee label uniqueness
- * across years — Plotly merges bars with identical category labels.
+ * Adapts label format based on aggregation level and bar count:
+ *   Yearly  → "2025"
+ *   Monthly → "Mar '26" (few bars) or "M '26" / "3/26" (many bars)
+ *   Weekly/Daily → "Mar 16 '26" (≤12) or "3/16" (>12, single year) or "3/16 '26" (>12, multi year)
+ * Labels must be unique to prevent Plotly from merging bars.
  */
 function formatDatesForBars(dates) {
     if (!dates || dates.length === 0) return {labels: [], validIndices: []};
@@ -211,14 +245,43 @@ function formatDatesForBars(dates) {
     var labels = [];
     var validIndices = [];
     var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    var aggLevel = detectAggLevel(dates);
+    var n = dates.length;
 
-    for (var i = 0; i < dates.length; i++) {
+    // Detect whether dates span multiple years (need year suffix for uniqueness)
+    var firstParsed = parseIsoDate(dates[0]);
+    var lastParsed = parseIsoDate(dates[dates.length - 1]);
+    var multiYear = firstParsed.valid && lastParsed.valid && firstParsed.year !== lastParsed.year;
+
+    for (var i = 0; i < n; i++) {
         var parsed = parseIsoDate(dates[i]);
-        if (!parsed.valid) continue;  // Skip invalid dates
+        if (!parsed.valid) continue;
 
         validIndices.push(i);
         var shortYear = "'" + String(parsed.year).slice(-2);
-        labels.push(months[parsed.month] + " " + parsed.day + " " + shortYear);
+
+        if (aggLevel === "Y") {
+            labels.push(String(parsed.year));
+        } else if (aggLevel === "M") {
+            // Monthly: "Mar '26" for ≤18, shorter for more
+            if (n <= 18) {
+                labels.push(months[parsed.month] + " " + shortYear);
+            } else {
+                // Compact: "3/'26"
+                labels.push((parsed.month + 1) + "/" + shortYear);
+            }
+        } else {
+            // Weekly/Daily
+            if (n <= 12) {
+                labels.push(months[parsed.month] + " " + parsed.day + " " + shortYear);
+            } else if (multiYear) {
+                // Compact with year for disambiguation: "3/16 '26"
+                labels.push((parsed.month + 1) + "/" + parsed.day + " " + shortYear);
+            } else {
+                // Compact without year: "3/16"
+                labels.push((parsed.month + 1) + "/" + parsed.day);
+            }
+        }
     }
     return {labels: labels, validIndices: validIndices};
 }

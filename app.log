@@ -1,0 +1,36 @@
+Dash is running on http://localhost:8050/
+
+ * Serving Flask app 'dash_app'
+ * Debug mode: on
+/Users/Mike/RadiantCare_Clinical/pages/physicians.py:466: FutureWarning:
+
+DataFrame.applymap has been deprecated. Use DataFrame.map instead.
+
+Traceback (most recent call last):
+  File "/Users/Mike/RadiantCare_Clinical/dash_app.py", line 14, in <module>
+    app = Dash(
+        __name__,
+    ...<3 lines>...
+        update_title="Loading...",
+    )
+  File "/Users/Mike/RadiantCare_Clinical/.venv/lib/python3.13/site-packages/dash/dash.py", line 639, in __init__
+    self.init_app()
+    ~~~~~~~~~~~~~^^
+  File "/Users/Mike/RadiantCare_Clinical/.venv/lib/python3.13/site-packages/dash/dash.py", line 752, in init_app
+    self.enable_pages()
+    ~~~~~~~~~~~~~~~~~^^
+  File "/Users/Mike/RadiantCare_Clinical/.venv/lib/python3.13/site-packages/dash/dash.py", line 2535, in enable_pages
+    _import_layouts_from_pages(self.config.pages_folder)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/Mike/RadiantCare_Clinical/.venv/lib/python3.13/site-packages/dash/_pages.py", line 442, in _import_layouts_from_pages
+    spec.loader.exec_module(page_module)  # type: ignore[reportOptionalMemberAccess]
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap_external>", line 1026, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/Users/Mike/RadiantCare_Clinical/pages/tasks.py", line 385, in <module>
+    _build_tasks_filter_bar(),
+    ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/Users/Mike/RadiantCare_Clinical/pages/tasks.py", line 158, in _build_tasks_filter_bar
+    for s in _STAFF
+             ^^^^^^
+NameError: name '_STAFF' is not defined

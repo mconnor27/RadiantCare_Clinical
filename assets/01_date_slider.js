@@ -83,6 +83,12 @@
     // Clinic Visits: data goes back to 2004
     registerSlider("cvDateSlider", 2004, ["cv-date-slider"]);
 
+    // Simulations: same BASE_YEAR as Python utils/date_slider.py
+    registerSlider("simDateSlider", 2004, ["sim-date-slider"]);
+
+    // Tasks: same BASE_YEAR as Python utils/date_slider.py
+    registerSlider("tasksDateSlider", 2004, ["tasks-date-slider"]);
+
     // Expose factory for future pages
     window._registerDateSlider = registerSlider;
 

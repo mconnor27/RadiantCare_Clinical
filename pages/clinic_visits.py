@@ -44,11 +44,12 @@ _ACTIVITY_TO_CATEGORY = {
     "Virtual Consult/Follow Up": "Virtual",
 }
 
-BODY_SYSTEMS = [
-    "Breast", "Central Nervous System", "Digestive System", "Endocrine",
-    "Genitourinary", "Gynecological", "Head & Neck", "Hematology",
-    "Lymphomas", "Misc.", "Musculoskeletal", "Opthalmic", "Skin", "Thoracic",
-]
+from utils.diagnosis_categories import (
+    CATEGORIES as BODY_SYSTEMS,
+    build_code_to_category,
+    get_categories_for_codes,
+    primary_category,
+)
 
 # Outlier caps for KPI filtering
 _LEAD_MAX = 30      # max days for consult lead time
@@ -220,13 +221,13 @@ def _build_cv_filter_bar():
                         ],
                         style={"position": "relative", "display": "inline-block"},
                     ),
-                    # Body System dropdown
+                    # Diagnosis dropdown
                     html.Div(
                         children=[
                             html.Div(
                                 children=[
                                     dmc.Button(
-                                        "Body System",
+                                        "Diagnosis",
                                         id="cv-body-system-trigger",
                                         variant="default",
                                         size="sm",
@@ -454,6 +455,7 @@ layout = dmc.Stack(
                                 {"value": "type", "label": "Type"},
                                 {"value": "physician", "label": "MD"},
                                 {"value": "site", "label": "Site"},
+                                {"value": "diagnosis", "label": "Dx"},
                             ],
                             value="category",
                             size="xs",
@@ -514,6 +516,7 @@ layout = dmc.Stack(
                                 {"value": "type", "label": "Type"},
                                 {"value": "physician", "label": "MD"},
                                 {"value": "site", "label": "Site"},
+                                {"value": "diagnosis", "label": "Dx"},
                             ],
                             value="site",
                             size="xs",
@@ -665,8 +668,17 @@ layout = dmc.Stack(
                         dmc.Group(
                             justify="space-between", mb=8,
                             children=[
-                                dmc.Group(gap="md", align="center", children=[
-                                    dmc.Text("Diagnosis Mix", size="sm", fw=500, c="#6B7280"),
+                                dmc.Group(gap="xs", align="center", wrap="nowrap", style={"flex": "1"}, children=[
+                                    dmc.Text("Diagnosis", size="sm", fw=500, c="#6B7280"),
+                                    dmc.SegmentedControl(
+                                        id="cv-diagnosis-compare",
+                                        data=[
+                                            {"value": "off", "label": "Current"},
+                                            {"value": "prior", "label": "vs Prior"},
+                                        ],
+                                        value="off",
+                                        size="xs",
+                                    ),
                                     dmc.SegmentedControl(
                                         id="cv-diagnosis-slice",
                                         data=[
@@ -677,6 +689,16 @@ layout = dmc.Stack(
                                             {"value": "site", "label": "Site"},
                                         ],
                                         value="",
+                                        size="xs",
+                                    ),
+                                    dmc.SegmentedControl(
+                                        id="cv-diagnosis-mode",
+                                        style={"marginLeft": "auto"},
+                                        data=[
+                                            {"value": "count", "label": "#"},
+                                            {"value": "pct", "label": "%"},
+                                        ],
+                                        value="count",
                                         size="xs",
                                     ),
                                 ]),
@@ -738,6 +760,7 @@ layout = dmc.Stack(
                                     ),
                                     dmc.SegmentedControl(
                                         id="cv-billing-mode",
+                                        style={"marginLeft": "auto"},
                                         data=[
                                             {"value": "count", "label": "#"},
                                             {"value": "pct", "label": "%"},
@@ -871,6 +894,20 @@ def _classify_visit_type(row):
     return "Other"
 
 
+def _diag_period_label(p_start, p_end, date_preset=None):
+    """Smart period label — mirrors cumulative chart's _period_label logic."""
+    same_year = p_start.year == p_end.year
+    same_month = same_year and p_start.month == p_end.month
+    if same_month:
+        return p_start.strftime("%b %Y")
+    if same_year:
+        if date_preset in ("ytd", "last_year") or (p_start.month == 1 and p_end.month == 12):
+            return str(p_start.year)
+        return f"{p_start.strftime('%b')} – {p_end.strftime('%b %Y')}"
+    fmt = "%b '%y"
+    return f"{p_start.strftime(fmt)} – {p_end.strftime(fmt)}"
+
+
 def _get_date_range(slider_val, daterange):
     """Calculate start/end based on slider or explicit daterange override.
     End date is capped to today so charts never extend into the future."""
@@ -885,20 +922,16 @@ def _get_date_range(slider_val, daterange):
 
 
 def _build_diag_code_to_body_system(diag_lookup):
-    """Build a DiagnosisCode → BodySystemDesc dict from the lookup table."""
-    if diag_lookup is None or diag_lookup.empty:
-        return {}
-    if "BodySystemDesc" not in diag_lookup.columns or "DiagnosisCode" not in diag_lookup.columns:
-        return {}
-    return diag_lookup.set_index("DiagnosisCode")["BodySystemDesc"].to_dict()
+    """Build a DiagnosisCode → category dict from the lookup table."""
+    return build_code_to_category(diag_lookup)
 
 
 def _get_body_systems_for_rows(df, c2b):
-    """For each row, extract body systems from comma-separated DiagnosisCodes."""
+    """For each row, extract categories from comma-separated DiagnosisCodes."""
     if "DiagnosisCodes" not in df.columns or not c2b:
         return pd.Series(dtype=object, index=df.index)
     return df["DiagnosisCodes"].apply(
-        lambda s: {c2b.get(c.strip(), "") for c in str(s).split(",")} - {""} if pd.notna(s) else set()
+        lambda s: get_categories_for_codes(s, c2b) if pd.notna(s) else set()
     )
 
 
@@ -1046,7 +1079,7 @@ def _register_cv_filter_callbacks():
     )
     clientside_callback(
         """function(vals) {
-            if (!vals || vals.length === 0) return "Body System";
+            if (!vals || vals.length === 0) return "Diagnosis";
             if (vals.length === 1) return vals[0];
             return vals.length + " selected";
         }""",
@@ -1131,6 +1164,8 @@ _register_cv_filter_callbacks()
     Input("cv-weekend-switch", "checked"),
     Input("cv-filter-date-preset", "value"),
     Input("cv-diagnosis-slice", "value"),
+    Input("cv-diagnosis-mode", "value"),
+    Input("cv-diagnosis-compare", "value"),
     Input("cv-billing-group", "value"),
     Input("cv-billing-slice", "value"),
     Input("cv-billing-mode", "value"),
@@ -1151,7 +1186,7 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
                           slider_val,
                           departments, physician, body_systems, visit_type,
                           classified_type, status, inpatient, weekend_only, date_preset,
-                          diagnosis_slice,
+                          diagnosis_slice, diagnosis_mode, diagnosis_compare,
                           billing_group, billing_slice, billing_mode):
     from data.loader import load_clinic_visits, load_diagnosis
 
@@ -1508,7 +1543,7 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
     # ------------------------------------------------------------------
     # Prepare data for clientside charts
     # ------------------------------------------------------------------
-    volume_data = _prepare_volume_data(dff, agg, volume_slice)
+    volume_data = _prepare_volume_data(dff, agg, volume_slice, c2b=c2b)
     lead_data = _prepare_lead_data(dff, departments, lead_agg, lead_slice)
     conversion_data = _prepare_conversion_data(dff, departments, conv_agg, conv_slice)
     cumulative_data = _prepare_cumulative_data(
@@ -1524,7 +1559,23 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
     cancel_data = _prepare_cancel_data(dff_all_status, cancel_agg, cancel_slice)
 
     # Server-side charts (simpler)
-    fig_diagnosis = _build_diagnosis_mix(dff, c2b, slice_by=diagnosis_slice or "")
+    _diag_prior_df = None
+    _diag_period_labels = None
+    if diagnosis_compare == "prior" and not dff_prior.empty:
+        _diag_prior_df = dff_prior
+        _diag_period_labels = (_diag_period_label(start, end, date_preset),)
+        if date_preset in _PRIOR_MAP:
+            _p_start, _p_end = _PRIOR_MAP[date_preset][1](start, end)
+            _diag_period_labels = (
+                _diag_period_labels[0],
+                _diag_period_label(_p_start, _p_end, date_preset),
+            )
+    fig_diagnosis = _build_diagnosis_mix(
+        dff, c2b, slice_by=diagnosis_slice or "",
+        mode=diagnosis_mode or "count",
+        prior_df=_diag_prior_df,
+        period_labels=_diag_period_labels,
+    )
     fig_billing = _build_billing_mix(
         dff, group=billing_group or "new",
         slice_by=billing_slice or "", mode=billing_mode or "count",
@@ -1558,6 +1609,16 @@ for _sid in ["cv-volume-slice", "cv-lead-slice", "cv-conversion-slice", "cv-canc
         Output(_sid, "className"),
         Input(_sid, "value"),
     )
+
+# Hide diagnosis slice control when "vs Prior" is active (prior ignores slicing)
+clientside_callback(
+    """function(compare) {
+        if (compare === "prior") return {display: "none"};
+        return {};
+    }""",
+    Output("cv-diagnosis-slice", "style"),
+    Input("cv-diagnosis-compare", "value"),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1826,7 +1887,7 @@ def _build_day_index_ticks(start_norm, n_days, max_ticks=12):
     return candidates[-1]
 
 
-def _prepare_volume_data(dff, agg, slice_by="category"):
+def _prepare_volume_data(dff, agg, slice_by="category", c2b=None):
     """Prepare volume trend data for clientside rendering.
 
     slice_by controls how the stacked series are split:
@@ -1834,6 +1895,7 @@ def _prepare_volume_data(dff, agg, slice_by="category"):
       - "type":     VisitType (classified via _classify_visit_type)
       - "physician": AppointmentPhysician
       - "site":     Department
+      - "diagnosis": Body system (via diagnosis lookup)
     """
     if dff.empty or "ScheduledDateTime" not in dff.columns:
         return None
@@ -1917,6 +1979,19 @@ def _prepare_volume_data(dff, agg, slice_by="category"):
                     "values": _trim_edges(counts.tolist()),
                     "color": DEPARTMENT_COLORS.get(dept, CHART_COLORWAY[0]),
                 })
+
+    elif slice_by == "diagnosis" and c2b and "DiagnosisCodes" in dff.columns:
+        dff["_bs"] = dff["DiagnosisCodes"].apply(lambda v: primary_category(v, c2b))
+        dff_bs = dff[dff["_bs"] != "Unknown"]
+        top_bs = dff_bs["_bs"].value_counts().head(8).index.tolist()
+        for i, bs in enumerate(top_bs):
+            subset = dff_bs[dff_bs["_bs"] == bs]
+            counts = subset.groupby("period").size().reindex(all_periods, fill_value=0)
+            series.append({
+                "name": bs,
+                "values": _trim_edges(counts.tolist()),
+                "color": CHART_COLORWAY[i % len(CHART_COLORWAY)],
+            })
 
     return {"dates": dates, "series": series, "height": 350, "yTitle": "Visits", "hideLegend": len(series) <= 1}
 
@@ -2160,6 +2235,11 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
         elif slice_by == "physician" and "AppointmentPhysician" in sub.columns:
             counts = sub.groupby("AppointmentPhysician").size()
             return {(k.split(",")[0] if "," in k else k): v for k, v in counts.items()}
+        elif slice_by == "diagnosis" and c2b and "DiagnosisCodes" in sub.columns:
+            sub = sub.copy()
+            sub["_bs"] = sub["DiagnosisCodes"].apply(lambda v: primary_category(v, c2b))
+            sub = sub[sub["_bs"] != "Unknown"]
+            return sub.groupby("_bs").size().to_dict()
         return {}
 
     # Apply dimension filters to full dataset (no date filter)
@@ -2168,9 +2248,6 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
         visit_type, status, inpatient, c2b,
         classified_type=classified_type,
     )
-
-    if dff_all.empty:
-        return None
 
     # Use numeric day indices as x-values (0, 1, 2, ...) to avoid duplicate category issue.
     # Build tick positions + labels for display.
@@ -2182,10 +2259,16 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
     tick_positions, tick_labels = _build_day_index_ticks(start_norm, n_days)
 
     # --- Always compute prior period windows + slice breakdown (needed for bar mode) ---
-    current_vals = _cumulative_for_window(dff_all, start, end)
+    if dff_all.empty:
+        current_vals = [0] * n_days
+    else:
+        current_vals = _cumulative_for_window(dff_all, start, end)
 
     # Find earliest data date to avoid generating windows before data exists
-    data_min = dff_all["ScheduledDateTime"].min()
+    if dff_all.empty:
+        data_min = start  # no data — priors will also be empty
+    else:
+        data_min = dff_all["ScheduledDateTime"].min()
 
     def _period_label(p_start, p_end):
         """Smart label based on the date preset and range."""
@@ -2292,9 +2375,6 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
         mask = (dff_all["ScheduledDateTime"] >= start) & (dff_all["ScheduledDateTime"] <= end)
         dff_period = dff_all.loc[mask]
 
-        if dff_period.empty:
-            return None
-
         dates_range = pd.date_range(start.normalize(), end.normalize(), freq="D")
         dates_iso = [d.isoformat() for d in dates_range]
 
@@ -2371,8 +2451,20 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
                     "color": CHART_COLORWAY[i % len(CHART_COLORWAY)],
                 })
 
-        if not series:
-            return None
+        elif slice_by == "diagnosis" and c2b and "DiagnosisCodes" in dff_period.columns:
+            dff_period = dff_period.copy()
+            dff_period["_bs"] = dff_period["DiagnosisCodes"].apply(lambda v: primary_category(v, c2b))
+            dff_bs = dff_period[dff_period["_bs"] != "Unknown"]
+            top_bs = dff_bs["_bs"].value_counts().head(8).index.tolist()
+            for i, bs in enumerate(top_bs):
+                sub = dff_bs[dff_bs["_bs"] == bs]
+                daily = sub.groupby(sub["ScheduledDateTime"].dt.normalize()).size()
+                daily = daily.reindex(dates_range, fill_value=0)
+                series.append({
+                    "name": bs,
+                    "values": _trimmed_cumsum(daily),
+                    "color": CHART_COLORWAY[i % len(CHART_COLORWAY)],
+                })
 
         return {
             "mode": "slice",
@@ -2457,10 +2549,13 @@ def _prepare_cancel_data(dff_all, agg="M", slice_by="type"):
     return {"dates": dates, "series": series, "height": 320, "yTitle": "Cancellation Rate (%)", "stacked": False, "hideLegend": len(series) <= 1}
 
 
-def _build_diagnosis_mix(dff, c2b=None, slice_by=""):
+def _build_diagnosis_mix(dff, c2b=None, slice_by="", mode="count", prior_df=None, period_labels=None):
     """Horizontal bar chart of visits by body system (via diagnosis lookup).
 
     slice_by: "" for total, or "category"/"type"/"physician"/"site" for stacked bars.
+    mode: "count" (absolute) or "pct" (% of total visits).
+    prior_df: if provided, show paired current/prior bars (ignores slice_by).
+    period_labels: tuple (current_label, prior_label) with date range strings for tooltips.
     """
     if dff.empty:
         return empty_figure("Diagnosis data unavailable")
@@ -2469,17 +2564,8 @@ def _build_diagnosis_mix(dff, c2b=None, slice_by=""):
     if not (c2b and "DiagnosisCodes" in dff.columns):
         return empty_figure("Diagnosis data unavailable")
 
-    def _primary_body_system(val):
-        if pd.isna(val):
-            return "Unknown"
-        for code in str(val).split(","):
-            bs = c2b.get(code.strip(), "")
-            if bs:
-                return bs
-        return "Unknown"
-
     work = dff.copy()
-    work["_bs"] = work["DiagnosisCodes"].apply(_primary_body_system)
+    work["_bs"] = work["DiagnosisCodes"].apply(lambda v: primary_category(v, c2b))
     work = work[work["_bs"] != "Unknown"]
 
     if work.empty:
@@ -2492,16 +2578,82 @@ def _build_diagnosis_mix(dff, c2b=None, slice_by=""):
     # Sort ascending for horizontal bars (largest at top)
     bs_order = list(reversed(top_bs_names))
 
+    total_current = len(work)
+
     fig = go.Figure()
 
+    # --- Prior-period comparison mode ---
+    if prior_df is not None and not prior_df.empty and "DiagnosisCodes" in prior_df.columns:
+        prior_work = prior_df.copy()
+        prior_work["_bs"] = prior_work["DiagnosisCodes"].apply(lambda v: primary_category(v, c2b))
+        prior_work = prior_work[prior_work["_bs"] != "Unknown"]
+        # Use same body system order as current period
+        prior_work = prior_work[prior_work["_bs"].isin(top_bs_names)]
+        total_prior = len(prior_work)
+
+        curr_counts = work["_bs"].value_counts().reindex(bs_order, fill_value=0)
+        prior_counts = prior_work["_bs"].value_counts().reindex(bs_order, fill_value=0)
+
+        curr_label = period_labels[0] if period_labels else "Current"
+        prior_label = period_labels[1] if period_labels else "Prior"
+
+        if mode == "pct":
+            curr_vals = (curr_counts / total_current * 100).round(1) if total_current else curr_counts * 0
+            prior_vals = (prior_counts / total_prior * 100).round(1) if total_prior else prior_counts * 0
+            curr_hover = [f"<b>{bs}</b><br>{curr_label}: {v:.1f}%<extra></extra>" for bs, v in zip(bs_order, curr_vals)]
+            prior_hover = [f"<b>{bs}</b><br>{prior_label}: {v:.1f}%<extra></extra>" for bs, v in zip(bs_order, prior_vals)]
+        else:
+            curr_vals = curr_counts
+            prior_vals = prior_counts
+            curr_hover = [f"<b>{bs}</b><br>{curr_label}: {v:,}<extra></extra>" for bs, v in zip(bs_order, curr_vals)]
+            prior_hover = [f"<b>{bs}</b><br>{prior_label}: {v:,}<extra></extra>" for bs, v in zip(bs_order, prior_vals)]
+
+        # Prior bars first (behind), then current bars (in front)
+        fig.add_trace(go.Bar(
+            x=list(prior_vals), y=[str(b) for b in bs_order], orientation="h",
+            marker_color="rgba(156, 163, 175, 0.5)",
+            name=prior_label,
+            hovertemplate=prior_hover,
+        ))
+        fig.add_trace(go.Bar(
+            x=list(curr_vals), y=[str(b) for b in bs_order], orientation="h",
+            marker_color=CHART_COLORWAY[0],
+            name=curr_label,
+            hovertemplate=curr_hover,
+        ))
+
+        apply_default_layout(fig, barmode="group")
+        fig.update_layout(
+            xaxis_title="", yaxis_title="",
+            xaxis_visible=False,
+            yaxis=dict(automargin="left+top+bottom", ticklabelstandoff=0),
+            margin=dict(l=0, r=8, t=24, b=12),
+            showlegend=True,
+            bargroupgap=0.15,
+        )
+        if mode == "pct":
+            fig.update_layout(xaxis=dict(ticksuffix="%"))
+        return fig
+
+    # --- Standard mode (no prior comparison) ---
     if not slice_by:
         counts = work["_bs"].value_counts().reindex(bs_order, fill_value=0)
+        if mode == "pct":
+            vals = (counts / total_current * 100).round(1) if total_current else counts * 0
+            text = [f"{v:.1f}%" for v in vals]
+            hover = [f"<b>{bs}</b><br>{v:.1f}%<extra></extra>" for bs, v in zip(bs_order, vals)]
+        else:
+            vals = counts
+            text = [f"{v:,}" for v in vals]
+            hover = [f"<b>{bs}</b><br>{v:,}<extra></extra>" for bs, v in zip(bs_order, vals)]
         fig.add_trace(go.Bar(
-            x=counts.values,
-            y=counts.index.astype(str),
+            x=list(vals),
+            y=[str(b) for b in bs_order],
             orientation="h",
             marker_color=CHART_COLORWAY[0],
             showlegend=False,
+            text=text, textposition="auto",
+            hovertemplate=hover,
         ))
     else:
         # Determine slice column and groups
@@ -2538,9 +2690,14 @@ def _build_diagnosis_mix(dff, c2b=None, slice_by=""):
                     continue
                 counts = subset["_bs"].value_counts().reindex(bs_order, fill_value=0)
                 name = grp.split(",")[0] if "," in grp else grp
+                if mode == "pct":
+                    grp_total = len(subset)
+                    vals = (counts / grp_total * 100).round(1) if grp_total else counts * 0
+                else:
+                    vals = counts
                 fig.add_trace(go.Bar(
-                    x=counts.values,
-                    y=counts.index.astype(str),
+                    x=list(vals),
+                    y=[str(b) for b in bs_order],
                     orientation="h",
                     marker_color=colors.get(grp, CHART_COLORWAY[0]),
                     name=name,
@@ -2554,6 +2711,8 @@ def _build_diagnosis_mix(dff, c2b=None, slice_by=""):
         margin=dict(l=0, r=8, t=24, b=12),
         showlegend=bool(slice_by),
     )
+    if mode == "pct":
+        fig.update_layout(xaxis=dict(ticksuffix="%"))
     return fig
 
 
