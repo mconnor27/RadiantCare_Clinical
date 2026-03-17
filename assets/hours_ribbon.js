@@ -292,9 +292,15 @@ window.dash_clientside.hoursRibbon = {
                         hoverinfo: "skip"
                     });
 
-                    // Hover-only trace for future points (excludes connection point)
+                    // Hover-only trace for future points at midpoint (excludes connection point)
                     var hoverDates = hasConn ? dates.slice(1) : dates;
-                    var hoverY = hasConn ? startHours.slice(1) : startHours;
+                    var futureMidHours = [];
+                    var startSlice = hasConn ? startHours.slice(1) : startHours;
+                    var endSlice = hasConn ? endHours.slice(1) : endHours;
+                    for (var j = 0; j < startSlice.length; j++) {
+                        futureMidHours.push((startSlice[j] + endSlice[j]) / 2);
+                    }
+                    var hoverY = futureMidHours;
                     if (hoverDates.length > 0) {
                         traces.push({
                             x: hoverDates,
