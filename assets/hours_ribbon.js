@@ -163,6 +163,20 @@ window.dash_clientside.hoursRibbon = {
                     fillcolor: fillColor,
                     name: s.name,
                     showlegend: true,
+                    hoverinfo: "skip"
+                });
+
+                // Midpoint trace for hover tooltip (centered between start and end)
+                var midHours = [];
+                for (var j = 0; j < startHours.length; j++) {
+                    midHours.push((startHours[j] + endHours[j]) / 2);
+                }
+                traces.push({
+                    x: dates,
+                    y: midHours,
+                    mode: "lines",
+                    line: {width: 0},
+                    showlegend: false,
                     text: hoverText,
                     hovertemplate: "%{text}<extra></extra>"
                 });
