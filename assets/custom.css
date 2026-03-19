@@ -287,14 +287,16 @@ body {
 #wf-b-date-slider .mantine-Slider-bar,
 #cv-date-slider .mantine-Slider-bar,
 #sim-date-slider .mantine-Slider-bar,
-#tasks-date-slider .mantine-Slider-bar {
+#tasks-date-slider .mantine-Slider-bar,
+#otvs-date-slider .mantine-Slider-bar {
     background: linear-gradient(90deg, #9B40A9, #7C2A83);
 }
 #wf-date-slider .mantine-Slider-markLabel,
 #wf-b-date-slider .mantine-Slider-markLabel,
 #cv-date-slider .mantine-Slider-markLabel,
 #sim-date-slider .mantine-Slider-markLabel,
-#tasks-date-slider .mantine-Slider-markLabel {
+#tasks-date-slider .mantine-Slider-markLabel,
+#otvs-date-slider .mantine-Slider-markLabel {
     font-size: 10px;
     color: #9CA3AF;
     margin-top: 2px;
@@ -303,14 +305,16 @@ body {
 #wf-b-date-slider,
 #cv-date-slider,
 #sim-date-slider,
-#tasks-date-slider {
+#tasks-date-slider,
+#otvs-date-slider {
     margin-bottom: 20px;  /* room for mark labels */
 }
 #wf-date-range-label,
 #wf-b-date-range-label,
 #cv-date-range-label,
 #sim-date-range-label,
-#tasks-date-range-label {
+#tasks-date-range-label,
+#otvs-date-range-label {
     letter-spacing: 0.5px;
 }
 /* Slider thumb hover label styling */
@@ -318,7 +322,8 @@ body {
 #wf-b-date-slider .mantine-Slider-label,
 #cv-date-slider .mantine-Slider-label,
 #sim-date-slider .mantine-Slider-label,
-#tasks-date-slider .mantine-Slider-label {
+#tasks-date-slider .mantine-Slider-label,
+#otvs-date-slider .mantine-Slider-label {
     font-size: 11px;
     white-space: nowrap;
     padding: 2px 6px;
@@ -555,4 +560,22 @@ div:has(> .wf-filter-clear-btn[style*="inline-flex"]) > .mantine-Button-root .ma
 .slice-group-active .mantine-SegmentedControl-input[value=""] + .mantine-SegmentedControl-label:hover {
     opacity: 0.75;
 }
+
+/* Tasks KPI cards — clickable selection */
+.tasks-kpi-click { cursor: pointer; }
+.tasks-kpi-paper {
+    transition: box-shadow 0.15s ease, outline 0.15s ease, background-color 0.15s ease;
+}
+.tasks-kpi-click:hover .tasks-kpi-paper {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.10) !important;
+}
+.tasks-kpi-active .tasks-kpi-paper {
+    outline-offset: -1px;
+    outline-style: solid;
+    outline-width: 2px;
+}
+.tasks-kpi-active .tasks-kpi-paper-draw   { outline-color: #7C2A83; background-color: #7C2A8308; }
+.tasks-kpi-active .tasks-kpi-paper-srs    { outline-color: #FF9800; background-color: #FF980008; }
+.tasks-kpi-active .tasks-kpi-paper-contour { outline-color: #2196F3; background-color: #2196F308; }
+.tasks-kpi-active .tasks-kpi-paper-review  { outline-color: #F44336; background-color: #F4433608; }
 

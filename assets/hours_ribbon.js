@@ -163,20 +163,6 @@ window.dash_clientside.hoursRibbon = {
                     fillcolor: fillColor,
                     name: s.name,
                     showlegend: true,
-                    hoverinfo: "skip"
-                });
-
-                // Midpoint trace for hover tooltip (centered between start and end)
-                var midHours = [];
-                for (var j = 0; j < startHours.length; j++) {
-                    midHours.push((startHours[j] + endHours[j]) / 2);
-                }
-                traces.push({
-                    x: dates,
-                    y: midHours,
-                    mode: "lines",
-                    line: {width: 0},
-                    showlegend: false,
                     text: hoverText,
                     hovertemplate: "%{text}<extra></extra>"
                 });
@@ -292,15 +278,9 @@ window.dash_clientside.hoursRibbon = {
                         hoverinfo: "skip"
                     });
 
-                    // Hover-only trace for future points at midpoint (excludes connection point)
+                    // Hover-only trace for future points (excludes connection point)
                     var hoverDates = hasConn ? dates.slice(1) : dates;
-                    var futureMidHours = [];
-                    var startSlice = hasConn ? startHours.slice(1) : startHours;
-                    var endSlice = hasConn ? endHours.slice(1) : endHours;
-                    for (var j = 0; j < startSlice.length; j++) {
-                        futureMidHours.push((startSlice[j] + endSlice[j]) / 2);
-                    }
-                    var hoverY = futureMidHours;
+                    var hoverY = hasConn ? startHours.slice(1) : startHours;
                     if (hoverDates.length > 0) {
                         traces.push({
                             x: hoverDates,

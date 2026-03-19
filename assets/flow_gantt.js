@@ -1878,7 +1878,7 @@ window.dash_clientside.flowGantt = {
 
 // ─── Date Slider Helpers ─────────────────────────────────────────────────
 (function() {
-    var BASE = 2014;
+    var BASE = 2004;
     var MO = ["Jan","Feb","Mar","Apr","May","Jun",
               "Jul","Aug","Sep","Oct","Nov","Dec"];
     function fmtIdx(idx) {
@@ -1965,7 +1965,10 @@ window.dash_clientside.flowGantt = {
         ["sim-bodysite-trigger",   "sim-bodysite-panel"],
         ["tasks-physician-trigger",  "tasks-physician-panel"],
         ["tasks-diagnosis-trigger",  "tasks-diagnosis-panel"],
-        ["tasks-tasktype-trigger",   "tasks-tasktype-panel"]
+        ["tasks-tasktype-trigger",   "tasks-tasktype-panel"],
+        ["otvs-treating-trigger",    "otvs-treating-panel"],
+        ["otvs-performing-trigger",  "otvs-performing-panel"],
+        ["otvs-diagnosis-trigger",   "otvs-diagnosis-panel"]
     ];
 
     function closeAll(except) {

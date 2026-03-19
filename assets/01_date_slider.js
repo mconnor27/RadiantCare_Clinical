@@ -89,6 +89,9 @@
     // Tasks: same BASE_YEAR as Python utils/date_slider.py
     registerSlider("tasksDateSlider", 2004, ["tasks-date-slider"]);
 
+    // OTVs: same BASE_YEAR as Python utils/date_slider.py
+    registerSlider("otvsDateSlider", 2004, ["otvs-date-slider"]);
+
     // Expose factory for future pages
     window._registerDateSlider = registerSlider;
 
