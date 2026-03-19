@@ -4,6 +4,18 @@ import os
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
+# Load .env file if present (no dependency needed)
+# ---------------------------------------------------------------------------
+_env_path = Path(__file__).resolve().parent.parent / ".env"
+if _env_path.is_file():
+    with open(_env_path) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _key, _, _val = _line.partition("=")
+                os.environ.setdefault(_key.strip(), _val.strip())
+
+# ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -20,10 +32,7 @@ DATA_COMPLETE = DATA_DIR / "Complete"
 DATA_INCREMENTAL = DATA_DIR / "Incremental"
 DATA_LOOKUP = DATA_DIR / "Lookup"
 
-MAPBOX_TOKEN = os.environ.get(
-    "MAPBOX_TOKEN",
-    "",
-)
+MAPBOX_TOKEN = os.environ.get("MAPBOX_TOKEN", "")
 
 # ---------------------------------------------------------------------------
 # Colors
