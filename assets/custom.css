@@ -288,7 +288,8 @@ body {
 #cv-date-slider .mantine-Slider-bar,
 #sim-date-slider .mantine-Slider-bar,
 #tasks-date-slider .mantine-Slider-bar,
-#otvs-date-slider .mantine-Slider-bar {
+#otvs-date-slider .mantine-Slider-bar,
+#courses-date-slider .mantine-Slider-bar {
     background: linear-gradient(90deg, #9B40A9, #7C2A83);
 }
 #wf-date-slider .mantine-Slider-markLabel,
@@ -296,7 +297,8 @@ body {
 #cv-date-slider .mantine-Slider-markLabel,
 #sim-date-slider .mantine-Slider-markLabel,
 #tasks-date-slider .mantine-Slider-markLabel,
-#otvs-date-slider .mantine-Slider-markLabel {
+#otvs-date-slider .mantine-Slider-markLabel,
+#courses-date-slider .mantine-Slider-markLabel {
     font-size: 10px;
     color: #9CA3AF;
     margin-top: 2px;
@@ -306,7 +308,8 @@ body {
 #cv-date-slider,
 #sim-date-slider,
 #tasks-date-slider,
-#otvs-date-slider {
+#otvs-date-slider,
+#courses-date-slider {
     margin-bottom: 20px;  /* room for mark labels */
 }
 #wf-date-range-label,
@@ -314,7 +317,8 @@ body {
 #cv-date-range-label,
 #sim-date-range-label,
 #tasks-date-range-label,
-#otvs-date-range-label {
+#otvs-date-range-label,
+#courses-date-range-label {
     letter-spacing: 0.5px;
 }
 /* Slider thumb hover label styling */
@@ -323,7 +327,8 @@ body {
 #cv-date-slider .mantine-Slider-label,
 #sim-date-slider .mantine-Slider-label,
 #tasks-date-slider .mantine-Slider-label,
-#otvs-date-slider .mantine-Slider-label {
+#otvs-date-slider .mantine-Slider-label,
+#courses-date-slider .mantine-Slider-label {
     font-size: 11px;
     white-space: nowrap;
     padding: 2px 6px;

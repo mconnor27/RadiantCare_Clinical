@@ -1968,7 +1968,10 @@ window.dash_clientside.flowGantt = {
         ["tasks-tasktype-trigger",   "tasks-tasktype-panel"],
         ["otvs-treating-trigger",    "otvs-treating-panel"],
         ["otvs-performing-trigger",  "otvs-performing-panel"],
-        ["otvs-diagnosis-trigger",   "otvs-diagnosis-panel"]
+        ["otvs-diagnosis-trigger",   "otvs-diagnosis-panel"],
+        ["courses-physician-trigger",  "courses-physician-panel"],
+        ["courses-diagnosis-trigger",  "courses-diagnosis-panel"],
+        ["courses-technique-trigger",  "courses-technique-panel"]
     ];
 
     function closeAll(except) {

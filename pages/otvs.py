@@ -972,17 +972,25 @@ def update_otvs(_n, agg, volume_slice,
         sparkline_id=f"{PAGE_ID}-spark-avg",
     )
 
-    # Avg per patient sparkline (weekly unique patient count trend)
+    # Avg per patient sparkline — rolling window scaled to 1/3 of selected range
     if "PatientId" in df.columns:
         temp_avg = df.copy()
         temp_avg["_wk"] = temp_avg[date_col].dt.to_period("W").dt.to_timestamp()
-        wk_total = temp_avg.groupby("_wk").size()
-        wk_pts = temp_avg.groupby("_wk")["PatientId"].nunique()
-        wk_avg = (wk_total / wk_pts).dropna()
-        if len(wk_avg) >= 3:
+        weeks = sorted(temp_avg["_wk"].unique())
+        span_days = (end - start).days
+        window = pd.Timedelta(days=max(span_days // 3, 14))
+        roll_labels, roll_vals = [], []
+        for wk in weeks:
+            mask = (temp_avg[date_col] >= (wk - window)) & (temp_avg[date_col] <= wk + pd.Timedelta(days=6))
+            subset = temp_avg.loc[mask]
+            n_checks = len(subset)
+            n_pts = subset["PatientId"].nunique()
+            roll_labels.append(wk.isoformat())
+            roll_vals.append(n_checks / n_pts if n_pts else 0)
+        if len(roll_vals) >= 3:
             sparkline_data["avg"] = {
-                "labels": [d.isoformat() for d in wk_avg.index],
-                "values": wk_avg.tolist(),
+                "labels": roll_labels,
+                "values": roll_vals,
                 "color": SEMANTIC_COLORS["info"],
                 "hover_fmt": "%{x|%b %d}: %{customdata:.1f}<extra></extra>",
             }
