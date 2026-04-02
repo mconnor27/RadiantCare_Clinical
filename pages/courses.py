@@ -478,6 +478,12 @@ layout = dmc.Stack(
         dcc.Store(id="courses-store-volume"),
         dcc.Store(id="courses-store-cumulative"),
         dcc.Store(id="courses-store-kpi-sparklines"),
+        dcc.Store(id="courses-store-ridgeline"),
+        dcc.Store(id="courses-store-frac-trend"),
+        dcc.Store(id="courses-store-frac-dist"),
+        dcc.Store(id="courses-store-complexity-trends"),
+        dcc.Store(id="courses-store-technique-dist"),
+        dcc.Store(id="courses-store-quit-trend"),
 
         # Interval for periodic refresh
         dcc.Interval(id="courses-interval", interval=300_000, n_intervals=0),
@@ -491,6 +497,10 @@ layout = dmc.Stack(
 register_chart_callbacks([
     ("courses-volume", "courses-chart-volume"),
     ("courses-cumulative", "courses-chart-cumulative"),
+    ("courses-frac-trend", "courses-chart-frac-trend"),
+    ("courses-complexity", "courses-chart-complexity"),
+    ("courses-technique-dist", "courses-chart-technique-dist"),
+    ("courses-quit-trend", "courses-chart-quit-trend"),
 ])
 
 
@@ -955,16 +965,659 @@ def _build_day_index_ticks(start_norm, n_days, max_ticks=12):
 
 
 # ---------------------------------------------------------------------------
+# Ridgeline: Fractions per Course by Year
+# ---------------------------------------------------------------------------
+
+def _prepare_ridgeline_data(df, date_col):
+    """Extract per-year fraction values for the ridgeline store.
+
+    Returns a JSON-serialisable dict or None.
+    """
+    col = "FractionsPrescribed"
+    if col not in df.columns or df.empty or date_col not in df.columns:
+        return None
+
+    tmp = df[[date_col, col]].copy()
+    tmp["_frac"] = pd.to_numeric(tmp[col], errors="coerce")
+    tmp = tmp.dropna(subset=["_frac", date_col])
+    tmp = tmp[tmp["_frac"] > 0]
+    if tmp.empty:
+        return None
+
+    # Exclude outliers: fractions above Q3 + 1.5×IQR
+    q1, q3 = tmp["_frac"].quantile(0.25), tmp["_frac"].quantile(0.75)
+    upper_fence = q3 + 1.5 * (q3 - q1)
+    tmp = tmp[tmp["_frac"] <= upper_fence]
+
+    tmp["_year"] = tmp[date_col].dt.year
+    years = sorted(tmp["_year"].unique(), reverse=True)
+    if not years:
+        return None
+
+    per_year = {}
+    for yr in years:
+        per_year[str(yr)] = tmp.loc[tmp["_year"] == yr, "_frac"].tolist()
+
+    return {
+        "years": [str(y) for y in years],
+        "per_year": per_year,
+        "x_min": max(0, float(tmp["_frac"].min()) - 2),
+        "x_max": float(tmp["_frac"].max()) + 2,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Fractions Trend: median fractions over time (all agg × slice combos)
+# ---------------------------------------------------------------------------
+
+def _prepare_frac_trend_data(dff, date_col, c2b, start=None, end=None):
+    """Prepare median-fractions-over-time data for all agg × slice combos."""
+    frac_col = "FractionsPrescribed"
+    if frac_col not in dff.columns or date_col not in dff.columns or dff.empty:
+        return None
+
+    tmp = dff[[date_col, frac_col]].copy()
+    for col in ["TreatingPhysician", "Department", "DiagnosisCodes"]:
+        if col in dff.columns:
+            tmp[col] = dff[col].values
+
+    tmp["_frac"] = pd.to_numeric(tmp[frac_col], errors="coerce")
+    tmp = tmp.dropna(subset=["_frac", date_col])
+    tmp = tmp[tmp["_frac"] > 0]
+    if tmp.empty:
+        return None
+
+    if start is not None:
+        tmp["_plot_date"] = tmp[date_col].clip(lower=start)
+        if end is not None:
+            tmp["_plot_date"] = tmp["_plot_date"].clip(upper=end)
+    else:
+        tmp["_plot_date"] = tmp[date_col]
+
+    combos = {}
+    for agg in ["W", "M", "Y"]:
+        period_code = "Y" if agg == "Y" else agg
+        t = tmp.copy()
+        t["period"] = t["_plot_date"].dt.to_period(period_code).dt.to_timestamp()
+        all_periods = sorted(t["period"].unique())
+        dates = [d.isoformat() for d in all_periods]
+
+        for slice_key in ["", "physician", "site", "diagnosis"]:
+            series = []
+            if not slice_key:
+                medians = t.groupby("period")["_frac"].median().reindex(all_periods)
+                series.append({
+                    "name": "Median",
+                    "values": [round(float(v), 1) if pd.notna(v) else None for v in medians],
+                    "color": PRIMARY,
+                })
+            elif slice_key == "physician":
+                col = "TreatingPhysician"
+                if col in t.columns:
+                    for i, phys in enumerate(sorted(t[col].dropna().unique())):
+                        sub = t[t[col] == phys]
+                        medians = sub.groupby("period")["_frac"].median().reindex(all_periods)
+                        series.append({
+                            "name": phys.split(",")[0] if "," in phys else phys,
+                            "values": [round(float(v), 1) if pd.notna(v) else None for v in medians],
+                            "color": CHART_COLORWAY[i % len(CHART_COLORWAY)],
+                        })
+            elif slice_key == "site":
+                if "Department" in t.columns:
+                    for dept in sorted(t["Department"].dropna().unique()):
+                        sub = t[t["Department"] == dept]
+                        medians = sub.groupby("period")["_frac"].median().reindex(all_periods)
+                        series.append({
+                            "name": dept,
+                            "values": [round(float(v), 1) if pd.notna(v) else None for v in medians],
+                            "color": DEPARTMENT_COLORS.get(dept, CHART_COLORWAY[0]),
+                        })
+            elif slice_key == "diagnosis" and c2b and "DiagnosisCodes" in t.columns:
+                t2 = t.copy()
+                t2["_bs"] = t2["DiagnosisCodes"].apply(lambda v: primary_category(v, c2b))
+                t2_bs = t2[t2["_bs"] != "Unknown"]
+                top_bs = t2_bs["_bs"].value_counts().head(8).index.tolist()
+                for i, bs in enumerate(top_bs):
+                    sub = t2_bs[t2_bs["_bs"] == bs]
+                    medians = sub.groupby("period")["_frac"].median().reindex(all_periods)
+                    series.append({
+                        "name": bs,
+                        "values": [round(float(v), 1) if pd.notna(v) else None for v in medians],
+                        "color": CHART_COLORWAY[i % len(CHART_COLORWAY)],
+                    })
+
+            combos[f"{agg}|{slice_key}"] = {
+                "dates": dates,
+                "series": series,
+            }
+
+    return combos
+
+
+# ---------------------------------------------------------------------------
+# Quit Rate Trend: % of completed courses where delivered < planned
+# ---------------------------------------------------------------------------
+
+def _prepare_quit_trend_data(completed_df, date_col, c2b, start=None, end=None):
+    """Prepare quit-rate-over-time data for all agg × slice combos."""
+    needed = {"CourseSessionsPlanned", "CourseSessionsDelivered", date_col}
+    if not needed.issubset(completed_df.columns) or completed_df.empty:
+        return None
+
+    tmp = completed_df[
+        (completed_df["CourseSessionsPlanned"] > 0)
+        & (completed_df["CourseSessionsDelivered"] > 0)
+        & completed_df[date_col].notna()
+    ].copy()
+    tmp["_quit"] = (
+        tmp["CourseSessionsDelivered"] < tmp["CourseSessionsPlanned"]
+    ).astype(int)
+
+    for col in ["TreatingPhysician", "Department", "DiagnosisCodes"]:
+        if col in completed_df.columns and col not in tmp.columns:
+            tmp[col] = completed_df.loc[tmp.index, col].values
+
+    if tmp.empty:
+        return None
+
+    if start is not None:
+        tmp["_plot_date"] = tmp[date_col].clip(lower=start)
+        if end is not None:
+            tmp["_plot_date"] = tmp["_plot_date"].clip(upper=end)
+    else:
+        tmp["_plot_date"] = tmp[date_col]
+
+    combos = {}
+    for agg in ["W", "M", "Y"]:
+        period_code = "Y" if agg == "Y" else agg
+        t = tmp.copy()
+        t["period"] = t["_plot_date"].dt.to_period(period_code).dt.to_timestamp()
+        all_periods = sorted(t["period"].unique())
+        dates = [d.isoformat() for d in all_periods]
+
+        for slice_key in ["", "physician", "site", "diagnosis"]:
+            series = []
+
+            def _rate_series(sub, name, color):
+                grp = sub.groupby("period")["_quit"].agg(["sum", "count"]).reindex(all_periods)
+                # Require ≥5 courses for a meaningful rate
+                rates = []
+                for _, row in grp.iterrows():
+                    if pd.notna(row["count"]) and row["count"] >= 5:
+                        rates.append(round(float(row["sum"]) / float(row["count"]) * 100, 1))
+                    else:
+                        rates.append(None)
+                series.append({"name": name, "values": rates, "color": color})
+
+            if not slice_key:
+                _rate_series(t, "Overall", PRIMARY)
+            elif slice_key == "physician":
+                col = "TreatingPhysician"
+                if col in t.columns:
+                    for i, phys in enumerate(sorted(t[col].dropna().unique())):
+                        label = phys.split(",")[0] if "," in phys else phys
+                        _rate_series(
+                            t[t[col] == phys], label,
+                            CHART_COLORWAY[i % len(CHART_COLORWAY)],
+                        )
+            elif slice_key == "site":
+                if "Department" in t.columns:
+                    for dept in sorted(t["Department"].dropna().unique()):
+                        _rate_series(
+                            t[t["Department"] == dept], dept,
+                            DEPARTMENT_COLORS.get(dept, CHART_COLORWAY[0]),
+                        )
+            elif slice_key == "diagnosis" and c2b and "DiagnosisCodes" in t.columns:
+                t2 = t.copy()
+                t2["_bs"] = t2["DiagnosisCodes"].apply(lambda v: primary_category(v, c2b))
+                t2_bs = t2[t2["_bs"] != "Unknown"]
+                top_bs = t2_bs["_bs"].value_counts().head(8).index.tolist()
+                for i, bs in enumerate(top_bs):
+                    _rate_series(
+                        t2_bs[t2_bs["_bs"] == bs], bs,
+                        CHART_COLORWAY[i % len(CHART_COLORWAY)],
+                    )
+
+            combos[f"{agg}|{slice_key}"] = {"dates": dates, "series": series}
+
+    return combos
+
+
+# ---------------------------------------------------------------------------
+# Fractions Distribution: histogram/density data
+# ---------------------------------------------------------------------------
+
+def _prepare_frac_dist_data(dff):
+    """Prepare fractions distribution data for the store."""
+    frac_col = "FractionsPrescribed"
+    if frac_col not in dff.columns or dff.empty:
+        return None
+
+    vals = pd.to_numeric(dff[frac_col], errors="coerce").dropna()
+    vals = vals[vals > 0]
+    if vals.empty:
+        return None
+
+    arr = vals.values
+    try:
+        from scipy.stats import gaussian_kde
+        kde = gaussian_kde(arr, bw_method="silverman")
+        x_min = max(0, float(arr.min()) - 2)
+        x_max = float(arr.max()) + 2
+        x_grid = np.linspace(x_min, x_max, 200)
+        kde_y_raw = kde(x_grid)
+        kde_x = [round(float(v), 2) for v in x_grid]
+        kde_y = [round(float(v), 6) for v in kde_y_raw]
+    except Exception:
+        kde_x, kde_y = [], []
+
+    return {
+        "values": [round(float(v), 1) for v in arr],
+        "median": round(float(np.median(arr)), 1),
+        "mean": round(float(np.mean(arr)), 1),
+        "p25": round(float(np.percentile(arr, 25)), 1),
+        "p75": round(float(np.percentile(arr, 75)), 1),
+        "n": int(len(arr)),
+        "kde_x": kde_x,
+        "kde_y": kde_y,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Complexity Trends: multi-machine, multi-dept, multi-plan over time
+# ---------------------------------------------------------------------------
+
+def _count_comma_items(series):
+    """Count items in a comma-separated string column, returning numeric Series."""
+    return series.fillna("").apply(
+        lambda v: len([x for x in str(v).split(",") if x.strip()]) if pd.notna(v) and str(v).strip() else 0
+    )
+
+
+def _prepare_complexity_trend_data(dff, date_col, start=None, end=None, iso_map=None):
+    """Prepare multi-machine/dept/plan/iso trend data for store.
+
+    Returns a dict with keys for each agg period (W/M/Y), each containing
+    dates + series for pct and avg modes for each dimension.
+
+    iso_map: optional Series indexed by (PatientId, CourseId) → max UniqueIsocenters
+    """
+    if dff.empty or date_col not in dff.columns:
+        return None
+
+    tmp = dff.copy()
+    if start is not None:
+        tmp["_plot_date"] = tmp[date_col].clip(lower=start)
+        if end is not None:
+            tmp["_plot_date"] = tmp["_plot_date"].clip(upper=end)
+    else:
+        tmp["_plot_date"] = tmp[date_col]
+
+    # Count machines, departments, plans per course
+    if "Machines" in tmp.columns:
+        tmp["_n_machines"] = _count_comma_items(tmp["Machines"])
+    else:
+        tmp["_n_machines"] = 0
+
+    # Use original Departments column (comma-separated) if available, else Department (single)
+    if "Departments" in tmp.columns:
+        tmp["_n_depts"] = _count_comma_items(tmp["Departments"])
+    elif "Department" in tmp.columns:
+        tmp["_n_depts"] = 1
+    else:
+        tmp["_n_depts"] = 0
+
+    if "PlanCount" in tmp.columns:
+        tmp["_n_plans"] = pd.to_numeric(tmp["PlanCount"], errors="coerce").fillna(0).astype(int)
+    else:
+        tmp["_n_plans"] = 0
+
+    # Max isocenters per course from Treatment Detail
+    if iso_map is not None and "PatientId" in tmp.columns and "CourseId" in tmp.columns:
+        tmp["_n_isos"] = (
+            tmp.set_index(["PatientId", "CourseId"]).index
+            .map(iso_map)
+        )
+        tmp["_n_isos"] = pd.to_numeric(tmp["_n_isos"], errors="coerce").fillna(1).astype(int)
+    else:
+        tmp["_n_isos"] = 1
+
+    dims = [
+        ("machines", "_n_machines", "Machines"),
+        ("depts", "_n_depts", "Departments"),
+        ("plans", "_n_plans", "Plans"),
+        ("isos", "_n_isos", "Isocenters"),
+    ]
+
+    combos = {}
+    for agg in ["W", "M", "Y"]:
+        period_code = "Y" if agg == "Y" else agg
+        t = tmp.copy()
+        t["period"] = t["_plot_date"].dt.to_period(period_code).dt.to_timestamp()
+        all_periods = sorted(t["period"].unique())
+        dates = [d.isoformat() for d in all_periods]
+
+        for dim, col, label in dims:
+            grp = t.groupby("period")
+            count_total = grp[col].count().reindex(all_periods, fill_value=0)
+            count_multi = grp[col].apply(lambda s: (s > 1).sum()).reindex(all_periods, fill_value=0)
+            avg_val = grp[col].mean().reindex(all_periods)
+
+            pct_vals = []
+            for p in all_periods:
+                total = count_total.get(p, 0)
+                multi = count_multi.get(p, 0)
+                if total > 0:
+                    pct_vals.append(round(multi / total * 100, 1))
+                else:
+                    pct_vals.append(None)
+
+            avg_vals = [round(float(v), 2) if pd.notna(v) else None for v in avg_val]
+
+            combos[f"{agg}|{dim}"] = {
+                "dates": dates,
+                "pct": pct_vals,
+                "avg": avg_vals,
+                "label": label,
+            }
+
+    return combos
+
+
+# ---------------------------------------------------------------------------
+# Technique Distribution: stacked area by advancement order
+# ---------------------------------------------------------------------------
+
+# Ordered from most to least advanced
+_TECHNIQUE_ORDER = ["SRS", "SBRT", "VMAT", "IMRT", "3D", "Electron"]
+_TECHNIQUE_COLORS = {
+    "SRS": "#e74c3c",
+    "SBRT": "#e67e22",
+    "VMAT": "#9b59b6",
+    "IMRT": "#3498db",
+    "3D": "#2ecc71",
+    "Electron": "#f1c40f",
+}
+
+
+def _prepare_technique_dist_data(dff, date_col, start=None, end=None):
+    """Prepare technique distribution over time from courses data.
+
+    Builds two counting modes:
+    - "any": explode comma-separated techniques (course counted once per technique)
+    - "primary": take only the first listed technique per course
+
+    Returns JSON-serialisable dict keyed by "{agg}|{counting}" for the store.
+    """
+    tech_col = "TreatmentTechniques"
+    if dff.empty or date_col not in dff.columns or tech_col not in dff.columns:
+        return None
+
+    base = dff[[date_col, tech_col]].dropna(subset=[date_col, tech_col]).copy()
+    if base.empty:
+        return None
+
+    if start is not None:
+        base["_plot_date"] = base[date_col].clip(lower=start)
+        if end is not None:
+            base["_plot_date"] = base["_plot_date"].clip(upper=end)
+    else:
+        base["_plot_date"] = base[date_col]
+
+    # Pre-compute both counting modes
+    # "any" — explode all techniques
+    any_df = base.copy()
+    any_df["_techs"] = any_df[tech_col].str.split(",")
+    any_df = any_df.explode("_techs")
+    any_df["_techs"] = any_df["_techs"].str.strip()
+    any_df = any_df[any_df["_techs"] != ""]
+
+    # "primary" — first listed technique only
+    primary_df = base.copy()
+    primary_df["_techs"] = primary_df[tech_col].str.split(",").str[0].str.strip()
+    primary_df = primary_df[primary_df["_techs"] != ""]
+
+    if any_df.empty:
+        return None
+
+    # Collect all techniques across both modes for consistent ordering
+    all_techs = set(any_df["_techs"].unique()) | set(primary_df["_techs"].unique())
+    ordered = [t for t in _TECHNIQUE_ORDER if t in all_techs]
+    remaining = sorted(all_techs - set(ordered))
+    ordered.extend(remaining)
+
+    combos = {}
+    for agg in ["W", "M", "Y"]:
+        period_code = "Y" if agg == "Y" else agg
+
+        for counting, src_df in [("any", any_df), ("primary", primary_df)]:
+            t = src_df.copy()
+            t["period"] = t["_plot_date"].dt.to_period(period_code).dt.to_timestamp()
+            all_periods = sorted(t["period"].unique())
+            dates = [d.isoformat() for d in all_periods]
+
+            pivot = t.groupby(["period", "_techs"]).size().unstack(fill_value=0)
+            pivot = pivot.reindex(all_periods, fill_value=0)
+
+            series = []
+            for tech in ordered:
+                vals = pivot[tech].tolist() if tech in pivot.columns else [0] * len(all_periods)
+                series.append({
+                    "name": tech,
+                    "values": vals,
+                    "color": _TECHNIQUE_COLORS.get(tech, CHART_COLORWAY[len(series) % len(CHART_COLORWAY)]),
+                })
+
+            combos[f"{agg}|{counting}"] = {
+                "dates": dates,
+                "series": series,
+            }
+
+    return combos
+
+
+_RIDGE_HEIGHT = 720
+
+
+def _build_ridgeline_figure(data, bw_factor=0.5, mode="density"):
+    """Build the ridgeline Plotly figure from store data + bandwidth factor."""
+    from scipy.stats import gaussian_kde
+
+    if not data:
+        fig = empty_figure("No fractions data available")
+        fig.update_layout(height=_RIDGE_HEIGHT)
+        return fig
+
+    years = data["years"]
+    per_year = data["per_year"]
+
+    spacing = 0.32
+    peak_factor = 5.35
+
+    if mode == "histogram":
+        from plotly.subplots import make_subplots
+
+        n_years = len(years)
+        bin_min = int(data["x_min"])
+        bin_max = int(data["x_max"]) + 1
+        bins = np.arange(bin_min, bin_max + 1)
+        bin_centers = (bins[:-1] + bins[1:]) / 2.0
+
+        fig = make_subplots(
+            rows=n_years, cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.01,
+        )
+
+        for i, yr in enumerate(years):
+            row = i + 1
+            vals = np.array(per_year[yr])
+            counts, _ = np.histogram(vals, bins=bins)
+            n_courses = len(vals)
+            median_fx = float(np.median(vals)) if len(vals) else 0
+
+            fig.add_trace(go.Bar(
+                x=bin_centers.tolist(),
+                y=counts.tolist(),
+                marker_color="rgb(158, 113, 178)",
+                marker_line_width=0,
+                width=1.0,
+                customdata=np.full(len(bin_centers), median_fx).tolist(),
+                hovertemplate=(
+                    f"<b>{yr}</b> (n={n_courses:,})"
+                    "<br>Fractions: %{x:.0f}"
+                    "<br>Count: %{y}"
+                    "<br>Median: %{customdata:.0f}"
+                    "<extra></extra>"
+                ),
+                showlegend=False,
+            ), row=row, col=1)
+
+            # Suppress y-axis labels; year label added as annotation below
+            yaxis_key = f"yaxis{row}" if row > 1 else "yaxis"
+            fig.update_layout(**{yaxis_key: dict(
+                showticklabels=False, showgrid=False, zeroline=False,
+            )})
+
+        fig.update_xaxes(title_text="Fractions Prescribed", row=n_years, col=1)
+        fig.update_layout(
+            height=_RIDGE_HEIGHT, bargap=0,
+            margin=dict(l=60, r=16, t=16, b=40),
+        )
+        apply_default_layout(fig)
+        fig.update_layout(
+            height=_RIDGE_HEIGHT, bargap=0,
+            margin=dict(l=60, r=16, t=16, b=40),
+        )
+        # Re-suppress y tick labels after apply_default_layout
+        # and add horizontal year annotations
+        for i, yr in enumerate(years):
+            axis_name = f"yaxis{i + 1}" if i > 0 else "yaxis"
+            yref = f"y{i + 1} domain" if i > 0 else "y domain"
+            fig.update_layout(**{axis_name: dict(
+                showticklabels=False, showgrid=False, zeroline=False,
+            )})
+            fig.add_annotation(
+                text=str(yr), x=0, y=0.5,
+                xref="paper", yref=yref,
+                xanchor="right", yanchor="middle",
+                xshift=-8,
+                showarrow=False,
+                font=dict(size=11, color="#6B7280"),
+            )
+        return fig
+
+    else:  # density mode
+        x_pts = np.linspace(data["x_min"], data["x_max"], 200)
+        kde_curves = {}
+        global_max = 0.0
+        for yr in years:
+            vals = np.array(per_year[yr])
+            if len(vals) < 3:
+                kde_curves[yr] = np.zeros_like(x_pts)
+                continue
+            try:
+                if bw_factor <= 0.5:
+                    mult = 0.15 + (bw_factor / 0.5) * 0.85
+                else:
+                    mult = 1.0 + ((bw_factor - 0.5) / 0.5) * 2.0
+                silverman_bw = gaussian_kde(vals, bw_method="silverman").factor
+                kde = gaussian_kde(vals, bw_method=silverman_bw * mult)
+                y_pts = kde(x_pts)
+            except Exception:
+                y_pts = np.zeros_like(x_pts)
+            kde_curves[yr] = y_pts
+            peak = y_pts.max()
+            if peak > global_max:
+                global_max = peak
+
+        scale = (peak_factor * spacing / global_max) if global_max > 0 else 1.0
+
+        fig = go.Figure()
+        ridge_tops = []
+        ridges = []
+
+        for i, yr in enumerate(years):
+            baseline = i * spacing
+            y_scaled = kde_curves[yr] * scale + baseline
+            ridge_tops.append(float(np.max(y_scaled)) if len(y_scaled) else baseline)
+            vals = per_year[yr]
+            n_courses = len(vals)
+            median_fx = float(np.median(vals)) if vals else 0
+
+            ridges.append({
+                "year": yr,
+                "baseline": baseline,
+                "x_pts": x_pts,
+                "y_scaled": y_scaled,
+                "n_courses": n_courses,
+                "median_fx": median_fx,
+            })
+
+        for r in reversed(ridges):
+            y_s = r["y_scaled"]
+            b = r["baseline"]
+            fig.add_trace(go.Scatter(
+                x=np.concatenate([r["x_pts"], r["x_pts"][::-1]]).tolist(),
+                y=np.concatenate([y_s, np.full(len(r["x_pts"]), b)]).tolist(),
+                fill="toself",
+                fillcolor="rgb(158, 113, 178)",
+                line=dict(width=0, color="rgba(0,0,0,0)"),
+                hoverinfo="skip",
+                showlegend=False,
+            ))
+            x_list = r["x_pts"].tolist()
+            y_list = r["y_scaled"].tolist()
+            yr = r["year"]
+            fig.add_trace(go.Scatter(
+                x=x_list,
+                y=y_list,
+                mode="lines",
+                line=dict(color="rgba(255,255,255,0.98)", width=2.4),
+                name=str(yr),
+                showlegend=False,
+                customdata=np.full(len(x_list), r["median_fx"]).tolist(),
+                hovertemplate=(
+                    f"<b>{yr}</b> (n={r['n_courses']:,})"
+                    "<br>Fractions: %{x:.0f}"
+                    "<br>Median: %{customdata:.0f}"
+                    "<extra></extra>"
+                ),
+            ))
+
+    tick_vals = [i * spacing for i in range(len(years))]
+    tick_text = [str(yr) for yr in years]
+    ridge_axes = dict(
+        yaxis=dict(
+            tickvals=tick_vals, ticktext=tick_text,
+            showgrid=True, gridcolor="rgba(200,200,200,0.45)",
+            zeroline=False, title="",
+            range=[-0.25 * spacing, (max(ridge_tops) if ridge_tops else spacing) + 0.2 * spacing],
+        ),
+        xaxis=dict(
+            title="Fractions Prescribed",
+            showgrid=True, gridcolor="rgba(200,200,200,0.3)",
+            zeroline=False,
+        ),
+    )
+    fig.update_layout(height=_RIDGE_HEIGHT, **ridge_axes,
+                      margin=dict(l=60, r=16, t=16, b=40))
+    apply_default_layout(fig)
+    fig.update_layout(**ridge_axes, margin=dict(l=60, r=16, t=16, b=40))
+    return fig
+
+
+# ---------------------------------------------------------------------------
 # Data Preparation: Volume Trend
 # ---------------------------------------------------------------------------
 
 def _prepare_volume_data(dff, agg, slice_by="", date_col="CourseStartDate", c2b=None,
-                         start=None, end=None):
+                         start=None, end=None, date_mode="started"):
     """Prepare course volume trend data for clientside rendering.
 
-    When start/end are provided (e.g. "treated in" mode where overlap-matched
-    courses may have date_col values outside the window), periods are clamped
-    to the filter range so the chart doesn't show bars outside the window.
+    In "treated" mode, counts how many courses were under active treatment
+    during each period (census-style), rather than when they started.
+    Other modes count courses by their date_col value per period.
     """
     if dff.empty or date_col not in dff.columns:
         return None
@@ -972,8 +1625,79 @@ def _prepare_volume_data(dff, agg, slice_by="", date_col="CourseStartDate", c2b=
     dff = dff.copy()
     period_code = "Y" if agg == "Y" else agg
 
-    # For overlap-matched courses whose date_col falls before the window,
-    # clamp to the window start so they appear in the first visible period.
+    # --- Census mode for "treated" ---
+    use_census = (
+        date_mode == "treated"
+        and "FirstTreatmentDate" in dff.columns
+        and "LastTreatmentDate" in dff.columns
+        and start is not None and end is not None
+    )
+
+    if use_census:
+        # Build period boundaries
+        period_range = pd.date_range(start, end, freq=period_code)
+        if len(period_range) < 2:
+            period_range = pd.date_range(start, end, periods=2, freq=None)
+        all_periods = sorted(period_range)
+        dates = [d.isoformat() for d in all_periods]
+
+        ft = dff["FirstTreatmentDate"].values
+        lt = dff["LastTreatmentDate"].fillna(dff["FirstTreatmentDate"]).values
+
+        def _census_counts(sub_ft, sub_lt):
+            """Count courses active at each period start."""
+            counts = []
+            for p in all_periods:
+                p_np = p.to_numpy()
+                counts.append(int(((sub_ft <= p_np) & (sub_lt >= p_np)).sum()))
+            return counts
+
+        series = []
+        if not slice_by:
+            series.append({
+                "name": "Total",
+                "values": _trim_edges(_census_counts(ft, lt)),
+                "color": PRIMARY,
+            })
+        elif slice_by == "physician" and "TreatingPhysician" in dff.columns:
+            for i, phys in enumerate(sorted(dff["TreatingPhysician"].dropna().unique())):
+                mask = (dff["TreatingPhysician"] == phys).values
+                series.append({
+                    "name": phys.split(",")[0] if "," in phys else phys,
+                    "values": _trim_edges(_census_counts(ft[mask], lt[mask])),
+                    "color": CHART_COLORWAY[i % len(CHART_COLORWAY)],
+                })
+        elif slice_by == "site" and "Department" in dff.columns:
+            for dept in sorted(dff["Department"].dropna().unique()):
+                mask = (dff["Department"] == dept).values
+                series.append({
+                    "name": dept,
+                    "values": _trim_edges(_census_counts(ft[mask], lt[mask])),
+                    "color": DEPARTMENT_COLORS.get(dept, CHART_COLORWAY[0]),
+                })
+        elif slice_by == "diagnosis" and c2b and "DiagnosisCodes" in dff.columns:
+            dff["_bs"] = dff["DiagnosisCodes"].apply(lambda v: primary_category(v, c2b))
+            dff_bs = dff[dff["_bs"] != "Unknown"]
+            top_bs = dff_bs["_bs"].value_counts().head(8).index.tolist()
+            for i, bs in enumerate(top_bs):
+                mask = (dff_bs["_bs"] == bs).values
+                ft_bs = dff_bs["FirstTreatmentDate"].values[mask]
+                lt_bs = dff_bs["LastTreatmentDate"].fillna(dff_bs["FirstTreatmentDate"]).values[mask]
+                series.append({
+                    "name": bs,
+                    "values": _trim_edges(_census_counts(ft_bs, lt_bs)),
+                    "color": CHART_COLORWAY[i % len(CHART_COLORWAY)],
+                })
+
+        return {
+            "dates": dates,
+            "series": series,
+            "height": 350,
+            "yTitle": "Active Courses",
+            "hideLegend": len(series) <= 1,
+        }
+
+    # --- Standard mode: count by date_col per period ---
     if start is not None:
         dff["_plot_date"] = dff[date_col].clip(lower=start)
         if end is not None:
@@ -1291,7 +2015,8 @@ def _is_effectively_completed(df):
 
     A course is considered completed if ANY of:
       1. ClinicalStatus == "COMPLETED"
-      2. FractionsDelivered >= FractionsPrescribed (both non-null, prescribed > 0)
+      2. CourseSessionsDelivered >= CourseSessionsPlanned (raw DB session counts)
+         Falls back to FractionsDelivered >= FractionsPrescribed if session cols missing
       3. LastDayActivityFlag is truthy (Yes/1/True)
       4. DCActivityFlag is truthy (Yes/1/True)
       5. No treatment activity in the last 90 days (inactivity timeout)
@@ -1301,8 +2026,13 @@ def _is_effectively_completed(df):
     if "ClinicalStatus" in df.columns:
         mask = mask | (df["ClinicalStatus"] == "COMPLETED")
 
-    # Fractions delivered >= prescribed
-    if "FractionsDelivered" in df.columns and "FractionsPrescribed" in df.columns:
+    # Sessions delivered >= planned (preferred — raw DB counts)
+    if "CourseSessionsDelivered" in df.columns and "CourseSessionsPlanned" in df.columns:
+        sd = pd.to_numeric(df["CourseSessionsDelivered"], errors="coerce")
+        sp = pd.to_numeric(df["CourseSessionsPlanned"], errors="coerce")
+        mask = mask | ((sd >= sp) & sp.notna() & (sp > 0) & sd.notna())
+    elif "FractionsDelivered" in df.columns and "FractionsPrescribed" in df.columns:
+        # Fallback for older data without session columns
         fd = pd.to_numeric(df["FractionsDelivered"], errors="coerce")
         fp = pd.to_numeric(df["FractionsPrescribed"], errors="coerce")
         mask = mask | ((fd >= fp) & fp.notna() & (fp > 0) & fd.notna())
@@ -1388,6 +2118,12 @@ def _apply_filters(df, departments, physician, diagnosis_cats, status, frac_rang
     Output("courses-store-volume", "data"),
     Output("courses-store-cumulative", "data"),
     Output("courses-store-kpi-sparklines", "data"),
+    Output("courses-store-ridgeline", "data"),
+    Output("courses-store-frac-trend", "data"),
+    Output("courses-store-frac-dist", "data"),
+    Output("courses-store-complexity-trends", "data"),
+    Output("courses-store-technique-dist", "data"),
+    Output("courses-store-quit-trend", "data"),
     Output("courses-charts", "children"),
     Output("courses-table-container", "children"),
     Output("courses-fraction-slider", "min"),
@@ -1424,7 +2160,7 @@ def update_courses(_n, agg, volume_slice,
 
     na_kpi = kpi_card("--", "N/A")
     empty = empty_figure()
-    empty_result = (na_kpi,) * 6 + (None, None, {}, [], [], 0, 50)
+    empty_result = (na_kpi,) * 6 + (None, None, {}, None, None, None, None, None, None, [], [], 0, 50)
 
     try:
         df = load_courses()
@@ -1481,7 +2217,7 @@ def update_courses(_n, agg, volume_slice,
         df = df[(df[date_col] >= start) & (df[date_col] <= end)]
 
     if df.empty:
-        return (na_kpi,) * 6 + (None, None, {}, [], [], frac_min_data, frac_max_data)
+        return (na_kpi,) * 6 + (None, None, {}, None, None, None, None, None, [], [], frac_min_data, frac_max_data)
 
     # Only apply fraction filter when the user has engaged the slider
     active_frac_range = frac_range if frac_engaged else None
@@ -1491,7 +2227,7 @@ def update_courses(_n, agg, volume_slice,
                          inpatient=inpatient, techniques=techniques)
 
     if dff.empty:
-        return (na_kpi,) * 6 + (None, None, {}, [], [], frac_min_data, frac_max_data)
+        return (na_kpi,) * 6 + (None, None, {}, None, None, None, None, None, [], [], frac_min_data, frac_max_data)
 
     # ------------------------------------------------------------------
     # Prior-period comparison
@@ -1812,7 +2548,7 @@ def update_courses(_n, agg, volume_slice,
     # Volume trend data (clientside)
     # ------------------------------------------------------------------
     volume_data = _prepare_volume_data(dff, agg, volume_slice, date_col=date_col, c2b=c2b,
-                                       start=start, end=end)
+                                       start=start, end=end, date_mode=date_mode)
 
     # ------------------------------------------------------------------
     # Cumulative data (clientside)
@@ -1832,153 +2568,425 @@ def update_courses(_n, agg, volume_slice,
     # ------------------------------------------------------------------
     chart_children = []
 
-    # --- Row 2: Technique Mix + Treatment Site Distribution -------
+    # --- Row 2: Ridgeline + Technique Mix -------
     row2_charts = []
 
-    # Technique Mix (donut)
-    if "TreatmentTechniques" in dff.columns and not dff.empty:
-        techniques = dff["TreatmentTechniques"].dropna().str.split(",")
-        tech_list = []
-        for t_list in techniques:
-            for t in t_list:
-                stripped = t.strip()
-                if stripped:
-                    tech_list.append(stripped)
-
-        if tech_list:
-            tech_counts = pd.Series(tech_list).value_counts().head(10)
-            fig_technique = go.Figure(go.Pie(
-                labels=tech_counts.index.tolist(),
-                values=tech_counts.values.tolist(),
-                hole=0.45,
-                marker=dict(colors=CHART_COLORWAY[: len(tech_counts)]),
-                textinfo="label+percent",
-                textposition="outside",
-                hovertemplate=(
-                    "<b>%{label}</b><br>Count: %{value}<br>"
-                    "%{percent}<extra></extra>"
-                ),
-            ))
-            fig_technique.update_layout(height=380, showlegend=False)
-            apply_default_layout(fig_technique)
-            fig_technique.update_layout(
-                margin=dict(l=20, r=20, t=20, b=20),
-                showlegend=False,
-            )
-        else:
-            fig_technique = empty_figure("No technique data available")
-            fig_technique.update_layout(height=380)
-    else:
-        fig_technique = empty_figure("No technique data available")
-        fig_technique.update_layout(height=380)
-
+    # Ridgeline: Fractions per Course by Year (all-time, but respects dimension filters)
+    ridgeline_data = _prepare_ridgeline_data(dff_all_no_date, date_col)
     row2_charts.append(
         dmc.GridCol(
             span={"base": 12, "md": 6},
             children=dmc.Paper(
                 children=[
-                    dmc.Text("Technique Mix", size="sm", fw=500, c="#6B7280", mb="sm"),
-                    dcc.Graph(figure=fig_technique, config={"displayModeBar": False},
-                              style={"height": "380px"}),
+                    dmc.Group(
+                        justify="space-between",
+                        align="center",
+                        children=[
+                            dmc.Text("Fractions per Course by Year", size="sm", fw=500, c="#6B7280"),
+                            dmc.Group(
+                                gap="md", align="center",
+                                children=[
+                                    dmc.SegmentedControl(
+                                        id="courses-ridge-mode",
+                                        data=[
+                                            {"value": "density", "label": "Density"},
+                                            {"value": "histogram", "label": "Histogram"},
+                                        ],
+                                        value="density",
+                                        size="xs",
+                                    ),
+                                    dmc.Group(
+                                        id="courses-ridge-bw-group",
+                                        gap=6, align="center",
+                                        children=[
+                                            dmc.Text("Bandwidth", size="xs", c="#9CA3AF", fw=500),
+                                            dmc.Slider(
+                                                id="courses-ridge-bw",
+                                                min=0.05,
+                                                max=1.0,
+                                                step=0.05,
+                                                value=0.1,
+                                                size="xs",
+                                                w=100,
+                                                color="violet",
+                                                showLabelOnHover=True,
+                                                updatemode="mouseup",
+                                            ),
+                                        ],
+                                    ),
+                                ],
+                            ),
+                        ],
+                        mb="sm",
+                    ),
+                    dcc.Graph(id="courses-chart-ridgeline", config={"displayModeBar": False},
+                              style={"height": "720px"}),
                 ],
                 p="sm", radius="md", shadow="xs", withBorder=True,
             ),
+        ),
+    )
+
+    # Fractions Trend + Distribution data (for stores, rendered by separate callbacks)
+    frac_trend_data = _prepare_frac_trend_data(dff, date_col, c2b, start=start, end=end)
+    frac_dist_data = _prepare_frac_dist_data(dff)
+    quit_trend_data = _prepare_quit_trend_data(completed_df, "LastTreatmentDate", c2b, start=start, end=end)
+    # Build iso_map: max UniqueIsocenters per (PatientId, CourseId) from Treatment Detail
+    iso_map = None
+    try:
+        from data.loader import load_treatment_detail
+        td = load_treatment_detail()
+        if not td.empty and "UniqueIsocenters" in td.columns and "CourseName" in td.columns:
+            td["_isos"] = pd.to_numeric(td["UniqueIsocenters"], errors="coerce")
+            iso_map = td.groupby(["PatientId", "CourseName"])["_isos"].max()
+            iso_map.index.names = ["PatientId", "CourseId"]
+    except Exception:
+        pass
+    complexity_trend_data = _prepare_complexity_trend_data(
+        dff, date_col, start=start, end=end, iso_map=iso_map,
+    )
+    technique_dist_data = _prepare_technique_dist_data(dff, date_col, start=start, end=end)
+
+    # Right column: Median Fractions Trend (top) + Fractions Distribution (bottom)
+    row2_charts.append(
+        dmc.GridCol(
+            span={"base": 12, "md": 6},
+            children=dmc.Stack(
+                gap=16,
+                style={"height": "100%"},
+                children=[
+                    # Top: Median Fractions Trend
+                    dmc.Paper(
+                        children=[
+                            dmc.Group(
+                                justify="space-between", align="center", mb="sm",
+                                children=[
+                                    dmc.Group(
+                                        gap="sm", align="center",
+                                        children=[
+                                            dmc.Text("Median Fractions Trend", size="sm", fw=500, c="#6B7280"),
+                                            dmc.SegmentedControl(
+                                                id="courses-frac-trend-slice",
+                                                data=[
+                                                    {"value": "", "label": "Total"},
+                                                    {"value": "physician", "label": "MD"},
+                                                    {"value": "site", "label": "Site"},
+                                                    {"value": "diagnosis", "label": "Dx"},
+                                                ],
+                                                value="",
+                                                size="xs",
+                                            ),
+                                        ],
+                                    ),
+                                    dmc.Group(
+                                        gap="sm", align="center",
+                                        children=[
+                                            dmc.SegmentedControl(
+                                                id="courses-frac-trend-agg",
+                                                data=[
+                                                    {"value": "W", "label": "Weekly"},
+                                                    {"value": "M", "label": "Monthly"},
+                                                    {"value": "Y", "label": "Yearly"},
+                                                ],
+                                                value="M",
+                                                size="xs",
+                                            ),
+                                            chart_settings_popover(
+                                                "courses-frac-trend",
+                                                chart_types=[
+                                                    {"value": "line", "label": "Line"},
+                                                    {"value": "bar", "label": "Bar"},
+                                                    {"value": "area", "label": "Area"},
+                                                ],
+                                                show_smooth=True,
+                                                smooth_max=12,
+                                                smooth_default=0,
+                                            ),
+                                        ],
+                                    ),
+                                ],
+                            ),
+                            dcc.Graph(
+                                id="courses-chart-frac-trend",
+                                config={"displayModeBar": False},
+                                style={"flex": "1", "minHeight": 0},
+                            ),
+                        ],
+                        p="sm", radius="md", shadow="xs", withBorder=True,
+                        style={"flex": "1 1 0", "display": "flex", "flexDirection": "column"},
+                    ),
+                    # Bottom: Fractions Distribution (histogram/density)
+                    dmc.Paper(
+                        children=[
+                            dmc.Group(
+                                justify="space-between", align="center", mb="sm",
+                                children=[
+                                    dmc.Text("Fractions Distribution", size="sm", fw=500, c="#6B7280"),
+                                    dmc.SegmentedControl(
+                                        id="courses-frac-dist-mode",
+                                        data=[
+                                            {"value": "histogram", "label": "Histogram"},
+                                            {"value": "density", "label": "Density"},
+                                        ],
+                                        value="histogram",
+                                        size="xs",
+                                    ),
+                                ],
+                            ),
+                            dcc.Graph(
+                                id="courses-chart-frac-dist",
+                                config={"displayModeBar": False},
+                                style={"flex": "1", "minHeight": 0},
+                            ),
+                        ],
+                        p="sm", radius="md", shadow="xs", withBorder=True,
+                        style={"flex": "1 1 0", "display": "flex", "flexDirection": "column"},
+                    ),
+                ],
+            ),
+        ),
+    )
+
+    chart_children.append(dmc.Grid(gutter=16, align="stretch", children=row2_charts))
+
+    # --- Technique Distribution (full-width stacked area) ---
+    chart_children.append(
+        chart_card(
+            "courses-chart-technique-dist",
+            "Technique Distribution",
+            settings_id="courses-technique-dist",
+            chart_types=[
+                {"value": "area", "label": "Area"},
+                {"value": "bar", "label": "Bar"},
+                {"value": "line", "label": "Line"},
+            ],
+            show_smooth=True,
+            smooth_max=24,
+            smooth_default=3,
+            paper_padding="md",
+            paper_height="500px",
+            graph_height="420px",
+            extra_controls_left=[
+                dmc.SegmentedControl(
+                    id="courses-technique-dist-counting",
+                    data=[
+                        {"value": "any", "label": "Any"},
+                        {"value": "primary", "label": "Primary"},
+                    ],
+                    value="any",
+                    size="xs",
+                ),
+                dmc.SegmentedControl(
+                    id="courses-technique-dist-mode",
+                    data=[
+                        {"value": "count", "label": "Count"},
+                        {"value": "pct", "label": "%"},
+                    ],
+                    value="count",
+                    size="xs",
+                ),
+            ],
+            extra_controls=[
+                dmc.SegmentedControl(
+                    id="courses-technique-dist-agg",
+                    data=[
+                        {"value": "W", "label": "Weekly"},
+                        {"value": "M", "label": "Monthly"},
+                        {"value": "Y", "label": "Yearly"},
+                    ],
+                    value="M",
+                    size="xs",
+                ),
+            ],
         )
     )
+
+    # --- Course Complexity Trends (2x2 facets) ---
+    chart_children.append(
+        chart_card(
+            "courses-chart-complexity",
+            "Course Complexity Trends",
+            settings_id="courses-complexity",
+            chart_types=[
+                {"value": "line", "label": "Line"},
+                {"value": "area", "label": "Area"},
+                {"value": "bar", "label": "Bar"},
+            ],
+            show_smooth=True,
+            smooth_max=12,
+            smooth_default=4,
+            paper_padding="md",
+            paper_height="620px",
+            graph_height="560px",
+            extra_controls_left=[
+                dmc.SegmentedControl(
+                    id="courses-complexity-mode",
+                    data=[
+                        {"value": "pct", "label": "%"},
+                        {"value": "avg", "label": "Avg #"},
+                    ],
+                    value="pct",
+                    size="xs",
+                ),
+            ],
+            extra_controls=[
+                dmc.SegmentedControl(
+                    id="courses-complexity-agg",
+                    data=[
+                        {"value": "W", "label": "Weekly"},
+                        {"value": "M", "label": "Monthly"},
+                        {"value": "Y", "label": "Yearly"},
+                    ],
+                    value="W",
+                    size="xs",
+                ),
+            ],
+        )
+    )
+
+    # --- Row 3: Treatment Site Distribution + Quitting Rate Trend -------
+    row3a_charts = []
 
     # Treatment Site Distribution (horizontal bar)
     if "PrescriptionSites" in dff.columns and not dff.empty:
         sites_series = dff["PrescriptionSites"].dropna()
         if not sites_series.empty:
-            site_counts = sites_series.value_counts().head(15).sort_values(ascending=True)
+            # Split semicolon-separated sites, deduplicate per course, then count
+            site_list = []
+            for val in sites_series:
+                unique_sites = set()
+                for s in str(val).split(";"):
+                    stripped = s.strip()
+                    if stripped:
+                        unique_sites.add(stripped)
+                site_list.extend(unique_sites)
+            _site_display = {
+                "Prostate and Seminal Vessicles.": "Prostate/SV",
+            }
+            site_counts = pd.Series(site_list).value_counts().head(15).sort_values(ascending=True)
+            display_labels = [_site_display.get(s, s) for s in site_counts.index]
             fig_sites = go.Figure(go.Bar(
-                y=site_counts.index.tolist(),
+                y=display_labels,
                 x=site_counts.values.tolist(),
                 orientation="h",
                 marker_color=PRIMARY,
-                hovertemplate="<b>%{y}</b><br>Count: %{x}<extra></extra>",
+                customdata=site_counts.index.tolist(),
+                hovertemplate="<b>%{customdata}</b><br>Count: %{x}<extra></extra>",
             ))
-            fig_sites.update_layout(height=380)
             apply_default_layout(fig_sites)
             fig_sites.update_layout(
+                height=None,
                 yaxis_title="",
-                xaxis_title="Courses",
-                margin=dict(l=160, r=8, t=8, b=32),
+                xaxis_title="",
+                margin=dict(l=120, r=8, t=0, b=0),
             )
+            fig_sites.update_xaxes(automargin=True)
+            fig_sites.update_yaxes(automargin=True)
         else:
             fig_sites = empty_figure("No prescription site data")
-            fig_sites.update_layout(height=380)
+            fig_sites.update_layout(height=None)
     else:
         fig_sites = empty_figure("No prescription site data")
-        fig_sites.update_layout(height=380)
+        fig_sites.update_layout(height=None)
 
-    row2_charts.append(
+    row3a_charts.append(
         dmc.GridCol(
             span={"base": 12, "md": 6},
             children=dmc.Paper(
                 children=[
-                    dmc.Text("Treatment Site Distribution", size="sm", fw=500, c="#6B7280", mb="sm"),
-                    dcc.Graph(figure=fig_sites, config={"displayModeBar": False},
-                              style={"height": "380px"}),
+                    dmc.Text("Treatment Site Distribution", size="sm", fw=500, c="#6B7280", mb=0),
+                    dmc.Box(
+                        pos="relative",
+                        style={"flex": "1", "minHeight": 0},
+                        children=[
+                            dmc.Box(
+                                style={"position": "absolute", "top": 0, "left": 0, "right": 0, "bottom": 0},
+                                children=[
+                                    dcc.Graph(
+                                        figure=fig_sites,
+                                        config={"displayModeBar": False},
+                                        style={"height": "100%"},
+                                    )
+                                ],
+                            )
+                        ],
+                    ),
                 ],
-                p="sm", radius="md", shadow="xs", withBorder=True,
+                p="sm", pt="md", pb=6, radius="md", shadow="xs", withBorder=True,
+                h=CHART_PAPER_HEIGHT,
+                style={"display": "flex", "flexDirection": "column"},
             ),
         )
     )
 
-    chart_children.append(dmc.Grid(gutter=16, children=row2_charts))
-
-    # --- Row 3: Duration Distribution + (placeholder) -------
-    row3_charts = []
-
-    if "TreatmentDurationDays" in completed_df.columns and not completed_df.empty:
-        dur_data = completed_df["TreatmentDurationDays"].dropna()
-        dur_data = dur_data[dur_data > 0]
-        if not dur_data.empty:
-            fig_duration = go.Figure(go.Histogram(
-                x=dur_data,
-                nbinsx=30,
-                marker_color=STATUS_COLORS["COMPLETED"],
-                hovertemplate="Duration: %{x} days<br>Count: %{y}<extra></extra>",
-            ))
-            fig_duration.update_layout(height=380)
-            apply_default_layout(fig_duration)
-            fig_duration.update_layout(
-                xaxis_title="Duration (days)",
-                yaxis_title="Courses",
-            )
-            med_val = dur_data.median()
-            fig_duration.add_vline(
-                x=med_val,
-                line_dash="dash",
-                line_color=NEUTRAL["text_secondary"],
-                annotation_text=f"Median: {med_val:.0f}d",
-                annotation_position="top right",
-                annotation_font_size=11,
-                annotation_font_color=NEUTRAL["text_secondary"],
-            )
-        else:
-            fig_duration = empty_figure("No duration data available")
-            fig_duration.update_layout(height=380)
-    else:
-        fig_duration = empty_figure("No duration data available")
-        fig_duration.update_layout(height=380)
-
-    row3_charts.append(
+    # Quitting Rate Trend (clientside-rendered from store)
+    row3a_charts.append(
         dmc.GridCol(
             span={"base": 12, "md": 6},
             children=dmc.Paper(
                 children=[
-                    dmc.Text("Treatment Duration Distribution", size="sm", fw=500, c="#6B7280", mb="sm"),
-                    dcc.Graph(figure=fig_duration, config={"displayModeBar": False},
-                              style={"height": "380px"}),
+                    dmc.Group(
+                        justify="space-between", align="center", mb="sm",
+                        children=[
+                            dmc.Group(
+                                gap="sm", align="center",
+                                children=[
+                                    dmc.Text("Quitting Rate Trend", size="sm", fw=500, c="#6B7280"),
+                                    dmc.SegmentedControl(
+                                        id="courses-quit-trend-slice",
+                                        data=[
+                                            {"value": "", "label": "Total"},
+                                            {"value": "physician", "label": "MD"},
+                                            {"value": "site", "label": "Site"},
+                                            {"value": "diagnosis", "label": "Dx"},
+                                        ],
+                                        value="",
+                                        size="xs",
+                                    ),
+                                ],
+                            ),
+                            dmc.Group(
+                                gap="sm", align="center",
+                                children=[
+                                    dmc.SegmentedControl(
+                                        id="courses-quit-trend-agg",
+                                        data=[
+                                            {"value": "W", "label": "Weekly"},
+                                            {"value": "M", "label": "Monthly"},
+                                            {"value": "Y", "label": "Yearly"},
+                                        ],
+                                        value="M",
+                                        size="xs",
+                                    ),
+                                    chart_settings_popover(
+                                        "courses-quit-trend",
+                                        chart_types=[
+                                            {"value": "line", "label": "Line"},
+                                            {"value": "bar", "label": "Bar"},
+                                            {"value": "area", "label": "Area"},
+                                        ],
+                                        show_smooth=True,
+                                        smooth_max=12,
+                                        smooth_default=0,
+                                    ),
+                                ],
+                            ),
+                        ],
+                    ),
+                    dcc.Graph(
+                        id="courses-chart-quit-trend",
+                        config={"displayModeBar": False},
+                        style={"flex": "1", "minHeight": 0},
+                    ),
                 ],
                 p="sm", radius="md", shadow="xs", withBorder=True,
+                h=CHART_PAPER_HEIGHT,
+                style={"display": "flex", "flexDirection": "column"},
             ),
         )
     )
 
-    chart_children.append(dmc.Grid(gutter=16, children=row3_charts))
+    chart_children.append(dmc.Grid(gutter=16, align="stretch", children=row3a_charts))
 
     # ------------------------------------------------------------------
     # Detail Table (AG Grid)
@@ -2042,6 +3050,7 @@ def update_courses(_n, agg, volume_slice,
     return (
         kpi_active, kpi_started, kpi_completed, kpi_median_frac, kpi_median_dur, kpi_multiplan,
         volume_data, cumulative_data, sparkline_data,
+        ridgeline_data, frac_trend_data, frac_dist_data, complexity_trend_data, technique_dist_data, quit_trend_data,
         chart_children, table_children,
         frac_min_data, frac_max_data,
     )
@@ -2092,6 +3101,411 @@ for _spark_id in _COURSES_SPARKLINE_IDS:
         Input(_spark_id, "id"),
         Input("courses-smooth-slider", "value"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Ridgeline callback (mode + bandwidth)
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("courses-chart-ridgeline", "figure"),
+    Input("courses-store-ridgeline", "data"),
+    Input("courses-ridge-bw", "value"),
+    Input("courses-ridge-mode", "value"),
+)
+def _update_ridgeline(data, bw, mode):
+    return _build_ridgeline_figure(data, bw_factor=bw or 0.5, mode=mode or "density")
+
+
+# Hide bandwidth slider in histogram mode
+clientside_callback(
+    """function(mode) {
+        return mode === "histogram" ? {display: "none"} : {};
+    }""",
+    Output("courses-ridge-bw-group", "style"),
+    Input("courses-ridge-mode", "value"),
+)
+
+
+# ---------------------------------------------------------------------------
+# Fractions Trend callback (clientside: agg + slice-by + smooth + chart type)
+# ---------------------------------------------------------------------------
+
+clientside_callback(
+    """function(storeData, smoothVal, chartType, agg, sliceBy, currentFig) {
+        if (!storeData) return window.dash_clientside.no_update;
+        var key = (agg || "M") + "|" + (sliceBy || "");
+        var combo = storeData[key];
+        if (!combo || !combo.series || combo.series.length === 0) {
+            return {
+                data: [],
+                layout: {
+                    font: {family: "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif", size: 12},
+                    margin: {l: 48, r: 16, t: 24, b: 40},
+                    plot_bgcolor: "#FFFFFF", paper_bgcolor: "#FFFFFF",
+                    xaxis: {visible: false}, yaxis: {visible: false},
+                    annotations: [{text: "No fractions data", showarrow: false,
+                        xref: "paper", yref: "paper", x: 0.5, y: 0.5,
+                        font: {size: 14, color: "#9CA3AF"}}]
+                }
+            };
+        }
+        var data = {
+            dates: combo.dates,
+            series: combo.series,
+            yTitle: "Median Fractions",
+            hideLegend: combo.series.length <= 1,
+            stacked: false
+        };
+        return window.dash_clientside.census.smoothChartWithType(data, smoothVal, chartType || "line", currentFig);
+    }""",
+    Output("courses-chart-frac-trend", "figure"),
+    Input("courses-store-frac-trend", "data"),
+    Input("courses-frac-trend-settings-smooth", "value"),
+    Input("courses-frac-trend-settings-type", "value"),
+    Input("courses-frac-trend-agg", "value"),
+    Input("courses-frac-trend-slice", "value"),
+    State("courses-chart-frac-trend", "figure"),
+)
+
+
+# ---------------------------------------------------------------------------
+# Quit Rate Trend callback (clientside: agg + slice-by + smooth + chart type)
+# ---------------------------------------------------------------------------
+
+clientside_callback(
+    """function(storeData, smoothVal, chartType, agg, sliceBy, currentFig) {
+        if (!storeData) return window.dash_clientside.no_update;
+        var key = (agg || "M") + "|" + (sliceBy || "");
+        var combo = storeData[key];
+        if (!combo || !combo.series || combo.series.length === 0) {
+            return {
+                data: [],
+                layout: {
+                    font: {family: "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif", size: 12},
+                    margin: {l: 48, r: 16, t: 24, b: 40},
+                    plot_bgcolor: "#FFFFFF", paper_bgcolor: "#FFFFFF",
+                    xaxis: {visible: false}, yaxis: {visible: false},
+                    annotations: [{text: "No quit rate data", showarrow: false,
+                        xref: "paper", yref: "paper", x: 0.5, y: 0.5,
+                        font: {size: 14, color: "#9CA3AF"}}]
+                }
+            };
+        }
+        var data = {
+            dates: combo.dates,
+            series: combo.series,
+            yTitle: "Quit Rate (%)",
+            hideLegend: combo.series.length <= 1,
+            stacked: false
+        };
+        return window.dash_clientside.census.smoothChartWithType(data, smoothVal, chartType || "line", currentFig);
+    }""",
+    Output("courses-chart-quit-trend", "figure"),
+    Input("courses-store-quit-trend", "data"),
+    Input("courses-quit-trend-settings-smooth", "value"),
+    Input("courses-quit-trend-settings-type", "value"),
+    Input("courses-quit-trend-agg", "value"),
+    Input("courses-quit-trend-slice", "value"),
+    State("courses-chart-quit-trend", "figure"),
+)
+
+
+# ---------------------------------------------------------------------------
+# Fractions Distribution callback (histogram/density toggle)
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("courses-chart-frac-dist", "figure"),
+    Input("courses-store-frac-dist", "data"),
+    Input("courses-frac-dist-mode", "value"),
+)
+def _update_frac_dist(data, mode):
+    if not data:
+        fig = empty_figure("No fractions data")
+        fig.update_layout(height=310)
+        return fig
+
+    mode = mode or "histogram"
+    fig = go.Figure()
+
+    if mode == "density" and data.get("kde_x"):
+        fig.add_trace(go.Scatter(
+            x=data["kde_x"],
+            y=data["kde_y"],
+            mode="lines",
+            fill="tozeroy",
+            line=dict(color=PRIMARY, width=2),
+            fillcolor="rgba(124, 42, 131, 0.2)",
+            hovertemplate="Fractions: %{x:.0f}<br>Density: %{y:.4f}<extra></extra>",
+        ))
+        y_title = "Density"
+    else:
+        fig.add_trace(go.Histogram(
+            x=data["values"],
+            nbinsx=30,
+            marker_color=PRIMARY,
+            hovertemplate="Fractions: %{x}<br>Count: %{y}<extra></extra>",
+        ))
+        y_title = "Courses"
+
+    # Median vertical line
+    med = data["median"]
+    fig.add_vline(x=med, line_dash="dash", line_color=NEUTRAL["text_secondary"])
+    fig.add_annotation(
+        x=med, y=1.0, yref="paper", yshift=2,
+        text=f"Median: {med:.0f}", showarrow=False,
+        font=dict(size=11, color=NEUTRAL["text_secondary"]),
+        yanchor="bottom", xanchor="center",
+    )
+
+    apply_default_layout(fig)
+    fig.update_layout(
+        height=310,
+        xaxis_title=f"Fractions Prescribed  (n={data['n']}  Mean: {data['mean']:.0f}  IQR: {data['p25']:.0f}\u2013{data['p75']:.0f})",
+        yaxis_title=y_title,
+        margin=dict(l=48, r=16, t=16, b=24),
+    )
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# Complexity Trend callbacks (multi-machine / multi-dept / multi-plan)
+# ---------------------------------------------------------------------------
+
+def _hex_to_rgba(hex_color, alpha=0.1):
+    """Convert hex color to rgba string."""
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"rgba({r},{g},{b},{alpha})"
+
+
+_COMPLEXITY_DIM_CFG = {
+    "machines": {"color": CHART_COLORWAY[0], "pct_label": "% Multi-Machine", "avg_label": "Avg Machines"},
+    "depts": {"color": CHART_COLORWAY[1], "pct_label": "% Multi-Department", "avg_label": "Avg Departments"},
+    "plans": {"color": CHART_COLORWAY[2], "pct_label": "% Multi-Plan", "avg_label": "Avg Plans"},
+    "isos": {"color": CHART_COLORWAY[3], "pct_label": "% Multi-Isocenter", "avg_label": "Avg Isocenters"},
+}
+
+def _apply_moving_avg(values, window):
+    """Apply simple moving average to a list of values (None-safe)."""
+    if window <= 1:
+        return values
+    result = []
+    for i in range(len(values)):
+        start = max(0, i - window + 1)
+        chunk = [v for v in values[start:i + 1] if v is not None]
+        result.append(round(sum(chunk) / len(chunk), 2) if chunk else None)
+    return result
+
+
+_COMPLEXITY_FACETS = [
+    ("machines", "Multi-Machine"),
+    ("depts", "Multi-Department"),
+    ("plans", "Multi-Plan"),
+    ("isos", "Multi-Isocenter"),
+]
+
+
+@callback(
+    Output("courses-chart-complexity", "figure"),
+    Input("courses-store-complexity-trends", "data"),
+    Input("courses-complexity-agg", "value"),
+    Input("courses-complexity-mode", "value"),
+    Input("courses-complexity-settings-smooth", "value"),
+    Input("courses-complexity-settings-type", "value"),
+    prevent_initial_call=False,
+)
+def _update_complexity_facets(data, agg, mode, smooth, chart_type):
+    from plotly.subplots import make_subplots
+
+    if not data:
+        fig = empty_figure("No data")
+        fig.update_layout(height=560)
+        return fig
+
+    agg = agg or "W"
+    mode = mode or "pct"
+    chart_type = chart_type or "line"
+    smooth = smooth or 0
+
+    fig = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=[title for _, title in _COMPLEXITY_FACETS],
+        vertical_spacing=0.12,
+        horizontal_spacing=0.06,
+    )
+
+    for i, (dim_key, _title) in enumerate(_COMPLEXITY_FACETS):
+        row = i // 2 + 1
+        col = i % 2 + 1
+        cfg = _COMPLEXITY_DIM_CFG[dim_key]
+
+        key = f"{agg}|{dim_key}"
+        combo = data.get(key)
+        if not combo:
+            continue
+
+        dates = combo["dates"]
+        raw_values = combo[mode]
+        values = _apply_moving_avg(raw_values, smooth)
+
+        if mode == "pct":
+            hover_tmpl = "<b>%{x|%b %Y}</b><br>%{y:.1f}%<extra></extra>"
+        else:
+            hover_tmpl = "<b>%{x|%b %Y}</b><br>%{y:.2f}<extra></extra>"
+
+        if chart_type == "bar":
+            fig.add_trace(go.Bar(
+                x=dates, y=values,
+                marker_color=cfg["color"],
+                hovertemplate=hover_tmpl,
+                showlegend=False,
+            ), row=row, col=col)
+        else:
+            fill_mode = "tozeroy" if chart_type == "area" else "none"
+            fig.add_trace(go.Scatter(
+                x=dates, y=values,
+                mode="lines+markers",
+                line=dict(color=cfg["color"], width=2),
+                marker=dict(size=3),
+                fill=fill_mode,
+                fillcolor=_hex_to_rgba(cfg["color"]),
+                connectgaps=True,
+                hovertemplate=hover_tmpl,
+                showlegend=False,
+            ), row=row, col=col)
+
+        # Y-axis range for pct mode
+        if mode == "pct":
+            max_val = max((v for v in values if v is not None), default=0)
+            ceiling = min(100, max(max_val * 1.25, 5))
+            yaxis_key = f"yaxis{i + 1}" if i > 0 else "yaxis"
+            fig.update_layout(**{yaxis_key: dict(range=[0, ceiling])})
+
+    apply_default_layout(fig)
+    # Re-apply subplot title styling after default layout
+    for ann in fig.layout.annotations:
+        ann.update(font=dict(size=12, color="#6B7280"))
+    fig.update_layout(
+        height=560,
+        showlegend=False,
+        margin=dict(l=48, r=16, t=32, b=40),
+    )
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# Technique Distribution callback
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("courses-chart-technique-dist", "figure"),
+    Input("courses-store-technique-dist", "data"),
+    Input("courses-technique-dist-counting", "value"),
+    Input("courses-technique-dist-mode", "value"),
+    Input("courses-technique-dist-agg", "value"),
+    Input("courses-technique-dist-settings-smooth", "value"),
+    Input("courses-technique-dist-settings-type", "value"),
+    prevent_initial_call=False,
+)
+def _update_technique_dist(data, counting, mode, agg, smooth, chart_type):
+    if not data:
+        return empty_figure("No technique data")
+
+    agg = agg or "M"
+    counting = counting or "any"
+    key = f"{agg}|{counting}"
+    combo = data.get(key)
+    if not combo or not combo.get("series"):
+        return empty_figure("No technique data for selection")
+
+    dates = combo["dates"]
+    mode = mode or "count"
+    chart_type = chart_type or "area"
+    smooth = smooth or 0
+
+    # Build raw values per technique; stack order: least advanced at bottom
+    # (reversed from _TECHNIQUE_ORDER so most advanced ends up on top)
+    raw_series = list(reversed(combo["series"]))
+
+    # Convert to proportions if needed
+    n_periods = len(dates)
+    if mode == "pct":
+        totals = [0.0] * n_periods
+        for s in raw_series:
+            for i in range(n_periods):
+                totals[i] += s["values"][i]
+        proc_series = []
+        for s in raw_series:
+            pct_vals = []
+            for i in range(n_periods):
+                if totals[i] > 0:
+                    pct_vals.append(round(s["values"][i] / totals[i] * 100, 1))
+                else:
+                    pct_vals.append(0)
+            proc_series.append({**s, "values": pct_vals})
+    else:
+        proc_series = raw_series
+
+    # Apply smoothing
+    if smooth > 1:
+        proc_series = [
+            {**s, "values": _apply_moving_avg(s["values"], smooth)}
+            for s in proc_series
+        ]
+
+    fig = go.Figure()
+
+    if chart_type == "bar":
+        for s in proc_series:
+            fig.add_trace(go.Bar(
+                x=dates,
+                y=s["values"],
+                name=s["name"],
+                marker_color=s["color"],
+                hovertemplate=(
+                    "<b>%{x|%b %Y}</b><br>"
+                    + s["name"] + ": %{y:.0f}" + ("%" if mode == "pct" else "")
+                    + "<extra></extra>"
+                ),
+            ))
+        fig.update_layout(barmode="stack")
+    else:
+        stackgroup = "tech" if chart_type == "area" else None
+        for s in proc_series:
+            fig.add_trace(go.Scatter(
+                x=dates,
+                y=s["values"],
+                name=s["name"],
+                mode="lines",
+                line=dict(color=s["color"], width=0.5 if chart_type == "area" else 2),
+                stackgroup=stackgroup,
+                fillcolor=s["color"] if chart_type == "area" else None,
+                hovertemplate=(
+                    "<b>%{x|%b %Y}</b><br>"
+                    + s["name"] + ": %{y:.0f}" + ("%" if mode == "pct" else "")
+                    + "<extra></extra>"
+                ),
+            ))
+
+    apply_default_layout(fig)
+    n_series = len(proc_series)
+    fig.update_layout(
+        height=420,
+        yaxis_title="Proportion (%)" if mode == "pct" else "Plan Count",
+        showlegend=True,
+        legend=dict(
+            orientation="h", y=1.02, x=0.5, xanchor="center", yanchor="bottom",
+            traceorder="normal",
+        ),
+        margin=dict(l=48, r=16, t=56, b=40),
+        hovermode="x unified",
+    )
+    if mode == "pct":
+        fig.update_yaxes(range=[0, 100])
+
+    return fig
 
 
 # Table CSV Export (clientside)

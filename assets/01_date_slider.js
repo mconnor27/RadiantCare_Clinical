@@ -95,6 +95,15 @@
     // Courses: same BASE_YEAR as Python utils/date_slider.py
     registerSlider("coursesDateSlider", 2004, ["courses-date-slider"]);
 
+    // Plans: same BASE_YEAR as Python utils/date_slider.py
+    registerSlider("plansDateSlider", 2004, ["plans-date-slider"]);
+
+    // Machine Downtime: same BASE_YEAR as Python utils/date_slider.py
+    registerSlider("machinesDateSlider", 2004, ["machines-date-slider"]);
+
+    // Procedures: same BASE_YEAR as Python utils/date_slider.py
+    registerSlider("proceduresDateSlider", 2004, ["proc-date-slider"]);
+
     // Expose factory for future pages
     window._registerDateSlider = registerSlider;
 

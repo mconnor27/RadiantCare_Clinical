@@ -56,7 +56,7 @@ def create_sparkline(past_values=None, future_values=None,
         fig.add_trace(go.Scatter(
             x=x_past, y=[y_floor] * len(x_past),
             mode="lines",
-            line=dict(width=0, color="transparent"),
+            line=dict(width=0, color="rgba(0,0,0,0)"),
             hoverinfo="skip",
             showlegend=False,
         ))

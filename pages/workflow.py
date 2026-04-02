@@ -58,52 +58,8 @@ _DEFAULT_DATE_PRESET = "ytd" if pd.Timestamp.now().month > 1 else "3mo"
 # ---------------------------------------------------------------------------
 
 _CALL_STATUSES = frozenset({"ON CALL", "WEEKEND CALL"})
-_HOLIDAY_OFF_STATUSES = frozenset({"OFF", "ON CALL", "WEEKEND CALL"})
 
-def _derive_holidays():
-    """Derive holiday dates from physician schedule.
-
-    A real clinic closure is a date where every core physician is OFF or
-    on call, and **no** physician has VACATION status.  ARIA codes true
-    holidays (Thanksgiving, Christmas, etc.) as OFF; personal time off
-    is coded as VACATION.  Excluding VACATION prevents coincidental
-    all-off days from being mistaken for holidays.
-    """
-    from data.loader import load_physician_schedule
-
-    try:
-        sched = load_physician_schedule()
-    except Exception:
-        return set()
-
-    if sched.empty or "Date" not in sched.columns:
-        return set()
-
-    core = set(PHYSICIANS)
-    sched = sched[sched["Physician"].isin(core)].copy()
-    sched["_status_upper"] = sched["Status"].str.upper().str.strip()
-
-    holidays = set()
-    for date, grp in sched.groupby(sched["Date"].dt.normalize()):
-        physicians_present = set(grp["Physician"].unique())
-        if not core.issubset(physicians_present):
-            continue  # not all physicians have entries — skip
-        statuses = set(grp["_status_upper"])
-        # Real holidays: all OFF/ON CALL, never VACATION or SICK LEAVE
-        if not statuses - _HOLIDAY_OFF_STATUSES and "VACATION" not in statuses and "SICK LEAVE" not in statuses:
-            holidays.add(date)
-
-    return holidays
-
-
-# Module-level cache (computed once on first use)
-_holidays_cache = None
-
-def _get_holidays():
-    global _holidays_cache
-    if _holidays_cache is None:
-        _holidays_cache = _derive_holidays()
-    return _holidays_cache
+from utils.holidays import get_holidays as _get_holidays
 
 
 _BH_START = 8   # business hours start (8 AM)

@@ -497,19 +497,78 @@ def load_machines():
 
 
 @lru_cache(maxsize=1)
-def load_machine_downtime():
-    """Load Machine Downtime incremental files.
+def load_downtime_gaps():
+    """Load Machine Downtime - Gaps incremental files.
 
-    Columns: Site, Date, Machine, TreatmentCount, MachineErrorCount,
-    TotalAppointments, CancelledCount, CancelledMinutes,
-    MachineDownNoteCount, OtherMachinesActiveGlobally, DowntimeConfidence.
+    Pre-computed inter-treatment gaps with confidence scoring,
+    cancellation counts, reroute detection, and corroborating signals.
+    Columns: RowKey, RowType (Gap/FullDay/EndOfDay/StartOfDay), Site, Machine,
+    DowntimeDate, GapStartTime, GapEndTime, GapMinutes,
+    GapClassification, DowntimeConfidence, CancelledInGap,
+    MachineErrorsNearGap, RerouteMachine, PatientOutcome, etc.
     """
     df = _load_incremental(
-        DATA_INCREMENTAL / "MachineDowntime", "Machine Downtime",
-        ["Site", "Date", "Machine"],
+        DATA_INCREMENTAL / "MachineDowntimeGaps",
+        "Machine Downtime - Gaps",
+        "RowKey",
     )
-    df = _parse_dates(df, ["Date"])
+    df = _parse_dates(df, ["DowntimeDate"])
     return df
+
+
+_FIELDS_USECOLS = [
+    "RecordType", "Site", "Machine", "ActivityDate", "StartTime", "EndTime",
+    "DurationSeconds", "PatientId", "PatientName", "CourseId", "FieldId",
+    "FractionNumber", "PlannedMU", "DeliveredMU", "FieldStatus",
+    "TerminationStatus", "FieldCategory",
+]
+
+
+def load_downtime_fields_for_date(target_date):
+    """Load Machine Downtime - Fields, filtered to a single date.
+
+    Scans ALL incremental files (not just the latest) since each file
+    is a date-range snapshot and older dates only exist in older files.
+    Only loads essential columns via usecols for reduced memory.
+
+    Parameters
+    ----------
+    target_date : str or pd.Timestamp
+        Date to filter to.  Accepts MM/DD/YYYY string or Timestamp.
+    """
+    if hasattr(target_date, "strftime"):
+        target_date = target_date.strftime("%m/%d/%Y")
+    folder = DATA_INCREMENTAL / "MachineDowntimeFields"
+    files = sorted(
+        folder.glob("Machine Downtime - Fields_*.csv"),
+        key=lambda f: f.stem.rsplit("_", 1)[-1],
+    )
+    if not files:
+        return pd.DataFrame()
+
+    # Scan files from newest to oldest; stop once we find the target date
+    for fpath in reversed(files):
+        try:
+            df = pd.read_csv(
+                fpath, usecols=_FIELDS_USECOLS,
+                encoding="utf-8-sig", engine="pyarrow",
+            )
+        except Exception:
+            df = pd.read_csv(
+                fpath, usecols=_FIELDS_USECOLS,
+                encoding="utf-8-sig", on_bad_lines="skip", low_memory=False,
+            )
+
+        matched = df[df["ActivityDate"] == target_date]
+        if not matched.empty:
+            return matched.copy()
+
+    return pd.DataFrame(columns=_FIELDS_USECOLS)
+
+
+def load_machine_downtime():
+    """Deprecated — use load_downtime_gaps() instead."""
+    return load_downtime_gaps()
 
 
 @lru_cache(maxsize=1)
@@ -524,6 +583,20 @@ def load_billing():
     df = _clean_department(df)
     df = _parse_dates(df, ["DateOfService", "ActivityDateTime"])
     return df
+
+
+@lru_cache(maxsize=1)
+def load_pluvicto_workflow():
+    """Load Pluvicto-specific workflow chains from Workflow CSV.
+
+    Filters Workflow data to ModalityType == 'Pluvicto' for the Procedures
+    page Pluvicto patient queue grid.
+    """
+    wf = load_workflow()
+    if "ModalityType" not in wf.columns:
+        return pd.DataFrame()
+    mask = wf["ModalityType"].str.strip().str.upper() == "PLUVICTO"
+    return wf[mask].copy()
 
 
 @lru_cache(maxsize=1)
@@ -588,6 +661,7 @@ def load_physician_schedule():
 def clear_cache():
     """Clear all cached data (call after data refresh)."""
     from utils.geocoding import load_geocode_cache
+    from utils.holidays import clear_holidays_cache
 
     for fn in [
         _patient_department_map,
@@ -596,8 +670,10 @@ def clear_cache():
         load_availability, load_clinic_visits,
         load_simulations, load_workflow, load_tasks, load_otvs,
         load_weekly_visits, load_courses, load_plans, load_machines,
+        load_downtime_gaps,
         load_billing, load_cpt_audit, load_procedures, load_patients,
         load_referring, load_diagnosis, load_physician_schedule,
         load_geocode_cache,
     ]:
         fn.cache_clear()
+    clear_holidays_cache()

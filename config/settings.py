@@ -87,10 +87,13 @@ PHYSICIANS = [
 DEPARTMENTS = ["Lacey", "Centralia", "Aberdeen"]
 
 MACHINE_MAP = {
-    "Lacey": ["TrueBeamNorth", "21EX"],
+    "Lacey": ["TrueBeamNorth", "21EX", "6EX"],
     "Centralia": ["21iX_CEN"],
     "Aberdeen": ["21iX_AB"],
 }
+
+# Reverse lookup: machine name → department
+MACHINE_DEPT = {m: dept for dept, machines in MACHINE_MAP.items() for m in machines}
 
 # ---------------------------------------------------------------------------
 # Font stack
@@ -199,12 +202,13 @@ NAV_SECTIONS = [
         "pages": [
             {"label": "Courses", "path": "/courses", "icon": "tabler:package"},
             {"label": "Plans",   "path": "/plans",   "icon": "tabler:ruler-measure"},
+            {"label": "Procedures", "path": "/procedures", "icon": "tabler:needle"},
         ],
     },
     {
         "section": "RESOURCES",
         "pages": [
-            {"label": "Machines",   "path": "/machines",   "icon": "tabler:cpu"},
+            {"label": "Machine Downtime", "path": "/machines", "icon": "tabler:alert-triangle"},
             {"label": "Physicians", "path": "/physicians", "icon": "tabler:stethoscope-off"},
         ],
     },

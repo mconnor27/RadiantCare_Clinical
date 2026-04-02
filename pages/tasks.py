@@ -1192,7 +1192,10 @@ def _populate_physician_chips(_n, slider_val, task_types, diagnosis_cats, status
     # Apply non-physician filters
     start, end = _get_date_range(slider_val)
     if "StartDateTime" in tasks.columns:
-        tasks = tasks[(tasks["StartDateTime"] >= start) & (tasks["StartDateTime"] <= end)]
+        in_range = (tasks["StartDateTime"] >= start) & (tasks["StartDateTime"] <= end)
+        is_open = ~_task_is_completed(tasks)
+        open_eligible = is_open & (tasks["StartDateTime"].isna() | (tasks["StartDateTime"] <= end))
+        tasks = tasks[in_range | open_eligible]
 
     if task_types and "ActivityName" in tasks.columns:
         raw_types = []
@@ -1319,9 +1322,14 @@ def update_tasks(_n, date_preset, physician, task_types,
     _spark_period = "D" if range_months <= 3 else "W"
 
     # --- Base filtering (everything except task type) ---
+    # Include tasks in the selected date range PLUS any open tasks (NaT or
+    # started before end) so the KPI open-count reflects the true backlog.
     df_base = tasks.copy()
     if "StartDateTime" in df_base.columns:
-        df_base = df_base[(df_base["StartDateTime"] >= start) & (df_base["StartDateTime"] <= end)]
+        in_range = (df_base["StartDateTime"] >= start) & (df_base["StartDateTime"] <= end)
+        is_open = ~_task_is_completed(df_base)
+        open_eligible = is_open & (df_base["StartDateTime"].isna() | (df_base["StartDateTime"] <= end))
+        df_base = df_base[in_range | open_eligible]
     if physician and "ResolvedMD" in df_base.columns:
         df_base = df_base[df_base["ResolvedMD"] == physician]
 

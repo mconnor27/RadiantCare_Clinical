@@ -47,6 +47,12 @@ body {
     margin-top: -6px;
 }
 
+/* Allow Plotly annotations to render outside the plot area without clipping */
+.js-plotly-plot .plot-container,
+.js-plotly-plot .svg-container {
+    overflow: visible !important;
+}
+
 /* Plotly modebar hide by default, show on hover */
 .js-plotly-plot .plotly .modebar {
     opacity: 0;
@@ -289,7 +295,10 @@ body {
 #sim-date-slider .mantine-Slider-bar,
 #tasks-date-slider .mantine-Slider-bar,
 #otvs-date-slider .mantine-Slider-bar,
-#courses-date-slider .mantine-Slider-bar {
+#courses-date-slider .mantine-Slider-bar,
+#plans-date-slider .mantine-Slider-bar,
+#machines-date-slider .mantine-Slider-bar,
+#proc-date-slider .mantine-Slider-bar {
     background: linear-gradient(90deg, #9B40A9, #7C2A83);
 }
 #wf-date-slider .mantine-Slider-markLabel,
@@ -298,7 +307,10 @@ body {
 #sim-date-slider .mantine-Slider-markLabel,
 #tasks-date-slider .mantine-Slider-markLabel,
 #otvs-date-slider .mantine-Slider-markLabel,
-#courses-date-slider .mantine-Slider-markLabel {
+#courses-date-slider .mantine-Slider-markLabel,
+#plans-date-slider .mantine-Slider-markLabel,
+#machines-date-slider .mantine-Slider-markLabel,
+#proc-date-slider .mantine-Slider-markLabel {
     font-size: 10px;
     color: #9CA3AF;
     margin-top: 2px;
@@ -309,7 +321,10 @@ body {
 #sim-date-slider,
 #tasks-date-slider,
 #otvs-date-slider,
-#courses-date-slider {
+#courses-date-slider,
+#plans-date-slider,
+#machines-date-slider,
+#proc-date-slider {
     margin-bottom: 20px;  /* room for mark labels */
 }
 #wf-date-range-label,
@@ -318,7 +333,10 @@ body {
 #sim-date-range-label,
 #tasks-date-range-label,
 #otvs-date-range-label,
-#courses-date-range-label {
+#courses-date-range-label,
+#plans-date-range-label,
+#machines-date-range-label,
+#proc-date-range-label {
     letter-spacing: 0.5px;
 }
 /* Slider thumb hover label styling */
@@ -328,7 +346,10 @@ body {
 #sim-date-slider .mantine-Slider-label,
 #tasks-date-slider .mantine-Slider-label,
 #otvs-date-slider .mantine-Slider-label,
-#courses-date-slider .mantine-Slider-label {
+#courses-date-slider .mantine-Slider-label,
+#plans-date-slider .mantine-Slider-label,
+#machines-date-slider .mantine-Slider-label,
+#proc-date-slider .mantine-Slider-label {
     font-size: 11px;
     white-space: nowrap;
     padding: 2px 6px;
@@ -583,4 +604,44 @@ div:has(> .wf-filter-clear-btn[style*="inline-flex"]) > .mantine-Button-root .ma
 .tasks-kpi-active .tasks-kpi-paper-srs    { outline-color: #FF9800; background-color: #FF980008; }
 .tasks-kpi-active .tasks-kpi-paper-contour { outline-color: #2196F3; background-color: #2196F308; }
 .tasks-kpi-active .tasks-kpi-paper-review  { outline-color: #F44336; background-color: #F4433608; }
+
+/* ─── Machine Downtime Page ──────────────────────────────── */
+#machines-level1-container {
+    min-height: 170px;  /* prevent layout shift when content re-renders */
+}
+.machines-year-card-wrap:hover .machines-year-card {
+    filter: brightness(0.96);
+}
+.machines-breadcrumb {
+    font-size: 13px;
+    color: #7C2A83;
+    user-select: none;
+    padding: 2px 0;
+    min-height: 20px;
+}
+.machines-breadcrumb .bc-link {
+    color: #7C2A83;
+    cursor: pointer;
+}
+.machines-breadcrumb .bc-link:hover {
+    text-decoration: underline;
+    color: #5a1e60;
+}
+.machines-timeline-container {
+    min-height: 120px;
+    padding: 8px 0;
+    width: 100%;
+}
+.machines-timeline-container svg {
+    font-family: Inter, system-ui, -apple-system, sans-serif;
+}
+#machines-filter-gap-threshold .mantine-Slider-bar {
+    background: linear-gradient(90deg, #F59E0B, #EF4444);
+}
+.machines-strip-container {
+    width: 100%;
+    min-height: 120px;
+    padding: 4px 0;
+    border-radius: 6px;
+}
 
