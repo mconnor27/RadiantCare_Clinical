@@ -851,8 +851,6 @@ def update_billing(_n, start_date, end_date, departments, physician,
     from data.loader import load_billing, load_patients, load_rvu_lookup
 
     n_kpis = len(CATEGORY_SLUGS)
-    na_card = kpi_card("--", "N/A")
-    empty_kpis = [na_card] * n_kpis
     empty_stores = [None] * 7
 
     # ------------------------------------------------------------------
@@ -861,10 +859,10 @@ def update_billing(_n, start_date, end_date, departments, physician,
     try:
         billing = load_billing()
     except Exception:
-        return *empty_kpis, *empty_stores
+        return [], *empty_stores
 
     if billing.empty or "DateOfService" not in billing.columns:
-        return *empty_kpis, *empty_stores
+        return [], *empty_stores
 
     try:
         rvu = load_rvu_lookup()
@@ -963,17 +961,18 @@ def update_billing(_n, start_date, end_date, departments, physician,
     # KPIs + sparklines
     # ------------------------------------------------------------------
     sparkline_data = {}
-    kpi_cards = []
+    kpi_children = []  # GridCol-wrapped cards (only non-zero categories)
+    active_cats = []
 
     for cat in CATEGORY_NAMES:
         slug = CATEGORY_SLUGS[cat]
         color = CATEGORY_COLORS[cat]
-
         curr_count = len(bf[bf["Category"] == cat])
+        if curr_count == 0:
+            continue
+        active_cats.append(cat)
         prior_count = len(bf_prior[bf_prior["Category"] == cat])
-
         trend, direction = _trend_text(curr_count, prior_count)
-
         card = kpi_card(
             cat,
             f"{curr_count:,}",
@@ -982,13 +981,27 @@ def update_billing(_n, start_date, end_date, departments, physician,
             accent_color=color,
             sparkline_id=f"{PAGE_ID}-spark-{slug}",
         )
-        kpi_cards.append(card)
+        kpi_children.append(card)
 
         # Sparkline raw data
         cat_df = bf[bf["Category"] == cat]
         spark = _count_spark_raw(cat_df, "DateOfService", start, end)
         spark["color"] = color
         sparkline_data[slug] = spark
+
+    # Wrap cards in GridCols with equal width to fit one row
+    n_active = len(kpi_children)
+    if n_active > 0:
+        # 12-col grid: compute span to fit all in one row
+        span_md = max(1, round(12 / n_active, 1))
+        kpi_children = [
+            dmc.GridCol(
+                card,
+                span={"base": 6, "sm": 4, "md": span_md},
+                style={"display": "flex"},
+            )
+            for card in kpi_children
+        ]
 
     # ------------------------------------------------------------------
     # Volume stores (by category + by department)
