@@ -205,36 +205,12 @@ def _build_filter_bar():
 
 
 # ---------------------------------------------------------------------------
-# Tab Panels — each tab gets trend + cumulative charts + detail grid
+# Tab Panels — detail content only (charts live above tabs)
 # ---------------------------------------------------------------------------
 
 def _tab_panel(cat_key):
-    """Build a tab panel for a procedure category."""
-    children = [
-        dmc.Grid(gutter="md", children=[
-            dmc.GridCol(
-                chart_card(
-                    f"{PAGE_ID}-tab-chart-trend-{cat_key}",
-                    "Volume Trend",
-                    show_settings=False,
-                    show_smooth=False,
-                    paper_height="360px",
-                    paper_padding="md",
-                ),
-                span={"base": 12, "md": 6},
-            ),
-            dmc.GridCol(
-                chart_card(
-                    f"{PAGE_ID}-tab-chart-cumul-{cat_key}",
-                    "Cumulative Volume",
-                    show_settings=False,
-                    show_smooth=False,
-                    paper_height="360px",
-                    paper_padding="md",
-                ),
-                span={"base": 12, "md": 6},
-            ),
-        ]),
+    """Build a tab panel with detail grid only (charts are shared above tabs)."""
+    return [
         detail_table(
             f"{PAGE_ID}-tab-grid-{cat_key}",
             title="Detail Records",
@@ -242,12 +218,11 @@ def _tab_panel(cat_key):
             height=400,
         ),
     ]
-    return children
 
 
 def _pluvicto_panel():
-    """Build the Pluvicto tab panel with patient queue grid + charts."""
-    children = [
+    """Build the Pluvicto tab panel with patient queue + detail grid."""
+    return [
         # Patient queue — slim inline table with status toggle
         dmc.Paper(
             children=[
@@ -274,31 +249,6 @@ def _pluvicto_panel():
             shadow="xs",
             withBorder=True,
         ),
-        # Charts
-        dmc.Grid(gutter="md", children=[
-            dmc.GridCol(
-                chart_card(
-                    f"{PAGE_ID}-tab-chart-trend-pluvicto",
-                    "Volume Trend",
-                    show_settings=False,
-                    show_smooth=False,
-                    paper_height="360px",
-                    paper_padding="md",
-                ),
-                span={"base": 12, "md": 6},
-            ),
-            dmc.GridCol(
-                chart_card(
-                    f"{PAGE_ID}-tab-chart-cumul-pluvicto",
-                    "Cumulative Volume",
-                    show_settings=False,
-                    show_smooth=False,
-                    paper_height="360px",
-                    paper_padding="md",
-                ),
-                span={"base": 12, "md": 6},
-            ),
-        ]),
         detail_table(
             f"{PAGE_ID}-tab-grid-pluvicto",
             title="Detail Records",
@@ -306,7 +256,29 @@ def _pluvicto_panel():
             height=400,
         ),
     ]
-    return children
+
+
+def _spacer_panel():
+    """Build the Rectal Spacer tab panel with upcoming patient queue + detail grid."""
+    return [
+        dmc.Paper(
+            children=[
+                dmc.Text("Rectal Spacer Patient Queue", size="sm", fw=500,
+                         c=NEUTRAL["text_secondary"], mb=6),
+                html.Div(id=f"{PAGE_ID}-spacer-queue"),
+            ],
+            p="md",
+            radius="md",
+            shadow="xs",
+            withBorder=True,
+        ),
+        detail_table(
+            f"{PAGE_ID}-tab-grid-spacer",
+            title="Detail Records",
+            export_id=f"{PAGE_ID}-tab-export-spacer",
+            height=400,
+        ),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +308,7 @@ layout = dmc.Stack(
             dmc.GridCol(id=f"{PAGE_ID}-kpi-lead-time", span={"base": 12, "sm": 6, "md": 2.4}),
         ]),
 
-        # Category tabs
+        # Category tabs (tab list only — charts sit between tabs and content)
         dmc.Tabs(
             id=f"{PAGE_ID}-tabs",
             value="pluvicto",
@@ -351,14 +323,118 @@ layout = dmc.Stack(
                     dmc.TabsTab("Volume Study", value="volstudy"),
                     dmc.TabsTab("Gold Seeds", value="seeds"),
                 ]),
-                dmc.TabsPanel(dmc.Stack(gap=16, children=_pluvicto_panel(), mt="md"), value="pluvicto"),
-                dmc.TabsPanel(dmc.Stack(gap=16, children=_tab_panel("spacer"), mt="md"), value="spacer"),
-                dmc.TabsPanel(dmc.Stack(gap=16, children=_tab_panel("lupron"), mt="md"), value="lupron"),
-                dmc.TabsPanel(dmc.Stack(gap=16, children=_tab_panel("ldr"), mt="md"), value="ldr"),
-                dmc.TabsPanel(dmc.Stack(gap=16, children=_tab_panel("volstudy"), mt="md"), value="volstudy"),
-                dmc.TabsPanel(dmc.Stack(gap=16, children=_tab_panel("seeds"), mt="md"), value="seeds"),
             ],
         ),
+
+        # Shared chart row — updates based on selected tab
+        dmc.Grid(gutter="md", children=[
+            dmc.GridCol(
+                chart_card(
+                    f"{PAGE_ID}-chart-trend",
+                    "Volume Trend",
+                    settings_id=f"{PAGE_ID}-trend",
+                    chart_types=[
+                        {"value": "bar", "label": "Bar"},
+                        {"value": "area", "label": "Area"},
+                        {"value": "line", "label": "Line"},
+                    ],
+                    show_smooth=True,
+                    smooth_max=12,
+                    smooth_default=0,
+                    paper_padding="md",
+                    extra_controls_left=[
+                        dmc.SegmentedControl(
+                            id=f"{PAGE_ID}-trend-slice",
+                            data=[
+                                {"value": "", "label": "Total"},
+                                {"value": "physician", "label": "MD"},
+                                {"value": "dept", "label": "Dept"},
+                            ],
+                            value="",
+                            size="xs",
+                        ),
+                    ],
+                    extra_controls=[
+                        dmc.SegmentedControl(
+                            id=f"{PAGE_ID}-trend-agg",
+                            data=[
+                                {"value": "W", "label": "Weekly"},
+                                {"value": "M", "label": "Monthly"},
+                                {"value": "Y", "label": "Yearly"},
+                            ],
+                            value="M",
+                            size="xs",
+                        ),
+                    ],
+                ),
+                span={"base": 12, "md": 6},
+            ),
+            dmc.GridCol(
+                chart_card(
+                    f"{PAGE_ID}-chart-cumul",
+                    "Cumulative Volume",
+                    settings_id=f"{PAGE_ID}-cumul",
+                    chart_types=[
+                        {"value": "line", "label": "Line"},
+                        {"value": "area", "label": "Area"},
+                        {"value": "bar", "label": "Bar"},
+                    ],
+                    show_smooth=True,
+                    smooth_max=50,
+                    smooth_default=0,
+                    paper_padding="md",
+                    extra_controls=[
+                        dmc.SegmentedControl(
+                            id=f"{PAGE_ID}-cumul-mode",
+                            data=[
+                                {"value": "prior", "label": "Prior Periods"},
+                                {"value": "slice", "label": "Slice By"},
+                            ],
+                            value="prior",
+                            size="xs",
+                        ),
+                        dmc.SegmentedControl(
+                            id=f"{PAGE_ID}-cumul-slice",
+                            data=[
+                                {"value": "physician", "label": "MD"},
+                                {"value": "dept", "label": "Dept"},
+                            ],
+                            value="dept",
+                            size="xs",
+                            orientation="horizontal",
+                            style={"display": "none"},
+                        ),
+                    ],
+                ),
+                span={"base": 12, "md": 6},
+            ),
+        ]),
+
+        # Tab content panels (detail grids + Pluvicto queue)
+        dmc.Box(children=[
+            html.Div(id=f"{PAGE_ID}-tab-content-pluvicto",
+                     children=dmc.Stack(gap=16, children=_pluvicto_panel()),
+                     style={"display": "block"}),
+            html.Div(id=f"{PAGE_ID}-tab-content-spacer",
+                     children=dmc.Stack(gap=16, children=_spacer_panel()),
+                     style={"display": "none"}),
+            html.Div(id=f"{PAGE_ID}-tab-content-lupron",
+                     children=dmc.Stack(gap=16, children=_tab_panel("lupron")),
+                     style={"display": "none"}),
+            html.Div(id=f"{PAGE_ID}-tab-content-ldr",
+                     children=dmc.Stack(gap=16, children=_tab_panel("ldr")),
+                     style={"display": "none"}),
+            html.Div(id=f"{PAGE_ID}-tab-content-volstudy",
+                     children=dmc.Stack(gap=16, children=_tab_panel("volstudy")),
+                     style={"display": "none"}),
+            html.Div(id=f"{PAGE_ID}-tab-content-seeds",
+                     children=dmc.Stack(gap=16, children=_tab_panel("seeds")),
+                     style={"display": "none"}),
+        ]),
+
+        # Stores for chart data
+        dcc.Store(id=f"{PAGE_ID}-store-trend"),
+        dcc.Store(id=f"{PAGE_ID}-store-cumul"),
 
         # Interval for periodic refresh
         dcc.Interval(id=f"{PAGE_ID}-interval", interval=300_000, n_intervals=0),
@@ -468,6 +544,36 @@ _register_filter_callbacks()
 
 
 # ---------------------------------------------------------------------------
+# Tab content visibility (show active tab's detail panel, hide others)
+# ---------------------------------------------------------------------------
+_TAB_CONTENT_IDS = [f"{PAGE_ID}-tab-content-{key}" for _, key in _CAT_TAB_PAIRS]
+
+clientside_callback(
+    """function(tab) {
+        var keys = %s;
+        return keys.map(function(k) {
+            return k === tab ? {"display": "block"} : {"display": "none"};
+        });
+    }""" % str([key for _, key in _CAT_TAB_PAIRS]),
+    [Output(cid, "style") for cid in _TAB_CONTENT_IDS],
+    Input(f"{PAGE_ID}-tabs", "value"),
+)
+
+
+# ---------------------------------------------------------------------------
+# Cumulative mode toggle: show/hide slice selector
+# ---------------------------------------------------------------------------
+clientside_callback(
+    """function(mode) {
+        var isSlice = mode === "slice";
+        return isSlice ? {"display": "inline-flex"} : {"display": "none"};
+    }""",
+    Output(f"{PAGE_ID}-cumul-slice", "style"),
+    Input(f"{PAGE_ID}-cumul-mode", "value"),
+)
+
+
+# ---------------------------------------------------------------------------
 # Dynamic physician chip population
 # ---------------------------------------------------------------------------
 @callback(
@@ -537,7 +643,7 @@ def _filter_data(df, start, end, dept_filter, physician_filter, status_filter):
 def _build_upcoming_card(df_all, cat_name, accent_color, n=3):
     """Build an 'upcoming' KPI card showing next N scheduled with date + MD."""
     if df_all.empty or "ProcedureCategory" not in df_all.columns:
-        return kpi_card(f"Upcoming {cat_name}", "0", accent_color=accent_color)
+        return _upcoming_paper(f"Upcoming {cat_name}", "0", [], accent_color)
 
     cat_df = df_all[df_all["ProcedureCategory"] == cat_name]
     if "ActivityStatus" in cat_df.columns:
@@ -547,7 +653,7 @@ def _build_upcoming_card(df_all, cat_name, accent_color, n=3):
 
     count = len(upcoming)
     if upcoming.empty:
-        return kpi_card(f"Upcoming {cat_name}", "0", accent_color=accent_color)
+        return _upcoming_paper(f"Upcoming {cat_name}", "0", [], accent_color)
 
     # Sort by date, take next N
     if "ScheduledDateTime" in upcoming.columns:
@@ -561,25 +667,57 @@ def _build_upcoming_card(df_all, cat_name, accent_color, n=3):
         dt_str = dt.strftime("%m/%d") if pd.notna(dt) else ""
         md_short = md.split(", ")[0] if md and pd.notna(md) else ""
         line = f"{dt_str} — {md_short}" if md_short else dt_str
-        lines.append(line)
+        if line:
+            lines.append(line)
 
-    detail_text = " | ".join(lines) if lines else ""
+    return _upcoming_paper(f"Upcoming {cat_name}", f"{count:,}", lines, accent_color)
 
-    return kpi_card(
-        f"Upcoming {cat_name}",
-        f"{count:,}",
-        value_detail=detail_text if detail_text else None,
-        accent_color=accent_color,
+
+def _upcoming_paper(label, value, date_lines, accent_color):
+    """Build a KPI-style Paper for upcoming procedures with dates on separate lines."""
+    children = [
+        dmc.Text(label, size="xs", c=NEUTRAL["text_secondary"], fw=500),
+        dmc.Text(str(value), size="xl", fw=700, c=NEUTRAL["text_primary"], lh=1.2),
+    ]
+    if date_lines:
+        for line in date_lines:
+            children.append(
+                dmc.Text(line, size="xs", c=NEUTRAL["text_muted"], lh=1.4)
+            )
+    return dmc.Paper(
+        children=[dmc.Stack(children=children, gap=2)],
+        pt="sm", px="md", pb=4, radius="md", shadow="xs", withBorder=True,
+        style={"borderLeft": f"4px solid {accent_color}" if accent_color else "none"},
     )
 
 
-def _build_sparkline_kpi(dff, cat_name, accent_color):
-    """Build a KPI card with sparkline for a category."""
+def _build_sparkline_kpi(dff, cat_name, accent_color, df_all=None, start=None, end=None):
+    """Build a KPI card with sparkline and trend comparison for a category."""
     if "ProcedureCategory" not in dff.columns:
         return kpi_card(cat_name, "0", accent_color=accent_color)
 
     sub = dff[dff["ProcedureCategory"] == cat_name]
     count = len(sub)
+
+    # Trend comparison vs prior period of same length
+    trend_text, trend_dir = None, None
+    if df_all is not None and start is not None and end is not None:
+        period_days = (end - start).days
+        if period_days > 0:
+            prior_end = start - pd.Timedelta(days=1)
+            prior_start = prior_end - pd.Timedelta(days=period_days)
+            prior_df = df_all[
+                (df_all["ScheduledDateTime"] >= prior_start)
+                & (df_all["ScheduledDateTime"] <= prior_end)
+            ]
+            prior_count = len(prior_df[prior_df["ProcedureCategory"] == cat_name])
+            if prior_count > 0:
+                pct = (count - prior_count) / prior_count * 100
+                trend_text = f"{abs(pct):.0f}% vs prior"
+                trend_dir = "up" if pct > 0 else ("down" if pct < 0 else None)
+            elif count > 0:
+                trend_text = "New"
+                trend_dir = "up"
 
     spark_vals, spark_labels = None, None
     if not sub.empty and "ScheduledDateTime" in sub.columns:
@@ -590,14 +728,16 @@ def _build_sparkline_kpi(dff, cat_name, accent_color):
 
     return kpi_card(
         cat_name, f"{count:,}",
+        trend_text=trend_text,
+        trend_direction=trend_dir,
         sparkline_past=spark_vals,
         sparkline_past_labels=spark_labels,
         accent_color=accent_color,
     )
 
 
-def _build_lead_time_kpi(dff, categories):
-    """Build avg lead time KPI for specific categories."""
+def _build_lead_time_kpi(dff, categories, df_all=None, start=None, end=None):
+    """Build avg lead time KPI for specific categories with trend comparison."""
     if dff.empty or "ProcedureCategory" not in dff.columns or "DaysFromCreatedToAppt" not in dff.columns:
         return kpi_card("Avg Lead Time", "N/A", accent_color=PRIMARY)
 
@@ -607,6 +747,27 @@ def _build_lead_time_kpi(dff, categories):
         return kpi_card("Avg Lead Time", "N/A", accent_color=PRIMARY)
 
     avg = round(vals.mean(), 1)
+
+    # Trend comparison vs prior period (lower lead time = better, so invert direction)
+    trend_text, trend_dir = None, None
+    if df_all is not None and start is not None and end is not None:
+        period_days = (end - start).days
+        if period_days > 0:
+            prior_end = start - pd.Timedelta(days=1)
+            prior_start = prior_end - pd.Timedelta(days=period_days)
+            prior_df = df_all[
+                (df_all["ScheduledDateTime"] >= prior_start)
+                & (df_all["ScheduledDateTime"] <= prior_end)
+            ]
+            prior_sub = prior_df[prior_df["ProcedureCategory"].isin(categories)]
+            prior_vals = prior_sub["DaysFromCreatedToAppt"].dropna()
+            if not prior_vals.empty:
+                prior_avg = prior_vals.mean()
+                if prior_avg > 0:
+                    pct = (avg - prior_avg) / prior_avg * 100
+                    trend_text = f"{abs(pct):.0f}% vs prior"
+                    # Lower lead time is better → increase = bad (down/red), decrease = good (up/green)
+                    trend_dir = "down" if pct > 0 else ("up" if pct < 0 else None)
 
     # Sparkline of weekly avg lead time
     t = sub[sub["DaysFromCreatedToAppt"].notna()].copy()
@@ -624,6 +785,8 @@ def _build_lead_time_kpi(dff, categories):
 
     return kpi_card(
         "Avg Lead Time", f"{avg} days",
+        trend_text=trend_text,
+        trend_direction=trend_dir,
         sparkline_past=spark_vals,
         sparkline_past_labels=spark_labels,
         sparkline_hover_fmt="%{x|%b %d}: %{y:.1f} days<extra></extra>",
@@ -632,69 +795,298 @@ def _build_lead_time_kpi(dff, categories):
 
 
 # ---------------------------------------------------------------------------
-# Tab chart builders
+# Chart data builders (census format for clientside rendering)
 # ---------------------------------------------------------------------------
 
-def _build_tab_trend_figure(dff, cat_name):
-    """Build a monthly trend bar chart for a category."""
+_EMPTY_TREND = {
+    "dates": [], "series": [{"name": "", "values": [], "color": "#999"}],
+    "stacked": False, "yTitle": "Count", "height": 380,
+}
+
+
+def _prepare_trend_data(dff, cat_name, agg="M", slice_by=""):
+    """Build census-format data for volume trend chart.
+
+    Returns dict compatible with census.smoothChartWithType clientside function.
+    """
     if dff.empty or "ScheduledDateTime" not in dff.columns:
-        return empty_figure(f"No {cat_name} data")
+        return _EMPTY_TREND
 
     t = dff.copy()
-    t["period"] = t["ScheduledDateTime"].dt.to_period("M").dt.to_timestamp()
-    counts = t.groupby("period").size()
+    period_code = {"W": "W", "Y": "Y"}.get(agg, "M")
+    t["period"] = t["ScheduledDateTime"].dt.to_period(period_code).dt.to_timestamp()
+    data_periods = sorted(t["period"].unique())
 
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
-        x=counts.index, y=counts.values,
-        marker_color=_CATEGORY_COLORS.get(cat_name, PRIMARY),
-        hovertemplate="%{x|%b %Y}: %{y}<extra></extra>",
-    ))
-    apply_default_layout(fig)
-    fig.update_layout(
-        height=300, yaxis_title="Count",
-        margin=dict(l=50, r=16, t=16, b=40), showlegend=False,
-    )
-    return fig
+    if not data_periods:
+        return _EMPTY_TREND
+
+    # Build full period range (including empty periods) so gaps are visible
+    freq_map = {"W": "W-MON", "Y": "YS", "M": "MS"}
+    all_periods = pd.date_range(data_periods[0], data_periods[-1], freq=freq_map.get(agg, "MS"))
+    all_periods = sorted(set(all_periods) | set(data_periods))
+
+    cat_color = _CATEGORY_COLORS.get(cat_name, PRIMARY)
+
+    if not slice_by:
+        counts = t.groupby("period").size()
+        series = [{
+            "name": cat_name,
+            "values": [int(counts.get(p, 0)) for p in all_periods],
+            "color": cat_color,
+        }]
+        stacked = False
+    elif slice_by == "physician" and "AppointmentPhysician" in t.columns:
+        physicians = sorted(t["AppointmentPhysician"].dropna().unique())
+        colors = list(CHART_COLORWAY) * (len(physicians) // len(CHART_COLORWAY) + 1)
+        series = []
+        for i, md in enumerate(physicians):
+            sub = t[t["AppointmentPhysician"] == md]
+            counts = sub.groupby("period").size()
+            display = md.split(", ")[0] if "," in md else md
+            series.append({
+                "name": display,
+                "values": [int(counts.get(p, 0)) for p in all_periods],
+                "color": colors[i],
+            })
+        stacked = True
+    elif slice_by == "dept" and "Department" in t.columns:
+        depts = sorted(t["Department"].dropna().unique())
+        series = []
+        for dept in depts:
+            sub = t[t["Department"] == dept]
+            counts = sub.groupby("period").size()
+            series.append({
+                "name": dept,
+                "values": [int(counts.get(p, 0)) for p in all_periods],
+                "color": DEPARTMENT_COLORS.get(dept, CHART_COLORWAY[len(series) % len(CHART_COLORWAY)]),
+            })
+        stacked = True
+    else:
+        counts = t.groupby("period").size()
+        series = [{
+            "name": cat_name,
+            "values": [int(counts.get(p, 0)) for p in all_periods],
+            "color": cat_color,
+        }]
+        stacked = False
+
+    return {
+        "dates": [d.isoformat() for d in all_periods],
+        "series": series,
+        "stacked": stacked,
+        "yTitle": "Count",
+        "height": 380,
+    }
 
 
-def _build_tab_cumulative_figure(dff, cat_name):
-    """Build a cumulative volume line chart for a category, comparing years."""
-    if dff.empty or "ScheduledDateTime" not in dff.columns:
-        return empty_figure(f"No {cat_name} data")
+def _build_day_index_ticks(start_norm, n_days, max_ticks=12):
+    """Build tick positions/labels for a day-index x-axis."""
+    candidates = []
 
-    t = dff.copy()
-    t["_date"] = t["ScheduledDateTime"].dt.normalize()
-    years = sorted(t["_date"].dt.year.unique(), reverse=True)
+    if n_days <= max_ticks:
+        pos, lbl = [], []
+        for i in range(n_days):
+            d = start_norm + pd.Timedelta(days=i)
+            pos.append(i)
+            lbl.append(d.strftime("%m/%d"))
+        candidates.append((pos, lbl))
 
-    fig = go.Figure()
-    color = _CATEGORY_COLORS.get(cat_name, PRIMARY)
+    # Weekly
+    pos, lbl = [], []
+    for i in range(0, n_days, 7):
+        d = start_norm + pd.Timedelta(days=i)
+        pos.append(i)
+        lbl.append(d.strftime("%m/%d"))
+    candidates.append((pos, lbl))
 
-    for i, yr in enumerate(years[:4]):
-        sub = t[t["_date"].dt.year == yr].copy()
-        sub["_doy"] = sub["_date"].dt.dayofyear
-        daily = sub.groupby("_doy").size().sort_index()
-        cum = daily.cumsum()
-        is_current = (i == 0)
-        fig.add_trace(go.Scatter(
-            x=cum.index, y=cum.values,
-            mode="lines", name=str(yr),
-            line=dict(
-                color=color if is_current else NEUTRAL["text_muted"],
-                width=2.5 if is_current else 1.5,
-                dash="solid" if is_current else "dot",
-            ),
-            hovertemplate=f"Day %{{x}}: %{{y:,.0f}}<extra>{yr}</extra>",
-        ))
+    # Monthly (1st of each month)
+    pos, lbl = [], []
+    for i in range(n_days):
+        d = start_norm + pd.Timedelta(days=i)
+        if d.day == 1 or i == 0:
+            pos.append(i)
+            lbl.append(d.strftime("%b '%y") if d.month == 1 or i == 0 else d.strftime("%b"))
+    candidates.append((pos, lbl))
 
-    apply_default_layout(fig)
-    fig.update_layout(
-        height=300, yaxis_title="Cumulative",
-        xaxis_title="Day of Year",
-        margin=dict(l=50, r=16, t=16, b=40),
-        legend=dict(orientation="h", y=1.08),
-    )
-    return fig
+    # Pick the candidate with the most ticks that still fits
+    best = candidates[-1]
+    for c in candidates:
+        if len(c[0]) <= max_ticks:
+            best = c
+            break
+    return best
+
+
+def _prepare_cumul_data(dff_all, cat_name, start, end, date_preset="12mo",
+                        slice_by="", mode="prior"):
+    """Build cumulative chart data for clientside rendering.
+
+    mode="prior": Current period + prior periods overlay (day-index x-axis).
+    mode="slice": Current period only, split by physician or department.
+    """
+    _EMPTY_CUMUL = {
+        "mode": "prior", "startDate": start.normalize().isoformat(),
+        "dayIndices": [0], "tickPositions": [], "tickLabels": [],
+        "current": {"label": "", "values": [0], "color": PRIMARY, "endpoint": 0},
+        "prior": [], "sliceBreakdown": {"periods": [], "slices": []},
+        "height": 380, "yTitle": f"Cumulative {cat_name}",
+    }
+
+    if dff_all.empty or "ScheduledDateTime" not in dff_all.columns:
+        return _EMPTY_CUMUL
+
+    today = pd.Timestamp.now().normalize()
+    if end.normalize() > today:
+        end = today
+
+    period_days = (end - start).days + 1
+    if period_days < 2:
+        return _EMPTY_CUMUL
+
+    cat_color = _CATEGORY_COLORS.get(cat_name, PRIMARY)
+
+    def _cumulative_for_window(df, w_start, w_end):
+        mask = (df["ScheduledDateTime"] >= w_start) & (df["ScheduledDateTime"] <= w_end)
+        sub = df.loc[mask]
+        if sub.empty:
+            return []
+        daily = sub.groupby(sub["ScheduledDateTime"].dt.normalize()).size()
+        idx = pd.date_range(w_start.normalize(), w_end.normalize(), freq="D")
+        daily = daily.reindex(idx, fill_value=0)
+        return daily.cumsum().tolist()
+
+    start_norm = start.normalize()
+    n_days = period_days
+    day_indices = list(range(n_days))
+    tick_positions, tick_labels = _build_day_index_ticks(start_norm, n_days)
+
+    if mode == "prior":
+        # Current window cumulative
+        current_vals = _cumulative_for_window(dff_all, start, end) or [0] * n_days
+        if len(current_vals) < n_days:
+            current_vals = current_vals + [None] * (n_days - len(current_vals))
+
+        data_min = dff_all["ScheduledDateTime"].min()
+
+        def _period_label(p_start, p_end):
+            same_year = p_start.year == p_end.year
+            same_month = same_year and p_start.month == p_end.month
+            if same_month:
+                return p_start.strftime("%b %Y")
+            if same_year:
+                if date_preset in ("ytd", "last_year") or (p_start.month == 1 and p_end.month == 12):
+                    return str(p_start.year)
+                return f"{p_start.strftime('%b')} – {p_end.strftime('%b %Y')}"
+            fmt = "%b '%y"
+            return f"{p_start.strftime(fmt)} – {p_end.strftime(fmt)}"
+
+        current_label = _period_label(start, end)
+
+        # Build prior windows
+        prior = []
+        if date_preset != "all":
+            for i in range(1, 6):
+                try:
+                    p_start = start - pd.DateOffset(years=i)
+                    p_end = end - pd.DateOffset(years=i)
+                except Exception:
+                    continue
+                if p_end < data_min:
+                    break
+                vals = _cumulative_for_window(dff_all, p_start, p_end)
+                if vals and any(v > 0 for v in vals):
+                    if len(vals) < n_days:
+                        vals = vals + [vals[-1] if vals else 0] * (n_days - len(vals))
+                    elif len(vals) > n_days:
+                        vals = vals[:n_days]
+                    prior.append({"label": _period_label(p_start, p_end), "values": vals, "color": "#D1D5DB"})
+
+        return {
+            "mode": "prior",
+            "startDate": start_norm.isoformat(),
+            "dayIndices": day_indices,
+            "tickPositions": tick_positions,
+            "tickLabels": tick_labels,
+            "current": {
+                "label": current_label,
+                "values": current_vals,
+                "color": cat_color,
+                "endpoint": next((v for v in reversed(current_vals) if v is not None), 0),
+            },
+            "prior": prior,
+            "sliceBreakdown": {"periods": [], "slices": []},
+            "height": 380,
+            "yTitle": f"Cumulative {cat_name}",
+        }
+
+    # --- Slice mode ---
+    mask = (dff_all["ScheduledDateTime"] >= start) & (dff_all["ScheduledDateTime"] <= end)
+    dff_period = dff_all.loc[mask]
+    dates_range = pd.date_range(start.normalize(), end.normalize(), freq="D")
+
+    def _trimmed_cumsum(daily_counts):
+        cumvals = daily_counts.cumsum().tolist()
+        raw = daily_counts.tolist()
+        first_idx = next((i for i, v in enumerate(raw) if v > 0), None)
+        last_idx = next((i for i in range(len(raw) - 1, -1, -1) if raw[i] > 0), None)
+        if first_idx is None:
+            return [None] * len(cumvals)
+        for i in range(first_idx):
+            cumvals[i] = None
+        for i in range(last_idx + 1, len(cumvals)):
+            cumvals[i] = None
+        return cumvals
+
+    series = []
+    if slice_by == "dept" and "Department" in dff_period.columns:
+        for dept in sorted(dff_period["Department"].dropna().unique()):
+            sub = dff_period[dff_period["Department"] == dept]
+            daily = sub.groupby(sub["ScheduledDateTime"].dt.normalize()).size()
+            daily = daily.reindex(dates_range, fill_value=0)
+            series.append({
+                "name": dept,
+                "values": _trimmed_cumsum(daily),
+                "color": DEPARTMENT_COLORS.get(dept, CHART_COLORWAY[len(series) % len(CHART_COLORWAY)]),
+            })
+    elif slice_by == "physician" and "AppointmentPhysician" in dff_period.columns:
+        for md in sorted(dff_period["AppointmentPhysician"].dropna().unique()):
+            sub = dff_period[dff_period["AppointmentPhysician"] == md]
+            daily = sub.groupby(sub["ScheduledDateTime"].dt.normalize()).size()
+            daily = daily.reindex(dates_range, fill_value=0)
+            display = md.split(", ")[0] if "," in md else md
+            series.append({
+                "name": display,
+                "values": _trimmed_cumsum(daily),
+                "color": CHART_COLORWAY[len(series) % len(CHART_COLORWAY)],
+            })
+    else:
+        # Fallback: total cumulative
+        daily = dff_period.groupby(dff_period["ScheduledDateTime"].dt.normalize()).size()
+        daily = daily.reindex(dates_range, fill_value=0)
+        series.append({
+            "name": cat_name,
+            "values": daily.cumsum().tolist(),
+            "color": cat_color,
+        })
+
+    # Build dates as ISO strings for line/area x-axis
+    dates_iso = [d.isoformat() for d in dates_range]
+
+    return {
+        "mode": "slice",
+        "startDate": start_norm.isoformat(),
+        "dayIndices": day_indices,
+        "dates": dates_iso,
+        "tickPositions": tick_positions,
+        "tickLabels": tick_labels,
+        "current": {"label": cat_name, "values": [], "color": cat_color, "endpoint": 0},
+        "prior": [],
+        "sliceBreakdown": {"periods": [], "slices": []},
+        "series": series,
+        "stacked": False,
+        "height": 380,
+        "yTitle": f"Cumulative {cat_name}",
+    }
 
 
 def _build_tab_grid_data(dff):
@@ -891,10 +1283,113 @@ def _build_pluvicto_queue(status_filter="all"):
 
 
 # ---------------------------------------------------------------------------
+# Rectal Spacer Queue
+# ---------------------------------------------------------------------------
+
+def _build_spacer_queue():
+    """Build the Rectal Spacer upcoming patient queue as a slim DMC table.
+
+    Shows only future/open patients — single procedure per patient.
+    """
+    from data.loader import load_procedures
+
+    try:
+        procs = load_procedures()
+    except Exception:
+        return dmc.Text("No data available", size="sm", c=NEUTRAL["text_muted"])
+
+    if procs.empty or "ProcedureCategory" not in procs.columns:
+        return dmc.Text("No data available", size="sm", c=NEUTRAL["text_muted"])
+
+    spacer = procs[procs["ProcedureCategory"] == "Rectal Spacer"].copy()
+    if spacer.empty:
+        return dmc.Text("No Rectal Spacer patients in queue", size="sm", c=NEUTRAL["text_muted"])
+
+    # Only upcoming (open) appointments
+    if "ActivityStatus" in spacer.columns:
+        spacer = spacer[spacer["ActivityStatus"] == "Open"]
+    if spacer.empty:
+        return dmc.Text("No upcoming Rectal Spacer patients", size="sm", c=NEUTRAL["text_muted"])
+
+    # Sort by date
+    if "ScheduledDateTime" in spacer.columns:
+        spacer = spacer.sort_values("ScheduledDateTime")
+
+    today = pd.Timestamp.now().normalize()
+
+    _FUTURE_COLOR = NEUTRAL["text_muted"]
+    _DONE_COLOR = SEMANTIC_COLORS["success"]
+
+    cell_style = {"fontSize": "13px", "padding": "5px 8px", "whiteSpace": "nowrap"}
+
+    headers = ["Patient", "Scheduled Date", "Physician", "Dept", "Lead (days)", "Referring MD"]
+    head = dmc.TableThead(dmc.TableTr([
+        dmc.TableTh(h, style={"fontSize": "11px", "color": NEUTRAL["text_secondary"],
+                              "fontWeight": 600, "textTransform": "uppercase",
+                              "padding": "6px 8px", "whiteSpace": "nowrap"})
+        for h in headers
+    ]))
+
+    body_rows = []
+    for _, row in spacer.iterrows():
+        dt = row.get("ScheduledDateTime")
+        is_past = pd.notna(dt) and dt.normalize() <= today
+        dot_color = _DONE_COLOR if is_past else _FUTURE_COLOR
+        dt_str = dt.strftime("%m/%d/%y") if pd.notna(dt) else ""
+        md = row.get("AppointmentPhysician", "")
+        md_short = md.split(", ")[0] if md and pd.notna(md) else ""
+        dept = row.get("Department", "")
+        dept_str = dept if pd.notna(dept) else ""
+        lead = row.get("DaysFromCreatedToAppt")
+        lead_str = f"{int(lead)}" if pd.notna(lead) else ""
+        ref_md = row.get("ReferringPhysician", "")
+        ref_str = ref_md if pd.notna(ref_md) else ""
+        patient = row.get("PatientFullName", "Unknown")
+
+        # Date cell with colored dot
+        date_cell = dmc.TableTd(
+            dmc.Group(
+                gap=6, align="center", wrap="nowrap",
+                children=[
+                    html.Span(style={
+                        "width": "7px", "height": "7px", "borderRadius": "50%",
+                        "backgroundColor": dot_color, "display": "inline-block",
+                        "flexShrink": 0,
+                    }),
+                    dmc.Text(dt_str, size="sm",
+                             c=NEUTRAL["text_primary"] if is_past else _FUTURE_COLOR),
+                ],
+            ),
+            style=cell_style,
+        )
+
+        body_rows.append(dmc.TableTr([
+            dmc.TableTd(patient, style={**cell_style, "fontWeight": 500}),
+            date_cell,
+            dmc.TableTd(md_short, style=cell_style),
+            dmc.TableTd(dept_str, style=cell_style),
+            dmc.TableTd(lead_str, style={**cell_style, "textAlign": "right"}),
+            dmc.TableTd(ref_str, style=cell_style),
+        ]))
+
+    body = dmc.TableTbody(body_rows)
+
+    return dmc.Table(
+        [head, body],
+        striped=True,
+        highlightOnHover=True,
+        withTableBorder=False,
+        withColumnBorders=False,
+        horizontalSpacing="xs",
+        verticalSpacing=4,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Main Server Callback
 # ---------------------------------------------------------------------------
 
-# Build output list dynamically
+# Build output list: KPIs + stores + per-tab grids + Pluvicto queue
 _OUTPUTS = [
     # 5 KPIs
     Output(f"{PAGE_ID}-kpi-pluvicto", "children"),
@@ -902,15 +1397,17 @@ _OUTPUTS = [
     Output(f"{PAGE_ID}-kpi-spacer", "children"),
     Output(f"{PAGE_ID}-kpi-upcoming-spacer", "children"),
     Output(f"{PAGE_ID}-kpi-lead-time", "children"),
+    # Chart stores (for clientside rendering)
+    Output(f"{PAGE_ID}-store-trend", "data"),
+    Output(f"{PAGE_ID}-store-cumul", "data"),
 ]
-# Per-tab: trend chart, cumulative chart, grid columnDefs, grid rowData
+# Per-tab: grid columnDefs, grid rowData (no more per-tab chart figures)
 for _cat_name, _cat_key in _CAT_TAB_PAIRS:
-    _OUTPUTS.append(Output(f"{PAGE_ID}-tab-chart-trend-{_cat_key}", "figure"))
-    _OUTPUTS.append(Output(f"{PAGE_ID}-tab-chart-cumul-{_cat_key}", "figure"))
     _OUTPUTS.append(Output(f"{PAGE_ID}-tab-grid-{_cat_key}", "columnDefs"))
     _OUTPUTS.append(Output(f"{PAGE_ID}-tab-grid-{_cat_key}", "rowData"))
-# Pluvicto queue
+# Pluvicto queue + Spacer queue
 _OUTPUTS.append(Output(f"{PAGE_ID}-pluvicto-queue", "children"))
+_OUTPUTS.append(Output(f"{PAGE_ID}-spacer-queue", "children"))
 
 
 @callback(
@@ -923,46 +1420,91 @@ _OUTPUTS.append(Output(f"{PAGE_ID}-pluvicto-queue", "children"))
     Input(f"{PAGE_ID}-filter-status", "value"),
     Input(f"{PAGE_ID}-date-slider", "value"),
     Input(f"{PAGE_ID}-pluvicto-queue-filter", "value"),
+    Input(f"{PAGE_ID}-tabs", "value"),
+    Input(f"{PAGE_ID}-trend-agg", "value"),
+    Input(f"{PAGE_ID}-trend-slice", "value"),
+    Input(f"{PAGE_ID}-cumul-mode", "value"),
+    Input(f"{PAGE_ID}-cumul-slice", "value"),
+    Input(f"{PAGE_ID}-filter-date-preset", "value"),
+    running=[
+        (Output(f"{PAGE_ID}-chart-trend-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-chart-cumul-loading", "visible"), True, False),
+    ],
 )
 def _update_procedures(
     _n, range_start, range_end, dept_filter, physician_filter, status_filter, slider_val,
-    queue_filter,
+    queue_filter, active_tab, trend_agg, trend_slice,
+    cumul_mode, cumul_slice, date_preset,
 ):
     from data.loader import load_procedures
 
     try:
         df = load_procedures()
     except Exception:
-        empty = empty_figure("Data not available")
-        return tuple([None] * 5 + [empty, empty, [], []] * len(_CAT_TAB_PAIRS) + [None])
+        n_grids = len(_CAT_TAB_PAIRS) * 2
+        return tuple([None] * 5 + [None, None] + [[], []] * len(_CAT_TAB_PAIRS) + [None, None])
 
     start, end = _get_date_range(slider_val, [range_start, range_end])
     dff = _filter_data(df, start, end, dept_filter, physician_filter, status_filter)
 
-    # --- KPIs ---
-    kpi_pluv = _build_sparkline_kpi(dff, "Pluvicto", _CATEGORY_COLORS["Pluvicto"])
-    kpi_upcoming_pluv = _build_upcoming_card(df, "Pluvicto", _CATEGORY_COLORS["Pluvicto"])
-    kpi_spacer = _build_sparkline_kpi(dff, "Rectal Spacer", _CATEGORY_COLORS["Rectal Spacer"])
-    kpi_upcoming_spacer = _build_upcoming_card(df, "Rectal Spacer", _CATEGORY_COLORS["Rectal Spacer"])
-    kpi_lead = _build_lead_time_kpi(dff, ["Pluvicto", "Rectal Spacer"])
+    # --- KPIs (with prior-period comparison) ---
+    df_base = df[df["ScheduledDateTime"].notna()].copy() if "ScheduledDateTime" in df.columns else df.copy()
+    if dept_filter and "Department" in df_base.columns:
+        df_base = df_base[df_base["Department"].isin(dept_filter)]
+    if physician_filter and "AppointmentPhysician" in df_base.columns:
+        df_base = df_base[df_base["AppointmentPhysician"] == physician_filter]
+    if status_filter and status_filter != "all" and "ActivityStatus" in df_base.columns:
+        if status_filter == "open":
+            df_base = df_base[df_base["ActivityStatus"] == "Open"]
+        elif status_filter == "completed":
+            df_base = df_base[df_base["ActivityStatus"] == "Manually Completed"]
 
-    # --- Tab content ---
+    kpi_pluv = _build_sparkline_kpi(dff, "Pluvicto", _CATEGORY_COLORS["Pluvicto"],
+                                     df_all=df_base, start=start, end=end)
+    kpi_upcoming_pluv = _build_upcoming_card(df, "Pluvicto", _CATEGORY_COLORS["Pluvicto"])
+    kpi_spacer = _build_sparkline_kpi(dff, "Rectal Spacer", _CATEGORY_COLORS["Rectal Spacer"],
+                                       df_all=df_base, start=start, end=end)
+    kpi_upcoming_spacer = _build_upcoming_card(df, "Rectal Spacer", _CATEGORY_COLORS["Rectal Spacer"])
+    kpi_lead = _build_lead_time_kpi(dff, ["Pluvicto", "Rectal Spacer"],
+                                     df_all=df_base, start=start, end=end)
+
+    # --- Chart stores (for active tab's category) ---
+    # Resolve tab key → category name
+    _key_to_cat = {key: cat for cat, key in _CAT_TAB_PAIRS}
+    active_cat = _key_to_cat.get(active_tab, "Pluvicto")
+    cat_df = dff[dff["ProcedureCategory"] == active_cat] if "ProcedureCategory" in dff.columns else pd.DataFrame()
+
+    # Trend store (census format)
+    trend_data = _prepare_trend_data(cat_df, active_cat, agg=trend_agg or "M", slice_by=trend_slice or "")
+
+    # Cumulative store
+    # For cumulative, use dimension-filtered but full-date-range data (df_base) so prior periods work
+    cat_base = df_base[df_base["ProcedureCategory"] == active_cat] if "ProcedureCategory" in df_base.columns else pd.DataFrame()
+    cumul_data = _prepare_cumul_data(
+        cat_base, active_cat, start, end,
+        date_preset=date_preset or "12mo",
+        slice_by=cumul_slice or "dept" if cumul_mode == "slice" else "",
+        mode=cumul_mode or "prior",
+    )
+
+    # --- Tab grids ---
     tab_outputs = []
     for cat_name, cat_key in _CAT_TAB_PAIRS:
-        cat_df = dff[dff["ProcedureCategory"] == cat_name] if "ProcedureCategory" in dff.columns else pd.DataFrame()
-        tab_outputs.append(_build_tab_trend_figure(cat_df, cat_name))
-        tab_outputs.append(_build_tab_cumulative_figure(cat_df, cat_name))
-        cols, rows = _build_tab_grid_data(cat_df)
+        grid_df = dff[dff["ProcedureCategory"] == cat_name] if "ProcedureCategory" in dff.columns else pd.DataFrame()
+        cols, rows = _build_tab_grid_data(grid_df)
         tab_outputs.append(cols)
         tab_outputs.append(rows)
 
     # --- Pluvicto queue ---
     queue_table = _build_pluvicto_queue(queue_filter or "all")
+    spacer_queue = _build_spacer_queue()
 
     return (
         kpi_pluv, kpi_upcoming_pluv, kpi_spacer, kpi_upcoming_spacer, kpi_lead,
+        trend_data, cumul_data,
         *tab_outputs,
         queue_table,
+        spacer_queue,
     )
 
 
@@ -988,5 +1530,36 @@ def _register_export_callbacks():
 
 
 _register_export_callbacks()
+
+
+# ---------------------------------------------------------------------------
+# Clientside callbacks for chart rendering
+# ---------------------------------------------------------------------------
+
+# Trend chart: store + smoothing + chart type → figure
+clientside_callback(
+    ClientsideFunction(namespace="census", function_name="smoothChartWithType"),
+    Output(f"{PAGE_ID}-chart-trend", "figure"),
+    Input(f"{PAGE_ID}-store-trend", "data"),
+    Input(f"{PAGE_ID}-trend-settings-smooth", "value"),
+    Input(f"{PAGE_ID}-trend-settings-type", "value"),
+    State(f"{PAGE_ID}-chart-trend", "figure"),
+)
+
+# Cumulative chart: store + smoothing + chart type → figure
+clientside_callback(
+    ClientsideFunction(namespace="cumulative", function_name="renderCumulative"),
+    Output(f"{PAGE_ID}-chart-cumul", "figure"),
+    Input(f"{PAGE_ID}-store-cumul", "data"),
+    Input(f"{PAGE_ID}-cumul-settings-smooth", "value"),
+    Input(f"{PAGE_ID}-cumul-settings-type", "value"),
+    State(f"{PAGE_ID}-chart-cumul", "figure"),
+)
+
+# Register settings gear toggle + PNG export callbacks
+register_chart_callbacks([
+    (f"{PAGE_ID}-trend", f"{PAGE_ID}-chart-trend"),
+    (f"{PAGE_ID}-cumul", f"{PAGE_ID}-chart-cumul"),
+])
 
 

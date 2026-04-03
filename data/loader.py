@@ -572,6 +572,23 @@ def load_machine_downtime():
 
 
 @lru_cache(maxsize=1)
+def load_machine_statistics():
+    """Load Machine Statistics.csv — lifetime and yearly stats per linac.
+
+    Sections: 1-All Data, 2-All Data by Year, 3-Real Patients, 4-Real Patients by Year.
+    Columns: Section, Machine, DataYear, TotalFields, TotalDose_Gy,
+    TotalFractions, AvgDosePerFx_Gy, TotalSessions, TotalPatients,
+    OperatingLife, MostRecentTreatment.
+    """
+    df = _read_csv_safe(DATA_COMPLETE / "Machine Statistics.csv")
+    df = _parse_dates(df, ["OperatingLife", "MostRecentTreatment"])
+    # DataYear is numeric (year int) for by-year sections, blank for lifetime
+    if "DataYear" in df.columns:
+        df["DataYear"] = pd.to_numeric(df["DataYear"], errors="coerce")
+    return df
+
+
+@lru_cache(maxsize=1)
 def load_billing():
     """Load Billing.csv.
 
@@ -641,6 +658,26 @@ def load_diagnosis():
 
 
 @lru_cache(maxsize=1)
+def load_rvu_lookup():
+    """Load CMS Physician Fee Schedule RVU lookup (all years 2004-2026).
+
+    Returns DataFrame with columns: HCPCS, MOD, wRVU, Fac_PE_RVU,
+    MP_RVU, Fac_Total_RVU, Year.  MOD is '' for Global, 'TC' for
+    Technical, '26' for Professional.
+    """
+    path = Path(__file__).parent / "rvu_files" / "rvu_lookup.csv"
+    df = pd.read_csv(path, low_memory=False)
+    df["HCPCS"] = df["HCPCS"].astype(str).str.strip()
+    df["MOD"] = df["MOD"].fillna("").astype(str).str.strip()
+    df["MOD"] = df["MOD"].replace("nan", "")
+    df["Year"] = pd.to_numeric(df["Year"], errors="coerce").astype("Int64")
+    for col in ("wRVU", "Fac_PE_RVU", "MP_RVU", "Fac_Total_RVU"):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+    return df
+
+
+@lru_cache(maxsize=1)
 def load_physician_schedule():
     """Load Physician Schedule.csv.
 
@@ -671,7 +708,8 @@ def clear_cache():
         load_simulations, load_workflow, load_tasks, load_otvs,
         load_weekly_visits, load_courses, load_plans, load_machines,
         load_downtime_gaps,
-        load_billing, load_cpt_audit, load_procedures, load_patients,
+        load_billing, load_cpt_audit, load_procedures, load_machine_statistics,
+        load_patients,
         load_referring, load_diagnosis, load_physician_schedule,
         load_geocode_cache,
     ]:

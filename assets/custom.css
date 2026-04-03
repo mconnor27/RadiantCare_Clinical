@@ -1,5 +1,11 @@
 /* RadiantCare Clinical Dashboard — minimal overrides (DMC handles most styling) */
 
+/* Disable height transition on machine stats timeline paper */
+#mstats-timeline-paper,
+#mstats-timeline-paper * {
+    transition: none !important;
+}
+
 /* Pointer cursor on heatmap cells (override Plotly's crosshair from drag layer) */
 #ops-chart-heatmap .nsewdrag,
 #ops-chart-heatmap .heatmaplayer,
@@ -298,7 +304,9 @@ body {
 #courses-date-slider .mantine-Slider-bar,
 #plans-date-slider .mantine-Slider-bar,
 #machines-date-slider .mantine-Slider-bar,
-#proc-date-slider .mantine-Slider-bar {
+#proc-date-slider .mantine-Slider-bar,
+#phys-date-slider .mantine-Slider-bar,
+#billing-date-slider .mantine-Slider-bar {
     background: linear-gradient(90deg, #9B40A9, #7C2A83);
 }
 #wf-date-slider .mantine-Slider-markLabel,
@@ -310,7 +318,9 @@ body {
 #courses-date-slider .mantine-Slider-markLabel,
 #plans-date-slider .mantine-Slider-markLabel,
 #machines-date-slider .mantine-Slider-markLabel,
-#proc-date-slider .mantine-Slider-markLabel {
+#proc-date-slider .mantine-Slider-markLabel,
+#phys-date-slider .mantine-Slider-markLabel,
+#billing-date-slider .mantine-Slider-markLabel {
     font-size: 10px;
     color: #9CA3AF;
     margin-top: 2px;
@@ -324,7 +334,9 @@ body {
 #courses-date-slider,
 #plans-date-slider,
 #machines-date-slider,
-#proc-date-slider {
+#proc-date-slider,
+#phys-date-slider,
+#billing-date-slider {
     margin-bottom: 20px;  /* room for mark labels */
 }
 #wf-date-range-label,
@@ -336,7 +348,9 @@ body {
 #courses-date-range-label,
 #plans-date-range-label,
 #machines-date-range-label,
-#proc-date-range-label {
+#proc-date-range-label,
+#phys-date-range-label,
+#billing-date-range-label {
     letter-spacing: 0.5px;
 }
 /* Slider thumb hover label styling */
@@ -349,7 +363,9 @@ body {
 #courses-date-slider .mantine-Slider-label,
 #plans-date-slider .mantine-Slider-label,
 #machines-date-slider .mantine-Slider-label,
-#proc-date-slider .mantine-Slider-label {
+#proc-date-slider .mantine-Slider-label,
+#phys-date-slider .mantine-Slider-label,
+#billing-date-slider .mantine-Slider-label {
     font-size: 11px;
     white-space: nowrap;
     padding: 2px 6px;
@@ -635,13 +651,45 @@ div:has(> .wf-filter-clear-btn[style*="inline-flex"]) > .mantine-Button-root .ma
 .machines-timeline-container svg {
     font-family: Inter, system-ui, -apple-system, sans-serif;
 }
-#machines-filter-gap-threshold .mantine-Slider-bar {
+#machines-filter-gap-threshold .mantine-Slider-bar,
+#machines-filter-min-cancellations .mantine-Slider-bar {
     background: linear-gradient(90deg, #F59E0B, #EF4444);
+}
+/* Let filter button expand to fit summary text */
+#machines-filter-trigger {
+    white-space: nowrap;
+}
+/* Dim the note switch when disabled */
+#machines-filter-require-note[data-disabled] {
+    opacity: 0.4;
 }
 .machines-strip-container {
     width: 100%;
     min-height: 120px;
     padding: 4px 0;
     border-radius: 6px;
+}
+
+/* Physicians after-hours slider — compact marks + wide tooltip */
+#phys-ah-hours .mantine-Slider-markLabel {
+    font-size: 10px;
+    color: #9CA3AF;
+    margin-top: -2px;
+}
+#phys-ah-hours {
+    margin-bottom: 10px;
+}
+#phys-ah-hours .mantine-Slider-label {
+    font-size: 11px;
+    white-space: nowrap;
+    padding: 2px 8px;
+}
+
+/* Procedures KPI row — equal-height cards */
+#proc-kpi-row {
+    align-items: stretch;
+}
+#proc-kpi-row .mantine-Grid-col > .mantine-Paper-root {
+    height: 100%;
 }
 

@@ -284,14 +284,15 @@ window.dash_clientside.census = {
         function buildSummaryEntry(rawDate, rawIdx, rawLookup) {
             var dateStr = "";
             if (rawDate) {
-                var d = new Date(rawDate);
-                if (!isNaN(d)) {
+                // Parse ISO date string manually to avoid UTC timezone shift
+                var parsed = parseIsoDate(rawDate);
+                if (parsed.valid) {
                     if (aggLevel === "Y") {
-                        dateStr = String(d.getFullYear());
+                        dateStr = String(parsed.year);
                     } else if (aggLevel === "M") {
-                        dateStr = monthNames[d.getMonth()] + " " + d.getFullYear();
+                        dateStr = monthNames[parsed.month] + " " + parsed.year;
                     } else {
-                        dateStr = monthNames[d.getMonth()] + " " + d.getDate() + ", " + d.getFullYear();
+                        dateStr = monthNames[parsed.month] + " " + parsed.day + ", " + parsed.year;
                     }
                 } else {
                     dateStr = String(rawDate);

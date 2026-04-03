@@ -22,7 +22,7 @@ server = app.server  # for gunicorn
 
 # Set Mapbox token globally
 if MAPBOX_TOKEN:
-    import plotly
+    import plotly.express
     plotly.express.set_mapbox_access_token(MAPBOX_TOKEN)
 
 # ---------------------------------------------------------------------------

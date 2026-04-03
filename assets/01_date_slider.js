@@ -104,7 +104,36 @@
     // Procedures: same BASE_YEAR as Python utils/date_slider.py
     registerSlider("proceduresDateSlider", 2004, ["proc-date-slider"]);
 
+    // Physicians: same BASE_YEAR as Python utils/date_slider.py
+    registerSlider("physDateSlider", 2004, ["phys-date-slider"]);
+    registerSlider("billingDateSlider", 2004, ["billing-date-slider"]);
+
     // Expose factory for future pages
     window._registerDateSlider = registerSlider;
+
+    // ── Physicians after-hours slider: rewrite thumb labels ───────────
+    // Slider uses 0-48 scale (each tick = 30 min, 0 = midnight)
+    function fmtHalfHour(tick) {
+        var totalMin = tick * 30;
+        var h = Math.floor(totalMin / 60);
+        var m = totalMin % 60;
+        var suffix = h < 12 || h === 24 ? "AM" : "PM";
+        var h12 = h % 12 || 12;
+        return h12 + ":" + String(m).padStart(2, "0") + " " + suffix;
+    }
+    var ahObserver = new MutationObserver(function() {
+        var el = document.getElementById("phys-ah-hours");
+        if (!el) return;
+        el.querySelectorAll(".mantine-Slider-label").forEach(function(lbl) {
+            var n = parseInt(lbl.textContent, 10);
+            if (!isNaN(n) && lbl.textContent === String(n)) {
+                lbl.textContent = fmtHalfHour(n);
+            }
+        });
+    });
+    document.addEventListener("DOMContentLoaded", function() {
+        ahObserver.observe(document.body,
+            {childList: true, subtree: true, characterData: true});
+    });
 
 })();

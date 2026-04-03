@@ -78,53 +78,100 @@ layout = dmc.Stack(
                                         multiple=True,
                                     ),
                                 ]),
-                                # Confidence filter
-                                dmc.Group(gap=8, align="center", children=[
-                                    dmc.Text("Confidence", size="sm", c="#9CA3AF", fw=500),
-                                    dmc.ChipGroup(
-                                        id=f"{PAGE_ID}-filter-confidence",
-                                        children=[
-                                            dmc.Chip("High", value="High", size="sm", variant="filled", color="red"),
-                                            dmc.Chip("Medium", value="Medium", size="sm", variant="filled", color="orange"),
-                                            dmc.Chip("Low", value="Low", size="sm", variant="filled", color="yellow"),
-                                        ],
-                                        value=["Medium", "High"],
-                                        multiple=True,
-                                    ),
-                                ]),
-                                # Downtime type filter
-                                dmc.Group(gap=8, align="center", children=[
-                                    dmc.Text("Type", size="sm", c="#9CA3AF", fw=500),
-                                    dmc.ChipGroup(
-                                        id=f"{PAGE_ID}-filter-type",
-                                        children=[
-                                            dmc.Chip("Equipment", value="Equipment Fault", size="sm", variant="filled", color="red"),
-                                            dmc.Chip("Vendor", value="Vendor Response", size="sm", variant="filled", color="orange"),
-                                            dmc.Chip("Logistics", value="Patient Logistics", size="sm", variant="filled", color="blue"),
-                                            dmc.Chip("Unclassified", value="Unclassified", size="sm", variant="filled", color="gray"),
-                                        ],
-                                        value=["Equipment Fault", "Vendor Response", "Patient Logistics", "Unclassified"],
-                                        multiple=True,
-                                    ),
-                                ]),
-                                # Gap threshold slider
-                                dmc.Group(gap=8, align="center", children=[
-                                    dmc.Text("Min Gap", size="sm", c="#9CA3AF", fw=500),
-                                    dmc.Box(
-                                        dmc.Slider(
-                                            id=f"{PAGE_ID}-filter-gap-threshold",
-                                            min=10, max=60, step=5, value=15,
+                                # Signal filters — custom panel (chip_dropdown.js wires the toggle)
+                                html.Div(
+                                    style={"position": "relative", "display": "inline-block"},
+                                    children=[
+                                        dmc.Button(
+                                            id=f"{PAGE_ID}-filter-trigger",
+                                            variant="light",
                                             size="sm",
-                                            marks=[
-                                                {"value": 10, "label": "10m"},
-                                                {"value": 30, "label": "30m"},
-                                                {"value": 60, "label": "60m"},
+                                            color="violet",
+                                            leftSection=DashIconify(icon="mdi:filter-variant", width=16),
+                                            rightSection=DashIconify(icon="mdi:chevron-down", width=14),
+                                            children=[
+                                                html.Span("Filters", id=f"{PAGE_ID}-filter-trigger-label"),
                                             ],
-                                            styles={"markLabel": {"fontSize": "10px"}},
                                         ),
-                                        style={"width": "140px"},
-                                    ),
-                                ]),
+                                        dmc.Paper(
+                                            id=f"{PAGE_ID}-filter-panel",
+                                            p="sm",
+                                            shadow="md",
+                                            withBorder=True,
+                                            radius="md",
+                                            className="wf-chip-dropdown",
+                                            style={"display": "none", "minWidth": "320px"},
+                                            children=[
+                                                # Event Type
+                                                dmc.Text("Event Type", size="xs", fw=600, c="#6B7280"),
+                                                dmc.ChipGroup(
+                                                    id=f"{PAGE_ID}-filter-rowtype",
+                                                    value=["Gap", "StartOfDay", "EndOfDay", "FullDay"],
+                                                    multiple=True,
+                                                    children=[
+                                                        dmc.Chip("Intraday Gap", value="Gap", size="xs"),
+                                                        dmc.Chip("Start of Day", value="StartOfDay", size="xs"),
+                                                        dmc.Chip("End of Day", value="EndOfDay", size="xs"),
+                                                        dmc.Chip("Full Day Down", value="FullDay", size="xs"),
+                                                    ],
+                                                ),
+                                                dmc.Divider(my="sm"),
+                                                # Min Gap Duration
+                                                dmc.Text("Min Gap Duration", size="xs", fw=600, c="#6B7280"),
+                                                dmc.Box(
+                                                    dmc.Slider(
+                                                        id=f"{PAGE_ID}-filter-gap-threshold",
+                                                        min=0, max=60, step=5, value=15,
+                                                        size="sm",
+                                                        marks=[
+                                                            {"value": 0, "label": "0m"},
+                                                            {"value": 15, "label": "15m"},
+                                                            {"value": 30, "label": "30m"},
+                                                            {"value": 60, "label": "60m"},
+                                                        ],
+                                                        styles={"markLabel": {"fontSize": "10px"}},
+                                                    ),
+                                                    mt=4, mb=20, style={"width": "100%"},
+                                                ),
+                                                dmc.Divider(my="sm"),
+                                                # Min Cancellations
+                                                dmc.Text("Min Cancellations", size="xs", fw=600, c="#6B7280"),
+                                                dmc.Box(
+                                                    dmc.Slider(
+                                                        id=f"{PAGE_ID}-filter-min-cancellations",
+                                                        min=0, max=10, step=1, value=0,
+                                                        size="sm",
+                                                        marks=[
+                                                            {"value": 0, "label": "Any"},
+                                                            {"value": 1, "label": "1+"},
+                                                            {"value": 5, "label": "5+"},
+                                                            {"value": 10, "label": "10+"},
+                                                        ],
+                                                        styles={"markLabel": {"fontSize": "10px"}},
+                                                    ),
+                                                    mt=4, mb=20, style={"width": "100%"},
+                                                ),
+                                                dmc.Divider(my="sm"),
+                                                # Require Signals
+                                                dmc.Text("Require", size="xs", fw=600, c="#6B7280"),
+                                                dmc.Stack(gap=4, mt=4, children=[
+                                                    dmc.Switch(
+                                                        id=f"{PAGE_ID}-filter-require-note",
+                                                        label="Has downtime note",
+                                                        size="xs",
+                                                        checked=False,
+                                                    ),
+                                                    dmc.Switch(
+                                                        id=f"{PAGE_ID}-filter-require-termination",
+                                                        label="Machine termination signal",
+                                                        size="xs",
+                                                        checked=False,
+                                                    ),
+                                                ]),
+                                            ],
+                                        ),
+                                    ],
+                                ),
                             ],
                             gap="lg", wrap="wrap",
                         ),
@@ -418,7 +465,12 @@ def _apply_lifespan_filter(df):
     return df.drop(index=drop_idx)
 
 
-def _filter_gaps(df, machines, confidence, downtime_types, gap_threshold, slider_val):
+_ALL_ROW_TYPES = {"Gap", "StartOfDay", "EndOfDay", "FullDay"}
+
+
+def _filter_gaps(df, machines, row_types, gap_threshold, slider_val,
+                 min_cancellations=0, require_note=False,
+                 require_termination=False):
     """Apply all filters to gaps dataframe."""
     if df.empty:
         return df
@@ -429,19 +481,28 @@ def _filter_gaps(df, machines, confidence, downtime_types, gap_threshold, slider
     if machines:
         df = df[df["Machine"].isin(machines)]
 
-    # Confidence filter — use LocalConfidence (locally computed) if available
-    conf_col = "LocalConfidence" if "LocalConfidence" in df.columns else "DowntimeConfidence"
-    if confidence:
-        df = df[df[conf_col].isin(confidence)]
+    # Row type filter
+    if row_types:
+        df = df[df["RowType"].isin(row_types)]
 
-    # Downtime type filter
-    if downtime_types and "DowntimeType" in df.columns:
-        df = df[df["DowntimeType"].isin(downtime_types)]
+    # Require machine termination prior to gap
+    if require_termination and "LastFieldTerminationStatus" in df.columns:
+        df = df[df["LastFieldTerminationStatus"] == "MACHINE"]
 
-    # Gap threshold (only for Gap rows, not FullDay/EndOfDay)
-    gap_mask = df["RowType"] == "Gap"
-    threshold_mask = ~gap_mask | (df["GapMinutes"] >= gap_threshold)
-    df = df[threshold_mask]
+    # Min cancellations — require at least N cancellations in the gap window
+    if min_cancellations and min_cancellations > 0 and "CancelledInGap" in df.columns:
+        df = df[df["CancelledInGap"].fillna(0) >= min_cancellations]
+
+    # Require downtime note (only meaningful when min_cancellations > 0)
+    if require_note and min_cancellations and min_cancellations > 0:
+        note_col = "EventNote" if "EventNote" in df.columns else "DowntimeNoteMatch"
+        df = df[df[note_col].notna() & (df[note_col] != "")]
+
+    # Gap threshold (only for Gap rows, not FullDay/EndOfDay/StartOfDay)
+    if gap_threshold and gap_threshold > 0:
+        gap_mask = df["RowType"] == "Gap"
+        threshold_mask = ~gap_mask | (df["GapMinutes"] >= gap_threshold)
+        df = df[threshold_mask]
 
     # Date filter from slider
     if slider_val:
@@ -696,7 +757,7 @@ def _get_holidays_set():
 
 _EVENT_KEYS = ("RowType", "Machine", "DowntimeDate", "GapStartTime")
 
-_CONFIDENCE_ORDER = {"High": 3, "Medium": 2, "Low": 1, "Not Downtime": 0}
+_CONFIDENCE_ORDER = {"High": 3, "Medium": 2, "Low": 1}
 
 
 def _dedup_events(df):
@@ -769,22 +830,117 @@ def _compute_downtime_type(df):
     return df
 
 
+def _compute_true_availability(df_events, start, end, machines, holidays):
+    """Compute availability using actual treatment operating windows.
+
+    Denominator: sum of per-machine-day operating windows (first_tx → last_tx)
+    from Treatment-Detail for days with treatments. FullDay outage days are
+    absent from Treatment-Detail — their window is estimated from that machine's
+    median daily window (computed from all-time Treatment-Detail data).
+
+    This replaces the 10-hr/day flat assumption with real schedule data.
+
+    Returns (availability_pct, fullday_estimated_hours) or (None, None) if
+    Treatment-Detail is unavailable.
+    """
+    from data.loader import load_treatment_detail
+
+    if start is None or end is None:
+        return None, None
+
+    td = load_treatment_detail()
+    if td.empty:
+        return None, None
+
+    td = td.copy()
+    td["_date"] = td["ScheduledDateTime"].dt.normalize()
+    # Minutes from midnight for first/last beam
+    td["_start_min"] = td["TreatmentStartTime"].dt.hour * 60 + td["TreatmentStartTime"].dt.minute
+    td["_end_min"] = td["TreatmentEndTime"].dt.hour * 60 + td["TreatmentEndTime"].dt.minute
+
+    active = machines or ACTIVE_MACHINES
+    td_m = td[td["Machine"].isin(active)]
+    if td_m.empty:
+        return None, None
+
+    # Per-machine median daily operating window from all-time data
+    # (used to estimate FullDay outage duration and to fill any gaps)
+    all_daily = td_m.groupby(["Machine", "_date"]).agg(
+        first_min=("_start_min", "min"),
+        last_min=("_end_min", "max"),
+    ).reset_index()
+    all_daily["window_min"] = (all_daily["last_min"] - all_daily["first_min"]).clip(lower=0)
+    machine_median_min = all_daily.groupby("Machine")["window_min"].median().to_dict()
+
+    # Operating windows within the selected date range (workdays only)
+    range_td = td_m[(td_m["_date"] >= start) & (td_m["_date"] <= end)]
+    range_td = range_td[range_td["_date"].dt.dayofweek < 5]
+    if holidays:
+        range_td = range_td[~range_td["_date"].isin(holidays)]
+
+    if not range_td.empty:
+        range_daily = range_td.groupby(["Machine", "_date"]).agg(
+            first_min=("_start_min", "min"),
+            last_min=("_end_min", "max"),
+        ).reset_index()
+        range_daily["window_min"] = (range_daily["last_min"] - range_daily["first_min"]).clip(lower=0)
+        total_op_min = float(range_daily["window_min"].sum())
+    else:
+        total_op_min = 0.0
+
+    # FullDay outage days are missing from Treatment-Detail — add their estimated
+    # operating window to both the denominator (they count as lost operating time)
+    # and to the downtime total.
+    fullday_est_min = 0.0
+    fd_rows = df_events[df_events["RowType"] == "FullDay"] if not df_events.empty else pd.DataFrame()
+    if not fd_rows.empty:
+        fd_evt = _dedup_events(fd_rows).copy()
+        fd_evt["_med"] = fd_evt["Machine"].map(machine_median_min).fillna(600)
+        fullday_est_min = float(fd_evt["_med"].sum())
+        total_op_min += fullday_est_min
+
+    if total_op_min <= 0:
+        return 100.0, 0.0
+
+    gap_rows = df_events[df_events["RowType"].isin(["Gap", "StartOfDay", "EndOfDay"])] if not df_events.empty else pd.DataFrame()
+    gap_min = float(_dedup_events(gap_rows)["GapMinutes"].sum()) if not gap_rows.empty else 0.0
+
+    total_downtime_min = gap_min + fullday_est_min
+    availability = max(0.0, (1.0 - total_downtime_min / total_op_min)) * 100.0
+    return availability, fullday_est_min / 60.0
+
+
 def _compute_local_confidence(df):
     """Add LocalConfidence column based on agreed scoring tiers.
 
-    Tiers (first match wins):
-      Not Downtime — CompletedInGap > 0
-      High         — DowntimeNoteMatch is not null (any category)
-      Medium       — LastFieldTerminationStatus == 'MACHINE'
-      Low          — everything else
+    All rows — if the gap detection algorithm found a gap in field records, it is
+    real downtime. CompletedInGap reflects scheduling decisions made around the
+    outage, not evidence the machine was running. Confidence tiers reflect only
+    how certain we are of the cause:
+
+    Gap / StartOfDay / EndOfDay:
+      High   — DowntimeNoteMatch is not null
+      Medium — LastFieldTerminationStatus == 'MACHINE'
+      Low    — everything else
+
+    FullDay rows — CancelledInGap replaces termination status as the Medium signal
+    (multi-day outages often lack a note after day 1 but will show cancellations):
+      High   — DowntimeNoteMatch is not null
+      Medium — CancelledInGap > 0
+      Low    — everything else
     """
     if df.empty:
         return df
     df = df.copy()
 
     def _score(row):
-        if (row.get("CompletedInGap") or 0) > 0:
-            return "Not Downtime"
+        if row.get("RowType") == "FullDay":
+            if pd.notna(row.get("DowntimeNoteMatch")):
+                return "High"
+            if (row.get("CancelledInGap") or 0) > 0:
+                return "Medium"
+            return "Low"
+        # Gap / StartOfDay / EndOfDay
         if pd.notna(row.get("DowntimeNoteMatch")):
             return "High"
         if row.get("LastFieldTerminationStatus") == "MACHINE":
@@ -792,6 +948,37 @@ def _compute_local_confidence(df):
         return "Low"
 
     df["LocalConfidence"] = df.apply(_score, axis=1)
+    return df
+
+
+def _propagate_event_note(df):
+    """Add EventNote column: the event's best non-null DowntimeNoteMatch broadcast to all rows.
+
+    B-branch rows have null DowntimeNoteMatch in the SQL output. This propagates
+    the A-branch note to all rows sharing the same event keys so that the note
+    filter operates at the event level (not just on the row that happens to have it).
+    Also normalises the string 'None' value (which can appear in the CSV) to NaN.
+    """
+    if df.empty or "DowntimeNoteMatch" not in df.columns:
+        return df
+    df = df.copy()
+    # Normalise string 'None' → NaN
+    df["DowntimeNoteMatch"] = df["DowntimeNoteMatch"].replace("None", np.nan)
+    evt_keys = [c for c in _EVENT_KEYS if c in df.columns]
+    if not evt_keys:
+        df["EventNote"] = np.nan
+        return df
+    # Take first non-null note per event
+    best = (
+        df[df["DowntimeNoteMatch"].notna()]
+        .drop_duplicates(subset=evt_keys)[evt_keys + ["DowntimeNoteMatch"]]
+        .rename(columns={"DowntimeNoteMatch": "EventNote"})
+    )
+    df = df.drop(columns=["EventNote"], errors="ignore")
+    if not best.empty:
+        df = df.merge(best, on=evt_keys, how="left")
+    else:
+        df["EventNote"] = np.nan
     return df
 
 
@@ -941,30 +1128,31 @@ def _build_strip_data(gaps_df, machines, start_date, end_date):
     Output(f"{PAGE_ID}-store-kpi-sparklines", "data"),
     Input(f"{PAGE_ID}-interval", "n_intervals"),
     Input(f"{PAGE_ID}-filter-machine", "value"),
-    Input(f"{PAGE_ID}-filter-confidence", "value"),
-    Input(f"{PAGE_ID}-filter-type", "value"),
+    Input(f"{PAGE_ID}-filter-rowtype", "value"),
     Input(f"{PAGE_ID}-filter-gap-threshold", "value"),
     Input(f"{PAGE_ID}-date-slider", "value"),
     Input(f"{PAGE_ID}-filter-date-preset", "value"),
+    Input(f"{PAGE_ID}-filter-min-cancellations", "value"),
+    Input(f"{PAGE_ID}-filter-require-note", "checked"),
+    Input(f"{PAGE_ID}-filter-require-termination", "checked"),
 )
-def update_main_data(_n, machines, confidence, downtime_types, gap_threshold, slider_val, date_preset):
+def update_main_data(_n, machines, row_types, gap_threshold, slider_val, date_preset,
+                     min_cancel, req_note, req_term):
     from data.loader import load_downtime_gaps
 
-    df_all = _compute_downtime_type(_compute_local_confidence(load_downtime_gaps()))
-    # Apply lifespan + non-date filters to full dataset (for prior period / heatmap)
-    df_all_filtered = _apply_lifespan_filter(df_all.copy())
-    if not df_all_filtered.empty:
-        if machines:
-            df_all_filtered = df_all_filtered[df_all_filtered["Machine"].isin(machines)]
-        if confidence:
-            df_all_filtered = df_all_filtered[df_all_filtered["LocalConfidence"].isin(confidence)]
-        if downtime_types and "DowntimeType" in df_all_filtered.columns:
-            df_all_filtered = df_all_filtered[df_all_filtered["DowntimeType"].isin(downtime_types)]
-        gap_mask = df_all_filtered["RowType"] == "Gap"
-        threshold_mask = ~gap_mask | (df_all_filtered["GapMinutes"] >= gap_threshold)
-        df_all_filtered = df_all_filtered[threshold_mask]
+    # Resolve date range early — needed for availability and prior-period calcs
+    start = idx_to_date(slider_val[0]) if slider_val else None
+    end = idx_to_date(slider_val[1], end_of_month=True) if slider_val else None
 
-    df = _filter_gaps(df_all, machines, confidence, downtime_types, gap_threshold, slider_val)
+    df_all = _compute_downtime_type(_compute_local_confidence(_propagate_event_note(load_downtime_gaps())))
+    # Apply lifespan + non-date filters to full dataset (for prior period / heatmap)
+    df_all_filtered = _filter_gaps(df_all, machines, row_types, gap_threshold, slider_val=None,
+                                   min_cancellations=min_cancel, require_note=req_note,
+                                   require_termination=req_term)
+
+    df = _filter_gaps(df_all, machines, row_types, gap_threshold, slider_val,
+                      min_cancellations=min_cancel, require_note=req_note,
+                      require_termination=req_term)
 
     # --- KPIs ---
     holidays = _get_holidays_set()
@@ -981,26 +1169,22 @@ def update_main_data(_n, machines, confidence, downtime_types, gap_threshold, sl
         fullday_rows = fullday_rows[_is_workday]
 
     gap_hours = gap_rows_evt["GapMinutes"].sum() / 60 if not gap_rows_evt.empty else 0
-    # Count unique (Machine, Date) pairs to avoid duplicate FullDay rows from overlapping incremental files
     fullday_count = fullday_rows.groupby(["Machine", "DowntimeDate"]).ngroups if not fullday_rows.empty else 0
-    total_hours = gap_hours + fullday_count * 10
 
-    # Availability — denominator is total operating days in the date range, not just days
-    # with downtime events (which would make the denominator too small and availability too low).
-    n_machines = df["Machine"].nunique() if not df.empty else len(machines or ACTIVE_MACHINES)
-    if start is not None and end is not None and n_machines > 0:
-        all_bdays = pd.bdate_range(start, end)
-        range_holidays = _get_holidays_set()
-        if range_holidays:
-            all_bdays = all_bdays[~all_bdays.isin(range_holidays)]
+    # Availability — use actual treatment operating windows from Treatment-Detail.
+    # FullDay outage days are estimated from each machine's median daily window.
+    # Falls back to workday count × 10 hrs if Treatment-Detail is unavailable.
+    availability, fullday_est_hours = _compute_true_availability(df, start, end, machines, holidays)
+    if availability is None:
+        n_machines = df["Machine"].nunique() if not df.empty else len(machines or ACTIVE_MACHINES)
+        all_bdays = pd.bdate_range(start, end) if start and end else []
+        if holidays and len(all_bdays):
+            all_bdays = all_bdays[~all_bdays.isin(holidays)]
         op_hours = len(all_bdays) * 10 * n_machines if len(all_bdays) > 0 else 1
-        availability = max(0, (1 - total_hours / op_hours)) * 100
-    elif not df.empty:
-        # Fallback: use data dates (still better than days-with-downtime only)
-        op_hours = df["DowntimeDate"].dt.normalize().nunique() * 10 * n_machines or 1
-        availability = max(0, (1 - total_hours / op_hours)) * 100
-    else:
-        availability = 100.0
+        fullday_est_hours = fullday_count * 10
+        availability = max(0, (1 - (gap_hours + fullday_est_hours) / op_hours)) * 100
+
+    total_hours = gap_hours + (fullday_est_hours if fullday_est_hours is not None else fullday_count * 10)
 
     event_count = len(gap_rows_evt)
     # Include cancellations from full-day outages — those rows carry CancelledInGap too
@@ -1049,10 +1233,6 @@ def update_main_data(_n, machines, confidence, downtime_types, gap_threshold, sl
         pct = (curr - prior) / abs(prior) * 100
         direction = ("down" if pct > 0 else "up") if invert else ("up" if pct > 0 else "down")
         return f"{abs(pct):.0f}%", direction
-
-    # Compute current period dates from slider
-    start = idx_to_date(slider_val[0]) if slider_val else None
-    end = idx_to_date(slider_val[1], end_of_month=True) if slider_val else None
 
     trend_label = None
     prior_gap_rows = pd.DataFrame()
@@ -1484,6 +1664,43 @@ clientside_callback(
 
 
 # ---------------------------------------------------------------------------
+# Filter panel — disable note switch when min cancellations = 0,
+# and update button label with active filter summary
+# ---------------------------------------------------------------------------
+
+clientside_callback(
+    """function(minCancel) {
+        return minCancel < 1;
+    }""",
+    Output(f"{PAGE_ID}-filter-require-note", "disabled"),
+    Input(f"{PAGE_ID}-filter-min-cancellations", "value"),
+)
+
+clientside_callback(
+    """function(rowTypes, gapThreshold, minCancel, reqNote, reqTerm) {
+        var parts = [];
+        // Row types: show only if not all 4 selected
+        if (rowTypes && rowTypes.length < 4) {
+            var labels = {Gap: "Intraday", StartOfDay: "SOD", EndOfDay: "EOD", FullDay: "Full Day"};
+            parts.push(rowTypes.map(function(r) { return labels[r] || r; }).join("+"));
+        }
+        if (gapThreshold && gapThreshold > 0) parts.push("≥" + gapThreshold + "m");
+        if (minCancel && minCancel > 0) parts.push(minCancel + "+ cancels");
+        if (reqNote) parts.push("noted");
+        if (reqTerm) parts.push("terminated");
+        if (parts.length === 0) return "Filters";
+        return "Filters: " + parts.join(" · ");
+    }""",
+    Output(f"{PAGE_ID}-filter-trigger-label", "children"),
+    Input(f"{PAGE_ID}-filter-rowtype", "value"),
+    Input(f"{PAGE_ID}-filter-gap-threshold", "value"),
+    Input(f"{PAGE_ID}-filter-min-cancellations", "value"),
+    Input(f"{PAGE_ID}-filter-require-note", "checked"),
+    Input(f"{PAGE_ID}-filter-require-termination", "checked"),
+)
+
+
+# ---------------------------------------------------------------------------
 # Level 3 timeline data callback
 # ---------------------------------------------------------------------------
 
@@ -1491,12 +1708,14 @@ clientside_callback(
     Output(f"{PAGE_ID}-store-timeline", "data"),
     Input(f"{PAGE_ID}-store-drill", "data"),
     Input(f"{PAGE_ID}-filter-machine", "value"),
-    Input(f"{PAGE_ID}-filter-confidence", "value"),
-    Input(f"{PAGE_ID}-filter-type", "value"),
+    Input(f"{PAGE_ID}-filter-rowtype", "value"),
     Input(f"{PAGE_ID}-filter-gap-threshold", "value"),
+    Input(f"{PAGE_ID}-filter-min-cancellations", "value"),
+    Input(f"{PAGE_ID}-filter-require-note", "checked"),
+    Input(f"{PAGE_ID}-filter-require-termination", "checked"),
     prevent_initial_call=True,
 )
-def load_timeline_data(drill, machines, confidence, downtime_types, gap_threshold):
+def load_timeline_data(drill, machines, row_types, gap_threshold, min_cancel, req_note, req_term):
     if not drill or drill.get("level") != 3:
         return no_update
 
@@ -1508,45 +1727,57 @@ def load_timeline_data(drill, machines, confidence, downtime_types, gap_threshol
 
     # Load gaps for this day (with lifespan filter to exclude pre-commission FullDay rows)
     from data.loader import load_downtime_gaps, load_downtime_fields_for_date
-    gaps = _apply_lifespan_filter(_compute_downtime_type(_compute_local_confidence(load_downtime_gaps())))
+    gaps = _compute_downtime_type(_compute_local_confidence(_propagate_event_note(load_downtime_gaps())))
     day_gaps = gaps[gaps["DowntimeDate"].dt.normalize() == target_date]
-    if machines:
-        day_gaps = day_gaps[day_gaps["Machine"].isin(machines)]
-    if confidence:
-        conf_col = "LocalConfidence" if "LocalConfidence" in day_gaps.columns else "DowntimeConfidence"
-        day_gaps = day_gaps[day_gaps[conf_col].isin(confidence)]
-    if downtime_types and "DowntimeType" in day_gaps.columns:
-        day_gaps = day_gaps[day_gaps["DowntimeType"].isin(downtime_types)]
-    # Include Gap, EndOfDay, StartOfDay, and FullDay rows; apply threshold only to regular gaps
-    regular_gaps = day_gaps[day_gaps["RowType"] == "Gap"]
-    if gap_threshold:
-        regular_gaps = regular_gaps[regular_gaps["GapMinutes"] >= gap_threshold]
-    boundary_gaps = day_gaps[day_gaps["RowType"].isin(["EndOfDay", "StartOfDay"])]
-    fullday_gaps = day_gaps[day_gaps["RowType"] == "FullDay"]
-    gap_rows = pd.concat([regular_gaps, boundary_gaps, fullday_gaps], ignore_index=True)
+    day_gaps = _filter_gaps(
+        day_gaps, machines, row_types, gap_threshold or 0,
+        slider_val=None,
+        min_cancellations=min_cancel, require_note=req_note,
+        require_termination=req_term,
+    )
+    gap_rows = day_gaps
 
     # Load fields for this day
     fields = load_downtime_fields_for_date(target_date)
     if machines and not fields.empty:
         fields = fields[fields["Machine"].isin(machines)]
 
-    # Serialize gaps
+    # Serialize gaps — aggregate rows that share the same gap window
+    # (multiple rows per gap = one per affected patient)
     gap_list = []
-    for _, r in gap_rows.iterrows():
-        is_fullday = r.get("RowType") == "FullDay"
-        gap_list.append({
-            "machine": r["Machine"],
-            "start": str(r["GapStartTime"])[:8] if pd.notna(r.get("GapStartTime")) and not is_fullday else "",
-            "end": str(r["GapEndTime"])[:8] if pd.notna(r.get("GapEndTime")) and not is_fullday else "",
-            "minutes": int(r["GapMinutes"]) if pd.notna(r.get("GapMinutes")) else (600 if is_fullday else 0),
-            "fullDay": is_fullday,
-            "confidence": r.get("LocalConfidence") or r.get("DowntimeConfidence", "Low"),
-            "cancelled": int(r["CancelledInGap"]) if pd.notna(r.get("CancelledInGap")) else 0,
-            "errors": int(r["MachineErrorsNearGap"]) if pd.notna(r.get("MachineErrorsNearGap")) else 0,
-            "prevPatient": str(r.get("PrevPatientName", "")) if pd.notna(r.get("PrevPatientName")) else "",
-            "nextPatient": str(r.get("NextPatientName", "")) if pd.notna(r.get("NextPatientName")) else "",
-            "reroute": str(r["RerouteMachine"]) if pd.notna(r.get("RerouteMachine")) else "",
-        })
+    if not gap_rows.empty:
+        gr = gap_rows.copy()
+        gr["_start_str"] = gr["GapStartTime"].apply(lambda v: str(v)[:8] if pd.notna(v) else "")
+        gr["_end_str"] = gr["GapEndTime"].apply(lambda v: str(v)[:8] if pd.notna(v) else "")
+        group_cols = ["Machine", "RowType", "_start_str", "_end_str"]
+        for (machine, row_type, start_s, end_s), grp in gr.groupby(group_cols, sort=False):
+            is_fullday = row_type == "FullDay"
+            first = grp.iloc[0]
+            # CancelledInGap is a per-gap value duplicated across patient rows — take max, not sum
+            cancelled = int(grp["CancelledInGap"].max()) if grp["CancelledInGap"].notna().any() else 0
+            # Collect unique non-empty patient outcomes
+            outcomes = grp["PatientOutcome"].dropna()
+            outcomes = outcomes[outcomes != ""]
+            outcome_counts = outcomes.value_counts().to_dict() if not outcomes.empty else {}
+            # Collect unique downtime note match reasons
+            notes = grp["DowntimeNoteMatch"].dropna()
+            notes = notes[notes.astype(str).str.strip() != ""]
+            note_reasons = sorted(notes.unique().tolist()) if not notes.empty else []
+            gap_list.append({
+                "machine": machine,
+                "start": "" if is_fullday else start_s,
+                "end": "" if is_fullday else end_s,
+                "minutes": int(first["GapMinutes"]) if pd.notna(first.get("GapMinutes")) else (600 if is_fullday else 0),
+                "fullDay": is_fullday,
+                "confidence": first.get("LocalConfidence") or first.get("DowntimeConfidence", "Low"),
+                "cancelled": cancelled,
+                "errors": int(first["MachineErrorsNearGap"]) if pd.notna(first.get("MachineErrorsNearGap")) else 0,
+                "prevPatient": str(first.get("PrevPatientName", "")) if pd.notna(first.get("PrevPatientName")) else "",
+                "nextPatient": str(first.get("NextPatientName", "")) if pd.notna(first.get("NextPatientName")) else "",
+                "reroute": str(first["RerouteMachine"]) if pd.notna(first.get("RerouteMachine")) else "",
+                "outcomes": outcome_counts,
+                "notes": note_reasons,
+            })
 
     # Serialize fields
     field_list = []
@@ -1581,7 +1812,6 @@ clientside_callback(
     Output(f"{PAGE_ID}-timeline-svg-container", "className"),
     Input(f"{PAGE_ID}-store-drill", "data"),
     Input(f"{PAGE_ID}-filter-machine", "value"),
-    Input(f"{PAGE_ID}-filter-confidence", "value"),
     Input(f"{PAGE_ID}-filter-gap-threshold", "value"),
     prevent_initial_call=True,
 )
@@ -1656,12 +1886,14 @@ for _spark_id in _MACHINES_SPARKLINE_IDS:
     Output(f"{PAGE_ID}-store-strip", "data"),
     Input(f"{PAGE_ID}-strip-range", "value"),
     Input(f"{PAGE_ID}-filter-machine", "value"),
-    Input(f"{PAGE_ID}-filter-confidence", "value"),
-    Input(f"{PAGE_ID}-filter-type", "value"),
+    Input(f"{PAGE_ID}-filter-rowtype", "value"),
     Input(f"{PAGE_ID}-filter-gap-threshold", "value"),
     Input(f"{PAGE_ID}-interval", "n_intervals"),
+    Input(f"{PAGE_ID}-filter-min-cancellations", "value"),
+    Input(f"{PAGE_ID}-filter-require-note", "checked"),
+    Input(f"{PAGE_ID}-filter-require-termination", "checked"),
 )
-def update_strip_data(strip_range, machines, confidence, downtime_types, gap_threshold, _n):
+def update_strip_data(strip_range, machines, row_types, gap_threshold, _n, min_cancel, req_note, req_term):
     from data.loader import load_downtime_gaps, load_treatment_detail
 
     td = load_treatment_detail()
@@ -1679,18 +1911,11 @@ def update_strip_data(strip_range, machines, confidence, downtime_types, gap_thr
     end_date = last_date
 
     # Load and filter gaps for overlay
-    gaps_df = _compute_downtime_type(_compute_local_confidence(load_downtime_gaps()))
+    gaps_df = _compute_downtime_type(_compute_local_confidence(_propagate_event_note(load_downtime_gaps())))
     if not gaps_df.empty:
-        if machines:
-            gaps_df = gaps_df[gaps_df["Machine"].isin(machines)]
-        if confidence:
-            conf_col = "LocalConfidence" if "LocalConfidence" in gaps_df.columns else "DowntimeConfidence"
-            gaps_df = gaps_df[gaps_df[conf_col].isin(confidence)]
-        if downtime_types and "DowntimeType" in gaps_df.columns:
-            gaps_df = gaps_df[gaps_df["DowntimeType"].isin(downtime_types)]
-        gap_mask = gaps_df["RowType"] == "Gap"
-        threshold_mask = ~gap_mask | (gaps_df["GapMinutes"] >= gap_threshold)
-        gaps_df = gaps_df[threshold_mask]
+        gaps_df = _filter_gaps(gaps_df, machines, row_types, gap_threshold, slider_val=None,
+                               min_cancellations=min_cancel, require_note=req_note,
+                               require_termination=req_term)
         gaps_df = gaps_df[(gaps_df["DowntimeDate"] >= start_date) & (gaps_df["DowntimeDate"] <= end_date)]
 
     return _build_strip_data(gaps_df, machines, start_date, end_date)

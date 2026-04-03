@@ -620,7 +620,18 @@ window.dash_clientside.machinesDowntime = {
             if (gx1 !== null && gx2 !== null && gx2 > gx1) {
                 var gColor = confColors[gap.confidence] || confColors.Low;
                 var tipLines = [gap.minutes + ' min ' + gap.confidence.toLowerCase() + ' confidence gap'];
-                if (gap.cancelled > 0) tipLines.push(gap.cancelled + ' cancelled');
+                if (gap.cancelled > 0) {
+                    var cancelText = gap.cancelled + ' cancelled';
+                    if (gap.outcomes && Object.keys(gap.outcomes).length > 0) {
+                        var parts = [];
+                        for (var oc in gap.outcomes) {
+                            parts.push(gap.outcomes[oc] + ' ' + oc.toLowerCase());
+                        }
+                        cancelText += ' (' + parts.join(', ') + ')';
+                    }
+                    tipLines.push(cancelText);
+                }
+                if (gap.notes && gap.notes.length > 0) tipLines.push('Notes: ' + gap.notes.join(', '));
                 if (gap.errors > 0) tipLines.push(gap.errors + ' errors nearby');
                 if (gap.prevPatient) tipLines.push('Prev: ' + gap.prevPatient);
                 if (gap.nextPatient) tipLines.push('Next: ' + gap.nextPatient);
@@ -1215,11 +1226,8 @@ window.dash_clientside.machinesDowntime = {
 
                     var gy1 = tY(gs, rTop);
                     var gy2 = tY(ge, rTop);
-                    var gFill = gc === "H" ? "rgba(220,38,38,0.85)" :
-                                gc === "M" ? "rgba(234,88,12,0.7)" :
-                                             "rgba(245,158,11,0.5)";
-                    var gapLabel = isEod ? ' (End of Day)' : isBod ? ' (Start of Day)' :
-                        ' (' + (gc === "H" ? "High" : gc === "M" ? "Medium" : "Low") + ' confidence)';
+                    var gFill = "rgba(220,38,38,0.75)";
+                    var gapLabel = isEod ? ' (End of Day)' : isBod ? ' (Start of Day)' : '';
                     var gapTip = dateStr + ' | ' + machine +
                         '\n' + Math.floor(gs / 60) + ':' + String(gs % 60).padStart(2, "0") +
                         '\u2013' + Math.floor(ge / 60) + ':' + String(ge % 60).padStart(2, "0") + gapLabel;

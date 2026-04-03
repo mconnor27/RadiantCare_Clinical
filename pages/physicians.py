@@ -2,25 +2,128 @@
 
 import dash
 import dash_mantine_components as dmc
-from dash import callback, clientside_callback, ClientsideFunction, Input, Output, State, dcc
+from dash import callback, clientside_callback, ClientsideFunction, Input, Output, State, dcc, html
+from dash_iconify import DashIconify
 import dash_ag_grid as dag
 import plotly.graph_objects as go
 import pandas as pd
 from datetime import timedelta
 
 from config.settings import (
-    PHYSICIANS, DEPARTMENTS, DEPARTMENT_COLORS, PRIMARY, NEUTRAL,
-    SEMANTIC_COLORS, CHART_COLORWAY,
+    DEPARTMENTS, DEPARTMENT_COLORS, PRIMARY, NEUTRAL,
+    SEMANTIC_COLORS, CHART_COLORWAY, CHART_PAPER_HEIGHT,
 )
-from components.filter_bar import filter_bar, physician_select
 from components.chart_settings import chart_settings_popover
 from components.kpi_card import kpi_card
 from utils.charts import apply_default_layout, empty_figure, color_for_index
+from utils.date_slider import (
+    month_idx, idx_to_date, MAX_IDX, DEFAULT_SLIDER, SLIDER_MARKS,
+    preset_to_slider_val,
+)
 
 dash.register_page(__name__, path="/physicians", name="Physicians", order=10)
 
-# Statuses that indicate a physician is on duty (includes site assignments)
-_ON_DUTY = {"ON", "ON CALL", "WEEKEND CALL", "CENTRALIA", "ABERDEEN"}
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+PAGE_ID = "phys"
+_DEFAULT_DATE_PRESET = "12mo"
+
+# Statuses that indicate a physician is NOT working
+_OFF_STATUSES = {"OFF", "VACATION", "SICK", "SICK LEAVE"}
+
+# Statuses that indicate a physician is on duty (site assignments + on call)
+_ON_DUTY = {"LACEY", "CENTRALIA", "ABERDEEN", "ON CALL", "ON", "WEEKEND CALL"}
+
+
+# ---------------------------------------------------------------------------
+# Filter Bar (two-row: dimension filters + date controls)
+# ---------------------------------------------------------------------------
+def _build_filter_bar():
+    return dmc.Paper(
+        children=[
+            dmc.Group(
+                children=[
+                    dmc.Select(
+                        id=f"{PAGE_ID}-filter-date-preset",
+                        data=[
+                            {"value": "12mo", "label": "Prior 12 mo"},
+                            {"value": "6mo", "label": "Prior 6 mo"},
+                            {"value": "3mo", "label": "Prior 3 mo"},
+                            {"value": "30d", "label": "Prior 30 days"},
+                            {"value": "ytd", "label": "Year to Date"},
+                            {"value": "last_year", "label": "Last Year"},
+                            {"value": "this_month", "label": "This Month"},
+                            {"value": "last_month", "label": "Last Month"},
+                            {"value": "all", "label": "All Time"},
+                            {"value": "custom", "label": "Custom Range"},
+                        ],
+                        value=_DEFAULT_DATE_PRESET,
+                        size="xs",
+                        w=150,
+                        allowDeselect=False,
+                        leftSection=DashIconify(icon="mdi:clock-outline", width=14),
+                        comboboxProps={"zIndex": 500, "offset": 2},
+                        maxDropdownHeight=400,
+                    ),
+                    dmc.Paper(
+                        dcc.DatePickerRange(
+                            id=f"{PAGE_ID}-filter-daterange",
+                            display_format="MMM D, YYYY",
+                            start_date_placeholder_text="Start",
+                            end_date_placeholder_text="End",
+                            clearable=True,
+                            number_of_months_shown=2,
+                            minimum_nights=0,
+                            start_date=idx_to_date(preset_to_slider_val(_DEFAULT_DATE_PRESET, MAX_IDX)[0]).strftime("%Y-%m-%d"),
+                            end_date=idx_to_date(preset_to_slider_val(_DEFAULT_DATE_PRESET, MAX_IDX)[1], end_of_month=True).strftime("%Y-%m-%d"),
+                            className="wf-date-picker-range",
+                        ),
+                        px="xs",
+                        py=4,
+                        radius="sm",
+                        withBorder=True,
+                        className="wf-datepicker-wrapper",
+                    ),
+                    dmc.Box(
+                        children=[
+                            html.Div(id=f"{PAGE_ID}-date-range-label", style={"display": "none"}),
+                            dmc.RangeSlider(
+                                id=f"{PAGE_ID}-date-slider",
+                                min=0,
+                                max=MAX_IDX,
+                                step=1,
+                                value=preset_to_slider_val(_DEFAULT_DATE_PRESET, MAX_IDX),
+                                marks=SLIDER_MARKS,
+                                color="violet",
+                                size="sm",
+                                minRange=0,
+                            ),
+                        ],
+                        style={"flex": "1", "minWidth": "280px"},
+                    ),
+                    dmc.Group(gap=8, align="center", children=[
+                        dmc.Text("Smoothing", size="sm", c="#9CA3AF", fw=500),
+                        dmc.Slider(
+                            id=f"{PAGE_ID}-filter-smoothing",
+                            min=0, max=1, step=0.01, value=0.4,
+                            size="xs", w=120,
+                            showLabelOnHover=False,
+                            updatemode="drag",
+                        ),
+                    ]),
+                ],
+                gap="md",
+                align="center",
+            ),
+        ],
+        p="sm",
+        px="md",
+        radius="md",
+        shadow="xs",
+        withBorder=True,
+    )
+
 
 # ---------------------------------------------------------------------------
 # Layout
@@ -33,36 +136,23 @@ layout = dmc.Stack(
         dmc.Box(
             className="page-sticky-header",
             children=[
-                dmc.Title("Physicians", order=2, className="page-title"),
-                filter_bar("phys", children=[
-                    dmc.SegmentedControl(
-                        id="phys-filter-date-preset",
-                        data=[
-                            {"value": "1mo", "label": "1 mo"},
-                            {"value": "3mo", "label": "3 mo"},
-                            {"value": "6mo", "label": "6 mo"},
-                            {"value": "12mo", "label": "12 mo"},
-                            {"value": "all", "label": "All"},
-                        ],
-                        value="12mo",
-                        size="sm",
-                    ),
-                    physician_select("phys"),
-                ]),
+                dmc.Title("Physicians", order=2, className="page-title",
+                          style={"margin": 0, "textAlign": "center"}),
+                _build_filter_bar(),
             ],
         ),
 
         # KPI row
-        dmc.Grid(id="phys-kpi-row", gutter="md", children=[
-            dmc.GridCol(id="phys-kpi-coverage", span={"base": 6, "md": 2.4}),
-            dmc.GridCol(id="phys-kpi-afterhours", span={"base": 6, "md": 2.4}),
-            dmc.GridCol(id="phys-kpi-crosscoverage", span={"base": 6, "md": 2.4}),
-            dmc.GridCol(id="phys-kpi-vacation", span={"base": 6, "md": 2.4}),
-            dmc.GridCol(id="phys-kpi-weekend", span={"base": 6, "md": 2.4}),
+        dmc.Grid(id=f"{PAGE_ID}-kpi-row", gutter="md", children=[
+            dmc.GridCol(id=f"{PAGE_ID}-kpi-coverage", span={"base": 6, "md": 2.4}),
+            dmc.GridCol(id=f"{PAGE_ID}-kpi-afterhours", span={"base": 6, "md": 2.4}),
+            dmc.GridCol(id=f"{PAGE_ID}-kpi-crosscoverage", span={"base": 6, "md": 2.4}),
+            dmc.GridCol(id=f"{PAGE_ID}-kpi-vacation", span={"base": 6, "md": 2.4}),
+            dmc.GridCol(id=f"{PAGE_ID}-kpi-weekend", span={"base": 6, "md": 2.4}),
         ]),
 
         # Charts row 1: Manpower over time + Site assignments
-        dmc.Grid(gutter="md", children=[
+        dmc.Grid(gutter="md", align="stretch", children=[
             dmc.GridCol(
                 dmc.Paper(
                     children=[
@@ -70,27 +160,51 @@ layout = dmc.Stack(
                             justify="space-between", mb="sm",
                             children=[
                                 dmc.Text("Manpower Over Time", size="sm", fw=500, c=NEUTRAL["text_secondary"]),
-                                chart_settings_popover(
-                                    "phys-manpower",
-                                    chart_types=[
-                                        {"value": "area", "label": "Area"},
-                                        {"value": "line", "label": "Line"},
-                                        {"value": "bar", "label": "Bar"},
+                                dmc.Group(
+                                    gap="sm", align="center",
+                                    children=[
+                                        dmc.SegmentedControl(
+                                            id=f"{PAGE_ID}-manpower-agg",
+                                            data=[
+                                                {"value": "D", "label": "Daily"},
+                                                {"value": "W", "label": "Weekly"},
+                                                {"value": "M", "label": "Monthly"},
+                                                {"value": "Y", "label": "Yearly"},
+                                            ],
+                                            value="D",
+                                            size="xs",
+                                        ),
+                                        chart_settings_popover(
+                                            f"{PAGE_ID}-manpower",
+                                            chart_types=[
+                                                {"value": "area", "label": "Area"},
+                                                {"value": "line", "label": "Line"},
+                                                {"value": "bar", "label": "Bar"},
+                                            ],
+                                            show_smooth=True,
+                                            smooth_max=50,
+                                            smooth_default=15,
+                                        ),
                                     ],
-                                    show_smooth=True,
-                                    smooth_max=50,
-                                    smooth_default=15,
                                 ),
                             ],
                         ),
                         dmc.Box(
                             pos="relative",
+                            style={"flex": "1", "minHeight": 0},
                             children=[
-                                dmc.LoadingOverlay(id="phys-manpower-loading", visible=False, loaderProps={"type": "dots", "color": PRIMARY}),
-                                dcc.Graph(id="phys-chart-manpower", config={"displayModeBar": False}, style={"height": "320px"}),
+                                dmc.Box(
+                                    style={"position": "absolute", "inset": 0},
+                                    children=[
+                                        dmc.LoadingOverlay(id=f"{PAGE_ID}-manpower-loading", visible=False, loaderProps={"type": "dots", "color": PRIMARY}),
+                                        dcc.Graph(id=f"{PAGE_ID}-chart-manpower", config={"displayModeBar": False}, style={"height": "100%"}),
+                                    ],
+                                ),
                             ],
                         ),
                     ],
+                    h=CHART_PAPER_HEIGHT,
+                    style={"display": "flex", "flexDirection": "column", "width": "100%"},
                     p="md", radius="md", shadow="xs", withBorder=True,
                 ),
                 span={"base": 12, "md": 6},
@@ -98,15 +212,37 @@ layout = dmc.Stack(
             dmc.GridCol(
                 dmc.Paper(
                     children=[
-                        dmc.Text("Site Assignments", size="sm", fw=500, c=NEUTRAL["text_secondary"], mb="sm"),
+                        dmc.Group(
+                            justify="space-between", mb="sm",
+                            children=[
+                                dmc.Text("Site Assignments", size="sm", fw=500, c=NEUTRAL["text_secondary"]),
+                                dmc.SegmentedControl(
+                                    id=f"{PAGE_ID}-sites-mode",
+                                    data=[
+                                        {"value": "count", "label": "Count"},
+                                        {"value": "pct", "label": "%"},
+                                    ],
+                                    value="count",
+                                    size="xs",
+                                ),
+                            ],
+                        ),
                         dmc.Box(
                             pos="relative",
+                            style={"flex": "1", "minHeight": 0},
                             children=[
-                                dmc.LoadingOverlay(id="phys-sites-loading", visible=False, loaderProps={"type": "dots", "color": PRIMARY}),
-                                dcc.Graph(id="phys-chart-sites", config={"displayModeBar": False}, style={"height": "320px"}),
+                                dmc.Box(
+                                    style={"position": "absolute", "inset": 0},
+                                    children=[
+                                        dmc.LoadingOverlay(id=f"{PAGE_ID}-sites-loading", visible=False, loaderProps={"type": "dots", "color": PRIMARY}),
+                                        dcc.Graph(id=f"{PAGE_ID}-chart-sites", config={"displayModeBar": False}, style={"height": "100%"}),
+                                    ],
+                                ),
                             ],
                         ),
                     ],
+                    h=CHART_PAPER_HEIGHT,
+                    style={"display": "flex", "flexDirection": "column", "width": "100%"},
                     p="md", radius="md", shadow="xs", withBorder=True,
                 ),
                 span={"base": 12, "md": 6},
@@ -118,15 +254,61 @@ layout = dmc.Stack(
             dmc.GridCol(
                 dmc.Paper(
                     children=[
-                        dmc.Text("After-Hours Task Completions", size="sm", fw=500, c=NEUTRAL["text_secondary"], mb="sm"),
+                        dmc.Group(
+                            gap="sm", align="center", wrap="nowrap", mb="sm",
+                            children=[
+                                dmc.Text("After-Hours Tasks", size="sm", fw=500, c=NEUTRAL["text_secondary"], style={"whiteSpace": "nowrap"}),
+                                dmc.ChipGroup(
+                                    id=f"{PAGE_ID}-ah-toggles",
+                                    children=[
+                                        dmc.Chip("Weekends", value="weekends", size="xs", variant="filled", color="violet"),
+                                        dmc.Chip("Holidays", value="holidays", size="xs", variant="filled", color="violet"),
+                                        dmc.Chip("Off Days", value="off", size="xs", variant="filled", color="violet"),
+                                        dmc.Chip("Vacation", value="vacation", size="xs", variant="filled", color="violet"),
+                                    ],
+                                    value=["weekends"],
+                                    multiple=True,
+                                ),
+                                dmc.Box(
+                                    children=[
+                                        dmc.Text("Business hours", size="10px", c=NEUTRAL["text_muted"],
+                                                 ta="center", mb=0),
+                                        dmc.RangeSlider(
+                                            id=f"{PAGE_ID}-ah-hours",
+                                            min=0, max=48, step=1,
+                                            value=[14, 36],
+                                            marks=[
+                                                {"value": 0, "label": "12a"},
+                                                {"value": 12, "label": "6a"},
+                                                {"value": 24, "label": "12p"},
+                                                {"value": 36, "label": "6p"},
+                                                {"value": 48, "label": "12a"},
+                                            ],
+                                            color="orange",
+                                            size="xs",
+                                            minRange=1,
+                                        ),
+                                    ],
+                                    style={"width": "280px", "flexShrink": 0},
+                                ),
+                            ],
+                        ),
                         dmc.Box(
                             pos="relative",
+                            style={"flex": "1", "minHeight": 0},
                             children=[
-                                dmc.LoadingOverlay(id="phys-afterhours-loading", visible=False, loaderProps={"type": "dots", "color": PRIMARY}),
-                                dcc.Graph(id="phys-chart-afterhours", config={"displayModeBar": False}, style={"height": "320px"}),
+                                dmc.Box(
+                                    style={"position": "absolute", "inset": 0},
+                                    children=[
+                                        dmc.LoadingOverlay(id=f"{PAGE_ID}-afterhours-loading", visible=False, loaderProps={"type": "dots", "color": PRIMARY}),
+                                        dcc.Graph(id=f"{PAGE_ID}-chart-afterhours", config={"displayModeBar": False}, style={"height": "100%"}),
+                                    ],
+                                ),
                             ],
                         ),
                     ],
+                    h=CHART_PAPER_HEIGHT,
+                    style={"display": "flex", "flexDirection": "column", "width": "100%"},
                     p="md", radius="md", shadow="xs", withBorder=True,
                 ),
                 span={"base": 12, "md": 6},
@@ -137,12 +319,20 @@ layout = dmc.Stack(
                         dmc.Text("Cross-Coverage (Tasks for Other MDs' Patients)", size="sm", fw=500, c=NEUTRAL["text_secondary"], mb="sm"),
                         dmc.Box(
                             pos="relative",
+                            style={"flex": "1", "minHeight": 0},
                             children=[
-                                dmc.LoadingOverlay(id="phys-crosscov-loading", visible=False, loaderProps={"type": "dots", "color": PRIMARY}),
-                                dcc.Graph(id="phys-chart-crosscoverage", config={"displayModeBar": False}, style={"height": "320px"}),
+                                dmc.Box(
+                                    style={"position": "absolute", "inset": 0},
+                                    children=[
+                                        dmc.LoadingOverlay(id=f"{PAGE_ID}-crosscov-loading", visible=False, loaderProps={"type": "dots", "color": PRIMARY}),
+                                        dcc.Graph(id=f"{PAGE_ID}-chart-crosscoverage", config={"displayModeBar": False}, style={"height": "100%"}),
+                                    ],
+                                ),
                             ],
                         ),
                     ],
+                    h=CHART_PAPER_HEIGHT,
+                    style={"display": "flex", "flexDirection": "column", "width": "100%"},
                     p="md", radius="md", shadow="xs", withBorder=True,
                 ),
                 span={"base": 12, "md": 6},
@@ -156,8 +346,8 @@ layout = dmc.Stack(
                 dmc.Box(
                     pos="relative",
                     children=[
-                        dmc.LoadingOverlay(id="phys-calendar-loading", visible=False, loaderProps={"type": "dots", "color": PRIMARY}),
-                        dcc.Graph(id="phys-chart-calendar", config={"displayModeBar": False}, style={"height": "400px"}),
+                        dmc.LoadingOverlay(id=f"{PAGE_ID}-calendar-loading", visible=False, loaderProps={"type": "dots", "color": PRIMARY}),
+                        dcc.Graph(id=f"{PAGE_ID}-chart-calendar", config={"displayModeBar": False}),
                     ],
                 ),
             ],
@@ -168,42 +358,148 @@ layout = dmc.Stack(
         dmc.Paper(
             children=[
                 dmc.Text("Schedule Detail", size="sm", fw=500, c=NEUTRAL["text_secondary"], mb="sm"),
-                dmc.Box(id="phys-table-container"),
+                dmc.Box(id=f"{PAGE_ID}-table-container"),
             ],
             p="md", radius="md", shadow="xs", withBorder=True,
         ),
 
-        dcc.Store(id="phys-store-manpower"),
-        dcc.Interval(id="phys-interval", interval=300_000, n_intervals=0),
+        dcc.Store(id=f"{PAGE_ID}-store-manpower"),
+        dcc.Store(id=f"{PAGE_ID}-store-kpi-sparklines"),
+        dcc.Interval(id=f"{PAGE_ID}-interval", interval=300_000, n_intervals=0),
     ],
 )
+
+
+# ---------------------------------------------------------------------------
+# Filter Sync Callbacks
+# ---------------------------------------------------------------------------
+def _register_filter_callbacks():
+
+    # A) Preset -> Slider + DatePicker
+    @callback(
+        Output(f"{PAGE_ID}-date-slider", "value"),
+        Output(f"{PAGE_ID}-filter-daterange", "start_date", allow_duplicate=True),
+        Output(f"{PAGE_ID}-filter-daterange", "end_date", allow_duplicate=True),
+        Input(f"{PAGE_ID}-filter-date-preset", "value"),
+        prevent_initial_call=True,
+    )
+    def _sync_preset(preset):
+        if not preset or preset == "custom":
+            return (dash.no_update,) * 3
+        sv = preset_to_slider_val(preset, MAX_IDX)
+        s = idx_to_date(sv[0]).strftime("%Y-%m-%d")
+        e_ts = idx_to_date(sv[1], end_of_month=True)
+        today = pd.Timestamp.now().normalize()
+        if e_ts > today:
+            e_ts = today
+        e = e_ts.strftime("%Y-%m-%d")
+        return sv, s, e
+
+    # B) Slider -> DatePicker + Label (clientside)
+    clientside_callback(
+        ClientsideFunction(namespace="physDateSlider", function_name="syncSlider"),
+        Output(f"{PAGE_ID}-filter-daterange", "start_date", allow_duplicate=True),
+        Output(f"{PAGE_ID}-filter-daterange", "end_date", allow_duplicate=True),
+        Output(f"{PAGE_ID}-date-range-label", "children"),
+        Input(f"{PAGE_ID}-date-slider", "value"),
+        State(f"{PAGE_ID}-filter-daterange", "start_date"),
+        State(f"{PAGE_ID}-filter-daterange", "end_date"),
+        prevent_initial_call=True,
+    )
+
+    # C) DatePicker -> Slider
+    @callback(
+        Output(f"{PAGE_ID}-date-slider", "value", allow_duplicate=True),
+        Input(f"{PAGE_ID}-filter-daterange", "start_date"),
+        Input(f"{PAGE_ID}-filter-daterange", "end_date"),
+        State(f"{PAGE_ID}-date-slider", "value"),
+        prevent_initial_call=True,
+    )
+    def _sync_picker_to_slider(start, end, current_slider):
+        if not start or not end:
+            return dash.no_update
+        s = pd.Timestamp(start)
+        e = pd.Timestamp(end)
+        new_val = [month_idx(s.year, s.month), month_idx(e.year, e.month)]
+        if new_val == current_slider:
+            return dash.no_update
+        return new_val
+
+    # D) Slider -> auto-clear preset
+    @callback(
+        Output(f"{PAGE_ID}-filter-date-preset", "value", allow_duplicate=True),
+        Input(f"{PAGE_ID}-date-slider", "value"),
+        State(f"{PAGE_ID}-filter-date-preset", "value"),
+        prevent_initial_call=True,
+    )
+    def _maybe_clear_preset(slider_val, current_preset):
+        if not current_preset or current_preset == "custom":
+            return dash.no_update
+        expected = preset_to_slider_val(current_preset, MAX_IDX)
+        if slider_val == expected:
+            return dash.no_update
+        return "custom"
+
+
+_register_filter_callbacks()
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def _get_date_range(slider_val, daterange):
+    """Calculate start/end dates from slider or explicit daterange."""
+    today = pd.Timestamp.now().normalize()
+    if daterange and len(daterange) == 2 and daterange[0] and daterange[1]:
+        return pd.Timestamp(daterange[0]), min(pd.Timestamp(daterange[1]), today)
+    if slider_val and len(slider_val) == 2:
+        start = idx_to_date(slider_val[0])
+        end = min(idx_to_date(slider_val[1], end_of_month=True), today)
+        return start, end
+    return pd.Timestamp("2000-01-01"), today
+
+
+def _trend(curr, prior, invert=False):
+    """Return (pct_text, direction, prior_value) for trend display."""
+    if prior is None or prior == 0:
+        return None, None, None
+    pct = (curr - prior) / prior * 100
+    direction = ("down" if pct > 0 else "up") if invert else ("up" if pct > 0 else "down")
+    return f"{abs(pct):.0f}%", direction, prior
 
 
 # ---------------------------------------------------------------------------
 # Callbacks
 # ---------------------------------------------------------------------------
 @callback(
-    Output("phys-kpi-coverage", "children"),
-    Output("phys-kpi-afterhours", "children"),
-    Output("phys-kpi-crosscoverage", "children"),
-    Output("phys-kpi-vacation", "children"),
-    Output("phys-kpi-weekend", "children"),
-    Output("phys-store-manpower", "data"),
-    Output("phys-chart-sites", "figure"),
-    Output("phys-chart-afterhours", "figure"),
-    Output("phys-chart-crosscoverage", "figure"),
-    Output("phys-chart-calendar", "figure"),
-    Output("phys-table-container", "children"),
-    Output("phys-manpower-loading", "visible"),
-    Output("phys-sites-loading", "visible"),
-    Output("phys-afterhours-loading", "visible"),
-    Output("phys-crosscov-loading", "visible"),
-    Output("phys-calendar-loading", "visible"),
-    Input("phys-interval", "n_intervals"),
-    Input("phys-filter-date-preset", "value"),
-    Input("phys-filter-physician", "value"),
+    Output(f"{PAGE_ID}-kpi-coverage", "children"),
+    Output(f"{PAGE_ID}-kpi-afterhours", "children"),
+    Output(f"{PAGE_ID}-kpi-crosscoverage", "children"),
+    Output(f"{PAGE_ID}-kpi-vacation", "children"),
+    Output(f"{PAGE_ID}-kpi-weekend", "children"),
+    Output(f"{PAGE_ID}-store-manpower", "data"),
+    Output(f"{PAGE_ID}-store-kpi-sparklines", "data"),
+    Output(f"{PAGE_ID}-chart-sites", "figure"),
+    Output(f"{PAGE_ID}-chart-afterhours", "figure"),
+    Output(f"{PAGE_ID}-chart-crosscoverage", "figure"),
+    Output(f"{PAGE_ID}-chart-calendar", "figure"),
+    Output(f"{PAGE_ID}-table-container", "children"),
+    Output(f"{PAGE_ID}-manpower-loading", "visible"),
+    Output(f"{PAGE_ID}-sites-loading", "visible"),
+    Output(f"{PAGE_ID}-afterhours-loading", "visible"),
+    Output(f"{PAGE_ID}-crosscov-loading", "visible"),
+    Output(f"{PAGE_ID}-calendar-loading", "visible"),
+    Input(f"{PAGE_ID}-interval", "n_intervals"),
+    Input(f"{PAGE_ID}-filter-daterange", "start_date"),
+    Input(f"{PAGE_ID}-filter-daterange", "end_date"),
+    Input(f"{PAGE_ID}-date-slider", "value"),
+    Input(f"{PAGE_ID}-manpower-agg", "value"),
+    Input(f"{PAGE_ID}-sites-mode", "value"),
+    Input(f"{PAGE_ID}-ah-toggles", "value"),
+    Input(f"{PAGE_ID}-ah-hours", "value"),
 )
-def update_physicians(_n, date_preset, physicians):
+def update_physicians(_n, range_start, range_end, slider_val, manpower_agg, sites_mode,
+                      ah_toggles, ah_hours):
     from data.loader import load_physician_schedule, load_tasks
 
     # Initialize empty outputs
@@ -214,50 +510,85 @@ def update_physicians(_n, date_preset, physicians):
     try:
         schedule = load_physician_schedule()
     except Exception:
-        return (na_kpi,) * 5 + (None,) + (empty,) * 4 + ([],) + (loading_off,) * 5
+        return (na_kpi,) * 5 + (None, None) + (empty,) * 4 + ([],) + (loading_off,) * 5
 
     try:
         tasks = load_tasks()
     except Exception:
         tasks = pd.DataFrame()
 
-    # Date filtering — schedule extends into the future so clamp to today
+    # Date range from slider/datepicker
+    start, end = _get_date_range(slider_val, [range_start, range_end])
+
+    # Compute prior period of equal length for trend comparison
+    period_days = (end - start).days
+    if period_days > 0:
+        prior_end = start - pd.Timedelta(days=1)
+        prior_start = prior_end - pd.Timedelta(days=period_days)
+    else:
+        prior_end = prior_start = None
+
+    # Ensure Date column is datetime
     if "Date" in schedule.columns:
         schedule["Date"] = pd.to_datetime(schedule["Date"], errors="coerce")
-    today = pd.Timestamp.now().normalize()
 
-    preset_days = {"1mo": 30, "3mo": 90, "6mo": 180, "12mo": 365}
-    if date_preset == "all":
-        start = None
-    else:
-        start = today - timedelta(days=preset_days.get(date_preset, 365))
-
-    # Filter schedule
+    # Filter schedule — current period
     df = schedule.copy()
-    if start is not None and "Date" in df.columns:
-        df = df[df["Date"] >= start]
+    if "Date" in df.columns:
+        df = df[df["Date"].between(start, end)]
 
-    if physicians and "Physician" in df.columns:
-        df = df[df["Physician"].isin(physicians)]
+    # Filter schedule — prior period
+    df_prior = schedule.copy()
+    if prior_start is not None and "Date" in df_prior.columns:
+        df_prior = df_prior[df_prior["Date"].between(prior_start, prior_end)]
+    else:
+        df_prior = pd.DataFrame()
 
-    # Filter tasks
+    # Filter tasks — current period
     task_df = tasks.copy()
-    if start is not None and not task_df.empty and "StartDateTime" in task_df.columns:
-        task_df = task_df[task_df["StartDateTime"] >= start]
-    if physicians and not task_df.empty and "CompletingMD" in task_df.columns:
-        task_df = task_df[task_df["CompletingMD"].isin(physicians)]
+    if not task_df.empty and "CompletedDateTime" in task_df.columns:
+        task_df["CompletedDateTime"] = pd.to_datetime(task_df["CompletedDateTime"], errors="coerce")
+        task_df = task_df[task_df["CompletedDateTime"].between(start, end)]
 
-    # --- KPIs ---
-    kpi_cov = _kpi_coverage(df)
-    kpi_ah = _kpi_afterhours(task_df)
-    kpi_cc = _kpi_crosscoverage(task_df)
-    kpi_vac = _kpi_vacation_days(df)
-    kpi_wknd = _kpi_weekend_calls(df)
+    # Filter tasks — prior period
+    task_prior = tasks.copy()
+    if prior_start is not None and not task_prior.empty and "CompletedDateTime" in task_prior.columns:
+        task_prior["CompletedDateTime"] = pd.to_datetime(task_prior["CompletedDateTime"], errors="coerce")
+        task_prior = task_prior[task_prior["CompletedDateTime"].between(prior_start, prior_end)]
+    else:
+        task_prior = pd.DataFrame()
+
+    # --- KPIs (with trends) ---
+    kpi_cov, spark_cov = _kpi_coverage(df, df_prior)
+    # Slider is 0-48 (each tick = 30 min); convert to fractional hours
+    ah_start_tick = ah_hours[0] if ah_hours else 14
+    ah_end_tick = ah_hours[1] if ah_hours else 36
+    ah_opts = {
+        "toggles": ah_toggles or [],
+        "biz_start": ah_start_tick * 0.5,
+        "biz_end": ah_end_tick * 0.5,
+    }
+    kpi_ah, spark_ah = _kpi_afterhours(task_df, task_prior, df, ah_opts)
+    kpi_cc, spark_cc = _kpi_crosscoverage(task_df, task_prior)
+    kpi_vac, spark_vac = _kpi_vacation_days(df, df_prior)
+    kpi_wknd, spark_wknd = _kpi_weekend_calls(df, df_prior)
+
+    sparkline_data = {}
+    if spark_cov:
+        sparkline_data["coverage"] = spark_cov
+    if spark_ah:
+        sparkline_data["afterhours"] = spark_ah
+    if spark_cc:
+        sparkline_data["crosscov"] = spark_cc
+    if spark_vac:
+        sparkline_data["vacation"] = spark_vac
+    if spark_wknd:
+        sparkline_data["weekend"] = spark_wknd
 
     # --- Charts ---
-    manpower_data = _build_manpower_data(df)
-    fig_sites = _build_site_assignments(df)
-    fig_afterhours = _build_afterhours_chart(task_df, df)
+    manpower_data = _build_manpower_data(df, manpower_agg or "D")
+    fig_sites = _build_site_assignments(df, sites_mode or "count")
+    fig_afterhours = _build_afterhours_chart(task_df, df, ah_opts)
     fig_crosscov = _build_crosscoverage_chart(task_df)
     fig_calendar = _build_calendar_heatmap(df)
 
@@ -266,138 +597,419 @@ def update_physicians(_n, date_preset, physicians):
 
     return (
         kpi_cov, kpi_ah, kpi_cc, kpi_vac, kpi_wknd,
-        manpower_data, fig_sites, fig_afterhours, fig_crosscov, fig_calendar,
+        manpower_data, sparkline_data or None,
+        fig_sites, fig_afterhours, fig_crosscov, fig_calendar,
         table,
         False, False, False, False, False,
     )
 
 
-def _kpi_coverage(df):
+# ---------------------------------------------------------------------------
+# KPI helpers (with trend comparison)
+# ---------------------------------------------------------------------------
+def _kpi_coverage(df, df_prior):
     """Average MDs on duty per day."""
     if df.empty or "Date" not in df.columns or "Status" not in df.columns:
         return kpi_card("Avg Daily Coverage", "N/A")
     on_duty = df[df["Status"].str.upper().isin(_ON_DUTY)]
-    if on_duty.empty:
+    if on_duty.empty or "Physician" not in on_duty.columns:
         return kpi_card("Avg Daily Coverage", "0")
-    avg = on_duty.groupby("Date").size().mean()
-    return kpi_card("Avg Daily Coverage", f"{avg:.1f} MDs", accent_color=PRIMARY)
+    # Count unique physicians per day, excluding holidays
+    from utils.holidays import get_holidays
+    holidays = get_holidays()
+    on_duty_wkday = on_duty[
+        (on_duty["Date"].dt.dayofweek < 5) & (~on_duty["Date"].dt.normalize().isin(holidays))
+    ]
+    if on_duty_wkday.empty:
+        return kpi_card("Avg Daily Coverage", "0")
+    daily_counts = on_duty_wkday.groupby("Date")["Physician"].nunique()
+    avg = daily_counts.mean()
+
+    # Prior period trend
+    trend_text, trend_dir = None, None
+    if not df_prior.empty and "Status" in df_prior.columns and "Physician" in df_prior.columns:
+        prior_on = df_prior[df_prior["Status"].str.upper().isin(_ON_DUTY)]
+        prior_on = prior_on[
+            (prior_on["Date"].dt.dayofweek < 5) & (~prior_on["Date"].dt.normalize().isin(holidays))
+        ]
+        if not prior_on.empty:
+            prior_avg = prior_on.groupby("Date")["Physician"].nunique().mean()
+            trend_text, trend_dir, _ = _trend(avg, prior_avg)
+            if trend_text:
+                trend_text = f"{trend_text} vs prior ({prior_avg:.1f})"
+
+    # Sparkline — weekly avg on-duty count
+    spark_data = None
+    daily = daily_counts
+    if len(daily) > 7:
+        weekly = daily.resample("W").mean().dropna()
+        if len(weekly) > 1:
+            spark_data = {
+                "labels": [d.isoformat() for d in weekly.index],
+                "values": [round(v, 1) for v in weekly.tolist()],
+                "color": PRIMARY,
+            }
+
+    return kpi_card(
+        "Avg Daily Coverage", f"{avg:.1f} MDs",
+        trend_text=trend_text, trend_direction=trend_dir,
+        accent_color=PRIMARY,
+        sparkline_id=f"{PAGE_ID}-spark-coverage",
+    ), spark_data
 
 
-def _kpi_afterhours(task_df):
-    """Tasks completed after hours (5pm-8am or weekends)."""
+def _filter_afterhours(task_df, schedule_df, opts):
+    """Return subset of completed tasks that qualify as 'after-hours'.
+
+    opts keys:
+        toggles: list of "weekends", "holidays", "off", "vacation"
+        biz_start: int hour (e.g. 7)  — business hours start
+        biz_end: int hour (e.g. 18)   — business hours end
+    Tasks outside biz_start..biz_end are always after-hours.
+    Toggle flags add additional criteria.
+    """
     if task_df.empty or "CompletedDateTime" not in task_df.columns:
-        return kpi_card("After-Hours Tasks", "N/A")
+        return pd.DataFrame()
     completed = task_df[task_df["CompletedDateTime"].notna()].copy()
     if completed.empty:
-        return kpi_card("After-Hours Tasks", "0")
-    completed["hour"] = completed["CompletedDateTime"].dt.hour
-    completed["dow"] = completed["CompletedDateTime"].dt.dayofweek
-    after_hours = completed[
-        (completed["hour"] < 8) | (completed["hour"] >= 17) | (completed["dow"] >= 5)
-    ]
-    return kpi_card("After-Hours Tasks", f"{len(after_hours):,}", accent_color=SEMANTIC_COLORS["warning"])
+        return completed
+
+    toggles = opts.get("toggles", [])
+    biz_start = opts.get("biz_start", 7)
+    biz_end = opts.get("biz_end", 18)
+
+    completed["_time_frac"] = completed["CompletedDateTime"].dt.hour + completed["CompletedDateTime"].dt.minute / 60
+    completed["_date"] = completed["CompletedDateTime"].dt.normalize()
+    completed["_dow"] = completed["CompletedDateTime"].dt.dayofweek
+
+    # Build a "non-working day" mask first — any task on these days
+    # counts regardless of time-of-day
+    non_working = pd.Series(False, index=completed.index)
+
+    # Weekend toggle
+    if "weekends" in toggles:
+        non_working = non_working | (completed["_dow"] >= 5)
+
+    # Holiday toggle
+    if "holidays" in toggles:
+        from utils.holidays import get_holidays
+        holidays = get_holidays()
+        non_working = non_working | (completed["_date"].isin(holidays))
+
+    # Schedule-based toggles (off / vacation)
+    # A physician has multiple rows per day (one per dept). They're only truly
+    # off/vacation if their BEST status for the day is off/vacation — i.e., they
+    # don't also have a working status like LACEY/CENTRALIA/ABERDEEN/ON CALL.
+    if ("off" in toggles or "vacation" in toggles) and not schedule_df.empty:
+        sched = schedule_df.copy()
+        sched["_sup"] = sched["Status"].str.upper()
+        # Find each physician's best status per day
+        _SCHED_PRIORITY = {
+            "LACEY": 6, "CENTRALIA": 5, "ABERDEEN": 5,
+            "ON CALL": 4, "ON": 4, "WEEKEND CALL": 3,
+            "VACATION": 2, "SICK": 2, "SICK LEAVE": 2,
+            "OFF": 1,
+        }
+        sched["_pri"] = sched["_sup"].map(_SCHED_PRIORITY).fillna(0)
+        best_status = sched.sort_values("_pri", ascending=False).drop_duplicates(
+            subset=["Date", "Physician"], keep="first"
+        )
+        # Only flag days where the best status is off/vacation
+        target_statuses = set()
+        if "off" in toggles:
+            target_statuses.add("OFF")
+        if "vacation" in toggles:
+            target_statuses |= {"VACATION", "SICK", "SICK LEAVE"}
+        truly_off = best_status[best_status["_sup"].isin(target_statuses)]
+        if not truly_off.empty and "CompletingMD" in completed.columns:
+            off_df = truly_off[["Date", "Physician"]].copy()
+            off_df["Date"] = off_df["Date"].dt.normalize()
+            off_df["_is_off"] = True
+            merged = completed.merge(
+                off_df, left_on=["_date", "CompletingMD"],
+                right_on=["Date", "Physician"], how="left",
+            )
+            non_working = non_working | merged["_is_off"].fillna(False)
+
+    # Time-based: outside business hours, but only on normal working days
+    outside_hours = (completed["_time_frac"] < biz_start) | (completed["_time_frac"] >= biz_end)
+
+    # Final: non-working day (all tasks count) OR working day outside business hours
+    mask = non_working | (~non_working & outside_hours)
+
+    return completed[mask]
 
 
-def _kpi_crosscoverage(task_df):
-    """Tasks where CompletingMD != TreatingPhysician."""
+def _kpi_afterhours(task_df, task_prior, schedule_df, opts):
+    """Tasks completed after hours with configurable criteria."""
+    if task_df.empty or "CompletedDateTime" not in task_df.columns:
+        return kpi_card("After-Hours Tasks", "N/A"), None
+
+    ah = _filter_afterhours(task_df, schedule_df, opts)
+    curr = len(ah)
+
+    trend_text, trend_dir = None, None
+    prior_ah = _filter_afterhours(task_prior, schedule_df, opts)
+    prior = len(prior_ah)
+    if prior > 0:
+        trend_text, trend_dir, _ = _trend(curr, prior, invert=True)
+        if trend_text:
+            trend_text = f"{trend_text} vs prior ({prior:,})"
+
+    spark_data = None
+    if not ah.empty and len(ah) > 7:
+        weekly = ah.set_index("CompletedDateTime").resample("W").size()
+        if len(weekly) > 1:
+            spark_data = {
+                "labels": [d.isoformat() for d in weekly.index],
+                "values": weekly.tolist(),
+                "color": SEMANTIC_COLORS["warning"],
+            }
+
+    return kpi_card(
+        "After-Hours Tasks", f"{curr:,}",
+        trend_text=trend_text, trend_direction=trend_dir,
+        accent_color=SEMANTIC_COLORS["warning"],
+        sparkline_id=f"{PAGE_ID}-spark-afterhours",
+    ), spark_data
+
+
+def _count_crosscoverage(task_df):
+    """Count cross-coverage tasks."""
     if task_df.empty or "CompletingMD" not in task_df.columns or "TreatingPhysician" not in task_df.columns:
-        return kpi_card("Cross-Coverage Tasks", "N/A")
+        return 0, 0
     completed = task_df[task_df["CompletedDateTime"].notna()].copy()
     cross = completed[completed["CompletingMD"] != completed["TreatingPhysician"]]
-    pct = (len(cross) / len(completed) * 100) if len(completed) > 0 else 0
-    return kpi_card("Cross-Coverage", f"{len(cross):,}", value_detail=f"({pct:.1f}%)")
+    return len(cross), len(completed)
 
 
-def _kpi_vacation_days(df):
-    """Total vacation/sick days in period."""
-    if df.empty or "Status" not in df.columns:
-        return kpi_card("Vacation/Sick Days", "N/A")
-    vac = df[df["Status"].str.upper().isin(["VACATION", "SICK", "OFF"])]
-    return kpi_card("Off/Vacation Days", f"{len(vac):,}")
+def _kpi_crosscoverage(task_df, task_prior):
+    """Tasks where CompletingMD != TreatingPhysician."""
+    if task_df.empty or "CompletingMD" not in task_df.columns or "TreatingPhysician" not in task_df.columns:
+        return kpi_card("Cross-Coverage Tasks", "N/A"), None
+    cross_count, total_count = _count_crosscoverage(task_df)
+    pct = (cross_count / total_count * 100) if total_count > 0 else 0
+
+    trend_text, trend_dir = None, None
+    prior_cross, _ = _count_crosscoverage(task_prior)
+    if prior_cross > 0:
+        trend_text, trend_dir, _ = _trend(cross_count, prior_cross, invert=True)
+        if trend_text:
+            trend_text = f"{trend_text} vs prior ({prior_cross:,})"
+
+    spark_data = None
+    if not task_df.empty and "CompletedDateTime" in task_df.columns:
+        completed = task_df[task_df["CompletedDateTime"].notna()].copy()
+        cross = completed[completed["CompletingMD"] != completed["TreatingPhysician"]]
+        if not cross.empty and len(cross) > 7:
+            weekly = cross.set_index("CompletedDateTime").resample("W").size()
+            if len(weekly) > 1:
+                spark_data = {
+                    "labels": [d.isoformat() for d in weekly.index],
+                    "values": weekly.tolist(),
+                    "color": CHART_COLORWAY[1],
+                }
+
+    return kpi_card(
+        "Cross-Coverage", f"{cross_count:,}",
+        value_detail=f"({pct:.1f}%)",
+        trend_text=trend_text, trend_direction=trend_dir,
+        accent_color=CHART_COLORWAY[1],
+        sparkline_id=f"{PAGE_ID}-spark-crosscov",
+    ), spark_data
 
 
-def _kpi_weekend_calls(df):
-    """Weekend call shifts."""
-    if df.empty or "Status" not in df.columns:
-        return kpi_card("Weekend Calls", "N/A")
+def _kpi_vacation_days(df, df_prior):
+    """Total vacation/sick physician-days in period."""
+    if df.empty or "Status" not in df.columns or "Physician" not in df.columns:
+        return kpi_card("Off/Vacation Days", "N/A"), None
+    vac = df[df["Status"].str.upper().isin(_OFF_STATUSES)]
+    vac_days = vac.drop_duplicates(subset=["Date", "Physician"])
+    curr = len(vac_days)
+
+    trend_text, trend_dir = None, None
+    if not df_prior.empty and "Status" in df_prior.columns and "Physician" in df_prior.columns:
+        prior_vac = df_prior[df_prior["Status"].str.upper().isin(_OFF_STATUSES)]
+        prior_count = len(prior_vac.drop_duplicates(subset=["Date", "Physician"]))
+        if prior_count > 0:
+            trend_text, trend_dir, _ = _trend(curr, prior_count)
+            if trend_text:
+                trend_text = f"{trend_text} vs prior ({prior_count:,})"
+
+    spark_data = None
+    if not vac_days.empty and "Date" in vac_days.columns and len(vac_days) > 7:
+        weekly = vac_days.groupby("Date").size().resample("W").sum()
+        if len(weekly) > 1:
+            spark_data = {
+                "labels": [d.isoformat() for d in weekly.index],
+                "values": weekly.tolist(),
+                "color": NEUTRAL["text_muted"],
+            }
+
+    return kpi_card(
+        "Off/Vacation Days", f"{curr:,}",
+        trend_text=trend_text, trend_direction=trend_dir,
+        accent_color=NEUTRAL["text_muted"],
+        sparkline_id=f"{PAGE_ID}-spark-vacation",
+    ), spark_data
+
+
+def _kpi_weekend_calls(df, df_prior):
+    """Weekend call shifts (unique physician-days)."""
+    if df.empty or "Status" not in df.columns or "Physician" not in df.columns:
+        return kpi_card("Weekend Calls", "N/A"), None
     wknd = df[df["Status"].str.upper() == "WEEKEND CALL"]
-    return kpi_card("Weekend Calls", f"{len(wknd):,}")
+    wknd_days = wknd.drop_duplicates(subset=["Date", "Physician"])
+    curr = len(wknd_days)
+
+    trend_text, trend_dir = None, None
+    if not df_prior.empty and "Status" in df_prior.columns and "Physician" in df_prior.columns:
+        prior_wknd = df_prior[df_prior["Status"].str.upper() == "WEEKEND CALL"]
+        prior_count = len(prior_wknd.drop_duplicates(subset=["Date", "Physician"]))
+        if prior_count > 0:
+            trend_text, trend_dir, _ = _trend(curr, prior_count)
+            if trend_text:
+                trend_text = f"{trend_text} vs prior ({prior_count:,})"
+
+    spark_data = None
+    if not wknd_days.empty and "Date" in wknd_days.columns and len(wknd_days) > 4:
+        weekly = wknd_days.groupby("Date").size().resample("W").sum()
+        if len(weekly) > 1:
+            spark_data = {
+                "labels": [d.isoformat() for d in weekly.index],
+                "values": weekly.tolist(),
+                "color": CHART_COLORWAY[3],
+            }
+
+    return kpi_card(
+        "Weekend Calls", f"{curr:,}",
+        trend_text=trend_text, trend_direction=trend_dir,
+        accent_color=CHART_COLORWAY[3],
+        sparkline_id=f"{PAGE_ID}-spark-weekend",
+    ), spark_data
 
 
-def _build_manpower_data(df):
-    """Build raw manpower data dict for clientside smoothing."""
+# ---------------------------------------------------------------------------
+# Chart builders
+# ---------------------------------------------------------------------------
+def _build_manpower_data(df, agg="D"):
+    """Build raw manpower data dict for clientside smoothing.
+
+    agg: "D" = daily (avg MDs/day), "W"/"M"/"Y" = total man-days per period.
+    """
     if df.empty or "Date" not in df.columns or "Status" not in df.columns:
         return None
 
     on_duty = df[df["Status"].str.upper().isin(_ON_DUTY)].copy()
-    if on_duty.empty:
+    if on_duty.empty or "Physician" not in on_duty.columns:
         return None
 
-    daily = on_duty.groupby("Date").size().reset_index(name="count")
-    # Keep only weekdays with >1 MD (excludes weekends / lone on-call days)
-    daily = daily[(daily["Date"].dt.dayofweek < 5) & (daily["count"] > 1)]
+    # Count unique physicians per day (each MD has multiple rows per day)
+    daily = on_duty.groupby("Date")["Physician"].nunique().reset_index(name="count")
+    # Keep only non-holiday weekdays
+    from utils.holidays import get_holidays
+    holidays = get_holidays()
+    daily = daily[
+        (daily["Date"].dt.dayofweek < 5) & (~daily["Date"].dt.normalize().isin(holidays))
+    ]
     if daily.empty:
         return None
 
+    daily = daily.set_index("Date").sort_index()
+
+    if agg == "D":
+        dates = [d.isoformat() for d in daily.index]
+        values = daily["count"].tolist()
+        y_title = "MDs On Duty"
+    else:
+        # W/M/Y: sum man-days per period
+        grouped = daily["count"].resample(agg).sum()
+        grouped = grouped[grouped > 0]
+        if grouped.empty:
+            return None
+        dates = [d.isoformat() for d in grouped.index]
+        values = grouped.tolist()
+        y_title = "Man-Days"
+
     return {
-        "dates": [d.isoformat() for d in daily["Date"]],
+        "dates": dates,
         "series": [{
-            "name": "MDs On Duty",
-            "values": daily["count"].tolist(),
+            "name": y_title,
+            "values": values,
             "color": PRIMARY,
         }],
-        "height": 320,
-        "yTitle": "MDs On Duty",
+        "yTitle": y_title,
+        "hideLegend": True,
     }
 
 
-def _build_site_assignments(df):
-    """Grouped bar chart of site assignment days per physician."""
-    if df.empty or "Department" not in df.columns or "Physician" not in df.columns:
-        return empty_figure("No department data")
+def _build_site_assignments(df, mode="count"):
+    """Grouped bar chart of site assignment days per physician.
 
-    assigned = df[df["Department"].notna()]
+    Site is derived from Status (LACEY/CENTRALIA/ABERDEEN/ON CALL).
+    ON CALL historically = Lacey assignment.
+    mode: "count" = raw days, "pct" = percentage of each physician's total.
+    """
+    if df.empty or "Status" not in df.columns or "Physician" not in df.columns:
+        return empty_figure("No assignment data")
+
+    df = df[~df["Physician"].str.startswith("Physician,", na=False)]
+    if df.empty:
+        return empty_figure("No assignment data")
+
+    _SITE_MAP = {"LACEY": "Lacey", "ON CALL": "Lacey", "CENTRALIA": "Centralia", "ABERDEEN": "Aberdeen"}
+    assigned = df[df["Status"].str.upper().isin(_SITE_MAP)].copy()
     if assigned.empty:
         return empty_figure("No site assignment data")
 
-    counts = assigned.groupby(["Physician", "Department"]).size().reset_index(name="count")
+    assigned["Site"] = assigned["Status"].str.upper().map(_SITE_MAP)
+    # Count unique physician-days per site
+    site_days = assigned.drop_duplicates(subset=["Date", "Physician", "Site"])
+    counts = site_days.groupby(["Physician", "Site"]).size().reset_index(name="count")
     counts["short_name"] = counts["Physician"].str.split(",").str[0]
 
+    if mode == "pct":
+        totals = counts.groupby("Physician")["count"].transform("sum")
+        counts["value"] = (counts["count"] / totals * 100).round(1)
+        y_title = "% of Assignment Days"
+        hover_fmt = ".1f"
+    else:
+        counts["value"] = counts["count"]
+        y_title = "Assignment Days"
+        hover_fmt = "d"
+
     fig = go.Figure()
-    for dept in sorted(counts["Department"].unique()):
-        dept_data = counts[counts["Department"] == dept]
+    for site in ["Lacey", "Centralia", "Aberdeen"]:
+        site_data = counts[counts["Site"] == site]
+        if site_data.empty:
+            continue
         fig.add_trace(go.Bar(
-            x=dept_data["short_name"],
-            y=dept_data["count"],
-            name=dept,
-            marker_color=DEPARTMENT_COLORS.get(dept, PRIMARY),
+            x=site_data["short_name"],
+            y=site_data["value"],
+            name=site,
+            marker_color=DEPARTMENT_COLORS.get(site, PRIMARY),
+            hovertemplate=f"%{{x}}: %{{y:{hover_fmt}}}{'%' if mode == 'pct' else ' days'}<extra>{site}</extra>",
         ))
 
-    apply_default_layout(fig, height=320)
+    apply_default_layout(fig, autosize=True)
     fig.update_layout(
-        yaxis_title="Assignment Days",
+        yaxis_title=y_title,
         barmode="group",
-        margin=dict(l=48, r=16, t=16, b=48),
+        margin=dict(l=48, r=16, t=4, b=20),
     )
     return fig
 
 
-def _build_afterhours_chart(task_df, schedule_df):
+def _build_afterhours_chart(task_df, schedule_df, opts):
     """Bar chart of after-hours tasks by physician."""
     if task_df.empty or "CompletedDateTime" not in task_df.columns or "CompletingMD" not in task_df.columns:
         return empty_figure("No task data")
 
-    completed = task_df[task_df["CompletedDateTime"].notna()].copy()
-    if completed.empty:
-        return empty_figure("No completed tasks")
+    ah = _filter_afterhours(task_df, schedule_df, opts)
+    if ah.empty:
+        return empty_figure("No after-hours tasks")
 
-    completed["hour"] = completed["CompletedDateTime"].dt.hour
-    completed["dow"] = completed["CompletedDateTime"].dt.dayofweek
-    completed["after_hours"] = (
-        (completed["hour"] < 8) | (completed["hour"] >= 17) | (completed["dow"] >= 5)
-    )
-
-    ah_by_md = completed[completed["after_hours"]].groupby("CompletingMD").size().reset_index(name="count")
+    ah_by_md = ah.groupby("CompletingMD").size().reset_index(name="count")
     ah_by_md = ah_by_md.sort_values("count", ascending=True)
     ah_by_md["short_name"] = ah_by_md["CompletingMD"].str.split(",").str[0]
 
@@ -408,8 +1020,8 @@ def _build_afterhours_chart(task_df, schedule_df):
         marker_color=SEMANTIC_COLORS["warning"],
     ))
 
-    apply_default_layout(fig, height=320)
-    fig.update_layout(xaxis_title="After-Hours Tasks", margin=dict(l=100, r=16, t=16, b=48))
+    apply_default_layout(fig, autosize=True)
+    fig.update_layout(xaxis_title="After-Hours Tasks", margin=dict(l=100, r=16, t=4, b=28))
     return fig
 
 
@@ -435,8 +1047,8 @@ def _build_crosscoverage_chart(task_df):
         marker_color=CHART_COLORWAY[1],
     ))
 
-    apply_default_layout(fig, height=320)
-    fig.update_layout(xaxis_title="Cross-Coverage Tasks", margin=dict(l=100, r=16, t=16, b=48))
+    apply_default_layout(fig, autosize=True)
+    fig.update_layout(xaxis_title="Cross-Coverage Tasks", margin=dict(l=100, r=16, t=4, b=28))
     return fig
 
 
@@ -445,8 +1057,35 @@ def _build_calendar_heatmap(df):
     if df.empty or "Date" not in df.columns or "Physician" not in df.columns:
         return empty_figure("No schedule data")
 
-    # Pivot to physician x date matrix
-    pivot = df.pivot_table(
+    # Each physician has multiple rows per day — pick the most informative status.
+    # Priority: site assignment > weekend call > off > vacation/sick
+    _STATUS_PRIORITY = {
+        "LACEY": 6, "CENTRALIA": 5, "ABERDEEN": 5,
+        "ON CALL": 4, "ON": 4,
+        "WEEKEND CALL": 3,
+        "VACATION": 2, "SICK": 2, "SICK LEAVE": 2,
+        "OFF": 1,
+    }
+    temp = df.copy()
+    # Exclude weekend call rows and placeholder "Physician, ..." entries
+    temp = temp[temp["Status"].str.upper() != "WEEKEND CALL"]
+    temp = temp[~temp["Physician"].str.startswith("Physician,", na=False)]
+    if temp.empty:
+        return empty_figure("No schedule data")
+    temp["_priority"] = temp["Status"].str.upper().map(_STATUS_PRIORITY).fillna(2)
+    # Keep one row per physician-day: the highest-priority status
+    best = temp.sort_values("_priority", ascending=False).drop_duplicates(
+        subset=["Date", "Physician"], keep="first"
+    )
+
+    # Exclude physicians who only have OFF (or no working status at all)
+    _WORKING = {"LACEY", "CENTRALIA", "ABERDEEN", "ON CALL", "ON", "VACATION", "SICK", "SICK LEAVE"}
+    active_mds = best[best["Status"].str.upper().isin(_WORKING)]["Physician"].unique()
+    best = best[best["Physician"].isin(active_mds)]
+    if best.empty:
+        return empty_figure("No active physician data")
+
+    pivot = best.pivot_table(
         index="Physician",
         columns="Date",
         values="Status",
@@ -457,63 +1096,120 @@ def _build_calendar_heatmap(df):
         return empty_figure("No schedule data")
 
     # Map status to numeric for heatmap
+    # Off days = yellow (0.5), vacation/sick = red (0), on duty = green (1)
     status_map = {
-        "ON": 3, "ON CALL": 3, "CENTRALIA": 3, "ABERDEEN": 3,
-        "WEEKEND CALL": 2,
-        "OFF": 0, "VACATION": -1, "SICK": -1,
+        "ON": 3, "ON CALL": 3, "LACEY": 3, "CENTRALIA": 3, "ABERDEEN": 3,
+        "OFF": 1,
+        "VACATION": -1, "SICK": -1, "SICK LEAVE": -1,
     }
 
-    z_data = pivot.applymap(lambda x: status_map.get(str(x).upper(), 1) if pd.notna(x) else 0)
+    # Determine each physician's active range (first/last day with non-OFF status)
+    working_rows = best[best["Status"].str.upper().isin(
+        {"LACEY", "CENTRALIA", "ABERDEEN", "ON CALL", "ON", "VACATION", "SICK", "SICK LEAVE"}
+    )]
+    active_ranges = working_rows.groupby("Physician")["Date"].agg(["min", "max"])
+
+    # Build masks for active range and status mapping (vectorized)
+    dates = pivot.columns
+
+    # Vectorized: map all statuses to z values and hover text
+    upper_pivot = pivot.map(lambda x: str(x).upper() if pd.notna(x) else None)
+    z_data = upper_pivot.map(lambda x: status_map.get(x, 1) if x is not None else None)
+    hover_data = pivot.map(lambda x: str(x) if pd.notna(x) else "Off")
+
+    # Mask out dates outside each physician's active range
+    for physician in pivot.index:
+        if physician in active_ranges.index:
+            first_day = active_ranges.loc[physician, "min"]
+            last_day = active_ranges.loc[physician, "max"]
+            outside = (dates < first_day) | (dates > last_day)
+        else:
+            outside = pd.Series(True, index=dates)
+        z_data.loc[physician, outside] = None
+        hover_data.loc[physician, outside] = ""
+        # Fill gaps within range as Off
+        in_range_nan = ~outside & z_data.loc[physician].isna()
+        z_data.loc[physician, in_range_nan] = 1.0
+        hover_data.loc[physician, in_range_nan] = "Off"
+
+    # Build pre-formatted hovertext so Plotly doesn't need customdata alignment
+    y_labels = [p.split(",")[0] for p in z_data.index]
+    hovertext = []
+    for i, physician in enumerate(z_data.index):
+        row = []
+        for j, col in enumerate(dates):
+            status = hover_data.iloc[i, j]
+            if status == "":
+                row.append("")
+            else:
+                row.append(f"Date: {col.strftime('%b %d, %Y')}<br>Physician: {y_labels[i]}<br>Status: {status}")
+        hovertext.append(row)
 
     fig = go.Figure(go.Heatmap(
-        z=z_data.values,
+        z=z_data.values.astype(float),
         x=z_data.columns,
-        y=[p.split(",")[0] for p in z_data.index],
+        y=y_labels,
+        hovertext=hovertext,
+        hoverinfo="text",
         colorscale=[
-            [0, "#EF4444"],      # Vacation/Sick
-            [0.25, "#F5F6F8"],   # Off
-            [0.5, "#FCD34D"],    # Weekend call
-            [1, "#10B981"],      # On duty
+            [0, "#EF4444"],      # Vacation/Sick (-1)
+            [0.5, "#FCD34D"],    # Off (1)
+            [1, "#10B981"],      # On duty (3)
         ],
         showscale=False,
-        hovertemplate="Date: %{x}<br>Physician: %{y}<extra></extra>",
+        zmin=-1, zmax=3,
     ))
 
-    apply_default_layout(fig, height=400)
+    # Scale height to number of physicians
+    n_physicians = len(pivot.index)
+    chart_h = max(180, n_physicians * 50)
+    apply_default_layout(fig, height=chart_h)
     fig.update_layout(
-        margin=dict(l=100, r=16, t=16, b=48),
+        margin=dict(l=100, r=16, t=4, b=20),
         xaxis=dict(tickformat="%b %d"),
     )
     return fig
 
 
 def _build_schedule_table(df):
-    """Build AG Grid table of schedule records."""
+    """Build AG Grid table of schedule records (one row per physician-day)."""
     if df.empty:
         return dmc.Text("No schedule data available", c=NEUTRAL["text_muted"], ta="center", py="xl")
 
-    display_cols = []
+    # Deduplicate: pick highest-priority status per physician-day
+    # (same logic as calendar heatmap)
+    _STATUS_PRIORITY = {
+        "LACEY": 6, "CENTRALIA": 5, "ABERDEEN": 5,
+        "ON CALL": 4, "ON": 4, "WEEKEND CALL": 3,
+        "OFF": 1, "VACATION": 0, "SICK": 0, "SICK LEAVE": 0,
+    }
+    deduped = df.copy()
+    deduped["_priority"] = deduped["Status"].str.upper().map(_STATUS_PRIORITY).fillna(2)
+    deduped = deduped.sort_values(["Date", "Physician", "_priority"], ascending=[False, True, False])
+    deduped = deduped.drop_duplicates(subset=["Date", "Physician"], keep="first")
+    deduped = deduped.drop(columns=["_priority"])
+
     col_map = {
         "Date": "Date",
         "Physician": "Physician",
         "Status": "Status",
-        "Department": "Department",
     }
 
+    display_cols = []
     for col, header in col_map.items():
-        if col in df.columns:
+        if col in deduped.columns:
             display_cols.append({"field": col, "headerName": header})
 
     if not display_cols:
         return dmc.Text("No schedule data available", c=NEUTRAL["text_muted"], ta="center", py="xl")
 
-    table_df = df.head(200).copy()
+    table_df = deduped.head(200).copy()
     if "Date" in table_df.columns:
         table_df["Date"] = table_df["Date"].dt.strftime("%Y-%m-%d")
     table_df = table_df.fillna("—")
 
     return dag.AgGrid(
-        id="phys-detail-grid",
+        id=f"{PAGE_ID}-detail-grid",
         rowData=table_df.to_dict("records"),
         columnDefs=display_cols,
         defaultColDef={"sortable": True, "filter": True, "resizable": True},
@@ -527,11 +1223,11 @@ def _build_schedule_table(df):
 # ---------------------------------------------------------------------------
 clientside_callback(
     ClientsideFunction(namespace="census", function_name="smoothChartWithType"),
-    Output("phys-chart-manpower", "figure"),
-    Input("phys-store-manpower", "data"),
-    Input("phys-manpower-settings-smooth", "value"),
-    Input("phys-manpower-settings-type", "value"),
-    State("phys-chart-manpower", "figure"),
+    Output(f"{PAGE_ID}-chart-manpower", "figure"),
+    Input(f"{PAGE_ID}-store-manpower", "data"),
+    Input(f"{PAGE_ID}-manpower-settings-smooth", "value"),
+    Input(f"{PAGE_ID}-manpower-settings-type", "value"),
+    State(f"{PAGE_ID}-chart-manpower", "figure"),
 )
 
 
@@ -539,9 +1235,9 @@ clientside_callback(
 # Settings panel toggle
 # ---------------------------------------------------------------------------
 @callback(
-    Output("phys-manpower-settings-panel", "style"),
-    Input("phys-manpower-settings-btn", "n_clicks"),
-    State("phys-manpower-settings-panel", "style"),
+    Output(f"{PAGE_ID}-manpower-settings-panel", "style"),
+    Input(f"{PAGE_ID}-manpower-settings-btn", "n_clicks"),
+    State(f"{PAGE_ID}-manpower-settings-panel", "style"),
     prevent_initial_call=True,
 )
 def toggle_manpower_settings(n, style):
@@ -550,3 +1246,20 @@ def toggle_manpower_settings(n, style):
     current = style or {}
     is_hidden = current.get("display") == "none"
     return {"display": "block"} if is_hidden else {"display": "none"}
+
+
+# ---------------------------------------------------------------------------
+# KPI Sparkline clientside callbacks
+# ---------------------------------------------------------------------------
+_SPARK_KEYS = ["coverage", "afterhours", "crosscov", "vacation", "weekend"]
+
+for _key in _SPARK_KEYS:
+    clientside_callback(
+        """function(data, smoothPct, componentId) {
+            return window.dash_clientside.sparklines.updateFromStore(data, componentId, smoothPct);
+        }""",
+        Output(f"{PAGE_ID}-spark-{_key}", "figure"),
+        Input(f"{PAGE_ID}-store-kpi-sparklines", "data"),
+        Input(f"{PAGE_ID}-filter-smoothing", "value"),
+        State(f"{PAGE_ID}-spark-{_key}", "id"),
+    )
