@@ -25,7 +25,8 @@ from utils.date_slider import (
 )
 from data.reviews_db import (
     get_all_insurance_rates, upsert_insurance_rate, delete_insurance_rate,
-    seed_insurance_rates,
+    seed_insurance_rates, get_rate_history, upsert_rate_history,
+    delete_rate_history_entry,
 )
 
 dash.register_page(__name__, path="/billing", name="Billing", order=7)
@@ -119,6 +120,152 @@ SLUG_TO_CATEGORY = {v: k for k, v in CATEGORY_SLUGS.items()}
 CATEGORY_COLORS = {}
 for _i, _cat in enumerate(CATEGORY_NAMES):
     CATEGORY_COLORS[_cat] = CHART_COLORWAY[_i % len(CHART_COLORWAY)]
+
+
+# ---------------------------------------------------------------------------
+# Fee schedule file paths (for detail drill-down)
+# ---------------------------------------------------------------------------
+_FEE_SCHEDULE_FILES = {
+    "Aetna": "insurance/AETNA/AETNA_fee-schedule 06.2022.csv",
+    "Premera Blue Cross": "insurance/PREMERA/RadiantCare Physicians PLLC - Premera Fee Schedule.xlsx",
+    "Premera HMO": "insurance/PREMERA/RadiantCare Physicians PLLC - Premera Fee Schedule.xlsx",
+    "LifeWise Assurance": "insurance/PREMERA/RadiantCare Physicians PLLC - Premera Fee Schedule.xlsx",
+    "LifeWise Health Plan WA": "insurance/PREMERA/RadiantCare Physicians PLLC - Premera Fee Schedule.xlsx",
+    "Regence BCBS": "insurance/REGENCE/Regence Fee Schedule 12-01-2021.xlsx",
+    "UnitedHealthcare Y1": "insurance/UHC/Radiantcare UHC Full Sched.xlsx",
+    "UnitedHealthcare Y2": "insurance/UHC/Radiantcare UHC Full Sched.xlsx",
+    "UnitedHealthcare Y3": "insurance/UHC/Radiantcare UHC Full Sched.xlsx",
+    "UnitedHealthcare (prior)": "insurance/UHC/Radiantcare UHC Full Sched.xlsx",
+}
+
+# All CPT codes we actually bill
+_OUR_CODES = set()
+for _codes in CPT_CATEGORIES.values():
+    _OUR_CODES.update(_codes)
+
+
+def _load_fee_schedule_detail(payor: str) -> list[dict]:
+    """Load per-code rates from a payor's fee schedule file, filtered to our codes."""
+    from pathlib import Path
+    from config.settings import PROJECT_ROOT
+
+    file_key = payor
+    filepath = _FEE_SCHEDULE_FILES.get(file_key)
+    if not filepath:
+        return []
+
+    full_path = PROJECT_ROOT / filepath
+    if not full_path.exists():
+        return []
+
+    # Load CMS 2026 rates for comparison
+    from data.loader import load_rvu_lookup
+    rvu = load_rvu_lookup()
+    rvu26 = rvu[(rvu["Year"] == 2026) & (rvu["MOD"] == "")].set_index("HCPCS")
+
+    rows = []
+
+    if "AETNA" in filepath:
+        df = pd.read_csv(full_path)
+        df["Procedure Code"] = df["Procedure Code"].astype(str).str.strip()
+        df["amount"] = pd.to_numeric(
+            df["Max Amount"].str.replace(r"[\$,]", "", regex=True), errors="coerce"
+        )
+        df = df[df["Procedure Code"].isin(_OUR_CODES)]
+        for _, r in df.iterrows():
+            code = r["Procedure Code"]
+            cms = rvu26.loc[code, "Fac_Total_RVU"] * _CMS_CF_DEFAULT if code in rvu26.index else None
+            pct = (r["amount"] / cms * 100) if cms and cms > 0 else None
+            rows.append({
+                "code": code,
+                "description": str(r.get("Description", ""))[:50],
+                "category": _CODE_TO_CATEGORY.get(code, "Other"),
+                "modifier": str(r.get("Modifier", "")),
+                "rate": r["amount"],
+                "cms_rate": round(cms, 2) if cms else None,
+                "pct_cms": round(pct, 1) if pct else None,
+                "site": str(r.get("Site Of Service", "")),
+                "product": str(r.get("Product", "")),
+            })
+
+    elif "PREMERA" in filepath:
+        df = pd.read_excel(full_path, header=None, skiprows=7)
+        df.columns = ["Procedure", "Modifier", "Proc_Mod", "PaymentMethod", "NonFacility", "Facility"]
+        df["Procedure"] = df["Procedure"].astype(str).str.strip()
+        df["Modifier"] = df["Modifier"].astype(str).str.strip()
+        df["Facility"] = pd.to_numeric(df["Facility"], errors="coerce")
+        df = df[df["Procedure"].isin(_OUR_CODES)]
+        for _, r in df.iterrows():
+            code = r["Procedure"]
+            mod = r["Modifier"] if r["Modifier"] not in ("", "nan", "None") else ""
+            rvu_key = code
+            cms = rvu26.loc[rvu_key, "Fac_Total_RVU"] * _CMS_CF_DEFAULT if rvu_key in rvu26.index else None
+            rate = r["Facility"]
+            pct = (rate / cms * 100) if cms and cms > 0 and pd.notna(rate) else None
+            rows.append({
+                "code": code,
+                "description": "",
+                "category": _CODE_TO_CATEGORY.get(code, "Other"),
+                "modifier": mod,
+                "rate": round(rate, 2) if pd.notna(rate) else None,
+                "cms_rate": round(cms, 2) if cms else None,
+                "pct_cms": round(pct, 1) if pct else None,
+                "site": "Facility",
+                "product": payor,
+            })
+
+    elif "REGENCE" in filepath:
+        df = pd.read_excel(full_path, header=None, skiprows=8)
+        df.columns = ["Procedure", "Modifier", "EffDate", "NonFacility", "Facility"]
+        df["Procedure"] = df["Procedure"].astype(str).str.strip()
+        df["Facility"] = pd.to_numeric(df["Facility"], errors="coerce")
+        df = df[df["Procedure"].isin(_OUR_CODES)]
+        for _, r in df.iterrows():
+            code = r["Procedure"]
+            mod = str(r["Modifier"]) if pd.notna(r["Modifier"]) else ""
+            cms = rvu26.loc[code, "Fac_Total_RVU"] * _CMS_CF_DEFAULT if code in rvu26.index else None
+            rate = r["Facility"]
+            pct = (rate / cms * 100) if cms and cms > 0 and pd.notna(rate) else None
+            rows.append({
+                "code": code,
+                "description": "",
+                "category": _CODE_TO_CATEGORY.get(code, "Other"),
+                "modifier": mod,
+                "rate": round(rate, 2) if pd.notna(rate) else None,
+                "cms_rate": round(cms, 2) if cms else None,
+                "pct_cms": round(pct, 1) if pct else None,
+                "site": "Facility",
+                "product": "Regence",
+            })
+
+    elif "UHC" in filepath:
+        df = pd.read_excel(full_path)
+        df["CPT/HCPCS"] = df["CPT/HCPCS"].astype(str).str.strip()
+        df["amount"] = pd.to_numeric(
+            df["Fee Amount"].str.replace(r"[\$,]", "", regex=True), errors="coerce"
+        )
+        df = df[df["CPT/HCPCS"].isin(_OUR_CODES)]
+        for _, r in df.iterrows():
+            code = r["CPT/HCPCS"]
+            mod = str(r.get("Modifier", ""))
+            # For global (00) modifier, compare to global CMS
+            rvu_key = code
+            cms = rvu26.loc[rvu_key, "Fac_Total_RVU"] * _CMS_CF_DEFAULT if rvu_key in rvu26.index else None
+            rate = r["amount"]
+            pct = (rate / cms * 100) if cms and cms > 0 and pd.notna(rate) else None
+            rows.append({
+                "code": code,
+                "description": str(r.get("CPT/HCPCS Description", ""))[:50],
+                "category": _CODE_TO_CATEGORY.get(code, "Other"),
+                "modifier": mod,
+                "rate": round(rate, 2) if pd.notna(rate) else None,
+                "cms_rate": round(cms, 2) if cms else None,
+                "pct_cms": round(pct, 1) if pct else None,
+                "site": str(r.get("Place of Service", "")),
+                "product": "UHC",
+            })
+
+    return rows
 
 
 # ---------------------------------------------------------------------------
@@ -1044,32 +1191,37 @@ layout = dmc.Stack(
                 ],
                 gap="xs",
             ),
-            size="80%",
+            size="95%",
             centered=True,
             zIndex=1000,
             styles={
                 "header": {"padding": "6px 16px"},
-                "content": {"height": "80vh", "display": "flex", "flexDirection": "column"},
+                "content": {"height": "95vh", "display": "flex", "flexDirection": "column"},
                 "body": {"padding": "0px 16px 4px 16px", "flex": 1, "overflow": "hidden",
                          "display": "flex", "flexDirection": "column"},
             },
             children=[
-                dmc.Text(
-                    "Edit payor rates for income projections. Changes persist across sessions.",
-                    size="sm", c="dimmed", mb="xs",
-                ),
                 dmc.Group(
+                    justify="space-between", align="center", mb=4,
+                    style={"borderBottom": "1px solid #dee2e6"},
                     children=[
-                        dmc.Text(id=f"{PAGE_ID}-irm-count", size="sm", c="dimmed"),
+                        dmc.Group(
+                            gap="sm",
+                            children=[
+                                dmc.Text(
+                                    "Edit payor rates for income projections. Changes persist across sessions.",
+                                    size="xs", c="dimmed",
+                                ),
+                                dmc.Text(id=f"{PAGE_ID}-irm-count", size="xs", c="dimmed"),
+                            ],
+                        ),
                         dmc.Button(
                             "Add Payor",
                             id=f"{PAGE_ID}-irm-add-btn",
                             leftSection=DashIconify(icon="mdi:plus", width=16),
-                            variant="light", color="violet", size="xs",
+                            variant="light", color="violet", size="compact-xs",
                         ),
                     ],
-                    justify="space-between",
-                    mb="xs",
                 ),
                 dag.AgGrid(
                     id=f"{PAGE_ID}-irm-grid",
@@ -1077,57 +1229,228 @@ layout = dmc.Stack(
                     columnDefs=[
                         {"field": "payor", "headerName": "Payor",
                          "editable": True, "flex": 2, "minWidth": 180,
-                         "cellStyle": {"fontWeight": 500}},
+                         "cellStyle": {"fontWeight": 500, "cursor": "pointer",
+                                       "color": "#7C2A83"},
+                         "floatingFilter": True},
                         {"field": "rate_method", "headerName": "Method",
-                         "editable": True, "flex": 1, "minWidth": 120,
+                         "editable": True, "flex": 0.8, "minWidth": 110,
                          "cellEditor": "agSelectCellEditor",
                          "cellEditorParams": {"values": [
                              "pct_medicare", "rbrvs_cf", "fee_schedule", "cms_cf",
-                         ]}},
-                        {"field": "pct_medicare", "headerName": "% of Medicare",
-                         "editable": True, "flex": 1, "minWidth": 110,
+                         ]},
+                         "floatingFilter": True},
+                        {"field": "pct_medicare", "headerName": "% of MCR",
+                         "editable": True, "flex": 0.7, "minWidth": 95,
                          "type": "numericColumn",
+                         "filter": "agNumberColumnFilter",
                          "valueFormatter": {"function": "params.value != null ? params.value.toFixed(1) + '%' : ''"}},
-                        {"field": "em_cf", "headerName": "E&M CF ($)",
-                         "editable": True, "flex": 1, "minWidth": 100,
+                        {"field": "em_cf", "headerName": "E&M CF",
+                         "editable": True, "flex": 0.6, "minWidth": 85,
                          "type": "numericColumn",
+                         "filter": "agNumberColumnFilter",
                          "valueFormatter": {"function": "params.value != null ? '$' + params.value.toFixed(2) : ''"}},
-                        {"field": "other_cf", "headerName": "Other CF ($)",
-                         "editable": True, "flex": 1, "minWidth": 100,
+                        {"field": "other_cf", "headerName": "Other CF",
+                         "editable": True, "flex": 0.6, "minWidth": 85,
                          "type": "numericColumn",
+                         "filter": "agNumberColumnFilter",
                          "valueFormatter": {"function": "params.value != null ? '$' + params.value.toFixed(2) : ''"}},
                         {"field": "effective_date", "headerName": "Eff. Date",
-                         "editable": True, "flex": 1, "minWidth": 100},
+                         "editable": True, "flex": 0.7, "minWidth": 95,
+                         "floatingFilter": True},
                         {"field": "source", "headerName": "Source",
-                         "editable": True, "flex": 1, "minWidth": 90,
+                         "editable": True, "flex": 0.6, "minWidth": 80,
                          "cellEditor": "agSelectCellEditor",
                          "cellEditorParams": {"values": [
                              "contract", "fee_schedule", "manual", "estimate",
                              "cms", "state", "government", "csv", "na",
-                         ]}},
+                         ]},
+                         "cellStyle": {"fontStyle": "italic", "color": "#868e96"},
+                         "floatingFilter": True},
                         {"field": "notes", "headerName": "Notes",
-                         "editable": True, "flex": 2, "minWidth": 200,
-                         "tooltipField": "notes"},
+                         "editable": True, "flex": 3, "minWidth": 250,
+                         "tooltipField": "notes",
+                         "floatingFilter": True},
                         {"field": "_delete", "headerName": "",
-                         "cellRenderer": "DBC_Button_Simple",
-                         "cellRendererParams": {"className": "btn btn-danger btn-sm",
-                                                "children": "X"},
-                         "width": 50, "maxWidth": 50, "sortable": False,
-                         "filter": False, "suppressMenu": True},
+                         "width": 40, "maxWidth": 40, "sortable": False,
+                         "filter": False, "floatingFilter": False,
+                         "cellStyle": {"color": "#F44336", "cursor": "pointer",
+                                       "textAlign": "center", "fontWeight": 700},
+                         "editable": False},
                     ],
                     defaultColDef={
                         "sortable": True,
-                        "filter": True,
                         "resizable": True,
+                        "filter": "agTextColumnFilter",
+                        "floatingFilter": True,
                     },
                     dashGridOptions={
                         "animateRows": True,
                         "singleClickEdit": True,
                         "stopEditingWhenCellsLoseFocus": True,
+                        "rowHeight": 36,
+                        "headerHeight": 36,
+                        "floatingFiltersHeight": 32,
                         "domLayout": "normal",
                     },
-                    style={"flex": 1, "width": "100%"},
+                    style={"flex": 1, "minHeight": 0},
                     className="ag-theme-alpine",
+                ),
+                # Detail panel — fee schedule per-code rates OR rate history
+                dmc.Paper(
+                    id=f"{PAGE_ID}-irm-detail-panel",
+                    style={"display": "none"},
+                    p="sm", radius="md", withBorder=True, mt=4,
+                    children=[
+                        dmc.Group(
+                            justify="space-between", mb=4,
+                            children=[
+                                dmc.Group(
+                                    gap="sm",
+                                    children=[
+                                        dmc.Text(
+                                            id=f"{PAGE_ID}-irm-detail-title",
+                                            size="sm", fw=600, c=PRIMARY,
+                                        ),
+                                        dmc.SegmentedControl(
+                                            id=f"{PAGE_ID}-irm-detail-mode",
+                                            data=[
+                                                {"value": "history", "label": "Rate History"},
+                                                {"value": "codes", "label": "Fee Schedule"},
+                                            ],
+                                            value="history",
+                                            size="xs",
+                                        ),
+                                    ],
+                                ),
+                                dmc.ActionIcon(
+                                    DashIconify(icon="tabler:x", width=14),
+                                    id=f"{PAGE_ID}-irm-detail-close",
+                                    variant="subtle", color="gray", size="sm",
+                                ),
+                            ],
+                        ),
+                        # Rate History grid
+                        html.Div(
+                            id=f"{PAGE_ID}-irm-history-container",
+                            children=[
+                                dag.AgGrid(
+                                    id=f"{PAGE_ID}-irm-history-grid",
+                                    columnDefs=[
+                                        {"field": "effective_date", "headerName": "Effective",
+                                         "flex": 0.8, "sort": "desc"},
+                                        {"field": "end_date", "headerName": "End Date",
+                                         "flex": 0.8, "editable": True},
+                                        {"field": "pct_medicare", "headerName": "% of MCR",
+                                         "flex": 0.6, "type": "numericColumn", "editable": True,
+                                         "valueFormatter": {"function":
+                                             "params.value != null ? params.value.toFixed(1) + '%' : ''"}},
+                                        {"field": "em_cf", "headerName": "E&M CF",
+                                         "flex": 0.5, "type": "numericColumn", "editable": True,
+                                         "valueFormatter": {"function":
+                                             "params.value != null ? '$' + params.value.toFixed(2) : ''"}},
+                                        {"field": "other_cf", "headerName": "Other CF",
+                                         "flex": 0.5, "type": "numericColumn", "editable": True,
+                                         "valueFormatter": {"function":
+                                             "params.value != null ? '$' + params.value.toFixed(2) : ''"}},
+                                        {"field": "rate_method", "headerName": "Method",
+                                         "flex": 0.6, "editable": True,
+                                         "cellEditor": "agSelectCellEditor",
+                                         "cellEditorParams": {"values": [
+                                             "pct_medicare", "rbrvs_cf", "fee_schedule", "cms_cf",
+                                         ]}},
+                                        {"field": "source", "headerName": "Source",
+                                         "flex": 0.5, "editable": True,
+                                         "cellStyle": {"fontStyle": "italic", "color": "#868e96"}},
+                                        {"field": "notes", "headerName": "Notes",
+                                         "flex": 2, "editable": True, "tooltipField": "notes"},
+                                    ],
+                                    defaultColDef={"sortable": True, "resizable": True},
+                                    dashGridOptions={
+                                        "rowHeight": 32,
+                                        "headerHeight": 32,
+                                        "singleClickEdit": True,
+                                        "stopEditingWhenCellsLoseFocus": True,
+                                    },
+                                    style={"height": "200px"},
+                                    className="ag-theme-alpine",
+                                ),
+                                # Add history entry row
+                                dmc.Group(
+                                    gap="xs", mt=4,
+                                    children=[
+                                        dmc.TextInput(
+                                            id=f"{PAGE_ID}-irm-hist-eff",
+                                            placeholder="YYYY-MM-DD",
+                                            size="xs", style={"width": 110},
+                                        ),
+                                        dmc.NumberInput(
+                                            id=f"{PAGE_ID}-irm-hist-pct",
+                                            placeholder="% MCR",
+                                            size="xs", style={"width": 90},
+                                            value=100, min=0, max=1000, step=0.1,
+                                        ),
+                                        dmc.TextInput(
+                                            id=f"{PAGE_ID}-irm-hist-notes",
+                                            placeholder="Notes",
+                                            size="xs", style={"flex": 1},
+                                        ),
+                                        dmc.Button(
+                                            "Add",
+                                            id=f"{PAGE_ID}-irm-hist-add",
+                                            size="xs", color="violet", variant="light",
+                                        ),
+                                    ],
+                                ),
+                            ],
+                        ),
+                        # Fee Schedule grid (hidden by default)
+                        html.Div(
+                            id=f"{PAGE_ID}-irm-codes-container",
+                            style={"display": "none"},
+                            children=[
+                                dag.AgGrid(
+                                    id=f"{PAGE_ID}-irm-detail-grid",
+                                    columnDefs=[
+                                        {"field": "code", "headerName": "CPT/HCPCS", "flex": 0.6,
+                                         "filter": "agTextColumnFilter", "floatingFilter": True},
+                                        {"field": "description", "headerName": "Description", "flex": 1.8,
+                                         "filter": "agTextColumnFilter", "floatingFilter": True},
+                                        {"field": "category", "headerName": "Category", "flex": 0.8,
+                                         "filter": "agTextColumnFilter", "floatingFilter": True},
+                                        {"field": "modifier", "headerName": "Mod", "flex": 0.3},
+                                        {"field": "rate", "headerName": "Rate ($)", "flex": 0.6,
+                                         "type": "numericColumn", "sort": "desc",
+                                         "valueFormatter": {"function":
+                                             "params.value != null ? '$' + params.value.toFixed(2) : ''"}},
+                                        {"field": "cms_rate", "headerName": "CMS 2026 ($)", "flex": 0.6,
+                                         "type": "numericColumn",
+                                         "valueFormatter": {"function":
+                                             "params.value != null ? '$' + params.value.toFixed(2) : ''"}},
+                                        {"field": "pct_cms", "headerName": "% of CMS", "flex": 0.5,
+                                         "type": "numericColumn",
+                                         "valueFormatter": {"function":
+                                             "params.value != null ? params.value.toFixed(1) + '%' : ''"},
+                                         "cellStyle": {"function":
+                                             "params.value > 100 ? {color: '#4CAF50'} "
+                                             ": params.value < 100 ? {color: '#F44336'} : {}"}},
+                                        {"field": "site", "headerName": "Site", "flex": 0.4},
+                                        {"field": "product", "headerName": "Product", "flex": 0.5,
+                                         "filter": "agTextColumnFilter", "floatingFilter": True},
+                                    ],
+                                    defaultColDef={"sortable": True, "resizable": True},
+                                    dashGridOptions={
+                                        "rowHeight": 30, "headerHeight": 30,
+                                        "floatingFiltersHeight": 28,
+                                        "pagination": True, "paginationPageSize": 25,
+                                    },
+                                    style={"height": "280px"},
+                                    className="ag-theme-alpine",
+                                ),
+                            ],
+                        ),
+                        # Store for the current detail payor name
+                        dcc.Store(id=f"{PAGE_ID}-irm-detail-payor", data=""),
+                    ],
                 ),
                 # Add-payor input row (hidden until needed)
                 dmc.Group(
@@ -2005,6 +2328,8 @@ def _irm_open(n):
     if not n:
         return (dash.no_update,) * 3
     rows = get_all_insurance_rates()
+    for r in rows:
+        r["_delete"] = "\u2716"  # ✖ symbol for delete
     return True, rows, f"{len(rows)} payors"
 
 
@@ -2021,15 +2346,6 @@ def _irm_save_edit(changed, row_data):
         return dash.no_update, dash.no_update
 
     row = changed[0].get("data", {}) if isinstance(changed, list) else changed.get("data", {})
-    col = changed[0].get("colId", "") if isinstance(changed, list) else changed.get("colId", "")
-
-    if col == "_delete":
-        # Delete row
-        payor = row.get("payor", "")
-        if payor:
-            delete_insurance_rate(payor)
-            row_data = [r for r in row_data if r.get("payor") != payor]
-        return row_data, f"{len(row_data)} payors"
 
     # Save the edited row
     payor = row.get("payor", "").strip()
@@ -2047,6 +2363,75 @@ def _irm_save_edit(changed, row_data):
         notes=row.get("notes", ""),
     )
     return dash.no_update, dash.no_update
+
+
+@callback(
+    Output(f"{PAGE_ID}-irm-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-irm-count", "children", allow_duplicate=True),
+    Output(f"{PAGE_ID}-irm-detail-panel", "style", allow_duplicate=True),
+    Output(f"{PAGE_ID}-irm-detail-title", "children", allow_duplicate=True),
+    Output(f"{PAGE_ID}-irm-detail-payor", "data"),
+    Output(f"{PAGE_ID}-irm-history-grid", "rowData"),
+    Output(f"{PAGE_ID}-irm-detail-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-irm-detail-mode", "value", allow_duplicate=True),
+    Output(f"{PAGE_ID}-irm-detail-mode", "data", allow_duplicate=True),
+    Input(f"{PAGE_ID}-irm-grid", "cellClicked"),
+    State(f"{PAGE_ID}-irm-grid", "rowData"),
+    prevent_initial_call=True,
+)
+def _irm_cell_click(cell, row_data):
+    """Handle cell clicks: delete on ✖ column, detail drill-down on any other."""
+    no = dash.no_update
+    if not cell:
+        return (no,) * 9
+
+    col = cell.get("colId", "")
+    row = cell.get("data", {})
+    payor = row.get("payor", "")
+
+    # Delete
+    if col == "_delete" and payor:
+        delete_insurance_rate(payor)
+        row_data = [r for r in row_data if r.get("payor") != payor]
+        return row_data, f"{len(row_data)} payors", no, no, no, no, no, no, no
+
+    if not payor:
+        return (no,) * 9
+
+    # Load history for this payor
+    history = get_rate_history(payor)
+
+    # Load fee schedule if available
+    has_codes = payor in _FEE_SCHEDULE_FILES
+    codes_data = _load_fee_schedule_detail(payor) if has_codes else []
+
+    # Build title
+    parts = [payor]
+    if history:
+        parts.append(f"{len(history)} rate periods")
+    if codes_data:
+        n_codes = len(set(r["code"] for r in codes_data))
+        parts.append(f"{n_codes} codes on file")
+    title = " — ".join(parts)
+
+    # Build mode toggle options based on what's available
+    mode_data = [{"value": "history", "label": "Rate History"}]
+    if has_codes:
+        mode_data.append({"value": "codes", "label": "Fee Schedule"})
+
+    # Default to history view, but if no history and codes exist, show codes
+    default_mode = "history" if history else ("codes" if codes_data else "history")
+
+    return (
+        no, no,  # rowData, count unchanged
+        {"display": "block"},  # show panel
+        title,
+        payor,  # store payor name for add-history callback
+        history,
+        codes_data,
+        default_mode,
+        mode_data,
+    )
 
 
 # Toggle add-payor row visibility
@@ -2090,3 +2475,89 @@ def _irm_add_payor(n, payor_name, pct, row_data):
     # Reload all rates
     rows = get_all_insurance_rates()
     return rows, f"{len(rows)} payors", {"display": "none"}, "", 100
+
+
+# Close detail panel
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        return {"display": "none"};
+    }""",
+    Output(f"{PAGE_ID}-irm-detail-panel", "style"),
+    Input(f"{PAGE_ID}-irm-detail-close", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+# Toggle between history and codes views
+clientside_callback(
+    """function(mode) {
+        if (mode === 'codes') {
+            return [{"display": "none"}, {"display": "block"}];
+        }
+        return [{"display": "block"}, {"display": "none"}];
+    }""",
+    Output(f"{PAGE_ID}-irm-history-container", "style"),
+    Output(f"{PAGE_ID}-irm-codes-container", "style"),
+    Input(f"{PAGE_ID}-irm-detail-mode", "value"),
+    prevent_initial_call=True,
+)
+
+
+# Save history cell edits
+@callback(
+    Output(f"{PAGE_ID}-irm-history-grid", "rowData", allow_duplicate=True),
+    Input(f"{PAGE_ID}-irm-history-grid", "cellValueChanged"),
+    State(f"{PAGE_ID}-irm-detail-payor", "data"),
+    prevent_initial_call=True,
+)
+def _irm_history_save(changed, payor):
+    """Persist edits to a rate history entry."""
+    if not changed or not payor:
+        return dash.no_update
+    row = changed[0].get("data", {}) if isinstance(changed, list) else changed.get("data", {})
+    eff = row.get("effective_date", "")
+    if not eff:
+        return dash.no_update
+    upsert_rate_history(
+        payor=payor,
+        effective_date=eff,
+        end_date=row.get("end_date", "") or "",
+        rate_method=row.get("rate_method", "pct_medicare"),
+        em_cf=float(row["em_cf"]) if row.get("em_cf") else None,
+        other_cf=float(row["other_cf"]) if row.get("other_cf") else None,
+        pct_medicare=float(row.get("pct_medicare") or 100),
+        source=row.get("source", "manual"),
+        notes=row.get("notes", ""),
+    )
+    return dash.no_update
+
+
+# Add new history entry
+@callback(
+    Output(f"{PAGE_ID}-irm-history-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-irm-hist-eff", "value"),
+    Output(f"{PAGE_ID}-irm-hist-pct", "value"),
+    Output(f"{PAGE_ID}-irm-hist-notes", "value"),
+    Input(f"{PAGE_ID}-irm-hist-add", "n_clicks"),
+    State(f"{PAGE_ID}-irm-detail-payor", "data"),
+    State(f"{PAGE_ID}-irm-hist-eff", "value"),
+    State(f"{PAGE_ID}-irm-hist-pct", "value"),
+    State(f"{PAGE_ID}-irm-hist-notes", "value"),
+    prevent_initial_call=True,
+)
+def _irm_history_add(n, payor, eff_date, pct, notes):
+    """Add a new rate history entry."""
+    if not n or not payor or not eff_date:
+        return (dash.no_update,) * 4
+    pct = float(pct) if pct else 100.0
+    upsert_rate_history(
+        payor=payor,
+        effective_date=eff_date.strip(),
+        pct_medicare=pct,
+        source="manual",
+        notes=notes or "",
+    )
+    # Reload history
+    history = get_rate_history(payor)
+    return history, "", 100, ""

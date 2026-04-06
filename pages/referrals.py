@@ -713,6 +713,12 @@ layout = dmc.Stack(
                                     children=[
                                         dmc.Text(id=f"{PAGE_ID}-rpm-stats", size="xs",
                                                  c=NEUTRAL["text_muted"]),
+                                        dmc.Switch(
+                                            id=f"{PAGE_ID}-rpm-unreviewed-toggle",
+                                            label="Unreviewed only",
+                                            size="xs",
+                                            checked=False,
+                                        ),
                                         dmc.Button(
                                             "Look Up Specialties (NPI)",
                                             id=f"{PAGE_ID}-rpm-npi-btn",
@@ -1014,6 +1020,12 @@ layout = dmc.Stack(
                                             children=[
                                                 dmc.Text(id=f"{PAGE_ID}-rpm-diag-stats", size="xs",
                                                          c=NEUTRAL["text_muted"]),
+                                                dmc.Switch(
+                                                    id=f"{PAGE_ID}-rpm-diag-unreviewed-toggle",
+                                                    label="Unreviewed only",
+                                                    size="xs",
+                                                    checked=False,
+                                                ),
                                                 dmc.Button(
                                                     "Mark Reviewed",
                                                     id=f"{PAGE_ID}-rpm-diag-reviewed-btn",
@@ -1125,6 +1137,8 @@ layout = dmc.Stack(
             ],
         ),
         # RPM stores and interval
+        dcc.Store(id=f"{PAGE_ID}-rpm-grid-full-store", data=None),
+        dcc.Store(id=f"{PAGE_ID}-rpm-diag-grid-full-store", data=None),
         dcc.Store(id=f"{PAGE_ID}-rpm-running", data=False),
         dcc.Store(id=f"{PAGE_ID}-rpm-npi-pending", data=None),
         dcc.Store(id=f"{PAGE_ID}-rpm-detail-store", data=None),
@@ -2837,48 +2851,56 @@ def _build_inst_grid_data(phys_rows: list[dict]) -> tuple[list[dict], str]:
 @callback(
     Output(f"{PAGE_ID}-rpm-modal", "opened"),
     Output(f"{PAGE_ID}-rpm-grid", "rowData"),
+    Output(f"{PAGE_ID}-rpm-grid-full-store", "data"),
     Output(f"{PAGE_ID}-rpm-stats", "children"),
     Output(f"{PAGE_ID}-rpm-inst-grid", "rowData"),
     Output(f"{PAGE_ID}-rpm-inst-count", "children"),
     Output(f"{PAGE_ID}-rpm-prov-count", "children"),
+    Output(f"{PAGE_ID}-rpm-unreviewed-toggle", "checked"),
     Input(f"{PAGE_ID}-rpm-btn", "n_clicks"),
     prevent_initial_call=True,
 )
 def _rpm_open(n):
     if not n:
-        return (dash.no_update,) * 6
+        return (dash.no_update,) * 8
     rows, stats = _build_rpm_grid_data()
     inst_rows, inst_count = _build_inst_grid_data(rows)
-    return True, rows, stats, inst_rows, inst_count, str(len(rows))
+    return True, rows, rows, stats, inst_rows, inst_count, str(len(rows)), False
 
 
 @callback(
     Output(f"{PAGE_ID}-rpm-diag-grid", "rowData"),
+    Output(f"{PAGE_ID}-rpm-diag-grid-full-store", "data"),
     Output(f"{PAGE_ID}-rpm-diag-count", "children"),
     Output(f"{PAGE_ID}-rpm-diag-stats", "children"),
+    Output(f"{PAGE_ID}-rpm-diag-unreviewed-toggle", "checked"),
     Input(f"{PAGE_ID}-rpm-tabs", "value"),
     prevent_initial_call=True,
 )
 def _rpm_diag_tab_load(tab):
     """Lazy-load diagnosis grid only when the Diagnoses tab is selected."""
     if tab != "diagnoses":
-        return dash.no_update, dash.no_update, dash.no_update
+        return (dash.no_update,) * 5
     rows, count, stats = _build_diag_grid_data()
-    return rows, count, stats
+    return rows, rows, count, stats, False
 
 
 @callback(
     Output(f"{PAGE_ID}-rpm-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-grid-full-store", "data", allow_duplicate=True),
     Output(f"{PAGE_ID}-rpm-stats", "children", allow_duplicate=True),
     Input(f"{PAGE_ID}-rpm-grid", "cellValueChanged"),
-    State(f"{PAGE_ID}-rpm-grid", "rowData"),
+    State(f"{PAGE_ID}-rpm-grid-full-store", "data"),
+    State(f"{PAGE_ID}-rpm-unreviewed-toggle", "checked"),
     prevent_initial_call=True,
 )
-def _rpm_save_edit(changed, row_data):
+def _rpm_save_edit(changed, full_data, unreviewed_only):
     """Save a manual cell edit (specialty, institution, or reviewed) to SQLite."""
     if not changed:
-        return dash.no_update, dash.no_update
+        return dash.no_update, dash.no_update, dash.no_update
     from data.reviews_db import upsert_referring, add_institution, set_reviewed_bulk
+
+    row_data = full_data or []
 
     row = changed[0].get("data", {}) if isinstance(changed, list) else changed.get("data", {})
     row_key = row.get("row_key", "")
@@ -2958,11 +2980,14 @@ def _rpm_save_edit(changed, row_data):
         f"{with_spec:,} specialty  |  {with_inst:,} institution"
     )
 
-    return row_data, stats
+    # Return filtered view if toggle is on, plus full store
+    visible = [r for r in row_data if not r.get("reviewed")] if unreviewed_only else row_data
+    return visible, row_data, stats
 
 
 @callback(
     Output(f"{PAGE_ID}-rpm-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-grid-full-store", "data", allow_duplicate=True),
     Output(f"{PAGE_ID}-rpm-stats", "children", allow_duplicate=True),
     Output(f"{PAGE_ID}-rpm-prov-count", "children", allow_duplicate=True),
     Input(f"{PAGE_ID}-rpm-add-addr-btn", "n_clicks"),
@@ -2973,14 +2998,14 @@ def _rpm_save_edit(changed, row_data):
 def _rpm_add_address(n, row_data, selected_rows):
     """Add a new blank address row for the selected provider's NPI."""
     if not n or not row_data:
-        return dash.no_update, dash.no_update, dash.no_update
+        return (dash.no_update,) * 4
     if not selected_rows or len(selected_rows) == 0:
-        return dash.no_update, dash.no_update, dash.no_update
+        return (dash.no_update,) * 4
 
     src = selected_rows[0]
     npi = src.get("npi", "")
     if not npi:
-        return dash.no_update, dash.no_update, dash.no_update
+        return (dash.no_update,) * 4
 
     # Create a new empty-address row with the same NPI
     new_addr_key = f"NEW_{pd.Timestamp.now().strftime('%H%M%S')}"
@@ -3018,7 +3043,7 @@ def _rpm_add_address(n, row_data, selected_rows):
         f"{reviewed_n:,} reviewed  |  {total - reviewed_n:,} unreviewed  |  "
         f"{with_spec:,} specialty  |  {with_inst:,} institution"
     )
-    return row_data, stats, str(total)
+    return row_data, row_data, stats, str(total)
 
 
 @callback(
@@ -3466,6 +3491,39 @@ def _rpm_toggle_action_btns(tab):
     return {"display": "none"}
 
 
+# --- Unreviewed-only toggles ---
+# Store the full dataset in a hidden Store. The toggle filters into the grid.
+# When the grid rowData changes (edits), we update the store too.
+
+clientside_callback(
+    """function(checked, fullData) {
+        if (!fullData) return window.dash_clientside.no_update;
+        if (checked) {
+            return fullData.filter(function(r) { return !r.reviewed; });
+        }
+        return fullData;
+    }""",
+    Output(f"{PAGE_ID}-rpm-grid", "rowData", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rpm-unreviewed-toggle", "checked"),
+    State(f"{PAGE_ID}-rpm-grid-full-store", "data"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """function(checked, fullData) {
+        if (!fullData) return window.dash_clientside.no_update;
+        if (checked) {
+            return fullData.filter(function(r) { return !r.reviewed; });
+        }
+        return fullData;
+    }""",
+    Output(f"{PAGE_ID}-rpm-diag-grid", "rowData", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rpm-diag-unreviewed-toggle", "checked"),
+    State(f"{PAGE_ID}-rpm-diag-grid-full-store", "data"),
+    prevent_initial_call=True,
+)
+
+
 # --- NPI Review: Accept All (check all rows) ---
 @callback(
     Output(f"{PAGE_ID}-rpm-npi-review-grid", "rowData", allow_duplicate=True),
@@ -3754,126 +3812,216 @@ def _load_diag_descriptions() -> dict[str, str]:
 _DIAG_DESCRIPTIONS: dict[str, str] = _load_diag_descriptions()
 
 
+def _resolve_referral_diagnosis(row, cv_mrn_dx, c2c, base_map):
+    """Resolve a single referral row to (key, description, source_type).
+
+    Priority cascade:
+    1. CV DiagnosisCodes — what we actually treated them for
+    2. Rfl Prim Dx — what the referral is for (uses ICD from Diagnoses to match)
+    3. First ICD-10 code from Diagnoses (for multi-code, pick the one matching Rfl Prim Dx)
+    4. Free-text from Diagnoses column
+
+    Returns (key, description, source_type) where:
+    - key: ICD code or lowercased free-text for aggregation
+    - description: human-readable label
+    - source_type: "cv", "icd", or "free-text"
+    """
+    mrn = row.get("MRN")
+    diag_text = str(row.get("Diagnoses", "")) if pd.notna(row.get("Diagnoses")) else ""
+    prim_dx = str(row.get("Rfl Prim Dx", "")) if pd.notna(row.get("Rfl Prim Dx")) else ""
+
+    # --- Tier 1: CV diagnosis (what we treated) ---
+    if mrn is not None and pd.notna(mrn):
+        cv_code = cv_mrn_dx.get(int(mrn))
+        if cv_code and cv_code in c2c:
+            desc = _DIAG_DESCRIPTIONS.get(cv_code, cv_code)
+            return cv_code, desc, "cv"
+
+    # --- Tier 2/3: ICD codes from Diagnoses column ---
+    icd10_codes = _ICD10_RE.findall(diag_text)
+    icd9_codes = _ICD9_RE.findall(diag_text)
+
+    if icd10_codes:
+        if len(icd10_codes) == 1:
+            # Single code — straightforward
+            code = icd10_codes[0]
+            desc = _extract_icd_desc(diag_text, code)
+            return code, desc, "icd"
+
+        # Multi-code: pick the one that best matches Rfl Prim Dx
+        if prim_dx:
+            # Strip bracket reference from Rfl Prim Dx for matching
+            prim_text = re.sub(r"\s*\[.*?\]\s*$", "", prim_dx).strip()
+            best_code = _pick_best_icd(icd10_codes, prim_text, diag_text, c2c)
+            desc = _extract_icd_desc(diag_text, best_code) or prim_text
+            return best_code, desc, "icd"
+
+        # No Rfl Prim Dx — take first code
+        code = icd10_codes[0]
+        desc = _extract_icd_desc(diag_text, code)
+        return code, desc, "icd"
+
+    if icd9_codes:
+        code = icd9_codes[0]
+        return code, "", "icd"
+
+    # --- Tier 4: Free-text ---
+    text = prim_dx.strip() if prim_dx.strip() else diag_text.strip()
+    # Strip bracket reference
+    text = re.sub(r"\s*\[.*?\]\s*$", "", text).strip()
+    if text and text.lower() not in ("nan", "none", ""):
+        return text.lower(), text, "free-text"
+
+    return None, "", ""
+
+
+def _extract_icd_desc(diag_text, code):
+    """Extract the description text associated with an ICD code in a Diagnoses string."""
+    # Find text after "code (ICD-...) - description"
+    pattern = re.escape(code) + r"\s*\(ICD-\d+-CM\)\s*-\s*"
+    m = re.search(pattern, diag_text)
+    if m:
+        rest = diag_text[m.end():]
+        # Take until next ICD code or end of line
+        end = re.search(r"\n|[A-Z]\d[0-9A-Z].*?\(ICD-", rest)
+        desc = rest[:end.start()].strip() if end else rest.strip()
+        # Also check for "ICD-9 code - desc" continuation
+        desc = re.sub(r"\s*\d{3}(?:\.\d+)?\s*\(ICD-9-CM\)\s*-\s*", " ", desc).strip()
+        return desc
+    return _DIAG_DESCRIPTIONS.get(code, "")
+
+
+def _pick_best_icd(codes, prim_text, diag_text, c2c):
+    """For multi-ICD referrals, pick the code that best matches Rfl Prim Dx.
+
+    Strategy:
+    1. If Rfl Prim Dx mentions mets/metastasis → pick the C79.x code
+    2. If Rfl Prim Dx mentions a primary site → pick the non-C79.x code
+    3. Check which code's category matches what _categorise_text returns for Rfl Prim Dx
+    4. Fall back to first code
+    """
+    prim_lower = prim_text.lower()
+
+    # Check if Rfl Prim Dx is about metastases
+    is_mets = bool(re.search(
+        r"metast|bone met|brain met|lung met|liver met|cord.?compress"
+        r"|secondary|mets\b|\bmet\b", prim_lower))
+
+    # Separate mets codes (C79.x, C77.x, C78.x) from primary codes
+    mets_codes = [c for c in codes if re.match(r"C7[789]", c)]
+    primary_codes = [c for c in codes if c not in mets_codes]
+
+    if is_mets and mets_codes:
+        return mets_codes[0]
+    if not is_mets and primary_codes:
+        return primary_codes[0]
+
+    # Try matching Rfl Prim Dx text to code categories
+    text_cat = _categorise_text(prim_text)
+    if text_cat:
+        for code in codes:
+            if c2c.get(code) == text_cat:
+                return code
+
+    return codes[0]
+
+
 def _build_diag_grid_data():
     """Build diagnosis grid for referral-only entries.
 
-    Shows ICD codes and free-text diagnoses found in referral data that are
-    NOT already in the base ARIA lookup CSV (diagnosis_subcategories.csv).
-    The ARIA CSV codes are managed on the Diagnosis page instead.
+    Uses a priority cascade per referral to determine the primary diagnosis:
+    1. CV DiagnosisCodes — what we actually treated them for
+    2. Rfl Prim Dx — what the referral is for (+ best-match ICD from Diagnoses)
+    3. ICD code from Diagnoses column
+    4. Free-text from Diagnoses column
+
+    Shows entries NOT in the base ARIA lookup CSV. Aggregated by unique
+    diagnosis key (ICD code or normalized free-text).
     """
-    from data.loader import load_referrals
+    from data.loader import load_referrals, load_clinic_visits
     from data.reviews_db import get_all_diagnosis_overrides
 
     ref = load_referrals()
     overrides = get_all_diagnosis_overrides()
-    base_map = get_all_subcategory_entries()  # {code: (category, subcategory)}
+    base_map = get_all_subcategory_entries()
 
-    # --- ICD codes extracted from referral Diagnoses text ---
-    code_patients: dict[str, int] = {}
-    code_desc: dict[str, str] = {}
-    # --- Free-text diagnoses (no ICD code) ---
-    freetext_patients: dict[str, int] = {}  # keyed by normalized text
-    freetext_raw: dict[str, str] = {}       # normalized → first raw form
-    freetext_cat: dict[str, str] = {}       # normalized → regex-resolved category
+    # Build MRN → primary CV DiagnosisCode map
+    cv_mrn_dx: dict[int, str] = {}
+    try:
+        cv = load_clinic_visits()
+        if not cv.empty and "DiagnosisCodes" in cv.columns and "PatientId" in cv.columns:
+            cv_diag = cv[cv["DiagnosisCodes"].notna()][["PatientId", "DiagnosisCodes"]].copy()
+            cv_diag = cv_diag.drop_duplicates("PatientId")
+            for _, r in cv_diag.iterrows():
+                # Take first code from comma-separated list
+                first_code = str(r["DiagnosisCodes"]).split(",")[0].strip()
+                if first_code:
+                    cv_mrn_dx[int(r["PatientId"])] = first_code
+    except Exception:
+        pass
 
-    if not ref.empty and "Diagnoses" in ref.columns:
-        for _, row in ref[ref["Diagnoses"].notna()].iterrows():
-            diag_text = str(row["Diagnoses"])
-            prim_dx = str(row.get("Rfl Prim Dx", "")) if pd.notna(row.get("Rfl Prim Dx")) else ""
-            found_icd = False
+    # Aggregate: key → {count, description, source_type}
+    agg: dict[str, dict] = {}  # key → {"desc": str, "count": int, "type": str}
 
-            for m in _ICD10_RE.finditer(diag_text):
-                code = m.group(1)
-                found_icd = True
-                # Only track codes NOT in base ARIA CSV
-                if code not in base_map:
-                    code_patients[code] = code_patients.get(code, 0) + 1
-                    if code not in code_desc:
-                        idx = diag_text.find(code)
-                        if idx > 0:
-                            prefix = diag_text[:idx].rstrip(" (").strip()
-                            parts = prefix.split(",")
-                            desc = parts[-1].strip()
-                            if desc:
-                                code_desc[code] = desc
+    if not ref.empty:
+        for _, row in ref.iterrows():
+            key, desc, src_type = _resolve_referral_diagnosis(row, cv_mrn_dx, _DIAG_C2C, base_map)
+            if key is None:
+                continue
+            # Skip codes already in the ARIA base CSV (managed on Diagnosis page)
+            if src_type == "icd" and key in base_map:
+                continue
+            if src_type == "cv" and key in base_map:
+                continue
 
-            for m in _ICD9_RE.finditer(diag_text):
-                code = m.group(1)
-                found_icd = True
-                if code not in base_map:
-                    code_patients[code] = code_patients.get(code, 0) + 1
+            if key not in agg:
+                agg[key] = {"desc": desc, "count": 0, "type": src_type}
+            agg[key]["count"] += 1
+            # Keep the best description (longest non-empty)
+            if desc and len(desc) > len(agg[key]["desc"]):
+                agg[key]["desc"] = desc
 
-            # Track free-text entries that had no ICD code
-            if not found_icd:
-                # Use Rfl Prim Dx if available, else Diagnoses text
-                text = prim_dx.strip() if prim_dx.strip() else diag_text.strip()
-                if text and text.lower() not in ("nan", "none", ""):
-                    key = text.lower().strip()
-                    freetext_patients[key] = freetext_patients.get(key, 0) + 1
-                    if key not in freetext_raw:
-                        freetext_raw[key] = text
-                    # Try regex classification
-                    if key not in freetext_cat:
-                        cat = _categorise_text(text)
-                        if cat:
-                            freetext_cat[key] = cat
-
-    # Build rows — ICD codes not in base CSV
+    # Build grid rows
     rows = []
-    for code in sorted(code_patients.keys()):
-        pts = code_patients[code]
-        cat = _DIAG_C2C.get(code, "")
-        sub = ""
-        source = "referral"
+    for key, info in agg.items():
+        is_icd = info["type"] in ("icd", "cv")
+        code = key if is_icd else ""
+        desc = info["desc"]
+        pts = info["count"]
+        src_type = info["type"]
+
+        # Resolve category/subcategory
+        if is_icd:
+            cat = _DIAG_C2C.get(code, "")
+            sub = ""
+        else:
+            cat = _categorise_text(desc) or ""
+            sub = ""
+
+        source = src_type
         reviewed = False
 
-        if code in overrides:
-            ov = overrides[code]
+        # Check DB override (keyed by code or raw text)
+        override_key = code if is_icd else desc
+        if override_key in overrides:
+            ov = overrides[override_key]
             cat = ov["category"]
             sub = ov["subcategory"]
             source = ov["source"]
             reviewed = ov.get("reviewed", False)
 
-        desc = code_desc.get(code) or _DIAG_DESCRIPTIONS.get(code, "")
+        # Infer subcategory from text if we have category but not subcategory
+        if cat and not sub:
+            infer_text = desc if desc else (_DIAG_DESCRIPTIONS.get(code, "") if code else "")
+            if infer_text:
+                sub = _infer_subcategory(infer_text, cat)
 
-        # Infer subcategory from description if we have a category but no subcategory
-        if cat and not sub and desc:
-            sub = _infer_subcategory(desc, cat)
+        if not desc and code:
+            desc = _DIAG_DESCRIPTIONS.get(code, "")
 
         rows.append({
             "icd_code": code,
             "description": desc,
-            "category": cat,
-            "subcategory": sub,
-            "patients": pts,
-            "source": source,
-            "reviewed": reviewed,
-        })
-
-    # Build rows — free-text diagnoses (no ICD code)
-    for key in sorted(freetext_patients.keys()):
-        pts = freetext_patients[key]
-        raw_text = freetext_raw[key]
-        cat = freetext_cat.get(key, "")
-        sub = ""
-        source = "free-text"
-        reviewed = False
-
-        # Infer subcategory from the text
-        if cat:
-            sub = _infer_subcategory(raw_text, cat)
-
-        # Check DB override keyed by the raw text
-        if raw_text in overrides:
-            ov = overrides[raw_text]
-            cat = ov["category"]
-            sub = ov["subcategory"]
-            source = ov["source"]
-            reviewed = ov.get("reviewed", False)
-
-        rows.append({
-            "icd_code": "",
-            "description": raw_text,
             "category": cat,
             "subcategory": sub,
             "patients": pts,
@@ -3886,10 +4034,11 @@ def _build_diag_grid_data():
     total = len(rows)
     icd_count = sum(1 for r in rows if r["icd_code"])
     text_count = total - icd_count
+    cv_count = sum(1 for r in rows if r["source"] == "cv")
     categorized = sum(1 for r in rows if r["category"])
-    overridden = sum(1 for r in rows if r["source"] not in ("referral", "free-text"))
+    overridden = sum(1 for r in rows if r["source"] not in ("icd", "cv", "free-text"))
     stats = (
-        f"{icd_count:,} ICD codes  |  {text_count:,} free-text  |  "
+        f"{icd_count:,} ICD  |  {text_count:,} free-text  |  {cv_count:,} from CV  |  "
         f"{categorized:,} categorized  |  {total - categorized:,} unmapped  |  "
         f"{overridden:,} overrides"
     )
@@ -3898,44 +4047,57 @@ def _build_diag_grid_data():
 
 @callback(
     Output(f"{PAGE_ID}-rpm-diag-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-diag-grid-full-store", "data", allow_duplicate=True),
     Output(f"{PAGE_ID}-rpm-diag-stats", "children", allow_duplicate=True),
     Input(f"{PAGE_ID}-rpm-diag-grid", "cellValueChanged"),
-    State(f"{PAGE_ID}-rpm-diag-grid", "rowData"),
+    State(f"{PAGE_ID}-rpm-diag-grid-full-store", "data"),
+    State(f"{PAGE_ID}-rpm-diag-unreviewed-toggle", "checked"),
     prevent_initial_call=True,
 )
-def _rpm_diag_save_edit(changed, row_data):
-    """Save a manual cell edit (category or subcategory) to SQLite."""
+def _rpm_diag_save_edit(changed, full_data, unreviewed_only):
+    """Save a manual cell edit (category, subcategory, or reviewed) to SQLite."""
     if not changed:
-        return dash.no_update, dash.no_update
+        return dash.no_update, dash.no_update, dash.no_update
     from data.reviews_db import upsert_diagnosis_override
 
+    row_data = full_data or []
     row = changed[0].get("data", {}) if isinstance(changed, list) else changed.get("data", {})
     code = row.get("icd_code", "")
-    if not code:
-        return dash.no_update, dash.no_update
+    desc = row.get("description", "")
+    override_key = code or desc
+    if not override_key:
+        return dash.no_update, dash.no_update, dash.no_update
 
+    col = changed[0].get("colId", "") if isinstance(changed, list) else changed.get("colId", "")
     cat = row.get("category", "")
     sub = row.get("subcategory", "")
-    upsert_diagnosis_override(code, category=cat, subcategory=sub, source="manual")
+    reviewed = row.get("reviewed", False)
 
-    # Update row data source indicator
-    if row_data:
-        for r in row_data:
-            if r["icd_code"] == code:
-                r["category"] = cat
-                r["subcategory"] = sub
-                r["source"] = "manual"
-                break
+    upsert_diagnosis_override(override_key, category=cat, subcategory=sub, source="manual")
+    if col == "reviewed":
+        from data.reviews_db import set_diagnosis_reviewed_bulk
+        set_diagnosis_reviewed_bulk([override_key], reviewed=bool(reviewed))
 
-    total = len(row_data) if row_data else 0
-    categorized = sum(1 for r in row_data if r.get("category")) if row_data else 0
-    with_sub = sum(1 for r in row_data if r.get("subcategory")) if row_data else 0
-    overridden = sum(1 for r in row_data if r.get("source") != "csv") if row_data else 0
+    # Update full store
+    match_key = code if code else desc
+    for r in row_data:
+        rk = r.get("icd_code") or r.get("description", "")
+        if rk == match_key:
+            r["category"] = cat
+            r["subcategory"] = sub
+            r["reviewed"] = reviewed
+            r["source"] = "manual"
+            break
+
+    total = len(row_data)
+    categorized = sum(1 for r in row_data if r.get("category"))
+    reviewed_n = sum(1 for r in row_data if r.get("reviewed"))
     stats = (
-        f"{total:,} codes  |  {categorized:,} categorized  |  "
-        f"{with_sub:,} with subcategory  |  {overridden:,} overrides"
+        f"{total:,} entries  |  {categorized:,} categorized  |  "
+        f"{reviewed_n:,} reviewed  |  {total - reviewed_n:,} unreviewed"
     )
-    return row_data, stats
+    visible = [r for r in row_data if not r.get("reviewed")] if unreviewed_only else row_data
+    return visible, row_data, stats
 
 
 @callback(
@@ -3956,18 +4118,20 @@ def _rpm_diag_export(n, diag_data):
 # --- Diagnosis Manager: Mark Reviewed ---
 @callback(
     Output(f"{PAGE_ID}-rpm-diag-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-diag-grid-full-store", "data", allow_duplicate=True),
     Output(f"{PAGE_ID}-rpm-diag-stats", "children", allow_duplicate=True),
     Input(f"{PAGE_ID}-rpm-diag-reviewed-btn", "n_clicks"),
-    State(f"{PAGE_ID}-rpm-diag-grid", "rowData"),
+    State(f"{PAGE_ID}-rpm-diag-grid-full-store", "data"),
     State(f"{PAGE_ID}-rpm-diag-grid", "selectedRows"),
+    State(f"{PAGE_ID}-rpm-diag-unreviewed-toggle", "checked"),
     prevent_initial_call=True,
 )
-def _rpm_diag_mark_reviewed(n, row_data, selected_rows):
-    if not n or not row_data or not selected_rows:
-        return dash.no_update, dash.no_update
+def _rpm_diag_mark_reviewed(n, full_data, selected_rows, unreviewed_only):
+    if not n or not full_data or not selected_rows:
+        return dash.no_update, dash.no_update, dash.no_update
     from data.reviews_db import upsert_diagnosis_override, set_diagnosis_reviewed_bulk
 
-    # Ensure rows exist in DB, then mark reviewed
+    row_data = full_data
     codes = []
     for r in selected_rows:
         key = r.get("icd_code") or r.get("description", "")
@@ -3993,7 +4157,8 @@ def _rpm_diag_mark_reviewed(n, row_data, selected_rows):
         f"{total:,} entries  |  {categorized:,} categorized  |  "
         f"{reviewed_n:,} reviewed  |  {total - reviewed_n:,} unreviewed"
     )
-    return row_data, stats
+    visible = [r for r in row_data if not r.get("reviewed")] if unreviewed_only else row_data
+    return visible, row_data, stats
 
 
 # --- Diagnosis Manager: Detail Panel ---

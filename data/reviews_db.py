@@ -71,6 +71,21 @@ CREATE TABLE IF NOT EXISTS insurance_rates (
     notes         TEXT NOT NULL DEFAULT '',
     updated_at    TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS insurance_rate_history (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    payor         TEXT NOT NULL,
+    effective_date TEXT NOT NULL,
+    end_date      TEXT,
+    rate_method   TEXT NOT NULL DEFAULT 'pct_medicare',
+    em_cf         REAL,
+    other_cf      REAL,
+    pct_medicare  REAL NOT NULL DEFAULT 100.0,
+    source        TEXT NOT NULL DEFAULT 'manual',
+    notes         TEXT NOT NULL DEFAULT '',
+    updated_at    TEXT NOT NULL,
+    UNIQUE(payor, effective_date)
+);
 """
 
 
@@ -503,7 +518,7 @@ def _load_base_payor_rates() -> list[dict]:
 
 
 def seed_insurance_rates() -> int:
-    """Populate insurance_rates from CSV if the table is empty. Returns rows inserted."""
+    """Populate insurance_rates + history from CSV if the main table is empty."""
     with _connect() as conn:
         count = conn.execute("SELECT COUNT(*) AS cnt FROM insurance_rates").fetchone()["cnt"]
         if count > 0:
@@ -512,26 +527,63 @@ def seed_insurance_rates() -> int:
     if not rows:
         return 0
     now = datetime.now(timezone.utc).isoformat()
+
+    # Group rows by canonical payor name (strip year suffixes)
+    # Rows with history_only=true go only into history, not the main table
+    canonical = {}  # payor -> list of rate dicts
+    for r in rows:
+        payor = r["payor"].strip()
+        canonical.setdefault(payor, []).append(r)
+
     with _connect() as conn:
-        for r in rows:
+        for payor, rate_rows in canonical.items():
+            # Sort by effective_date, most recent last
+            rate_rows.sort(key=lambda x: x.get("effective_date", ""))
+
+            # The last row is the current rate for the main table
+            current = rate_rows[-1]
             conn.execute(
                 """INSERT OR IGNORE INTO insurance_rates
                    (payor, rate_method, em_cf, other_cf, pct_medicare,
                     effective_date, source, notes, updated_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    r["payor"].strip(),
-                    r.get("rate_method", "pct_medicare"),
-                    float(r["em_cf"]) if r.get("em_cf") else None,
-                    float(r["other_cf"]) if r.get("other_cf") else None,
-                    float(r.get("pct_medicare") or 100),
-                    r.get("effective_date", ""),
-                    r.get("source", "csv"),
-                    r.get("notes", ""),
+                    payor,
+                    current.get("rate_method", "pct_medicare"),
+                    float(current["em_cf"]) if current.get("em_cf") else None,
+                    float(current["other_cf"]) if current.get("other_cf") else None,
+                    float(current.get("pct_medicare") or 100),
+                    current.get("effective_date", ""),
+                    current.get("source", "csv"),
+                    current.get("notes", ""),
                     now,
                 ),
             )
-    return len(rows)
+
+            # All rows go into history
+            for r in rate_rows:
+                eff = r.get("effective_date", "")
+                if not eff:
+                    continue
+                conn.execute(
+                    """INSERT OR IGNORE INTO insurance_rate_history
+                       (payor, effective_date, rate_method, em_cf, other_cf,
+                        pct_medicare, source, notes, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        payor,
+                        eff,
+                        r.get("rate_method", "pct_medicare"),
+                        float(r["em_cf"]) if r.get("em_cf") else None,
+                        float(r["other_cf"]) if r.get("other_cf") else None,
+                        float(r.get("pct_medicare") or 100),
+                        r.get("source", "csv"),
+                        r.get("notes", ""),
+                        now,
+                    ),
+                )
+
+    return len(canonical)
 
 
 def upsert_insurance_rate(
@@ -544,7 +596,7 @@ def upsert_insurance_rate(
     source: str = "manual",
     notes: str = "",
 ) -> None:
-    """Insert or update a payor rate."""
+    """Insert or update a payor's current rate."""
     now = datetime.now(timezone.utc).isoformat()
     with _connect() as conn:
         conn.execute(
@@ -567,7 +619,7 @@ def upsert_insurance_rate(
 
 
 def get_all_insurance_rates() -> list[dict]:
-    """Return all payor rates as a list of dicts."""
+    """Return all payor rates as a list of dicts (one per payor)."""
     with _connect() as conn:
         rows = conn.execute(
             "SELECT payor, rate_method, em_cf, other_cf, pct_medicare, "
@@ -578,6 +630,86 @@ def get_all_insurance_rates() -> list[dict]:
 
 
 def delete_insurance_rate(payor: str) -> None:
-    """Remove a payor rate."""
+    """Remove a payor rate and its history."""
     with _connect() as conn:
         conn.execute("DELETE FROM insurance_rates WHERE payor = ?", (payor.strip(),))
+        conn.execute("DELETE FROM insurance_rate_history WHERE payor = ?", (payor.strip(),))
+
+
+# ---------------------------------------------------------------------------
+# Rate history
+# ---------------------------------------------------------------------------
+
+def upsert_rate_history(
+    payor: str,
+    effective_date: str,
+    end_date: str = "",
+    rate_method: str = "pct_medicare",
+    em_cf: float | None = None,
+    other_cf: float | None = None,
+    pct_medicare: float = 100.0,
+    source: str = "manual",
+    notes: str = "",
+) -> None:
+    """Insert or update a rate history entry."""
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            """INSERT INTO insurance_rate_history
+               (payor, effective_date, end_date, rate_method, em_cf, other_cf,
+                pct_medicare, source, notes, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(payor, effective_date) DO UPDATE SET
+                   end_date       = excluded.end_date,
+                   rate_method    = excluded.rate_method,
+                   em_cf          = excluded.em_cf,
+                   other_cf       = excluded.other_cf,
+                   pct_medicare   = excluded.pct_medicare,
+                   source         = excluded.source,
+                   notes          = excluded.notes,
+                   updated_at     = excluded.updated_at""",
+            (payor.strip(), effective_date, end_date or None, rate_method,
+             em_cf, other_cf, pct_medicare, source, notes, now),
+        )
+
+
+def get_rate_history(payor: str) -> list[dict]:
+    """Return all rate history entries for a payor, newest first."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT id, payor, effective_date, end_date, rate_method, "
+            "em_cf, other_cf, pct_medicare, source, notes, updated_at "
+            "FROM insurance_rate_history WHERE payor = ? "
+            "ORDER BY effective_date DESC",
+            (payor.strip(),),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_rate_history_entry(entry_id: int) -> None:
+    """Remove a single rate history entry by id."""
+    with _connect() as conn:
+        conn.execute("DELETE FROM insurance_rate_history WHERE id = ?", (entry_id,))
+
+
+def get_rate_at_date(payor: str, service_date: str) -> dict | None:
+    """Return the rate in effect for a payor on a given date.
+
+    Looks up the most recent history entry with effective_date <= service_date.
+    Falls back to the main insurance_rates table if no history exists.
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM insurance_rate_history "
+            "WHERE payor = ? AND effective_date <= ? "
+            "ORDER BY effective_date DESC LIMIT 1",
+            (payor.strip(), service_date),
+        ).fetchone()
+        if row:
+            return dict(row)
+        # Fallback to main table
+        row = conn.execute(
+            "SELECT * FROM insurance_rates WHERE payor = ?",
+            (payor.strip(),),
+        ).fetchone()
+        return dict(row) if row else None

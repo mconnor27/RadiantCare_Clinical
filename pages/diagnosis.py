@@ -584,6 +584,12 @@ layout = dmc.Stack(
                             children=[
                                 dmc.Text(id="diag-mgr-stats", size="xs",
                                          c=NEUTRAL["text_muted"]),
+                                dmc.Switch(
+                                    id="diag-mgr-unreviewed-toggle",
+                                    label="Unreviewed only",
+                                    size="xs",
+                                    checked=False,
+                                ),
                                 dmc.Button(
                                     "Mark Reviewed",
                                     id="diag-mgr-reviewed-btn",
@@ -906,6 +912,19 @@ def update_diagnosis(_n, slider_val, departments, physician, diag_filter, mode, 
     )
 
     return trend_store, fig_bars, phys_options
+
+
+# --- Unreviewed-only toggle for Diagnosis manager grid ---
+clientside_callback(
+    """function(checked) {
+        if (checked) {
+            return {"reviewed": {"filterType": "text", "type": "equals", "filter": "false"}};
+        }
+        return {};
+    }""",
+    Output("diag-mgr-grid", "filterModel"),
+    Input("diag-mgr-unreviewed-toggle", "checked"),
+)
 
 
 # ---------------------------------------------------------------------------
