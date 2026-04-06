@@ -1,0 +1,993 @@
+icd_code,description,category,subcategory
+D24.1,Benign neoplasm of right breast,Benign Diseases,
+M65.221,"Calcific tendinitis, right upper arm",Benign Diseases,
+N60.92,Unspecified benign mammary dysplasia of left breast,Benign Diseases,
+N60.99,Unspecified benign mammary dysplasia of unspecified breast,Benign Diseases,
+728.6,Contracture of palmar fascia,Benign Diseases,Dupuytren / Plantar
+M72.0,Palmar fascial fibromatosis [Dupuytren],Benign Diseases,Dupuytren / Plantar
+M72.2,Plantar fascial fibromatosis,Benign Diseases,Dupuytren / Plantar
+611.1,Hypertrophy of breast,Benign Diseases,Gynecomastia
+N62,Hypertrophy of breast,Benign Diseases,Gynecomastia
+228.00,Hemangioma of unspecified site,Benign Diseases,Hemangioma
+D18.00,Hemangioma unspecified site,Benign Diseases,Hemangioma
+D18.02,Hemangioma of intracranial structures,Benign Diseases,Hemangioma
+D18.09,Hemangioma of other sites,Benign Diseases,Hemangioma
+728.13,Postoperative heterotopic calcification,Benign Diseases,Heterotopic Ossification
+M61.40,"Other calcification of muscle, unspecified site",Benign Diseases,Heterotopic Ossification
+M61.451,"Other calcification of muscle, right thigh",Benign Diseases,Heterotopic Ossification
+M61.452,"Other calcification of muscle, left thigh",Benign Diseases,Heterotopic Ossification
+M61.49,"Other calcification of muscle, multiple sites",Benign Diseases,Heterotopic Ossification
+701.4,Keloid scar,Benign Diseases,Keloid / Scar
+L91.0,Hypertrophic scar,Benign Diseases,Keloid / Scar
+Q85.00,"Neurofibromatosis, unspecified",Benign Diseases,Neurofibromatosis
+376.11,Orbital granuloma,Benign Diseases,Orbital Pseudotumor
+M16.10,"Unilateral primary osteoarthritis, unspecified hip",Benign Diseases,Osteoarthritis
+M17.0,Bilateral primary osteoarthritis of knee,Benign Diseases,Osteoarthritis
+M17.11,"Unilateral primary osteoarthritis, right knee",Benign Diseases,Osteoarthritis
+M18.0,Bilateral primary osteoarthritis of first carpometacarpal joints,Benign Diseases,Osteoarthritis
+M19.011,"Primary osteoarthritis, right shoulder",Benign Diseases,Osteoarthritis
+M19.012,"Primary osteoarthritis, left shoulder",Benign Diseases,Osteoarthritis
+M19.031,"Primary osteoarthritis, right wrist",Benign Diseases,Osteoarthritis
+M19.041,"Primary osteoarthritis, right hand",Benign Diseases,Osteoarthritis
+M19.042,"Primary osteoarthritis, left hand",Benign Diseases,Osteoarthritis
+M19.90,"Unspecified osteoarthritis, unspecified site",Benign Diseases,Osteoarthritis
+M06.9,"Rheumatoid arthritis, unspecified",Benign Diseases,Rheumatoid Arthritis
+C50.012,"Malignant neoplasm of nipple and areola, left female breast",Breast,Left
+C50.112,Malignant neoplasm of central portion of left female breast,Breast,Left
+C50.212,Malignant neoplasm of upper-inner quadrant of left female breast,Breast,Left
+C50.312,Malignant neoplasm of lower-inner quadrant of left female breast,Breast,Left
+C50.412,Malignant neoplasm of upper-outer quadrant of left female breast,Breast,Left
+C50.512,Malignant neoplasm of lower-outer quadrant of left female breast,Breast,Left
+C50.612,Malignant neoplasm of axillary tail of left female breast,Breast,Left
+C50.812,Malignant neoplasm of overlapping sites of left female breast,Breast,Left
+C50.912,Malignant neoplasm of unspecified site of left female breast,Breast,Left
+D05.02,Lobular carcinoma in situ of left breast,Breast,Left
+D05.12,Intraductal carcinoma in situ of left breast,Breast,Left
+D05.82,Other specified type of carcinoma in situ of left breast,Breast,Left
+D48.62,Neoplasm of uncertain behavior of left breast,Breast,Left
+175.0,Malignant neoplasm of nipple and areola of male breast,Breast,Male
+175.9,Malignant neoplasm of other and unspecified sites of male breast,Breast,Male
+C50.021,"Malignant neoplasm of nipple and areola, right male breast",Breast,Male
+C50.022,"Malignant neoplasm of nipple and areola, left male breast",Breast,Male
+C50.121,Malignant neoplasm of central portion of right male breast,Breast,Male
+C50.122,Malignant neoplasm of central portion of left male breast,Breast,Male
+C50.821,Malignant neoplasm of overlapping sites of right male breast,Breast,Male
+C50.822,Malignant neoplasm of overlapping sites of left male breast,Breast,Male
+C50.921,Malignant neoplasm of unspecified site of right male breast,Breast,Male
+C50.011,"Malignant neoplasm of nipple and areola, right female breast",Breast,Right
+C50.111,Malignant neoplasm of central portion of right female breast,Breast,Right
+C50.211,Malignant neoplasm of upper-inner quadrant of right female breast,Breast,Right
+C50.311,Malignant neoplasm of lower-inner quadrant of right female breast,Breast,Right
+C50.411,Malignant neoplasm of upper-outer quadrant of right female breast,Breast,Right
+C50.511,Malignant neoplasm of lower-outer quadrant of right female breast,Breast,Right
+C50.611,Malignant neoplasm of axillary tail of right female breast,Breast,Right
+C50.811,Malignant neoplasm of overlapping sites of right female breast,Breast,Right
+C50.911,Malignant neoplasm of unspecified site of right female breast,Breast,Right
+D05.11,Intraductal carcinoma in situ of right breast,Breast,Right
+D48.61,Neoplasm of uncertain behavior of right breast,Breast,Right
+174,Malignant neoplasm of female breast,Breast,Unspecified Laterality
+174.0,Malignant neoplasm of nipple and areola of female breast,Breast,Unspecified Laterality
+174.1,Malignant neoplasm of central portion of female breast,Breast,Unspecified Laterality
+174.2,Malignant neoplasm of upper-inner quadrant of female breast,Breast,Unspecified Laterality
+174.3,Malignant neoplasm of lower-inner quadrant of female breast,Breast,Unspecified Laterality
+174.4,Malignant neoplasm of upper-outer quadrant of female breast,Breast,Unspecified Laterality
+174.5,Malignant neoplasm of lower-outer quadrant of female breast,Breast,Unspecified Laterality
+174.6,Malignant neoplasm of axillary tail of female breast,Breast,Unspecified Laterality
+174.8,Malignant neoplasm of other specified sites of female breast,Breast,Unspecified Laterality
+174.9,"Malignant neoplasm of breast (female), unspecified site",Breast,Unspecified Laterality
+233.0,Carcinoma in situ of breast,Breast,Unspecified Laterality
+C50.219,Malignant neoplasm of upper-inner quadrant of unspecified female breast,Breast,Unspecified Laterality
+C50.419,Malignant neoplasm of upper-outer quadrant of unspecified female breast,Breast,Unspecified Laterality
+C50.519,Malignant neoplasm of lower-outer quadrant of unspecified female breast,Breast,Unspecified Laterality
+C50.819,Malignant neoplasm of overlapping sites of unspecified female breast,Breast,Unspecified Laterality
+C50.919,Malignant neoplasm of unspecified site of unspecified female breast,Breast,Unspecified Laterality
+D05.10,Intraductal carcinoma in situ of unspecified breast,Breast,Unspecified Laterality
+D49.3,Neoplasm of unspecified behavior of breast,Breast,Unspecified Laterality
+237.7,Neurofibromatosis,Sarcomas,Peripheral Nerve Sheath
+C70.0,Malignant neoplasm of cerebral meninges,Central Nervous System,Meningioma
+D31.62,Benign neoplasm of unspecified site of left orbit,Benign Diseases,Orbital Pseudotumor
+D35.2,Benign neoplasm of pituitary gland,Central Nervous System,Pituitary / Pineal
+D35.3,Benign neoplasm of craniopharyngeal duct,Central Nervous System,Craniopharyngioma
+D35.5,Benign neoplasm of carotid body,Central Nervous System,Paraganglioma
+D42.0,Neoplasm of uncertain behavior of cerebral meninges,Central Nervous System,Meningioma
+D42.9,"Neoplasm of uncertain behavior of meninges, unspecified",Central Nervous System,Meningioma
+D49.7,Neoplasm of unspecified behavior of endocrine glands and other parts of nervous system,Central Nervous System,Pituitary / Pineal
+228.02,Hemangioma of intracranial structures,Benign Diseases,Hemangioma
+747.81,Congenital anomalies of cerebrovascular system,Central Nervous System,AVM
+Q28.2,Arteriovenous malformation of cerebral vessels,Central Nervous System,AVM
+225.1,Benign neoplasm of cranial nerves,Central Nervous System,Schwannoma
+225.2,Benign neoplasm of cerebral meninges,Central Nervous System,Meningioma
+227.5,Benign neoplasm of carotid body,Central Nervous System,Paraganglioma
+D33.3,Benign neoplasm of cranial nerves,Central Nervous System,Schwannoma
+D33.4,Benign neoplasm of spinal cord,Sarcomas,Peripheral Nerve Sheath
+237.0,Neoplasm of uncertain behavior of pituitary gland and craniopharyngeal duct,Central Nervous System,Craniopharyngioma
+D43.2,"Neoplasm of uncertain behavior of brain, unspecified",Central Nervous System,Hemangioblastoma
+D49.6,Neoplasm of unspecified behavior of brain,Central Nervous System,Glioma / Primary Brain
+191.0,"Malignant neoplasm of cerebrum, except lobes and ventricles",Central Nervous System,Primary Brain
+191.1,Malignant neoplasm of frontal lobe,Central Nervous System,Primary Brain
+191.2,Malignant neoplasm of temporal lobe,Central Nervous System,Primary Brain
+191.3,Malignant neoplasm of parietal lobe,Central Nervous System,Primary Brain
+191.4,Malignant neoplasm of occipital lobe,Central Nervous System,Primary Brain
+191.6,Malignant neoplasm of cerebellum nos,Central Nervous System,Primary Brain
+191.7,Malignant neoplasm of brain stem,Central Nervous System,Primary Brain
+191.8,Malignant neoplasm of other parts of brain,Central Nervous System,Primary Brain
+191.9,"Malignant neoplasm of brain, unspecified site",Central Nervous System,Primary Brain
+C71.0,"Malignant neoplasm of cerebrum, except lobes and ventricles",Central Nervous System,Primary Brain
+C71.1,Malignant neoplasm of frontal lobe,Central Nervous System,Primary Brain
+C71.2,Malignant neoplasm of temporal lobe,Central Nervous System,Primary Brain
+C71.3,Malignant neoplasm of parietal lobe,Central Nervous System,Primary Brain
+C71.4,Malignant neoplasm of occipital lobe,Central Nervous System,Primary Brain
+C71.5,Malignant neoplasm of cerebral ventricle,Central Nervous System,Primary Brain
+C71.6,Malignant neoplasm of cerebellum,Central Nervous System,Primary Brain
+C71.7,Malignant neoplasm of brain stem,Central Nervous System,Primary Brain
+C71.8,Malignant neoplasm of overlapping sites of brain,Central Nervous System,Primary Brain
+C71.9,"Malignant neoplasm of brain, unspecified",Central Nervous System,Primary Brain
+192.1,Malignant neoplasm of cerebral meninges,Central Nervous System,Primary Brain
+D32.0,Benign neoplasm of cerebral meninges,Central Nervous System,Primary Brain
+D32.9,"Benign neoplasm of meninges, unspecified",Central Nervous System,Primary Brain
+190.0,"Malignant neoplasm of eyeball, except conjunctiva, cornea, retina, and choroid",Central Nervous System,Ocular / Orbit
+190.1,Malignant neoplasm of orbit,Central Nervous System,Ocular / Orbit
+C69.31,Malignant neoplasm of right choroid,Central Nervous System,Ocular / Orbit
+C69.60,Malignant neoplasm of unspecified orbit,Central Nervous System,Ocular / Orbit
+C69.61,Malignant neoplasm of right orbit,Central Nervous System,Ocular / Orbit
+C69.62,Malignant neoplasm of left orbit,Central Nervous System,Ocular / Orbit
+C47.21,"Malignant neoplasm of peripheral nerves of right lower limb, including hip",Sarcomas,Peripheral Nerve Sheath
+C47.22,"Malignant neoplasm of peripheral nerves of left lower limb, including hip",Sarcomas,Peripheral Nerve Sheath
+194.0,Malignant neoplasm of adrenal gland,GU – Non-Prostate,Adrenal
+194.3,Malignant neoplasm of pituitary gland and craniopharyngeal duct,Central Nervous System,Pituitary / Pineal
+194.4,Malignant neoplasm of pineal gland,Central Nervous System,Pituitary / Pineal
+227.3,Benign neoplasm of pituitary gland and craniopharyngeal duct,Central Nervous System,Pituitary / Pineal
+C75.1,Malignant neoplasm of pituitary gland,Central Nervous System,Pituitary / Pineal
+192.0,Malignant neoplasm of cranial nerves,Central Nervous System,Schwannoma
+192.2,Malignant neoplasm of spinal cord,Central Nervous System,Spinal Cord
+192.3,Malignant neoplasm of spinal meninges,Central Nervous System,Spinal Cord
+C72.0,Malignant neoplasm of spinal cord,Central Nervous System,Spinal Cord
+C72.31,Malignant neoplasm of right optic nerve,Central Nervous System,Meningioma
+C66.1,Malignant neoplasm of right ureter,GU – Non-Prostate,Kidney / RCC
+C66.2,Malignant neoplasm of left ureter,GU – Non-Prostate,Kidney / RCC
+C66.9,Malignant neoplasm of unspecified ureter,GU – Non-Prostate,Kidney / RCC
+D07.4,Carcinoma in situ of penis,GU – Non-Prostate,Penile
+D09.0,Carcinoma in situ of bladder,GU – Non-Prostate,Bladder
+D49.4,Neoplasm of unspecified behavior of bladder,GU – Non-Prostate,Bladder
+237.2,Neoplasm of uncertain behavior of adrenal gland,GU – Non-Prostate,Adrenal
+C74.02,Malignant neoplasm of cortex of left adrenal gland,GU – Non-Prostate,Adrenal
+C74.11,Malignant neoplasm of medulla of right adrenal gland,GU – Non-Prostate,Adrenal
+188.0,Malignant neoplasm of trigone of urinary bladder,GU – Non-Prostate,Bladder
+188.1,Malignant neoplasm of dome of urinary bladder,GU – Non-Prostate,Bladder
+188.2,Malignant neoplasm of lateral wall of urinary bladder,GU – Non-Prostate,Bladder
+188.3,Malignant neoplasm of anterior wall of urinary bladder,GU – Non-Prostate,Bladder
+188.4,Malignant neoplasm of posterior wall of urinary bladder,GU – Non-Prostate,Bladder
+188.5,Malignant neoplasm of bladder neck,GU – Non-Prostate,Bladder
+188.6,Malignant neoplasm of ureteric orifice,GU – Non-Prostate,Bladder
+188.8,Malignant neoplasm of other specified sites of bladder,GU – Non-Prostate,Bladder
+188.9,"Malignant neoplasm of bladder, part unspecified",GU – Non-Prostate,Bladder
+233.7,Carcinoma in situ of bladder,GU – Non-Prostate,Bladder
+C67.0,Malignant neoplasm of trigone of bladder,GU – Non-Prostate,Bladder
+C67.1,Malignant neoplasm of dome of bladder,GU – Non-Prostate,Bladder
+C67.2,Malignant neoplasm of lateral wall of bladder,GU – Non-Prostate,Bladder
+C67.3,Malignant neoplasm of anterior wall of bladder,GU – Non-Prostate,Bladder
+C67.4,Malignant neoplasm of posterior wall of bladder,GU – Non-Prostate,Bladder
+C67.5,Malignant neoplasm of bladder neck,GU – Non-Prostate,Bladder
+C67.6,Malignant neoplasm of ureteric orifice,GU – Non-Prostate,Bladder
+C67.8,Malignant neoplasm of overlapping sites of bladder,GU – Non-Prostate,Bladder
+C67.9,"Malignant neoplasm of bladder, unspecified",GU – Non-Prostate,Bladder
+187.7,Malignant neoplasm of scrotum,Hematologic,Myeloma / Plasmacytoma
+189.0,"Malignant neoplasm of kidney, except pelvis",GU – Non-Prostate,Kidney / RCC
+189.1,Malignant neoplasm of renal pelvis,GU – Non-Prostate,Kidney / RCC
+189.2,Malignant neoplasm of ureter,GU – Non-Prostate,Kidney / RCC
+189.3,Malignant neoplasm of urethra,GU – Non-Prostate,Kidney / RCC
+189.9,"Malignant neoplasm of urinary organ, site unspecified",GU – Non-Prostate,Kidney / RCC
+C64.1,"Malignant neoplasm of right kidney, except renal pelvis",GU – Non-Prostate,Kidney / RCC
+C64.2,"Malignant neoplasm of left kidney, except renal pelvis",GU – Non-Prostate,Kidney / RCC
+C64.9,"Malignant neoplasm of unspecified kidney, except renal pelvis",GU – Non-Prostate,Kidney / RCC
+187.2,Malignant neoplasm of glans penis,GU – Non-Prostate,Penile
+187.4,"Malignant neoplasm of penis, part unspecified",GU – Non-Prostate,Penile
+233.5,Carcinoma in situ of penis,GU – Non-Prostate,Penile
+C60.0,Malignant neoplasm of prepuce,GU – Non-Prostate,Penile
+C60.1,Malignant neoplasm of glans penis,GU – Non-Prostate,Penile
+C60.8,Malignant neoplasm of overlapping sites of penis,GU – Non-Prostate,Penile
+C60.9,"Malignant neoplasm of penis, unspecified",GU – Non-Prostate,Penile
+186.9,Malignant neoplasm of other and unspecified testis,GU – Non-Prostate,Testicular
+187.6,Malignant neoplasm of spermatic cord,GU – Non-Prostate,Testicular
+C62.11,Malignant neoplasm of descended right testis,GU – Non-Prostate,Testicular
+C62.12,Malignant neoplasm of descended left testis,GU – Non-Prostate,Testicular
+C62.91,"Malignant neoplasm of right testis, unspecified whether descended or undescended",GU – Non-Prostate,Testicular
+C68.0,Malignant neoplasm of urethra,GU – Non-Prostate,Urethra
+185,Malignant neoplasm of prostate,GU – Prostate,Prostate Cancer
+C61,Malignant neoplasm of prostate,GU – Prostate,Prostate Cancer
+230.1,Carcinoma in situ of esophagus,Gastrointestinal,Esophageal
+D49.0,Neoplasm of unspecified behavior of digestive system,Gastrointestinal,Other/Unspecified
+154.2,Malignant neoplasm of anal canal,Gastrointestinal,Anal
+154.3,"Malignant neoplasm of anus, unspecified site",Gastrointestinal,Anal
+154.8,"Malignant neoplasm of other sites of rectum, rectosigmoid junction, and anus",Gastrointestinal,Rectal
+C21.0,"Malignant neoplasm of anus, unspecified",Gastrointestinal,Anal
+C21.1,Malignant neoplasm of anal canal,Gastrointestinal,Anal
+C21.2,Malignant neoplasm of cloacogenic zone,Gastrointestinal,Anal
+C21.8,"Malignant neoplasm of overlapping sites of rectum, anus and anal canal",Gastrointestinal,Anal
+156.0,Malignant neoplasm of gallbladder,Gastrointestinal,Biliary
+156.1,Malignant neoplasm of extrahepatic bile ducts,Gastrointestinal,Biliary
+156.2,Malignant neoplasm of ampulla of vater,Gastrointestinal,Biliary
+C24.0,Malignant neoplasm of extrahepatic bile duct,Gastrointestinal,Biliary
+C24.1,Malignant neoplasm of ampulla of Vater,Gastrointestinal,Biliary
+C24.8,Malignant neoplasm of overlapping sites of biliary tract,Gastrointestinal,Biliary
+153.0,Malignant neoplasm of hepatic flexure,Gastrointestinal,Colon
+153.1,Malignant neoplasm of transverse colon,Gastrointestinal,Colon
+153.2,Malignant neoplasm of descending colon,Gastrointestinal,Colon
+153.3,Malignant neoplasm of sigmoid colon,Gastrointestinal,Colon
+153.4,Malignant neoplasm of cecum,Gastrointestinal,Colon
+153.5,Malignant neoplasm of appendix vermiformis,Gastrointestinal,Colon
+153.6,Malignant neoplasm of ascending colon,Gastrointestinal,Colon
+153.7,Malignant neoplasm of splenic flexure,Gastrointestinal,Colon
+153.8,Malignant neoplasm of other specified sites of large intestine,Gastrointestinal,Colon
+153.9,"Malignant neoplasm of colon, unspecified site",Gastrointestinal,Colon
+C18.0,Malignant neoplasm of cecum,Gastrointestinal,Colon
+C18.2,Malignant neoplasm of ascending colon,Gastrointestinal,Colon
+C18.4,Malignant neoplasm of transverse colon,Gastrointestinal,Colon
+C18.6,Malignant neoplasm of descending colon,Gastrointestinal,Colon
+C18.7,Malignant neoplasm of sigmoid colon,Gastrointestinal,Colon
+C18.9,"Malignant neoplasm of colon, unspecified",Gastrointestinal,Colon
+150.0,Malignant neoplasm of cervical esophagus,Gastrointestinal,Esophageal
+150.1,Malignant neoplasm of thoracic esophagus,Gastrointestinal,Esophageal
+150.2,Malignant neoplasm of abdominal esophagus,Gastrointestinal,Esophageal
+150.3,Malignant neoplasm of upper third of esophagus,Gastrointestinal,Esophageal
+150.4,Malignant neoplasm of middle third of esophagus,Gastrointestinal,Esophageal
+150.5,Malignant neoplasm of lower third of esophagus,Gastrointestinal,Esophageal
+150.8,Malignant neoplasm of other specified part of esophagus,Gastrointestinal,Esophageal
+150.9,"Malignant neoplasm of esophagus, unspecified site",Gastrointestinal,Esophageal
+C15.3,Malignant neoplasm of upper third of esophagus,Gastrointestinal,Esophageal
+C15.4,Malignant neoplasm of middle third of esophagus,Gastrointestinal,Esophageal
+C15.5,Malignant neoplasm of lower third of esophagus,Gastrointestinal,Esophageal
+C15.8,Malignant neoplasm of overlapping sites of esophagus,Gastrointestinal,Esophageal
+C15.9,"Malignant neoplasm of esophagus, unspecified",Gastrointestinal,Esophageal
+159.0,"Malignant neoplasm of intestinal tract, part unspecified",Gastrointestinal,Other/Unspecified
+C23,Malignant neoplasm of gallbladder,Gastrointestinal,Biliary
+151.0,Malignant neoplasm of cardia,Gastrointestinal,Gastric
+151.2,Malignant neoplasm of pyloric antrum,Gastrointestinal,Gastric
+151.3,Malignant neoplasm of fundus of stomach,Gastrointestinal,Gastric
+151.4,Malignant neoplasm of body of stomach,Gastrointestinal,Gastric
+151.5,"Malignant neoplasm of lesser curvature of stomach, unspecified",Gastrointestinal,Gastric
+151.6,"Malignant neoplasm of greater curvature of stomach, unspecified",Gastrointestinal,Gastric
+151.8,Malignant neoplasm of other specified sites of stomach,Gastrointestinal,Gastric
+151.9,"Malignant neoplasm of stomach, unspecified site",Gastrointestinal,Gastric
+C16.0,Malignant neoplasm of cardia,Gastrointestinal,Gastric
+C16.2,Malignant neoplasm of body of stomach,Gastrointestinal,Gastric
+C16.3,Malignant neoplasm of pyloric antrum,Gastrointestinal,Gastric
+C16.4,Malignant neoplasm of pylorus,Gastrointestinal,Gastric
+C16.5,"Malignant neoplasm of lesser curvature of stomach, unspecified",Gastrointestinal,Gastric
+C16.8,Malignant neoplasm of overlapping sites of stomach,Gastrointestinal,Gastric
+C16.9,"Malignant neoplasm of stomach, unspecified",Gastrointestinal,Gastric
+155.0,"Malignant neoplasm of liver, primary",Gastrointestinal,Liver / HCC
+155.1,Malignant neoplasm of intrahepatic bile ducts,Gastrointestinal,Liver / HCC
+155.2,"Malignant neoplasm of liver, not specified as primary or secondary",Gastrointestinal,Liver / HCC
+C22.0,Liver cell carcinoma,Gastrointestinal,Liver / HCC
+C22.1,Intrahepatic bile duct carcinoma,Gastrointestinal,Liver / HCC
+C22.8,"Malignant neoplasm of liver, primary, unspecified as to type",Gastrointestinal,Liver / HCC
+C7A.012,Malignant carcinoid tumor of the ileum,Gastrointestinal,Neuroendocrine
+C7A.026,Malignant carcinoid tumor of the rectum,Gastrointestinal,Neuroendocrine
+239.0,Neoplasm of unspecified nature of digestive system,Gastrointestinal,Other/Unspecified
+157.0,Malignant neoplasm of head of pancreas,Gastrointestinal,Pancreatic
+157.1,Malignant neoplasm of body of pancreas,Gastrointestinal,Pancreatic
+157.2,Malignant neoplasm of tail of pancreas,Gastrointestinal,Pancreatic
+157.8,Malignant neoplasm of other specified sites of pancreas,Gastrointestinal,Pancreatic
+157.9,"Malignant neoplasm of pancreas, part unspecified",Gastrointestinal,Pancreatic
+C25.0,Malignant neoplasm of head of pancreas,Gastrointestinal,Pancreatic
+C25.1,Malignant neoplasm of body of pancreas,Gastrointestinal,Pancreatic
+C25.2,Malignant neoplasm of tail of pancreas,Gastrointestinal,Pancreatic
+C25.7,Malignant neoplasm of other parts of pancreas,Gastrointestinal,Pancreatic
+C25.8,Malignant neoplasm of overlapping sites of pancreas,Gastrointestinal,Pancreatic
+C25.9,"Malignant neoplasm of pancreas, unspecified",Gastrointestinal,Pancreatic
+154.1,Malignant neoplasm of rectum,Gastrointestinal,Rectal
+C20,Malignant neoplasm of rectum,Gastrointestinal,Rectal
+154.0,Malignant neoplasm of rectosigmoid junction,Gastrointestinal,Rectal
+C19,Malignant neoplasm of rectosigmoid junction,Gastrointestinal,Rectal
+152.0,Malignant neoplasm of duodenum,Gastrointestinal,Small Intestine
+152.1,Malignant neoplasm of jejunum,Gastrointestinal,Small Intestine
+152.8,Malignant neoplasm of other specified sites of small intestine,Gastrointestinal,Small Intestine
+C17.1,Malignant neoplasm of jejunum,Gastrointestinal,Small Intestine
+C49.A2,Gastrointestinal stromal tumor of stomach,Gastrointestinal,GIST
+180.0,Malignant neoplasm of endocervix,Gynecologic,Cervical
+180.1,Malignant neoplasm of exocervix,Gynecologic,Cervical
+180.8,Malignant neoplasm of other specified sites of cervix,Gynecologic,Cervical
+180.9,"Malignant neoplasm of cervix uteri, unspecified site",Gynecologic,Cervical
+233.1,Carcinoma in situ of cervix uteri,Gynecologic,Cervical
+C53.0,Malignant neoplasm of endocervix,Gynecologic,Cervical
+C53.1,Malignant neoplasm of exocervix,Gynecologic,Cervical
+C53.8,Malignant neoplasm of overlapping sites of cervix uteri,Gynecologic,Cervical
+C53.9,"Malignant neoplasm of cervix uteri, unspecified",Gynecologic,Cervical
+183.5,Malignant neoplasm of round ligament of uterus,Gynecologic,Fallopian / Adnexal
+183.9,"Malignant neoplasm of uterine adnexa, unspecified site",Gynecologic,Fallopian / Adnexal
+C57.00,Malignant neoplasm of unspecified fallopian tube,Gynecologic,Fallopian / Adnexal
+C57.02,Malignant neoplasm of left fallopian tube,Gynecologic,Fallopian / Adnexal
+C57.4,"Malignant neoplasm of uterine adnexa, unspecified",Gynecologic,Fallopian / Adnexal
+C57.7,Malignant neoplasm of other specified female genital organs,Gynecologic,Other
+C57.8,Malignant neoplasm of overlapping sites of female genital organs,Gynecologic,Other
+184.9,"Malignant neoplasm of female genital organ, site unspecified",Gynecologic,Other
+183.0,Malignant neoplasm of ovary,Gynecologic,Ovarian
+C56.1,Malignant neoplasm of right ovary,Gynecologic,Ovarian
+C56.2,Malignant neoplasm of left ovary,Gynecologic,Ovarian
+C56.9,Malignant neoplasm of unspecified ovary,Gynecologic,Ovarian
+179,"Malignant neoplasm of uterus, part unspecified",Gynecologic,Uterine / Endometrial
+182.0,"Malignant neoplasm of corpus uteri, except isthmus",Gynecologic,Uterine / Endometrial
+182.1,Malignant neoplasm of isthmus,Gynecologic,Uterine / Endometrial
+182.8,Malignant neoplasm of other specified sites of body of uterus,Gynecologic,Uterine / Endometrial
+C54.0,Malignant neoplasm of isthmus uteri,Gynecologic,Uterine / Endometrial
+C54.1,Malignant neoplasm of endometrium,Gynecologic,Uterine / Endometrial
+C54.2,Malignant neoplasm of myometrium,Gynecologic,Uterine / Endometrial
+C54.3,Malignant neoplasm of fundus uteri,Gynecologic,Uterine / Endometrial
+C54.8,Malignant neoplasm of overlapping sites of corpus uteri,Gynecologic,Uterine / Endometrial
+C54.9,"Malignant neoplasm of corpus uteri, unspecified",Gynecologic,Uterine / Endometrial
+C55,"Malignant neoplasm of uterus, part unspecified",Gynecologic,Uterine / Endometrial
+D25.9,"Leiomyoma of uterus, unspecified",Gynecologic,Uterine / Endometrial
+184.0,Malignant neoplasm of vagina,Gynecologic,Vaginal
+C52,Malignant neoplasm of vagina,Gynecologic,Vaginal
+184.1,Malignant neoplasm of labia majora,Gynecologic,Vulvar
+184.2,Malignant neoplasm of labia minora,Gynecologic,Vulvar
+184.4,"Malignant neoplasm of vulva, unspecified site",Gynecologic,Vulvar
+C51.0,Malignant neoplasm of labium majus,Gynecologic,Vulvar
+C51.1,Malignant neoplasm of labium minus,Gynecologic,Vulvar
+C51.2,Malignant neoplasm of clitoris,Gynecologic,Vulvar
+C51.8,Malignant neoplasm of overlapping sites of vulva,Gynecologic,Vulvar
+C51.9,"Malignant neoplasm of vulva, unspecified",Gynecologic,Vulvar
+,,Head and Neck,
+195.0,"Malignant neoplasm of head, face, and neck",Head and Neck,Unknown Primary/Other
+C76.0,"Malignant neoplasm of head, face and neck",Head and Neck,Unknown Primary/Other
+148.1,Malignant neoplasm of pyriform sinus,Head and Neck,Hypopharynx
+148.2,"Malignant neoplasm of aryepiglottic fold, hypopharyngeal aspect",Head and Neck,Hypopharynx
+148.3,Malignant neoplasm of posterior hypopharyngeal wall,Head and Neck,Hypopharynx
+148.8,Malignant neoplasm of other specified sites of hypopharynx,Head and Neck,Hypopharynx
+148.9,"Malignant neoplasm of hypopharynx, unspecified site",Head and Neck,Hypopharynx
+C12,Malignant neoplasm of pyriform sinus,Head and Neck,Hypopharynx
+C13.0,Malignant neoplasm of postcricoid region,Head and Neck,Hypopharynx
+C13.1,"Malignant neoplasm of aryepiglottic fold, hypopharyngeal aspect",Head and Neck,Hypopharynx
+C13.2,Malignant neoplasm of posterior wall of hypopharynx,Head and Neck,Hypopharynx
+C13.8,Malignant neoplasm of overlapping sites of hypopharynx,Head and Neck,Hypopharynx
+C13.9,"Malignant neoplasm of hypopharynx, unspecified",Head and Neck,Hypopharynx
+161.0,Malignant neoplasm of glottis,Head and Neck,Larynx
+161.1,Malignant neoplasm of supraglottis,Head and Neck,Larynx
+161.3,Malignant neoplasm of laryngeal cartilages,Head and Neck,Larynx
+161.8,Malignant neoplasm of other specified sites of larynx,Head and Neck,Larynx
+C32.0,Malignant neoplasm of glottis,Head and Neck,Larynx
+C32.1,Malignant neoplasm of supraglottis,Head and Neck,Larynx
+C32.2,Malignant neoplasm of subglottis,Head and Neck,Larynx
+C32.3,Malignant neoplasm of laryngeal cartilage,Head and Neck,Larynx
+C32.8,Malignant neoplasm of overlapping sites of larynx,Head and Neck,Larynx
+C32.9,"Malignant neoplasm of larynx, unspecified",Head and Neck,Larynx
+D02.0,Carcinoma in situ of larynx,Head and Neck,Larynx
+D38.0,Neoplasm of uncertain behavior of larynx,Head and Neck,Larynx
+140.1,"Malignant neoplasm of lower lip, vermilion border",Head and Neck,Lip
+140.8,Malignant neoplasm of other sites of lip,Head and Neck,Lip
+140.9,"Malignant neoplasm of lip, unspecified, vermilion border",Head and Neck,Lip
+C00.0,Malignant neoplasm of external upper lip,Head and Neck,Lip
+C00.1,Malignant neoplasm of external lower lip,Head and Neck,Lip
+C00.3,"Malignant neoplasm of upper lip, inner aspect",Head and Neck,Lip
+C00.4,"Malignant neoplasm of lower lip, inner aspect",Head and Neck,Lip
+C00.5,"Malignant neoplasm of lip, unspecified, inner aspect",Head and Neck,Lip
+C00.8,Malignant neoplasm of overlapping sites of lip,Head and Neck,Lip
+C00.9,"Malignant neoplasm of lip, unspecified",Head and Neck,Lip
+160.0,Malignant neoplasm of nasal cavities,Head and Neck,Nasal Cavity / Sinus
+160.2,Malignant neoplasm of maxillary sinus,Head and Neck,Nasal Cavity / Sinus
+160.3,Malignant neoplasm of ethmoidal sinus,Head and Neck,Nasal Cavity / Sinus
+160.4,Malignant neoplasm of frontal sinus,Head and Neck,Nasal Cavity / Sinus
+160.8,Malignant neoplasm of other accessory sinuses,Head and Neck,Nasal Cavity / Sinus
+C31.0,Malignant neoplasm of maxillary sinus,Head and Neck,Nasal Cavity / Sinus
+C31.1,Malignant neoplasm of ethmoidal sinus,Head and Neck,Nasal Cavity / Sinus
+C31.8,Malignant neoplasm of overlapping sites of accessory sinuses,Head and Neck,Nasal Cavity / Sinus
+C31.9,"Malignant neoplasm of accessory sinus, unspecified",Head and Neck,Nasal Cavity / Sinus
+147.0,Malignant neoplasm of superior wall of nasopharynx,Head and Neck,Nasopharynx
+147.1,Malignant neoplasm of posterior wall of nasopharynx,Head and Neck,Nasopharynx
+147.2,Malignant neoplasm of lateral wall of nasopharynx,Head and Neck,Nasopharynx
+147.3,Malignant neoplasm of anterior wall of nasopharynx,Head and Neck,Nasopharynx
+147.8,Malignant neoplasm of other specified sites of nasopharynx,Head and Neck,Nasopharynx
+C11.1,Malignant neoplasm of posterior wall of nasopharynx,Head and Neck,Nasopharynx
+C11.2,Malignant neoplasm of lateral wall of nasopharynx,Head and Neck,Nasopharynx
+C11.8,Malignant neoplasm of overlapping sites of nasopharynx,Head and Neck,Nasopharynx
+C11.9,"Malignant neoplasm of nasopharynx, unspecified",Head and Neck,Nasopharynx
+144.0,Malignant neoplasm of anterior portion of floor of mouth,Head and Neck,Oral Cavity
+144.1,Malignant neoplasm of lateral portion of floor of mouth,Head and Neck,Oral Cavity
+144.8,Malignant neoplasm of other sites of floor of mouth,Head and Neck,Oral Cavity
+144.9,"Malignant neoplasm of floor of mouth, part unspecified",Head and Neck,Oral Cavity
+C04.0,Malignant neoplasm of anterior floor of mouth,Head and Neck,Oral Cavity
+C04.1,Malignant neoplasm of lateral floor of mouth,Head and Neck,Oral Cavity
+C04.8,Malignant neoplasm of overlapping sites of floor of mouth,Head and Neck,Oral Cavity
+C04.9,"Malignant neoplasm of floor of mouth, unspecified",Head and Neck,Oral Cavity
+143.0,Malignant neoplasm of upper gum,Head and Neck,Oral Cavity
+143.1,Malignant neoplasm of lower gum,Head and Neck,Oral Cavity
+143.8,Malignant neoplasm of other sites of gum,Head and Neck,Oral Cavity
+143.9,"Malignant neoplasm of gum, unspecified",Head and Neck,Oral Cavity
+C03.0,Malignant neoplasm of upper gum,Head and Neck,Oral Cavity
+C03.1,Malignant neoplasm of lower gum,Head and Neck,Oral Cavity
+C03.9,"Malignant neoplasm of gum, unspecified",Head and Neck,Oral Cavity
+145.0,Malignant neoplasm of cheek mucosa,Head and Neck,Oral Cavity
+145.1,Malignant neoplasm of vestibule of mouth,Head and Neck,Oral Cavity
+145.2,Malignant neoplasm of hard palate,Head and Neck,Oral Cavity
+145.3,Malignant neoplasm of soft palate,Head and Neck,Oral Cavity
+145.4,Malignant neoplasm of uvula,Head and Neck,Oral Cavity
+145.6,Malignant neoplasm of retromolar area,Head and Neck,Oral Cavity
+145.8,Malignant neoplasm of other specified parts of mouth,Head and Neck,Oral Cavity
+145.9,"Malignant neoplasm of mouth, unspecified",Head and Neck,Oral Cavity
+210.4,Benign neoplasm of other and unspecified parts of mouth,Head and Neck,Oral Cavity
+C06.0,Malignant neoplasm of cheek mucosa,Head and Neck,Oral Cavity
+C06.1,Malignant neoplasm of vestibule of mouth,Head and Neck,Oral Cavity
+C06.2,Malignant neoplasm of retromolar area,Head and Neck,Oral Cavity
+C06.80,Malignant neoplasm of overlapping sites of unspecified parts of mouth,Head and Neck,Oral Cavity
+C06.89,Malignant neoplasm of overlapping sites of other parts of mouth,Head and Neck,Oral Cavity
+C06.9,"Malignant neoplasm of mouth, unspecified",Head and Neck,Oral Cavity
+C05.0,Malignant neoplasm of hard palate,Head and Neck,Oral Cavity
+C05.1,Malignant neoplasm of soft palate,Head and Neck,Oropharynx
+C05.8,Malignant neoplasm of overlapping sites of palate,Head and Neck,Oral Cavity
+C02.0,Malignant neoplasm of dorsal surface of tongue,Head and Neck,Oral Cavity
+C02.1,Malignant neoplasm of border of tongue,Head and Neck,Oral Cavity
+C02.2,Malignant neoplasm of ventral surface of tongue,Head and Neck,Oral Cavity
+C02.3,"Malignant neoplasm of anterior two-thirds of tongue, part unspecified",Head and Neck,Oral Cavity
+C02.4,Malignant neoplasm of lingual tonsil,Head and Neck,Oral Cavity
+C02.8,Malignant neoplasm of overlapping sites of tongue,Head and Neck,Oral Cavity
+C02.9,"Malignant neoplasm of tongue, unspecified",Head and Neck,Oral Cavity
+141,Malignant neoplasm of tongue,Head and Neck,Oral Cavity
+141.0,Malignant neoplasm of base of tongue,Head and Neck,Oropharynx
+141.1,Malignant neoplasm of dorsal surface of tongue,Head and Neck,Oropharynx
+141.2,Malignant neoplasm of tip and lateral border of tongue,Head and Neck,Oropharynx
+141.3,Malignant neoplasm of ventral surface of tongue,Head and Neck,Oropharynx
+141.4,"Malignant neoplasm of anterior two-thirds of tongue, part unspecified",Head and Neck,Oropharynx
+141.5,Malignant neoplasm of junctional zone of tongue,Head and Neck,Oropharynx
+141.8,Malignant neoplasm of other sites of tongue,Head and Neck,Oropharynx
+141.9,"Malignant neoplasm of tongue, unspecified",Head and Neck,Oropharynx
+146.0,Malignant neoplasm of tonsil,Head and Neck,Oropharynx
+146.1,Malignant neoplasm of tonsillar fossa,Head and Neck,Oropharynx
+146.2,Malignant neoplasm of tonsillar pillars (anterior) (posterior),Head and Neck,Oropharynx
+146.3,Malignant neoplasm of vallecula epiglottica,Head and Neck,Oropharynx
+146.4,Malignant neoplasm of anterior aspect of epiglottis,Head and Neck,Oropharynx
+146.6,Malignant neoplasm of lateral wall of oropharynx,Head and Neck,Oropharynx
+146.7,Malignant neoplasm of posterior wall of oropharynx,Head and Neck,Oropharynx
+146.8,Malignant neoplasm of other specified sites of oropharynx,Head and Neck,Oropharynx
+146.9,"Malignant neoplasm of oropharynx, unspecified site",Head and Neck,Oropharynx
+C10.0,Malignant neoplasm of vallecula,Head and Neck,Oropharynx
+C10.2,Malignant neoplasm of lateral wall of oropharynx,Head and Neck,Oropharynx
+C10.3,Malignant neoplasm of posterior wall of oropharynx,Head and Neck,Oropharynx
+C10.8,Malignant neoplasm of overlapping sites of oropharynx,Head and Neck,Oropharynx
+C10.9,"Malignant neoplasm of oropharynx, unspecified",Head and Neck,Oropharynx
+C01,Malignant neoplasm of base of tongue,Head and Neck,Oropharynx
+C09.0,Malignant neoplasm of tonsillar fossa,Head and Neck,Oropharynx
+C09.1,Malignant neoplasm of tonsillar pillar (anterior) (posterior),Head and Neck,Oropharynx
+C09.8,Malignant neoplasm of overlapping sites of tonsil,Head and Neck,Oropharynx
+C09.9,"Malignant neoplasm of tonsil, unspecified",Head and Neck,Oropharynx
+149.0,"Malignant neoplasm of pharynx, unspecified",Head and Neck,Unknown Primary/Other
+149.8,Malignant neoplasm of other sites within the lip and oral cavity,Head and Neck,Oral Cavity
+C14.0,"Malignant neoplasm of pharynx, unspecified",Head and Neck,Unknown Primary/Other
+C14.8,"Malignant neoplasm of overlapping sites of lip, oral cavity and pharynx",Head and Neck,Unknown Primary/Other
+D37.05,Neoplasm of uncertain behavior of pharynx,Head and Neck,Unknown Primary/Other
+142.0,Malignant neoplasm of parotid gland,Head and Neck,Salivary Gland
+142.1,Malignant neoplasm of submandibular gland,Head and Neck,Salivary Gland
+142.2,Malignant neoplasm of sublingual gland,Head and Neck,Salivary Gland
+142.8,Malignant neoplasm of other major salivary glands,Head and Neck,Salivary Gland
+C07,Malignant neoplasm of parotid gland,Head and Neck,Salivary Gland
+C08.0,Malignant neoplasm of submandibular gland,Head and Neck,Salivary Gland
+C08.9,"Malignant neoplasm of major salivary gland, unspecified",Head and Neck,Salivary Gland
+D11.0,Benign neoplasm of parotid gland,Head and Neck,Salivary Gland
+193,Malignant neoplasm of thyroid gland,Head and Neck,Thyroid
+C73,Malignant neoplasm of thyroid gland,Head and Neck,Thyroid
+D45,Polycythemia vera,Hematologic,Other/Unspecified
+D46.9,"Myelodysplastic syndrome, unspecified",Hematologic,MDS/PMF/Splenomegaly
+D47.9,"Neoplasm of uncertain behavior of lymphoid, hematopoietic and related tissue, unspecified",Hematologic,Other/Unspecified
+D47.Z9,"Other specified neoplasms of uncertain behavior of lymphoid, hematopoietic and related tissue",Hematologic,Other/Unspecified
+201.01,"Hodgkin's paragranuloma involving lymph nodes of head, face, and neck",Hematologic,Hodgkin Lymphoma
+201.41,"Hodgkin's disease, lymphocytic-histiocytic predominance involving lymph nodes of head, face, and neck",Hematologic,Hodgkin Lymphoma
+201.42,"Hodgkin's disease, lymphocytic-histiocytic predominance involving intrathoracic lymph nodes",Hematologic,Hodgkin Lymphoma
+201.43,"Hodgkin's disease, lymphocytic-histiocytic predominance involving intra-abdominal lymph nodes",Hematologic,Hodgkin Lymphoma
+201.44,"Hodgkin's disease, lymphocytic-histiocytic predominance involving intra-abdominal lymph nodes",Hematologic,Hodgkin Lymphoma
+201.50,"Hodgkin's disease, nodular sclerosis, unspecified site",Hematologic,Hodgkin Lymphoma
+201.51,"Hodgkin's disease, nodular sclerosis, involving lymph nodes of head, face, and neck",Hematologic,Hodgkin Lymphoma
+201.52,"Hodgkin's disease, nodular sclerosis, involving intrathoracic lymph nodes",Hematologic,Hodgkin Lymphoma
+201.53,"Hodgkin's disease, nodular sclerosis, involving intra-abdominal lymph nodes",Hematologic,Hodgkin Lymphoma
+201.56,"Hodgkin's disease, nodular sclerosis, involving intrapelvic lymph nodes",Hematologic,Hodgkin Lymphoma
+201.57,"Hodgkin's disease, nodular sclerosis, involving spleen",Hematologic,Hodgkin Lymphoma
+201.58,"Hodgkin's disease, nodular sclerosis, involving lymph nodes of multiple sites",Hematologic,Hodgkin Lymphoma
+201.61,"Hodgkin's disease, mixed cellularity, involving lymph nodes of head, face, and neck",Hematologic,Hodgkin Lymphoma
+201.62,"Hodgkin's disease, mixed cellularity, involving intrathoracic lymph nodes",Hematologic,Hodgkin Lymphoma
+201.64,"Hodgkin's disease, mixed cellularity, involving lymph nodes of axilla and upper limb",Hematologic,Hodgkin Lymphoma
+201.65,"Hodgkin's disease, mixed cellularity, involving lymph nodes of inguinal region and lower limb",Hematologic,Hodgkin Lymphoma
+201.66,"Hodgkin's disease, mixed cellularity, involving intrapelvic lymph nodes",Hematologic,Hodgkin Lymphoma
+201.68,"Hodgkin's disease, mixed cellularity, involving lymph nodes of multiple sites",Hematologic,Hodgkin Lymphoma
+201.91,"Hodgkin's disease, unspecified type, involving lymph nodes of head, face, and neck",Hematologic,Hodgkin Lymphoma
+C81.01,"Nodular lymphocyte predominant Hodgkin lymphoma, lymph nodes of head, face, and neck",Hematologic,Hodgkin Lymphoma
+C81.11,"Nodular sclerosis Hodgkin lymphoma, lymph nodes of head, face, and neck",Hematologic,Hodgkin Lymphoma
+C81.12,"Nodular sclerosis Hodgkin lymphoma, intrathoracic lymph nodes",Hematologic,Hodgkin Lymphoma
+C81.14,"Nodular sclerosis Hodgkin lymphoma, lymph nodes of axilla and upper limb",Hematologic,Hodgkin Lymphoma
+C81.18,"Nodular sclerosis Hodgkin lymphoma, lymph nodes of multiple sites",Hematologic,Hodgkin Lymphoma
+C81.21,"Mixed cellularity Hodgkin lymphoma, lymph nodes of head, face, and neck",Hematologic,Hodgkin Lymphoma
+C81.22,"Mixed cellularity Hodgkin lymphoma, intrathoracic lymph nodes",Hematologic,Hodgkin Lymphoma
+C81.28,"Mixed cellularity Hodgkin lymphoma, lymph nodes of multiple sites",Hematologic,Hodgkin Lymphoma
+C81.72,"Other Hodgkin lymphoma, intrathoracic lymph nodes",Hematologic,Hodgkin Lymphoma
+176.0,"Kaposi's sarcoma, skin",Hematologic,Kaposi Sarcoma
+C46.0,Kaposi's sarcoma of skin,Hematologic,Kaposi Sarcoma
+204.10,"Lymphoid leukemia, chronic, without mention of remission",Hematologic,Leukemia
+C91.00,Acute lymphoblastic leukemia not having achieved remission,Hematologic,Leukemia
+C91.02,"Acute lymphoblastic leukemia, in relapse",Hematologic,Leukemia
+C91.10,Chronic lymphocytic leukemia of B-cell type not having achieved remission,Hematologic,Leukemia
+C91.11,Chronic lymphocytic leukemia of B-cell type in remission,Hematologic,Leukemia
+C91.12,Chronic lymphocytic leukemia of B-cell type in relapse,Hematologic,Leukemia
+C91.60,Prolymphocytic leukemia of T-cell type not having achieved remission,Hematologic,Leukemia
+206.10,"Monocytic leukemia, chronic without mention of remission",Hematologic,Leukemia
+238.76,Myelofibrosis with myeloid metaplasia,Hematologic,MDS/PMF/Splenomegaly
+289.83,Myelofibrosis,Hematologic,MDS/PMF/Splenomegaly
+D75.81,Myelofibrosis,Hematologic,MDS/PMF/Splenomegaly
+205.30,"Myeloid sarcoma, without mention of remission",Hematologic,Leukemia
+C92.01,"Acute myeloblastic leukemia, in remission",Hematologic,Leukemia
+203.0,Multiple myeloma,Hematologic,Myeloma / Plasmacytoma
+203.00,"Multiple myeloma, without mention of remission",Hematologic,Myeloma / Plasmacytoma
+203.01,"Multiple myeloma, in remission",Hematologic,Myeloma / Plasmacytoma
+203.02,Multiple myeloma in relapse,Hematologic,Myeloma / Plasmacytoma
+203.1,Plasma cell leukemia,Hematologic,Myeloma / Plasmacytoma
+203.10,"Plasma cell leukemia, without mention of remission",Hematologic,Myeloma / Plasmacytoma
+203.8,Other immunoproliferative neoplasms,Hematologic,Myeloma / Plasmacytoma
+238.6,Neoplasm of uncertain behavior of plasma cells,Hematologic,Myeloma / Plasmacytoma
+C90.00,Multiple myeloma not having achieved remission,Hematologic,Myeloma / Plasmacytoma
+C90.02,Multiple myeloma in relapse,Hematologic,Myeloma / Plasmacytoma
+C90.10,Plasma cell leukemia not having achieved remission,Hematologic,Myeloma / Plasmacytoma
+C90.20,Extramedullary plasmacytoma not having achieved remission,Hematologic,Myeloma / Plasmacytoma
+C90.30,Solitary plasmacytoma not having achieved remission,Hematologic,Myeloma / Plasmacytoma
+C90.32,Solitary plasmacytoma in relapse,Hematologic,Myeloma / Plasmacytoma
+C83.00,"Small cell B-cell lymphoma, unspecified site",Hematologic,Non-Hodgkin Lymphoma (Diffuse)
+C83.01,"Small cell B-cell lymphoma, lymph nodes of head, face, and neck",Hematologic,Non-Hodgkin Lymphoma (Diffuse)
+C83.06,"Small cell B-cell lymphoma, intrapelvic lymph nodes",Hematologic,Non-Hodgkin Lymphoma (Diffuse)
+C83.09,"Small cell B-cell lymphoma, extranodal and solid organ sites",Hematologic,Non-Hodgkin Lymphoma (Diffuse)
+C83.11,"Mantle cell lymphoma, lymph nodes of head, face, and neck",Hematologic,Mantle Cell
+C83.12,"Mantle cell lymphoma, intrathoracic lymph nodes",Hematologic,Mantle Cell
+C83.13,"Mantle cell lymphoma, intra-abdominal lymph nodes",Hematologic,Mantle Cell
+C83.14,"Mantle cell lymphoma, lymph nodes of axilla and upper limb",Hematologic,Mantle Cell
+C83.16,"Mantle cell lymphoma, intrapelvic lymph nodes",Hematologic,Mantle Cell
+C83.18,"Mantle cell lymphoma, lymph nodes of multiple sites",Hematologic,Mantle Cell
+C83.19,"Mantle cell lymphoma, extranodal and solid organ sites",Hematologic,Mantle Cell
+C83.30,"Diffuse large B-cell lymphoma, unspecified site",Hematologic,Non-Hodgkin Lymphoma (Diffuse)
+C83.31,"Diffuse large B-cell lymphoma, lymph nodes of head, face, and neck",Hematologic,Non-Hodgkin Lymphoma (Diffuse)
+C83.33,"Diffuse large B-cell lymphoma, intra-abdominal lymph nodes",Hematologic,Non-Hodgkin Lymphoma (Diffuse)
+C83.34,"Diffuse large B-cell lymphoma, lymph nodes of axilla and upper limb",Hematologic,Non-Hodgkin Lymphoma (Diffuse)
+C83.35,"Diffuse large B-cell lymphoma, lymph nodes of inguinal region and lower limb",Hematologic,Non-Hodgkin Lymphoma (Diffuse)
+C83.36,"Diffuse large B-cell lymphoma, intrapelvic lymph nodes",Hematologic,Non-Hodgkin Lymphoma (Diffuse)
+C83.38,"Diffuse large B-cell lymphoma, lymph nodes of multiple sites",Hematologic,Non-Hodgkin Lymphoma (Diffuse)
+C83.39,"Diffuse large B-cell lymphoma, extranodal and solid organ sites",Hematologic,Non-Hodgkin Lymphoma (Diffuse)
+C83.390,Primary central nervous system lymphoma,Hematologic,Non-Hodgkin Lymphoma (Diffuse)
+C83.51,"Lymphoblastic (diffuse) lymphoma, lymph nodes of head, face, and neck",Hematologic,Non-Hodgkin Lymphoma (Diffuse)
+C83.52,"Lymphoblastic (diffuse) lymphoma, intrathoracic lymph nodes",Hematologic,Non-Hodgkin Lymphoma (Diffuse)
+C83.53,"Lymphoblastic (diffuse) lymphoma, intra-abdominal lymph nodes",Hematologic,Non-Hodgkin Lymphoma (Diffuse)
+C83.54,"Lymphoblastic (diffuse) lymphoma, lymph nodes of axilla and upper limb",Hematologic,Non-Hodgkin Lymphoma (Diffuse)
+C83.55,"Lymphoblastic (diffuse) lymphoma, lymph nodes of inguinal region and lower limb",Hematologic,Non-Hodgkin Lymphoma (Diffuse)
+C83.56,"Lymphoblastic (diffuse) lymphoma, intrapelvic lymph nodes",Hematologic,Non-Hodgkin Lymphoma (Diffuse)
+C83.58,"Lymphoblastic (diffuse) lymphoma, lymph nodes of multiple sites",Hematologic,Non-Hodgkin Lymphoma (Diffuse)
+C83.59,"Lymphoblastic (diffuse) lymphoma, extranodal and solid organ sites",Hematologic,Non-Hodgkin Lymphoma (Diffuse)
+C83.75,"Burkitt lymphoma, lymph nodes of inguinal region and lower limb",Hematologic,Non-Hodgkin Lymphoma (Diffuse)
+C83.81,"Other non-follicular lymphoma, lymph nodes of head, face, and neck",Hematologic,Non-Hodgkin Lymphoma (Diffuse)
+C83.82,"Other non-follicular lymphoma, intrathoracic lymph nodes",Hematologic,Non-Hodgkin Lymphoma (Diffuse)
+C83.83,"Other non-follicular lymphoma, intra-abdominal lymph nodes",Hematologic,Non-Hodgkin Lymphoma (Diffuse)
+C83.84,"Other non-follicular lymphoma, lymph nodes of axilla and upper limb",Hematologic,Non-Hodgkin Lymphoma (Diffuse)
+C83.86,"Other non-follicular lymphoma, intrapelvic lymph nodes",Hematologic,Non-Hodgkin Lymphoma (Diffuse)
+C83.89,"Other non-follicular lymphoma, extranodal and solid organ sites",Hematologic,Non-Hodgkin Lymphoma (Diffuse)
+C83.94,"Non-follicular (diffuse) lymphoma, unspecified, lymph nodes of axilla and upper limb",Hematologic,Non-Hodgkin Lymphoma (Diffuse)
+C82.01,"Follicular lymphoma grade I, lymph nodes of head, face, and neck",Hematologic,Non-Hodgkin Lymphoma (Follicular)
+C82.02,"Follicular lymphoma grade I, intrathoracic lymph nodes",Hematologic,Non-Hodgkin Lymphoma (Follicular)
+C82.03,"Follicular lymphoma grade I, intra-abdominal lymph nodes",Hematologic,Non-Hodgkin Lymphoma (Follicular)
+C82.05,"Follicular lymphoma grade I, lymph nodes of inguinal region and lower limb",Hematologic,Non-Hodgkin Lymphoma (Follicular)
+C82.08,"Follicular lymphoma grade I, lymph nodes of multiple sites",Hematologic,Non-Hodgkin Lymphoma (Follicular)
+C82.09,"Follicular lymphoma grade I, extranodal and solid organ sites",Hematologic,Non-Hodgkin Lymphoma (Follicular)
+C82.11,"Follicular lymphoma grade II, lymph nodes of head, face, and neck",Hematologic,Non-Hodgkin Lymphoma (Follicular)
+C82.13,"Follicular lymphoma grade II, intra-abdominal lymph nodes",Hematologic,Non-Hodgkin Lymphoma (Follicular)
+C82.14,"Follicular lymphoma grade II, lymph nodes of axilla and upper limb",Hematologic,Non-Hodgkin Lymphoma (Follicular)
+C82.15,"Follicular lymphoma grade II, lymph nodes of inguinal region and lower limb",Hematologic,Non-Hodgkin Lymphoma (Follicular)
+C82.18,"Follicular lymphoma grade II, lymph nodes of multiple sites",Hematologic,Non-Hodgkin Lymphoma (Follicular)
+C82.19,"Follicular lymphoma grade II, extranodal and solid organ sites",Hematologic,Non-Hodgkin Lymphoma (Follicular)
+C82.35,"Follicular lymphoma grade IIIa, lymph nodes of inguinal region and lower limb",Hematologic,Non-Hodgkin Lymphoma (Follicular)
+C82.41,"Follicular lymphoma grade IIIb, lymph nodes of head, face, and neck",Hematologic,Non-Hodgkin Lymphoma (Follicular)
+C82.51,"Diffuse follicle center lymphoma, lymph nodes of head, face, and neck",Hematologic,Non-Hodgkin Lymphoma (Follicular)
+C82.58,"Diffuse follicle center lymphoma, lymph nodes of multiple sites",Hematologic,Non-Hodgkin Lymphoma (Follicular)
+C82.68,"Cutaneous follicle center lymphoma, lymph nodes of multiple sites",Hematologic,Non-Hodgkin Lymphoma (Follicular)
+C82.69,"Cutaneous follicle center lymphoma, extranodal and solid organ sites",Hematologic,Non-Hodgkin Lymphoma (Follicular)
+C82.85,"Other types of follicular lymphoma, lymph nodes of inguinal region and lower limb",Hematologic,Non-Hodgkin Lymphoma (Follicular)
+C82.90,"Follicular lymphoma, unspecified, unspecified site",Hematologic,Non-Hodgkin Lymphoma (Follicular)
+C82.94,"Follicular lymphoma, unspecified, lymph nodes of axilla and upper limb",Hematologic,Non-Hodgkin Lymphoma (Follicular)
+200.10,"Lymphosarcoma, unspecified site",Hematologic,Non-Hodgkin Lymphoma (Other)
+200.11,"Lymphosarcoma involving lymph nodes of head, face, and neck",Hematologic,Non-Hodgkin Lymphoma (Other)
+200.12,Lymphosarcoma involving intrathoracic lymph nodes,Hematologic,Non-Hodgkin Lymphoma (Other)
+200.13,Lymphosarcoma involving intra-abdominal lymph nodes,Hematologic,Non-Hodgkin Lymphoma (Other)
+200.14,Lymphosarcoma involving lymph nodes of axilla and upper limb,Hematologic,Non-Hodgkin Lymphoma (Other)
+200.15,Lymphosarcoma involving lymph nodes of inguinal region and lower limb,Hematologic,Non-Hodgkin Lymphoma (Other)
+200.16,Lymphosarcoma involving intrapelvic lymph nodes,Hematologic,Non-Hodgkin Lymphoma (Other)
+200.18,Lymphosarcoma involving lymph nodes of multiple sites,Hematologic,Non-Hodgkin Lymphoma (Other)
+200.31,Marginal zone lymphoma involving lymph nodes of head face and neck,Hematologic,MALT
+200.33,Marginal zone lymphoma involving intra-abdominal lymph nodes,Hematologic,MALT
+200.4,Mantle cell lymphoma,Hematologic,Mantle Cell
+200.50,Primary central nervous system lymphoma unspecified site,Hematologic,Non-Hodgkin Lymphoma (Other)
+200.61,Anaplastic large cell lymphoma involving lymph nodes of head face and neck,Hematologic,Non-Hodgkin Lymphoma (Other)
+200.63,Anaplastic large cell lymphoma involving intra-abdominal lymph nodes,Hematologic,Non-Hodgkin Lymphoma (Other)
+200.7,Large cell lymphoma,Hematologic,Non-Hodgkin Lymphoma (Other)
+200.70,Large cell lymphoma unspecified site,Hematologic,Non-Hodgkin Lymphoma (Other)
+200.80,"Other named variants of lymphosarcoma and reticulosarcoma, unspecified site",Hematologic,Non-Hodgkin Lymphoma (Other)
+200.81,"Other named variants of lymphosarcoma and reticulosarcoma involving lymph nodes of head, face, and neck",Hematologic,Non-Hodgkin Lymphoma (Other)
+200.82,Other named variants of lymphosarcoma and reticulosarcoma involving intrathoracic lymph nodes,Hematologic,Non-Hodgkin Lymphoma (Other)
+200.83,Other named variants of lymphosarcoma and reticulosarcoma involving intra-abdominal lymph nodes,Hematologic,Non-Hodgkin Lymphoma (Other)
+200.84,Other named variants of lymphosarcoma and reticulosarcoma involving lymph nodes of axilla and upper limb,Hematologic,Non-Hodgkin Lymphoma (Other)
+200.85,Other named variants of lymphosarcoma and reticulosarcoma involving lymph nodes of inguinal region and lower limb,Hematologic,Non-Hodgkin Lymphoma (Other)
+200.88,Other named variants of lymphosarcoma and reticulosarcoma involving lymph nodes of multiple sites,Hematologic,Non-Hodgkin Lymphoma (Other)
+202.0,Nodular lymphoma,Hematologic,Non-Hodgkin Lymphoma (Other)
+202.00,"Nodular lymphoma, unspecified site",Hematologic,Non-Hodgkin Lymphoma (Other)
+202.01,"Nodular lymphoma involving lymph nodes of head, face, and neck",Hematologic,Non-Hodgkin Lymphoma (Other)
+202.02,Nodular lymphoma involving intrathoracic lymph nodes,Hematologic,Non-Hodgkin Lymphoma (Other)
+202.03,Nodular lymphoma involving intra-abdominal lymph nodes,Hematologic,Non-Hodgkin Lymphoma (Other)
+202.04,Nodular lymphoma involving lymph nodes of axilla and upper limb,Hematologic,Non-Hodgkin Lymphoma (Other)
+202.05,Nodular lymphoma involving lymph nodes of inguinal region and lower limb,Hematologic,Non-Hodgkin Lymphoma (Other)
+202.06,Nodular lymphoma involving intrapelvic lymph nodes,Hematologic,Non-Hodgkin Lymphoma (Other)
+202.07,Nodular lymphoma involving spleen,Hematologic,Non-Hodgkin Lymphoma (Other)
+202.08,Nodular lymphoma involving lymph nodes of multiple sites,Hematologic,Non-Hodgkin Lymphoma (Other)
+202.1,Mycosis fungoides,Hematologic,Mycosis Fungoides
+202.10,"Mycosis fungoides, unspecified site",Hematologic,Mycosis Fungoides
+202.11,"Mycosis fungoides involving lymph nodes of head, face, and neck",Hematologic,Mycosis Fungoides
+202.13,Mycosis fungoides involving intra-abdominal lymph nodes,Hematologic,Mycosis Fungoides
+202.14,Mycosis fungoides involving lymph nodes of axilla and upper limb,Hematologic,Mycosis Fungoides
+202.15,Mycosis fungoides involving lymph nodes of inguinal region and lower limb,Hematologic,Mycosis Fungoides
+202.18,Mycosis fungoides involving lymph nodes of multiple sites,Hematologic,Mycosis Fungoides
+202.20,"Sezary's disease, unspecified site",Hematologic,Mycosis Fungoides
+202.5,Letterer-siwe disease,Hematologic,Langerhans
+202.58,Letterer-siwe disease involving lymph nodes of multiple sites,Hematologic,Langerhans
+202.71,Peripheral t-cell lymphoma involving lymph nodes of head face and neck,Hematologic,T-Cell Lymphoma
+202.75,Peripheral t-cell lymphoma involving lymph nodes of inguinal region and lower limb,Hematologic,T-Cell Lymphoma
+202.80,"Other malignant lymphomas, unspecified site",Hematologic,Non-Hodgkin Lymphoma (Other)
+202.81,"Other malignant lymphomas involving lymph nodes of head, face, and neck",Hematologic,Non-Hodgkin Lymphoma (Other)
+202.82,Other malignant lymphomas involving intrathoracic lymph nodes,Hematologic,Non-Hodgkin Lymphoma (Other)
+202.83,Other malignant lymphomas involving intra-abdominal lymph nodes,Hematologic,Non-Hodgkin Lymphoma (Other)
+202.85,Other malignant lymphomas involving lymph nodes of inguinal region and lower limb,Hematologic,Non-Hodgkin Lymphoma (Other)
+202.86,Other malignant lymphomas involving intrapelvic lymph nodes,Hematologic,Non-Hodgkin Lymphoma (Other)
+202.88,Other malignant lymphomas involving lymph nodes of multiple sites,Hematologic,Non-Hodgkin Lymphoma (Other)
+202.91,"Other and unspecified malignant neoplasms of lymphoid and histiocytic tissue involving lymph nodes of head, face, and neck",Hematologic,Non-Hodgkin Lymphoma (Other)
+202.92,Other and unspecified malignant neoplasms of lymphoid and histiocytic tissue involving intrathoracic lymph nodes,Hematologic,Non-Hodgkin Lymphoma (Other)
+202.94,Other and unspecified malignant neoplasms of lymphoid and histiocytic tissue involving lymph nodes of axilla and upper limb,Hematologic,Non-Hodgkin Lymphoma (Other)
+202.98,Other and unspecified malignant neoplasms of lymphoid and histiocytic tissue involving lymph nodes of multiple sites,Hematologic,Non-Hodgkin Lymphoma (Other)
+C85.11,"Unspecified B-cell lymphoma, lymph nodes of head, face, and neck",Hematologic,Non-Hodgkin Lymphoma (Other)
+C85.12,"Unspecified B-cell lymphoma, intrathoracic lymph nodes",Hematologic,Non-Hodgkin Lymphoma (Other)
+C85.13,"Unspecified B-cell lymphoma, intra-abdominal lymph nodes",Hematologic,Non-Hodgkin Lymphoma (Other)
+C85.18,"Unspecified B-cell lymphoma, lymph nodes of multiple sites",Hematologic,Non-Hodgkin Lymphoma (Other)
+C85.19,"Unspecified B-cell lymphoma, extranodal and solid organ sites",Hematologic,Non-Hodgkin Lymphoma (Other)
+C85.80,"Other specified types of non-Hodgkin lymphoma, unspecified site",Hematologic,Non-Hodgkin Lymphoma (Other)
+C85.81,"Other specified types of non-Hodgkin lymphoma, lymph nodes of head, face, and neck",Hematologic,Non-Hodgkin Lymphoma (Other)
+C85.83,"Other specified types of non-Hodgkin lymphoma, intra-abdominal lymph nodes",Hematologic,Non-Hodgkin Lymphoma (Other)
+C85.90,"Non-Hodgkin lymphoma, unspecified, unspecified site",Hematologic,Non-Hodgkin Lymphoma (Other)
+C85.91,"Non-Hodgkin lymphoma, unspecified, lymph nodes of head, face, and neck",Hematologic,Non-Hodgkin Lymphoma (Other)
+C85.92,"Non-Hodgkin lymphoma, unspecified, intrathoracic lymph nodes",Hematologic,Non-Hodgkin Lymphoma (Other)
+C85.93,"Non-Hodgkin lymphoma, unspecified, intra-abdominal lymph nodes",Hematologic,Non-Hodgkin Lymphoma (Other)
+C85.98,"Non-Hodgkin lymphoma, unspecified, lymph nodes of multiple sites",Hematologic,Non-Hodgkin Lymphoma (Other)
+C85.99,"Non-Hodgkin lymphoma, unspecified, extranodal and solid organ sites",Hematologic,Non-Hodgkin Lymphoma (Other)
+C88.0,Waldenstrom macroglobulinemia,Hematologic,Other/Unspecified
+C88.4,Extranodal marginal zone B-cell lymphoma of mucosa-associated lymphoid tissue [MALT-lymphoma],Hematologic,MALT
+C88.40,Extranodal marginal zone B-cell lymphoma of mucosa-associated lymphoid tissue [MALT-lymphoma] not having achieved remission,Hematologic,MALT
+C96.6,Unifocal Langerhans-cell histiocytosis,Hematologic,Langerhans
+789.2,Splenomegaly,Hematologic,MDS/PMF/Splenomegaly
+R16.1,"Splenomegaly, not elsewhere classified",Hematologic,MDS/PMF/Splenomegaly
+C84.00,"Mycosis fungoides, unspecified site",Hematologic,Mycosis Fungoides
+C84.04,"Mycosis fungoides, lymph nodes of axilla and upper limb",Hematologic,Mycosis Fungoides
+C84.08,"Mycosis fungoides, lymph nodes of multiple sites",Hematologic,Mycosis Fungoides
+C84.09,"Mycosis fungoides, extranodal and solid organ sites",Hematologic,Mycosis Fungoides
+C84.19,"Sezary disease, extranodal and solid organ sites",Hematologic,Mycosis Fungoides
+C84.41,"Peripheral T-cell lymphoma, not elsewhere classified, lymph nodes of head, face, and neck",Hematologic,T-Cell Lymphoma
+C84.44,"Peripheral T-cell lymphoma, not elsewhere classified, lymph nodes of axilla and upper limb",Hematologic,T-Cell Lymphoma
+C84.61,"Anaplastic large cell lymphoma, ALK-positive, lymph nodes of head, face, and neck",Hematologic,T-Cell Lymphoma
+C84.69,"Anaplastic large cell lymphoma, ALK-positive, extranodal and solid organ sites",Hematologic,T-Cell Lymphoma
+C84.71,"Anaplastic large cell lymphoma, ALK-negative, lymph nodes of head, face, and neck",Hematologic,T-Cell Lymphoma
+C84.93,"Mature T/NK-cell lymphomas, unspecified, intra-abdominal lymph nodes",Hematologic,T-Cell Lymphoma
+C84.A0,"Cutaneous T-cell lymphoma, unspecified, unspecified site",Hematologic,T-Cell Lymphoma
+C84.A5,"Cutaneous T-cell lymphoma, unspecified, lymph nodes of inguinal region and lower limb",Hematologic,T-Cell Lymphoma
+C84.A8,"Cutaneous T-cell lymphoma, unspecified, lymph nodes of multiple sites",Hematologic,T-Cell Lymphoma
+C84.A9,"Cutaneous T-cell lymphoma, unspecified, extranodal and solid organ sites",Hematologic,T-Cell Lymphoma
+197.2,Secondary malignant neoplasm of pleura,Metastases & Palliative,Lung Metastases
+197.8,Secondary malignant neoplasm of other digestive organs and spleen,Metastases & Palliative,Other Metastases
+T88.59XS,"Other complications of anesthesia, sequela",Unknown,
+198.7,Secondary malignant neoplasm of adrenal gland,Metastases & Palliative,Adrenal Metastases
+C79.71,Secondary malignant neoplasm of right adrenal gland,Metastases & Palliative,Adrenal Metastases
+C79.72,Secondary malignant neoplasm of left adrenal gland,Metastases & Palliative,Adrenal Metastases
+198.5,Secondary malignant neoplasm of bone and bone marrow,Metastases & Palliative,Bone Metastases
+C79.51,Secondary malignant neoplasm of bone,Metastases & Palliative,Bone Metastases
+C79.52,Secondary malignant neoplasm of bone marrow,Metastases & Palliative,Bone Metastases
+C41.4,"Malignant neoplasm of pelvic bones, sacrum and coccyx",Sarcomas,Bone Sarcoma
+198.3,Secondary malignant neoplasm of brain and spinal cord,Metastases & Palliative,Brain Metastases
+198.4,Secondary malignant neoplasm of other parts of nervous system,Metastases & Palliative,Brain Metastases
+C79.31,Secondary malignant neoplasm of brain,Metastases & Palliative,Brain Metastases
+C79.32,Secondary malignant neoplasm of cerebral meninges,Metastases & Palliative,Brain Metastases
+C79.40,Secondary malignant neoplasm of unspecified part of nervous system,Metastases & Palliative,Brain Metastases
+C79.49,Secondary malignant neoplasm of other parts of nervous system,Metastases & Palliative,Brain Metastases
+336.9,Unspecified disease of spinal cord,Metastases & Palliative,Bone Metastases
+G95.20,Unspecified cord compression,Metastases & Palliative,Bone Metastases
+G95.29,Other cord compression,Metastases & Palliative,Bone Metastases
+195.3,Malignant neoplasm of pelvis,Metastases & Palliative,Other Metastases
+195.4,Malignant neoplasm of upper limb,Metastases & Palliative,Other Metastases
+195.5,Malignant neoplasm of lower limb,Metastases & Palliative,Other Metastases
+195.8,Malignant neoplasm of other specified sites,Metastases & Palliative,Other Metastases
+C76.2,Malignant neoplasm of abdomen,Metastases & Palliative,Other Metastases
+C76.3,Malignant neoplasm of pelvis,Metastases & Palliative,Other Metastases
+197.7,"Malignant neoplasm of liver, secondary",Metastases & Palliative,Liver Metastases
+C78.7,Secondary malignant neoplasm of liver and intrahepatic bile duct,Metastases & Palliative,Liver Metastases
+197.0,Secondary malignant neoplasm of lung,Metastases & Palliative,Lung Metastases
+C78.00,Secondary malignant neoplasm of unspecified lung,Metastases & Palliative,Lung Metastases
+C78.01,Secondary malignant neoplasm of right lung,Metastases & Palliative,Lung Metastases
+C78.02,Secondary malignant neoplasm of left lung,Metastases & Palliative,Lung Metastases
+196.0,"Secondary and unspecified malignant neoplasm of lymph nodes of head, face, and neck",Metastases & Palliative,Lymph Node Metastases
+196.1,Secondary and unspecified malignant neoplasm of intrathoracic lymph nodes,Metastases & Palliative,Lymph Node Metastases
+196.2,Secondary and unspecified malignant neoplasm of intra-abdominal lymph nodes,Metastases & Palliative,Lymph Node Metastases
+196.3,Secondary and unspecified malignant neoplasm of lymph nodes of axilla and upper limb,Metastases & Palliative,Lymph Node Metastases
+196.5,Secondary and unspecified malignant neoplasm of lymph nodes of inguinal region and lower limb,Metastases & Palliative,Lymph Node Metastases
+196.6,Secondary and unspecified malignant neoplasm of intrapelvic lymph nodes,Metastases & Palliative,Lymph Node Metastases
+196.8,Secondary and unspecified malignant neoplasm of lymph nodes of multiple sites,Metastases & Palliative,Lymph Node Metastases
+196.9,"Secondary and unspecified malignant neoplasm of lymph nodes, site unspecified",Metastases & Palliative,Lymph Node Metastases
+C77.0,"Secondary and unspecified malignant neoplasm of lymph nodes of head, face and neck",Metastases & Palliative,Lymph Node Metastases
+C77.1,Secondary and unspecified malignant neoplasm of intrathoracic lymph nodes,Metastases & Palliative,Lymph Node Metastases
+C77.2,Secondary and unspecified malignant neoplasm of intra-abdominal lymph nodes,Metastases & Palliative,Lymph Node Metastases
+C77.3,Secondary and unspecified malignant neoplasm of axilla and upper limb lymph nodes,Metastases & Palliative,Lymph Node Metastases
+C77.4,Secondary and unspecified malignant neoplasm of inguinal and lower limb lymph nodes,Metastases & Palliative,Lymph Node Metastases
+C77.5,Secondary and unspecified malignant neoplasm of intrapelvic lymph nodes,Metastases & Palliative,Lymph Node Metastases
+C77.8,Secondary and unspecified malignant neoplasm of lymph nodes of multiple regions,Metastases & Palliative,Lymph Node Metastases
+C77.9,"Secondary and unspecified malignant neoplasm of lymph node, unspecified",Metastases & Palliative,Lymph Node Metastases
+G89.3,Neoplasm related pain (acute) (chronic),Metastases & Palliative,Other Metastases
+C7B.03,Secondary carcinoid tumors of bone,Metastases & Palliative,Bone Metastases
+C7B.1,Secondary Merkel cell carcinoma,Metastases & Palliative,Neuroendocrine Metastases
+C7B.8,Other secondary neuroendocrine tumors,Metastases & Palliative,Neuroendocrine Metastases
+234.9,"Carcinoma in situ, site unspecified",Unknown,
+239.9,"Neoplasm of unspecified nature, site unspecified",Unknown,
+197.1,Secondary malignant neoplasm of mediastinum,Metastases & Palliative,Other Metastases
+197.4,Secondary malignant neoplasm of small intestine including duodenum,Metastases & Palliative,Other Metastases
+197.5,Secondary malignant neoplasm of large intestine and rectum,Metastases & Palliative,Other Metastases
+197.6,Secondary malignant neoplasm of retroperitoneum and peritoneum,Metastases & Palliative,Other Metastases
+198.0,Secondary malignant neoplasm of kidney,Metastases & Palliative,Other Metastases
+198.1,Secondary malignant neoplasm of other urinary organs,Metastases & Palliative,Other Metastases
+198.6,Secondary malignant neoplasm of ovary,Metastases & Palliative,Other Metastases
+198.81,Secondary malignant neoplasm of breast,Metastases & Palliative,Other Metastases
+198.82,Secondary malignant neoplasm of genital organs,Metastases & Palliative,Other Metastases
+198.89,Secondary malignant neoplasm of other specified sites,Metastases & Palliative,Other Metastases
+C78.1,Secondary malignant neoplasm of mediastinum,Metastases & Palliative,Other Metastases
+C78.2,Secondary malignant neoplasm of pleura,Metastases & Palliative,Other Metastases
+C78.5,Secondary malignant neoplasm of large intestine and rectum,Metastases & Palliative,Other Metastases
+C78.6,Secondary malignant neoplasm of retroperitoneum and peritoneum,Metastases & Palliative,Other Metastases
+C78.80,Secondary malignant neoplasm of unspecified digestive organ,Metastases & Palliative,Other Metastases
+C78.89,Secondary malignant neoplasm of other digestive organs,Metastases & Palliative,Other Metastases
+C79.02,Secondary malignant neoplasm of left kidney and renal pelvis,Metastases & Palliative,Other Metastases
+C79.10,Secondary malignant neoplasm of unspecified urinary organs,Metastases & Palliative,Other Metastases
+C79.11,Secondary malignant neoplasm of bladder,Metastases & Palliative,Other Metastases
+C79.81,Secondary malignant neoplasm of breast,Metastases & Palliative,Other Metastases
+C79.82,Secondary malignant neoplasm of genital organs,Metastases & Palliative,Other Metastases
+C79.89,Secondary malignant neoplasm of other specified sites,Metastases & Palliative,Other Metastases
+C79.9,Secondary malignant neoplasm of unspecified site,Metastases & Palliative,Other Metastases
+Z51.0,Encounter for antineoplastic radiation therapy,Metastases & Palliative,Other Metastases
+Z51.5,Encounter for palliative care,Metastases & Palliative,Other Metastases
+198.2,Secondary malignant neoplasm of skin,Metastases & Palliative,Skin Metastases
+C79.2,Secondary malignant neoplasm of skin,Metastases & Palliative,Skin Metastases
+199.0,Disseminated malignant neoplasm,Metastases & Palliative,Other Metastases
+C80.1,"Malignant (primary) neoplasm, unspecified",Metastases & Palliative,Other Metastases
+D16.6,Benign neoplasm of vertebral column,Benign Diseases,Hemangioma
+D21.11,"Benign neoplasm of connective and other soft tissue of right upper limb, including shoulder",Sarcomas,Soft Tissue Sarcoma
+D21.3,Benign neoplasm of connective and other soft tissue of thorax,Sarcomas,Soft Tissue Sarcoma
+D36.11,"Benign neoplasm of peripheral nerves and autonomic nervous system of face, head, and neck",Sarcomas,Peripheral Nerve Sheath
+D48.1,Neoplasm of uncertain behavior of connective and other soft tissue,Sarcomas,Soft Tissue Sarcoma
+213.2,"Benign neoplasm of vertebral column, excluding sacrum and coccyx",Sarcomas,Bone Sarcoma
+213.4,Benign neoplasm of scapula and long bones of upper limb,Sarcomas,Bone Sarcoma
+213.6,"Benign neoplasm of pelvic bones, sacrum, and coccyx",Sarcomas,Bone Sarcoma
+215.0,"Other benign neoplasm of connective and other soft tissue of head, face, and neck",Sarcomas,Soft Tissue Sarcoma
+215.3,"Other benign neoplasm of connective and other soft tissue of lower limb, including hip",Sarcomas,Soft Tissue Sarcoma
+215.8,Other benign neoplasm of connective and other soft tissue of other specified sites,Sarcomas,Soft Tissue Sarcoma
+170.2,"Malignant neoplasm of vertebral column, excluding sacrum and coccyx",Sarcomas,Bone Sarcoma
+170.4,Malignant neoplasm of scapula and long bones of upper limb,Sarcomas,Bone Sarcoma
+170.6,"Malignant neoplasm of pelvic bones, sacrum, and coccyx",Sarcomas,Bone Sarcoma
+170.9,"Malignant neoplasm of bone and articular cartilage, site unspecified",Sarcomas,Bone Sarcoma
+C40.21,Malignant neoplasm of long bones of right lower limb,Sarcomas,Bone Sarcoma
+C40.22,Malignant neoplasm of long bones of left lower limb,Sarcomas,Bone Sarcoma
+C41.0,Malignant neoplasm of bones of skull and face,Sarcomas,Bone Sarcoma
+C41.1,Malignant neoplasm of mandible,Sarcomas,Bone Sarcoma
+C41.2,Malignant neoplasm of vertebral column,Sarcomas,Bone Sarcoma
+C41.3,"Malignant neoplasm of ribs, sternum and clavicle",Sarcomas,Bone Sarcoma
+C41.9,"Malignant neoplasm of bone and articular cartilage, unspecified",Sarcomas,Bone Sarcoma
+C76.51,Malignant neoplasm of right lower limb,Sarcomas,Soft Tissue Sarcoma
+C76.52,Malignant neoplasm of left lower limb,Sarcomas,Soft Tissue Sarcoma
+C38.1,Malignant neoplasm of anterior mediastinum,Thoracic,Mediastinal
+C38.2,Malignant neoplasm of posterior mediastinum,Thoracic,Mediastinal
+C38.3,"Malignant neoplasm of mediastinum, part unspecified",Thoracic,Mediastinal
+C47.9,"Malignant neoplasm of peripheral nerves and autonomic nervous system, unspecified",Sarcomas,Peripheral Nerve Sheath
+158.0,Malignant neoplasm of retroperitoneum,Sarcomas,Retroperitoneal Sarcoma
+158.8,Malignant neoplasm of specified parts of peritoneum,Sarcomas,Retroperitoneal Sarcoma
+158.9,"Malignant neoplasm of peritoneum, unspecified",Sarcomas,Retroperitoneal Sarcoma
+C48.0,Malignant neoplasm of retroperitoneum,Sarcomas,Retroperitoneal Sarcoma
+C48.1,Malignant neoplasm of specified parts of peritoneum,Sarcomas,Retroperitoneal Sarcoma
+C48.2,"Malignant neoplasm of peritoneum, unspecified",Sarcomas,Retroperitoneal Sarcoma
+C48.8,Malignant neoplasm of overlapping sites of retroperitoneum and peritoneum,Sarcomas,Retroperitoneal Sarcoma
+171.0,"Malignant neoplasm of connective and other soft tissue of head, face, and neck",Sarcomas,Soft Tissue Sarcoma
+171.2,"Malignant neoplasm of connective and other soft tissue of upper limb, including shoulder",Sarcomas,Soft Tissue Sarcoma
+171.3,"Malignant neoplasm of connective and other soft tissue of lower limb, including hip",Sarcomas,Soft Tissue Sarcoma
+171.4,Malignant neoplasm of connective and other soft tissue of thorax,Sarcomas,Soft Tissue Sarcoma
+171.5,Malignant neoplasm of connective and other soft tissue of abdomen,Sarcomas,Soft Tissue Sarcoma
+171.6,Malignant neoplasm of connective and other soft tissue of pelvis,Sarcomas,Soft Tissue Sarcoma
+171.7,"Malignant neoplasm of connective and other soft tissue of trunk, unspecified",Sarcomas,Soft Tissue Sarcoma
+171.8,Malignant neoplasm of other specified sites of connective and other soft tissue,Sarcomas,Soft Tissue Sarcoma
+171.9,"Malignant neoplasm of connective and other soft tissue, site unspecified",Sarcomas,Soft Tissue Sarcoma
+C49.0,"Malignant neoplasm of connective and soft tissue of head, face and neck",Sarcomas,Soft Tissue Sarcoma
+C49.11,"Malignant neoplasm of connective and soft tissue of right upper limb, including shoulder",Sarcomas,Soft Tissue Sarcoma
+C49.12,"Malignant neoplasm of connective and soft tissue of left upper limb, including shoulder",Sarcomas,Soft Tissue Sarcoma
+C49.21,"Malignant neoplasm of connective and soft tissue of right lower limb, including hip",Sarcomas,Soft Tissue Sarcoma
+C49.22,"Malignant neoplasm of connective and soft tissue of left lower limb, including hip",Sarcomas,Soft Tissue Sarcoma
+C49.3,Malignant neoplasm of connective and soft tissue of thorax,Sarcomas,Soft Tissue Sarcoma
+C49.4,Malignant neoplasm of connective and soft tissue of abdomen,Sarcomas,Soft Tissue Sarcoma
+C49.5,Malignant neoplasm of connective and soft tissue of pelvis,Sarcomas,Soft Tissue Sarcoma
+C49.6,"Malignant neoplasm of connective and soft tissue of trunk, unspecified",Sarcomas,Soft Tissue Sarcoma
+C49.8,Malignant neoplasm of overlapping sites of connective and soft tissue,Sarcomas,Soft Tissue Sarcoma
+C49.9,"Malignant neoplasm of connective and soft tissue, unspecified",Sarcomas,Soft Tissue Sarcoma
+D04.39,Carcinoma in situ of skin of other parts of face,Skin,Non-Melanoma Skin Cancer
+D04.4,Carcinoma in situ of skin of scalp and neck,Skin,Non-Melanoma Skin Cancer
+D04.5,Carcinoma in situ of skin of trunk,Skin,Non-Melanoma Skin Cancer
+D04.71,"Carcinoma in situ of skin of right lower limb, including hip",Skin,Non-Melanoma Skin Cancer
+D04.72,"Carcinoma in situ of skin of left lower limb, including hip",Skin,Non-Melanoma Skin Cancer
+D17.1,Benign lipomatous neoplasm of skin and subcutaneous tissue of trunk,Sarcomas,Other/Unspecified
+D23.39,Other benign neoplasm of skin of other parts of face,Skin,Other/Unspecified
+D23.4,Other benign neoplasm of skin of scalp and neck,Skin,Other/Unspecified
+D49.2,"Neoplasm of unspecified behavior of bone, soft tissue, and skin",Sarcomas,Other/Unspecified
+172.1,"Malignant melanoma of skin of eyelid, including canthus",Skin,Melanoma
+172.2,Malignant melanoma of skin of ear and external auditory canal,Skin,Melanoma
+172.3,Malignant melanoma of skin of other and unspecified parts of face,Skin,Melanoma
+172.4,Malignant melanoma of skin of scalp and neck,Skin,Melanoma
+172.5,"Malignant melanoma of skin of trunk, except scrotum",Skin,Melanoma
+172.6,"Malignant melanoma of skin of upper limb, including shoulder",Skin,Melanoma
+172.7,"Malignant melanoma of skin of lower limb, including hip",Skin,Melanoma
+172.8,Malignant melanoma of other specified sites of skin,Skin,Melanoma
+172.9,"Melanoma of skin, site unspecified",Skin,Melanoma
+C43.12,"Malignant melanoma of left eyelid, including canthus",Skin,Melanoma
+C43.30,Malignant melanoma of unspecified part of face,Skin,Melanoma
+C43.31,Malignant melanoma of nose,Skin,Melanoma
+C43.39,Malignant melanoma of other parts of face,Skin,Melanoma
+C43.4,Malignant melanoma of scalp and neck,Skin,Melanoma
+C43.51,Malignant melanoma of anal skin,Skin,Melanoma
+C43.59,Malignant melanoma of other part of trunk,Skin,Melanoma
+C43.61,"Malignant melanoma of right upper limb, including shoulder",Skin,Melanoma
+C43.62,"Malignant melanoma of left upper limb, including shoulder",Skin,Melanoma
+C43.71,"Malignant melanoma of right lower limb, including hip",Skin,Melanoma
+C43.72,"Malignant melanoma of left lower limb, including hip",Skin,Melanoma
+C43.9,"Malignant melanoma of skin, unspecified",Skin,Melanoma
+209.31,Merkel cell carcinoma of the face,Skin,Merkel Cell
+209.32,Merkel cell carcinoma of the scalp and neck,Skin,Merkel Cell
+209.33,Merkel cell carcinoma of the upper limb,Skin,Merkel Cell
+209.35,Merkel cell carcinoma of the trunk,Skin,Merkel Cell
+C4A.11,"Merkel cell carcinoma of right eyelid, including canthus",Skin,Merkel Cell
+C4A.22,Merkel cell carcinoma of left ear and external auricular canal,Skin,Merkel Cell
+C4A.30,Merkel cell carcinoma of unspecified part of face,Skin,Merkel Cell
+C4A.39,Merkel cell carcinoma of other parts of face,Skin,Merkel Cell
+C4A.4,Merkel cell carcinoma of scalp and neck,Skin,Merkel Cell
+C4A.59,Merkel cell carcinoma of other part of trunk,Skin,Merkel Cell
+C4A.61,"Merkel cell carcinoma of right upper limb, including shoulder",Skin,Merkel Cell
+C4A.71,"Merkel cell carcinoma of right lower limb, including hip",Skin,Merkel Cell
+C4A.72,"Merkel cell carcinoma of left lower limb, including hip",Skin,Merkel Cell
+C4A.8,Merkel cell carcinoma of overlapping sites,Skin,Merkel Cell
+C4A.9,"Merkel cell carcinoma, unspecified",Skin,Merkel Cell
+C30.0,Malignant neoplasm of nasal cavity,Head and Neck,Nasal Cavity / Sinus
+173.0,Other and unspecified malignant neoplasm of skin of lip,Skin,Non-Melanoma Skin Cancer
+173.01,Basal cell carcinoma of skin of lip,Skin,Non-Melanoma Skin Cancer
+173.02,Squamous cell carcinoma of skin of lip,Skin,Non-Melanoma Skin Cancer
+173.1,"Other malignant neoplasm of skin of eyelid, including canthus",Skin,Non-Melanoma Skin Cancer
+173.12,Squamous cell carcinoma of eyelid including canthus,Skin,Non-Melanoma Skin Cancer
+173.2,Other and unspecified malignant neoplasm of skin of ear and external auditory canal,Skin,Non-Melanoma Skin Cancer
+173.20,Unspecified malignant neoplasm of skin of ear and external auditory canal,Skin,Non-Melanoma Skin Cancer
+173.21,Basal cell carcinoma of skin of ear and external auditory canal,Skin,Non-Melanoma Skin Cancer
+173.22,Squamous cell carcinoma of skin of ear and external auditory canal,Skin,Non-Melanoma Skin Cancer
+173.3,Other and unspecified malignant neoplasm of skin of other and unspecified parts of face,Skin,Non-Melanoma Skin Cancer
+173.30,Unspecified malignant neoplasm of skin of other and unspecified parts of face,Skin,Non-Melanoma Skin Cancer
+173.31,Basal cell carcinoma of skin of other and unspecified parts of face,Skin,Non-Melanoma Skin Cancer
+173.32,Squamous cell carcinoma of skin of other and unspecified parts of face,Skin,Non-Melanoma Skin Cancer
+173.39,Other specified malignant neoplasm of skin of other and unspecified parts of face,Skin,Non-Melanoma Skin Cancer
+173.4,Other and unspecified malignant neoplasm of scalp and skin of neck,Skin,Non-Melanoma Skin Cancer
+173.41,Basal cell carcinoma of scalp and skin of neck,Skin,Non-Melanoma Skin Cancer
+173.42,Squamous cell carcinoma of scalp and skin of neck,Skin,Non-Melanoma Skin Cancer
+173.49,Other specified malignant neoplasm of scalp and skin of neck,Skin,Non-Melanoma Skin Cancer
+173.5,"Other malignant neoplasm of skin of trunk, except scrotum",Skin,Non-Melanoma Skin Cancer
+173.51,Basal cell carcinoma of skin of trunk except scrotum,Skin,Non-Melanoma Skin Cancer
+173.6,"Other malignant neoplasm of skin of upper limb, including shoulder",Skin,Non-Melanoma Skin Cancer
+173.61,Basal cell carcinoma of skin of upper limb including shoulder,Skin,Non-Melanoma Skin Cancer
+173.62,Squamous cell carcinoma of skin of upper limb including shoulder,Skin,Non-Melanoma Skin Cancer
+173.69,Other specified malignant neoplasm of skin of upper limb including shoulder,Skin,Non-Melanoma Skin Cancer
+173.7,"Other malignant neoplasm of skin of lower limb, including hip",Skin,Non-Melanoma Skin Cancer
+173.71,Basal cell carcinoma of skin of lower limb including hip,Skin,Non-Melanoma Skin Cancer
+173.72,Squamous cell carcinoma of skin of lower limb including hip,Skin,Non-Melanoma Skin Cancer
+173.79,Other specified malignant neoplasm of skin of lower limb including hip,Skin,Non-Melanoma Skin Cancer
+173.8,Other and unspecified malignant neoplasm of other specified sites of skin,Skin,Non-Melanoma Skin Cancer
+173.81,Basal cell carcinoma of other specified sites of skin,Skin,Non-Melanoma Skin Cancer
+173.82,Squamous cell carcinoma of other specified sites of skin,Skin,Non-Melanoma Skin Cancer
+173.89,Other specified malignant neoplasm of other specified sites of skin,Skin,Non-Melanoma Skin Cancer
+173.9,"Other malignant neoplasm of skin, site unspecified",Skin,Non-Melanoma Skin Cancer
+C44.00,Unspecified malignant neoplasm of skin of lip,Skin,Non-Melanoma Skin Cancer
+C44.01,Basal cell carcinoma of skin of lip,Skin,Non-Melanoma Skin Cancer
+C44.02,Squamous cell carcinoma of skin of lip,Skin,Non-Melanoma Skin Cancer
+C44.111,"Basal cell carcinoma of skin of unspecified eyelid, including canthus",Skin,Non-Melanoma Skin Cancer
+C44.119,"Basal cell carcinoma of skin of left eyelid, including canthus",Skin,Non-Melanoma Skin Cancer
+C44.121,"Squamous cell carcinoma of skin of unspecified eyelid, including canthus",Skin,Non-Melanoma Skin Cancer
+C44.129,"Squamous cell carcinoma of skin of left eyelid, including canthus",Skin,Non-Melanoma Skin Cancer
+C44.199,"Other specified malignant neoplasm of skin of left eyelid, including canthus",Skin,Non-Melanoma Skin Cancer
+C44.202,Unspecified malignant neoplasm of skin of right ear and external auricular canal,Skin,Non-Melanoma Skin Cancer
+C44.209,Unspecified malignant neoplasm of skin of left ear and external auricular canal,Skin,Non-Melanoma Skin Cancer
+C44.212,Basal cell carcinoma of skin of right ear and external auricular canal,Skin,Non-Melanoma Skin Cancer
+C44.219,Basal cell carcinoma of skin of left ear and external auricular canal,Skin,Non-Melanoma Skin Cancer
+C44.222,Squamous cell carcinoma of skin of right ear and external auricular canal,Skin,Non-Melanoma Skin Cancer
+C44.229,Squamous cell carcinoma of skin of left ear and external auricular canal,Skin,Non-Melanoma Skin Cancer
+C44.292,Other specified malignant neoplasm of skin of right ear and external auricular canal,Skin,Non-Melanoma Skin Cancer
+C44.309,Unspecified malignant neoplasm of skin of other parts of face,Skin,Non-Melanoma Skin Cancer
+C44.310,Basal cell carcinoma of skin of unspecified parts of face,Skin,Non-Melanoma Skin Cancer
+C44.311,Basal cell carcinoma of skin of nose,Skin,Non-Melanoma Skin Cancer
+C44.319,Basal cell carcinoma of skin of other parts of face,Skin,Non-Melanoma Skin Cancer
+C44.320,Squamous cell carcinoma of skin of unspecified parts of face,Skin,Non-Melanoma Skin Cancer
+C44.321,Squamous cell carcinoma of skin of nose,Skin,Non-Melanoma Skin Cancer
+C44.329,Squamous cell carcinoma of skin of other parts of face,Skin,Non-Melanoma Skin Cancer
+C44.399,Other specified malignant neoplasm of skin of other parts of face,Skin,Non-Melanoma Skin Cancer
+C44.40,Unspecified malignant neoplasm of skin of scalp and neck,Skin,Non-Melanoma Skin Cancer
+C44.41,Basal cell carcinoma of skin of scalp and neck,Skin,Non-Melanoma Skin Cancer
+C44.42,Squamous cell carcinoma of skin of scalp and neck,Skin,Non-Melanoma Skin Cancer
+C44.49,Other specified malignant neoplasm of skin of scalp and neck,Skin,Non-Melanoma Skin Cancer
+C44.509,Unspecified malignant neoplasm of skin of other part of trunk,Skin,Non-Melanoma Skin Cancer
+C44.511,Basal cell carcinoma of skin of breast,Skin,Non-Melanoma Skin Cancer
+C44.519,Basal cell carcinoma of skin of other part of trunk,Skin,Non-Melanoma Skin Cancer
+C44.520,Squamous cell carcinoma of anal skin,Gastrointestinal,Anal
+C44.521,Squamous cell carcinoma of skin of breast,Skin,Non-Melanoma Skin Cancer
+C44.529,Squamous cell carcinoma of skin of other part of trunk,Skin,Non-Melanoma Skin Cancer
+C44.590,Other specified malignant neoplasm of anal skin,Gastrointestinal,Anal
+C44.609,"Unspecified malignant neoplasm of skin of left upper limb, including shoulder",Skin,Non-Melanoma Skin Cancer
+C44.612,"Basal cell carcinoma of skin of right upper limb, including shoulder",Skin,Non-Melanoma Skin Cancer
+C44.619,"Basal cell carcinoma of skin of left upper limb, including shoulder",Skin,Non-Melanoma Skin Cancer
+C44.622,"Squamous cell carcinoma of skin of right upper limb, including shoulder",Skin,Non-Melanoma Skin Cancer
+C44.629,"Squamous cell carcinoma of skin of left upper limb, including shoulder",Skin,Non-Melanoma Skin Cancer
+C44.692,"Other specified malignant neoplasm of skin of right upper limb, including shoulder",Skin,Non-Melanoma Skin Cancer
+C44.699,"Other specified malignant neoplasm of skin of left upper limb, including shoulder",Skin,Non-Melanoma Skin Cancer
+C44.702,"Unspecified malignant neoplasm of skin of right lower limb, including hip",Skin,Non-Melanoma Skin Cancer
+C44.712,"Basal cell carcinoma of skin of right lower limb, including hip",Skin,Non-Melanoma Skin Cancer
+C44.719,"Basal cell carcinoma of skin of left lower limb, including hip",Skin,Non-Melanoma Skin Cancer
+C44.721,"Squamous cell carcinoma of skin of unspecified lower limb, including hip",Skin,Non-Melanoma Skin Cancer
+C44.722,"Squamous cell carcinoma of skin of right lower limb, including hip",Skin,Non-Melanoma Skin Cancer
+C44.729,"Squamous cell carcinoma of skin of left lower limb, including hip",Skin,Non-Melanoma Skin Cancer
+C44.799,"Other specified malignant neoplasm of skin of left lower limb, including hip",Skin,Non-Melanoma Skin Cancer
+C44.81,Basal cell carcinoma of overlapping sites of skin,Skin,Non-Melanoma Skin Cancer
+C44.82,Squamous cell carcinoma of overlapping sites of skin,Skin,Non-Melanoma Skin Cancer
+C44.89,Other specified malignant neoplasm of overlapping sites of skin,Skin,Non-Melanoma Skin Cancer
+C44.90,"Unspecified malignant neoplasm of skin, unspecified",Skin,Non-Melanoma Skin Cancer
+C44.91,"Basal cell carcinoma of skin, unspecified",Skin,Non-Melanoma Skin Cancer
+C44.92,"Squamous cell carcinoma of skin, unspecified",Skin,Non-Melanoma Skin Cancer
+C44.99,"Other specified malignant neoplasm of skin, unspecified",Skin,Non-Melanoma Skin Cancer
+190.3,Malignant neoplasm of conjunctiva,Central Nervous System,Ocular / Orbit
+C33,Malignant neoplasm of trachea,Head and Neck,Trachea
+D3A.090,Benign carcinoid tumor of the bronchus and lung,Thoracic,Neuroendocrine
+D49.1,Neoplasm of unspecified behavior of respiratory system,Thoracic,Other
+195.1,Malignant neoplasm of thorax,Thoracic,Other
+C76.1,Malignant neoplasm of thorax,Thoracic,Other
+162.0,Malignant neoplasm of trachea,Head and Neck,Trachea
+162.2,Malignant neoplasm of main bronchus,Thoracic,Lung Cancer
+162.3,"Malignant neoplasm of upper lobe, bronchus or lung",Thoracic,Lung Cancer
+162.4,"Malignant neoplasm of middle lobe, bronchus or lung",Thoracic,Lung Cancer
+162.5,"Malignant neoplasm of lower lobe, bronchus or lung",Thoracic,Lung Cancer
+162.8,Malignant neoplasm of other parts of bronchus or lung,Thoracic,Lung Cancer
+162.9,"Malignant neoplasm of bronchus and lung, unspecified",Thoracic,Lung Cancer
+164.2,Malignant neoplasm of anterior mediastinum,Thoracic,Mediastinal
+164.8,Malignant neoplasm of other parts of mediastinum,Thoracic,Mediastinal
+164.9,"Malignant neoplasm of mediastinum, part unspecified",Thoracic,Mediastinal
+C75.5,Malignant neoplasm of aortic body and other paraganglia,Thoracic,Mediastinal
+C38.4,Malignant neoplasm of pleura,Thoracic,Mesothelioma
+163.0,Malignant neoplasm of parietal pleura,Thoracic,Mesothelioma
+163.9,"Malignant neoplasm of pleura, unspecified",Thoracic,Mesothelioma
+C45.0,Mesothelioma of pleura,Thoracic,Mesothelioma
+C45.9,"Mesothelioma, unspecified",Thoracic,Mesothelioma
+C7A.090,Malignant carcinoid tumor of the bronchus and lung,Thoracic,Neuroendocrine
+C7A.091,Malignant carcinoid tumor of the thymus,Thoracic,Neuroendocrine
+C7A.1,Malignant poorly differentiated neuroendocrine tumors,Thoracic,Neuroendocrine
+C7A.8,Other malignant neuroendocrine tumors,Thoracic,Neuroendocrine
+C34.00,Malignant neoplasm of unspecified main bronchus,Thoracic,Lung Cancer
+C34.01,Malignant neoplasm of right main bronchus,Thoracic,Lung Cancer
+C34.02,Malignant neoplasm of left main bronchus,Thoracic,Lung Cancer
+C34.10,"Malignant neoplasm of upper lobe, unspecified bronchus or lung",Thoracic,Lung Cancer
+C34.11,"Malignant neoplasm of upper lobe, right bronchus or lung",Thoracic,Lung Cancer
+C34.12,"Malignant neoplasm of upper lobe, left bronchus or lung",Thoracic,Lung Cancer
+C34.2,"Malignant neoplasm of middle lobe, bronchus or lung",Thoracic,Lung Cancer
+C34.30,"Malignant neoplasm of lower lobe, unspecified bronchus or lung",Thoracic,Lung Cancer
+C34.31,"Malignant neoplasm of lower lobe, right bronchus or lung",Thoracic,Lung Cancer
+C34.32,"Malignant neoplasm of lower lobe, left bronchus or lung",Thoracic,Lung Cancer
+C34.80,Malignant neoplasm of overlapping sites of unspecified bronchus and lung,Thoracic,Lung Cancer
+C34.81,Malignant neoplasm of overlapping sites of right bronchus and lung,Thoracic,Lung Cancer
+C34.82,Malignant neoplasm of overlapping sites of left bronchus and lung,Thoracic,Lung Cancer
+C34.90,Malignant neoplasm of unspecified part of unspecified bronchus or lung,Thoracic,Lung Cancer
+C34.91,Malignant neoplasm of unspecified part of right bronchus or lung,Thoracic,Lung Cancer
+C34.92,Malignant neoplasm of unspecified part of left bronchus or lung,Thoracic,Lung Cancer
+239.1,Neoplasm of unspecified nature of respiratory system,Thoracic,Other
+165.8,Malignant neoplasm of other sites within the respiratory system and intrathoracic organs,Thoracic,Other
+164.0,Malignant neoplasm of thymus,Thoracic,Thymic
+C37,Malignant neoplasm of thymus,Thoracic,Thymic

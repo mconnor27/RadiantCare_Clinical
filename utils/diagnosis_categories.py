@@ -23,6 +23,9 @@ Public API
 
 from __future__ import annotations
 
+import csv
+from pathlib import Path
+
 import pandas as pd
 
 # ---------------------------------------------------------------------------
@@ -43,6 +46,94 @@ CATEGORIES: list[str] = [
     "Skin",
     "Thoracic",
 ]
+
+# ---------------------------------------------------------------------------
+# Subcategory taxonomy — category → sorted list of subcategory names
+# ---------------------------------------------------------------------------
+SUBCATEGORIES: dict[str, list[str]] = {
+    "Benign Diseases": [
+        "Dupuytren / Plantar", "Gynecomastia", "Hemangioma",
+        "Heterotopic Ossification", "Keloid / Scar", "Neurofibromatosis",
+        "Orbital Pseudotumor", "Osteoarthritis", "Rheumatoid Arthritis",
+    ],
+    "Breast": ["Left", "Male", "Right", "Unspecified Laterality"],
+    "Central Nervous System": [
+        "AVM", "Craniopharyngioma", "Glioma / Primary Brain",
+        "Hemangioblastoma", "Meningioma", "Ocular / Orbit", "Paraganglioma",
+        "Pituitary / Pineal", "Primary Brain", "Schwannoma", "Spinal Cord",
+    ],
+    "GU – Non-Prostate": [
+        "Adrenal", "Bladder", "Kidney / RCC", "Penile", "Testicular", "Urethra",
+    ],
+    "GU – Prostate": ["Prostate Cancer"],
+    "Gastrointestinal": [
+        "Anal", "Biliary", "Colon", "Esophageal",
+        "GIST", "Gastric", "Liver / HCC", "Neuroendocrine",
+        "Other/Unspecified", "Pancreatic", "Rectal", "Small Intestine",
+    ],
+    "Gynecologic": [
+        "Cervical", "Fallopian / Adnexal", "Other", "Ovarian",
+        "Uterine / Endometrial", "Vaginal", "Vulvar",
+    ],
+    "Head and Neck": [
+        "Hypopharynx", "Larynx", "Lip", "Nasal Cavity / Sinus", "Nasopharynx",
+        "Oral Cavity", "Oropharynx", "Salivary Gland", "Thyroid", "Trachea",
+        "Unknown Primary/Other",
+    ],
+    "Hematologic": [
+        "Hodgkin Lymphoma", "Kaposi Sarcoma", "Langerhans", "Leukemia", "MALT",
+        "MDS/PMF/Splenomegaly", "Mantle Cell", "Mycosis Fungoides",
+        "Myeloma / Plasmacytoma", "Non-Hodgkin Lymphoma (Diffuse)",
+        "Non-Hodgkin Lymphoma (Follicular)", "Non-Hodgkin Lymphoma (Other)",
+        "Other/Unspecified", "T-Cell Lymphoma",
+    ],
+    "Metastases & Palliative": [
+        "Adrenal Metastases", "Bone Metastases", "Brain Metastases",
+        "Liver Metastases", "Lung Metastases", "Lymph Node Metastases",
+        "Neuroendocrine Metastases", "Other Metastases", "Skin Metastases",
+    ],
+    "Sarcomas": [
+        "Bone Sarcoma", "Other/Unspecified", "Peripheral Nerve Sheath",
+        "Retroperitoneal Sarcoma", "Soft Tissue Sarcoma",
+    ],
+    "Skin": [
+        "Melanoma", "Merkel Cell", "Non-Melanoma Skin Cancer",
+        "Other/Unspecified",
+    ],
+    "Thoracic": [
+        "Lung Cancer", "Mediastinal", "Mesothelioma", "Neuroendocrine",
+        "Other", "Thymic",
+    ],
+}
+
+ALL_SUBCATEGORIES: list[str] = sorted(
+    {sc for subs in SUBCATEGORIES.values() for sc in subs}
+)
+
+
+# ---------------------------------------------------------------------------
+# ICD code → subcategory mapping (loaded from CSV)
+# ---------------------------------------------------------------------------
+def _load_subcategory_csv() -> dict[str, tuple[str, str]]:
+    """Load {icd_code: (category, subcategory)} from data/diagnosis_subcategories.csv."""
+    csv_path = Path(__file__).resolve().parent.parent / "data" / "diagnosis_subcategories.csv"
+    if not csv_path.exists():
+        return {}
+    result: dict[str, tuple[str, str]] = {}
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            code = row["icd_code"].strip()
+            cat = row["category"].strip()
+            subcat = row.get("subcategory", "").strip()
+            if code and cat:
+                result[code] = (cat, subcat)
+    return result
+
+
+_SUBCATEGORY_MAP: dict[str, tuple[str, str]] = _load_subcategory_csv()
+
+# Track codes already auto-seeded this session (avoid repeated DB writes)
+_seen_new: set[str] = set()
 
 # ---------------------------------------------------------------------------
 # Step 1: Exact overrides – fix known lookup bugs or force routing
@@ -375,37 +466,120 @@ def _resolve_code(code: str, site: str, body: str) -> str:
     return "Uncategorized"
 
 
-def build_code_to_category(diag_lookup: pd.DataFrame | None) -> dict[str, str]:
-    """Build a ``{DiagnosisCode: category}`` dict from the diagnosis lookup table.
+def seed_diagnosis_db(diag_lookup: pd.DataFrame | None = None) -> int:
+    """Populate the diagnosis_overrides DB table from all legacy sources.
 
-    This replaces the old ``{DiagnosisCode: BodySystemDesc}`` mapping.
+    Merges (in order, each layer overriding the last):
+    1. ARIA lookup table (SiteDesc / BodySystemDesc resolution)
+    2. Hardcoded ``_ICD_CODE_CATEGORY`` / ``_ICD_OVERRIDES``
+    3. Curated subcategory CSV (``diagnosis_subcategories.csv``)
+
+    Only inserts codes that are NOT already in the DB (preserves user edits).
+    Returns the number of new rows inserted.
     """
-    if diag_lookup is None or diag_lookup.empty:
-        return {}
-    required = {"DiagnosisCode"}
-    if not required.issubset(diag_lookup.columns):
-        return {}
+    from data.reviews_db import get_all_diagnosis_overrides, bulk_upsert_diagnosis_overrides
 
-    has_site = "SiteDesc" in diag_lookup.columns
-    has_body = "BodySystemDesc" in diag_lookup.columns
+    existing = get_all_diagnosis_overrides()
+    # Build the full legacy mapping
+    legacy: dict[str, tuple[str, str]] = {}  # code → (category, subcategory)
 
-    # Seed with overrides and exact code mappings so codes not in the CSV
-    # still resolve (e.g. referral-only ICD codes absent from Lookup table).
-    result: dict[str, str] = {}
-    result.update(_ICD_CODE_CATEGORY)
-    result.update(_ICD_OVERRIDES)
+    # Layer 1: ARIA lookup table
+    if diag_lookup is not None and not diag_lookup.empty and "DiagnosisCode" in diag_lookup.columns:
+        has_site = "SiteDesc" in diag_lookup.columns
+        has_body = "BodySystemDesc" in diag_lookup.columns
+        for _, row in diag_lookup.iterrows():
+            code = str(row["DiagnosisCode"]).strip()
+            site = str(row["SiteDesc"]).strip() if has_site else ""
+            body = str(row["BodySystemDesc"]).strip() if has_body else ""
+            if site == "nan":
+                site = ""
+            if body == "nan":
+                body = ""
+            cat = _resolve_code(code, site, body)
+            if cat != "Uncategorized":
+                legacy[code] = (cat, "")
 
-    for _, row in diag_lookup.iterrows():
-        code = str(row["DiagnosisCode"]).strip()
-        site = str(row["SiteDesc"]).strip() if has_site else ""
-        body = str(row["BodySystemDesc"]).strip() if has_body else ""
-        if site == "nan":
-            site = ""
-        if body == "nan":
-            body = ""
-        cat = _resolve_code(code, site, body)
-        if cat != "Uncategorized":
-            result[code] = cat
+    # Layer 2: hardcoded dicts
+    for code, cat in _ICD_CODE_CATEGORY.items():
+        legacy[code] = (cat, legacy.get(code, ("", ""))[1])
+    for code, cat in _ICD_OVERRIDES.items():
+        legacy[code] = (cat, legacy.get(code, ("", ""))[1])
+
+    # Layer 3: curated CSV (has both category and subcategory)
+    for code, (cat, sub) in _SUBCATEGORY_MAP.items():
+        if cat:
+            legacy[code] = (cat, sub)
+
+    # Insert only codes not already in the DB
+    new_records = []
+    for code, (cat, sub) in legacy.items():
+        if code not in existing:
+            new_records.append({
+                "icd_code": code,
+                "category": cat,
+                "subcategory": sub,
+                "source": "seed",
+            })
+
+    if new_records:
+        bulk_upsert_diagnosis_overrides(new_records)
+
+    return len(new_records)
+
+
+def build_code_to_category(diag_lookup: pd.DataFrame | None) -> dict[str, str]:
+    """Build a ``{DiagnosisCode: category}`` dict.
+
+    The ``diagnosis_overrides`` DB table is the single source of truth.
+    On first run, ``seed_diagnosis_db()`` auto-populates it from legacy
+    sources (ARIA lookup, hardcoded dicts, curated CSV).
+
+    For codes not yet in the DB (e.g. newly appeared in data), falls back
+    to the old resolution chain and seeds them into the DB for next time.
+    """
+    from data.reviews_db import get_all_diagnosis_overrides, diagnosis_table_row_count
+
+    # Auto-seed on first use
+    if diagnosis_table_row_count() == 0:
+        seed_diagnosis_db(diag_lookup)
+
+    # DB is ground truth
+    overrides = get_all_diagnosis_overrides()
+    result: dict[str, str] = {
+        code: ov["category"]
+        for code, ov in overrides.items()
+        if ov["category"]
+    }
+
+    # For any ARIA lookup codes not yet in the DB, resolve via legacy chain
+    # and seed them so they appear in the manager for classification
+    if diag_lookup is not None and not diag_lookup.empty and "DiagnosisCode" in diag_lookup.columns:
+        has_site = "SiteDesc" in diag_lookup.columns
+        has_body = "BodySystemDesc" in diag_lookup.columns
+        new_records = []
+        for _, row in diag_lookup.iterrows():
+            code = str(row["DiagnosisCode"]).strip()
+            if code in result or code in _seen_new:
+                continue
+            _seen_new.add(code)
+            site = str(row["SiteDesc"]).strip() if has_site else ""
+            body = str(row["BodySystemDesc"]).strip() if has_body else ""
+            if site == "nan":
+                site = ""
+            if body == "nan":
+                body = ""
+            cat = _resolve_code(code, site, body)
+            if cat != "Uncategorized":
+                result[code] = cat
+            new_records.append({
+                "icd_code": code,
+                "category": cat if cat != "Uncategorized" else "",
+                "subcategory": "", "source": "auto",
+            })
+        if new_records:
+            from data.reviews_db import bulk_upsert_diagnosis_overrides
+            bulk_upsert_diagnosis_overrides(new_records)
+
     return result
 
 
@@ -433,3 +607,44 @@ def primary_category(codes_str: str, c2c: dict[str, str]) -> str:
         if cat:
             return cat
     return "Unknown"
+
+
+def get_subcategory(code: str) -> str:
+    """Return the subcategory for an ICD code, or '' if unknown."""
+    try:
+        from data.reviews_db import get_all_diagnosis_overrides
+        ov = get_all_diagnosis_overrides().get(code)
+        if ov and ov["subcategory"]:
+            return ov["subcategory"]
+    except Exception:
+        pass
+    entry = _SUBCATEGORY_MAP.get(code)
+    return entry[1] if entry else ""
+
+
+def get_category_and_subcategory(code: str) -> tuple[str, str]:
+    """Return (category, subcategory) for an ICD code from the DB."""
+    try:
+        from data.reviews_db import get_all_diagnosis_overrides
+        ov = get_all_diagnosis_overrides().get(code)
+        if ov:
+            return (ov["category"], ov["subcategory"])
+    except Exception:
+        pass
+    entry = _SUBCATEGORY_MAP.get(code)
+    return entry if entry else ("", "")
+
+
+def get_all_subcategory_entries() -> dict[str, tuple[str, str]]:
+    """Return the full {icd_code: (category, subcategory)} map from the DB."""
+    try:
+        from data.reviews_db import get_all_diagnosis_overrides
+        overrides = get_all_diagnosis_overrides()
+        if overrides:
+            return {
+                code: (ov["category"], ov["subcategory"])
+                for code, ov in overrides.items()
+            }
+    except Exception:
+        pass
+    return dict(_SUBCATEGORY_MAP)

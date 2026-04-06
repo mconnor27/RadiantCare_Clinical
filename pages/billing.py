@@ -23,6 +23,10 @@ from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, DEFAULT_SLIDER, SLIDER_MARKS,
     preset_to_slider_val,
 )
+from data.reviews_db import (
+    get_all_insurance_rates, upsert_insurance_rate, delete_insurance_rate,
+    seed_insurance_rates,
+)
 
 dash.register_page(__name__, path="/billing", name="Billing", order=7)
 
@@ -823,7 +827,16 @@ layout = dmc.Stack(
         dmc.Box(
             className="page-sticky-header",
             children=[
-                dmc.Title("Billing", order=2, className="page-title"),
+                dmc.Group(
+                    children=[
+                        dmc.Title("Billing", order=2, className="page-title"),
+                        dmc.ActionIcon(
+                            DashIconify(icon="tabler:receipt-2", width=20),
+                            id=f"{PAGE_ID}-irm-btn",
+                            variant="subtle", color="violet", size="lg",
+                        ),
+                    ],
+                ),
                 _build_filter_bar(),
             ],
         ),
@@ -1014,6 +1027,131 @@ layout = dmc.Stack(
                         ],
                     ),
                     span={"base": 12, "md": 6},
+                ),
+            ],
+        ),
+
+        # ---------------------------------------------------------------
+        # Insurance Rate Manager Modal
+        # ---------------------------------------------------------------
+        dmc.Modal(
+            id=f"{PAGE_ID}-irm-modal",
+            opened=False,
+            title=dmc.Group(
+                children=[
+                    DashIconify(icon="tabler:receipt-2", width=22, color=PRIMARY),
+                    dmc.Text("Insurance Rate Manager", fw=600, size="lg"),
+                ],
+                gap="xs",
+            ),
+            size="80%",
+            centered=True,
+            zIndex=1000,
+            styles={
+                "header": {"padding": "6px 16px"},
+                "content": {"height": "80vh", "display": "flex", "flexDirection": "column"},
+                "body": {"padding": "0px 16px 4px 16px", "flex": 1, "overflow": "hidden",
+                         "display": "flex", "flexDirection": "column"},
+            },
+            children=[
+                dmc.Text(
+                    "Edit payor rates for income projections. Changes persist across sessions.",
+                    size="sm", c="dimmed", mb="xs",
+                ),
+                dmc.Group(
+                    children=[
+                        dmc.Text(id=f"{PAGE_ID}-irm-count", size="sm", c="dimmed"),
+                        dmc.Button(
+                            "Add Payor",
+                            id=f"{PAGE_ID}-irm-add-btn",
+                            leftSection=DashIconify(icon="mdi:plus", width=16),
+                            variant="light", color="violet", size="xs",
+                        ),
+                    ],
+                    justify="space-between",
+                    mb="xs",
+                ),
+                dag.AgGrid(
+                    id=f"{PAGE_ID}-irm-grid",
+                    rowData=[],
+                    columnDefs=[
+                        {"field": "payor", "headerName": "Payor",
+                         "editable": True, "flex": 2, "minWidth": 180,
+                         "cellStyle": {"fontWeight": 500}},
+                        {"field": "rate_method", "headerName": "Method",
+                         "editable": True, "flex": 1, "minWidth": 120,
+                         "cellEditor": "agSelectCellEditor",
+                         "cellEditorParams": {"values": [
+                             "pct_medicare", "rbrvs_cf", "fee_schedule", "cms_cf",
+                         ]}},
+                        {"field": "pct_medicare", "headerName": "% of Medicare",
+                         "editable": True, "flex": 1, "minWidth": 110,
+                         "type": "numericColumn",
+                         "valueFormatter": {"function": "params.value != null ? params.value.toFixed(1) + '%' : ''"}},
+                        {"field": "em_cf", "headerName": "E&M CF ($)",
+                         "editable": True, "flex": 1, "minWidth": 100,
+                         "type": "numericColumn",
+                         "valueFormatter": {"function": "params.value != null ? '$' + params.value.toFixed(2) : ''"}},
+                        {"field": "other_cf", "headerName": "Other CF ($)",
+                         "editable": True, "flex": 1, "minWidth": 100,
+                         "type": "numericColumn",
+                         "valueFormatter": {"function": "params.value != null ? '$' + params.value.toFixed(2) : ''"}},
+                        {"field": "effective_date", "headerName": "Eff. Date",
+                         "editable": True, "flex": 1, "minWidth": 100},
+                        {"field": "source", "headerName": "Source",
+                         "editable": True, "flex": 1, "minWidth": 90,
+                         "cellEditor": "agSelectCellEditor",
+                         "cellEditorParams": {"values": [
+                             "contract", "fee_schedule", "manual", "estimate",
+                             "cms", "state", "government", "csv", "na",
+                         ]}},
+                        {"field": "notes", "headerName": "Notes",
+                         "editable": True, "flex": 2, "minWidth": 200,
+                         "tooltipField": "notes"},
+                        {"field": "_delete", "headerName": "",
+                         "cellRenderer": "DBC_Button_Simple",
+                         "cellRendererParams": {"className": "btn btn-danger btn-sm",
+                                                "children": "X"},
+                         "width": 50, "maxWidth": 50, "sortable": False,
+                         "filter": False, "suppressMenu": True},
+                    ],
+                    defaultColDef={
+                        "sortable": True,
+                        "filter": True,
+                        "resizable": True,
+                    },
+                    dashGridOptions={
+                        "animateRows": True,
+                        "singleClickEdit": True,
+                        "stopEditingWhenCellsLoseFocus": True,
+                        "domLayout": "normal",
+                    },
+                    style={"flex": 1, "width": "100%"},
+                    className="ag-theme-alpine",
+                ),
+                # Add-payor input row (hidden until needed)
+                dmc.Group(
+                    id=f"{PAGE_ID}-irm-add-row",
+                    children=[
+                        dmc.TextInput(
+                            id=f"{PAGE_ID}-irm-new-payor",
+                            placeholder="New payor name",
+                            size="xs", style={"flex": 1},
+                        ),
+                        dmc.NumberInput(
+                            id=f"{PAGE_ID}-irm-new-pct",
+                            placeholder="% of Medicare",
+                            size="xs", style={"width": 120},
+                            value=100, min=0, max=1000, step=0.1,
+                        ),
+                        dmc.Button(
+                            "Save",
+                            id=f"{PAGE_ID}-irm-save-new",
+                            size="xs", color="violet",
+                        ),
+                    ],
+                    gap="xs", mt="xs",
+                    style={"display": "none"},
                 ),
             ],
         ),
@@ -1846,3 +1984,109 @@ for _col in ("Reviewed", "Exported"):
         State(_store_id, "data"),
         prevent_initial_call=True,
     )
+
+
+# ---------------------------------------------------------------------------
+# Insurance Rate Manager (IRM) Callbacks
+# ---------------------------------------------------------------------------
+
+# Seed rates on first import
+seed_insurance_rates()
+
+
+@callback(
+    Output(f"{PAGE_ID}-irm-modal", "opened"),
+    Output(f"{PAGE_ID}-irm-grid", "rowData"),
+    Output(f"{PAGE_ID}-irm-count", "children"),
+    Input(f"{PAGE_ID}-irm-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def _irm_open(n):
+    if not n:
+        return (dash.no_update,) * 3
+    rows = get_all_insurance_rates()
+    return True, rows, f"{len(rows)} payors"
+
+
+@callback(
+    Output(f"{PAGE_ID}-irm-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-irm-count", "children", allow_duplicate=True),
+    Input(f"{PAGE_ID}-irm-grid", "cellValueChanged"),
+    State(f"{PAGE_ID}-irm-grid", "rowData"),
+    prevent_initial_call=True,
+)
+def _irm_save_edit(changed, row_data):
+    """Persist cell edits to SQLite."""
+    if not changed:
+        return dash.no_update, dash.no_update
+
+    row = changed[0].get("data", {}) if isinstance(changed, list) else changed.get("data", {})
+    col = changed[0].get("colId", "") if isinstance(changed, list) else changed.get("colId", "")
+
+    if col == "_delete":
+        # Delete row
+        payor = row.get("payor", "")
+        if payor:
+            delete_insurance_rate(payor)
+            row_data = [r for r in row_data if r.get("payor") != payor]
+        return row_data, f"{len(row_data)} payors"
+
+    # Save the edited row
+    payor = row.get("payor", "").strip()
+    if not payor:
+        return dash.no_update, dash.no_update
+
+    upsert_insurance_rate(
+        payor=payor,
+        rate_method=row.get("rate_method", "pct_medicare"),
+        em_cf=float(row["em_cf"]) if row.get("em_cf") else None,
+        other_cf=float(row["other_cf"]) if row.get("other_cf") else None,
+        pct_medicare=float(row.get("pct_medicare") or 100),
+        effective_date=row.get("effective_date", ""),
+        source=row.get("source", "manual"),
+        notes=row.get("notes", ""),
+    )
+    return dash.no_update, dash.no_update
+
+
+# Toggle add-payor row visibility
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        return {"display": "flex"};
+    }""",
+    Output(f"{PAGE_ID}-irm-add-row", "style"),
+    Input(f"{PAGE_ID}-irm-add-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+@callback(
+    Output(f"{PAGE_ID}-irm-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-irm-count", "children", allow_duplicate=True),
+    Output(f"{PAGE_ID}-irm-add-row", "style", allow_duplicate=True),
+    Output(f"{PAGE_ID}-irm-new-payor", "value"),
+    Output(f"{PAGE_ID}-irm-new-pct", "value"),
+    Input(f"{PAGE_ID}-irm-save-new", "n_clicks"),
+    State(f"{PAGE_ID}-irm-new-payor", "value"),
+    State(f"{PAGE_ID}-irm-new-pct", "value"),
+    State(f"{PAGE_ID}-irm-grid", "rowData"),
+    prevent_initial_call=True,
+)
+def _irm_add_payor(n, payor_name, pct, row_data):
+    """Add a new payor to the rate table."""
+    if not n or not payor_name or not payor_name.strip():
+        return (dash.no_update,) * 5
+
+    payor_name = payor_name.strip()
+    pct = float(pct) if pct else 100.0
+
+    upsert_insurance_rate(
+        payor=payor_name,
+        pct_medicare=pct,
+        source="manual",
+    )
+
+    # Reload all rates
+    rows = get_all_insurance_rates()
+    return rows, f"{len(rows)} payors", {"display": "none"}, "", 100

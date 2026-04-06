@@ -327,6 +327,62 @@ dagcomponentfuncs.AddressLinks = function (props) {
 
 
 /**
+ * Address with click-to-copy + Google search link.
+ * Shows full_address value. Click the text to copy, click the icon to search.
+ * Manually edited addresses show in purple italic (handled by cellStyle).
+ */
+dagcomponentfuncs.AddressCopy = function (props) {
+    var value = props.value;
+    if (!value) {
+        return React.createElement("span", {style: {color: "#9CA3AF"}}, "\u2014");
+    }
+
+    var _React = React;
+    var copied = _React.useState(false);
+    var isCopied = copied[0];
+    var setCopied = copied[1];
+
+    function handleCopy(e) {
+        e.stopPropagation();
+        navigator.clipboard.writeText(value).then(function () {
+            setCopied(true);
+            setTimeout(function () { setCopied(false); }, 1500);
+        });
+    }
+
+    var searchUrl = "https://www.google.com/search?q=" + encodeURIComponent(value);
+
+    return _React.createElement(
+        "div",
+        {style: {display: "flex", alignItems: "center", height: "100%", gap: "3px", overflow: "hidden"}},
+        _React.createElement(
+            "span",
+            {
+                onClick: handleCopy,
+                title: isCopied ? "Copied!" : "Click to copy",
+                style: {
+                    fontSize: "12px",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    flex: 1,
+                    cursor: "pointer",
+                },
+            },
+            isCopied ? "\u2705 Copied" : value
+        ),
+        _React.createElement(
+            "a",
+            {href: searchUrl, target: "_blank", rel: "noopener",
+             style: {color: "#6B7280", textDecoration: "none", fontSize: "13px"},
+             title: "Google Search"},
+            "\ud83d\udd0d"
+        )
+    );
+};
+
+
+/**
  * Review buttons for CPT Audit table.
  * Shows OK/Fixed/Course OK for unreviewed, or status label + Undo for reviewed.
  */
@@ -405,5 +461,45 @@ dagcomponentfuncs.CptReviewButtons = function (props) {
             },
             "Course OK"
         )
+    );
+};
+
+/**
+ * Diagnosis patient count link — clickable number that triggers detail panel.
+ * Works for both referrals page (referrals-rpm-diag-detail-store)
+ * and diagnosis page (diag-mgr-detail-store).
+ */
+dagcomponentfuncs.DiagCountLink = function (props) {
+    var value = props.value;
+    if (value === null || value === undefined || value === 0) {
+        return React.createElement("span", {style: {color: "#9CA3AF"}}, value === 0 ? "0" : "\u2014");
+    }
+    function handleClick(e) {
+        e.stopPropagation();
+        var data = props.data || {};
+        var payload = {
+            icd_code: data.icd_code || "",
+            description: data.description || "",
+            category: data.category || "",
+            ts: Date.now(),
+        };
+        var storeId = props.colDef && props.colDef.cellRendererParams && props.colDef.cellRendererParams.storeId;
+        if (!storeId) storeId = "referrals-rpm-diag-detail-store";
+        if (window.dash_clientside) {
+            window.dash_clientside.set_props(storeId, {data: payload});
+        }
+    }
+    return React.createElement(
+        "span",
+        {
+            onClick: handleClick,
+            style: {
+                color: "#2196F3",
+                cursor: "pointer",
+                textDecoration: "underline",
+                fontSize: "12px",
+            },
+        },
+        value.toLocaleString()
     );
 };

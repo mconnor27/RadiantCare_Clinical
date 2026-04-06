@@ -1,6 +1,7 @@
 """Referrals page — conversion funnel, lead times, referring sources, and trends."""
 
 import re
+from pathlib import Path
 import dash
 import dash_mantine_components as dmc
 import dash_ag_grid as dag
@@ -21,7 +22,11 @@ from components.kpi_card import kpi_card, create_sparkline
 from components.chart_card import chart_card, register_chart_callbacks
 from components.outlier_panel import outlier_panel, register_outlier_callbacks
 from utils.charts import apply_default_layout, empty_figure, dept_color, color_for_index
-from utils.diagnosis_categories import build_code_to_category, CATEGORIES as BODY_SYSTEMS
+from utils.diagnosis_categories import (
+    build_code_to_category, CATEGORIES as BODY_SYSTEMS,
+    SUBCATEGORIES as DIAG_SUBCATEGORIES, ALL_SUBCATEGORIES,
+    get_all_subcategory_entries,
+)
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, DEFAULT_SLIDER, SLIDER_MARKS,
     preset_to_slider_val,
@@ -688,6 +693,17 @@ layout = dmc.Stack(
                                             ]),
                                             value="institutions",
                                         ),
+                                        dmc.TabsTab(
+                                            dmc.Group(gap=6, children=[
+                                                DashIconify(icon="tabler:dna", width=16),
+                                                "Diagnoses",
+                                                dmc.Badge(
+                                                    id=f"{PAGE_ID}-rpm-diag-count", size="sm",
+                                                    variant="light", color="violet",
+                                                ),
+                                            ]),
+                                            value="diagnoses",
+                                        ),
                                     ],
                                 ),
                                 # Buttons — visible only on Providers tab
@@ -714,6 +730,12 @@ layout = dmc.Stack(
                                             id=f"{PAGE_ID}-rpm-reviewed-btn",
                                             leftSection=DashIconify(icon="tabler:check", width=14),
                                             variant="light", color="green", size="xs",
+                                        ),
+                                        dmc.Button(
+                                            "Add Address",
+                                            id=f"{PAGE_ID}-rpm-add-addr-btn",
+                                            leftSection=DashIconify(icon="tabler:map-pin-plus", width=14),
+                                            variant="light", color="violet", size="xs",
                                         ),
                                         dmc.Button(
                                             "Export CSV",
@@ -829,7 +851,11 @@ layout = dmc.Stack(
                                         {"field": "department", "headerName": "Department", "flex": 1.4,
                                          "filter": "agTextColumnFilter", "floatingFilter": True},
                                         {"field": "full_address", "headerName": "Address", "flex": 1.6,
-                                         "cellRenderer": "AddressLinks",
+                                         "editable": True,
+                                         "cellEditor": "agLargeTextCellEditor",
+                                         "cellEditorPopup": True,
+                                         "cellRenderer": "AddressCopy",
+                                         "cellStyle": {"function": "params.data && params.data.address_source === 'manual' ? {fontStyle: 'italic', color: '#7C2A83'} : {}"},
                                          "filter": "agTextColumnFilter", "floatingFilter": True},
                                         {"field": "specialty", "headerName": "Specialty", "flex": 1.1,
                                          "editable": True,
@@ -969,9 +995,133 @@ layout = dmc.Stack(
                                 ),
                             ],
                         ),
+                        # ── Diagnoses tab ──
+                        dmc.TabsPanel(
+                            value="diagnoses",
+                            pt=4,
+                            style={"flex": 1, "display": "flex", "flexDirection": "column", "overflow": "hidden"},
+                            children=[
+                                dmc.Group(
+                                    justify="space-between", mb=6,
+                                    children=[
+                                        dmc.Text(
+                                            "ICD codes and free-text diagnoses from referrals not in the ARIA lookup. "
+                                            "Classify these to improve referral diagnosis reporting.",
+                                            size="sm", c=NEUTRAL["text_secondary"],
+                                        ),
+                                        dmc.Group(
+                                            gap="sm",
+                                            children=[
+                                                dmc.Text(id=f"{PAGE_ID}-rpm-diag-stats", size="xs",
+                                                         c=NEUTRAL["text_muted"]),
+                                                dmc.Button(
+                                                    "Mark Reviewed",
+                                                    id=f"{PAGE_ID}-rpm-diag-reviewed-btn",
+                                                    leftSection=DashIconify(icon="tabler:check", width=14),
+                                                    variant="light", color="green", size="xs",
+                                                ),
+                                                dmc.Button(
+                                                    "Export CSV",
+                                                    id=f"{PAGE_ID}-rpm-diag-export-btn",
+                                                    leftSection=DashIconify(icon="tabler:download", width=14),
+                                                    variant="light", color="gray", size="xs",
+                                                ),
+                                            ],
+                                        ),
+                                    ],
+                                ),
+                                dag.AgGrid(
+                                    id=f"{PAGE_ID}-rpm-diag-grid",
+                                    columnDefs=[
+                                        {"field": "icd_code", "headerName": "ICD Code", "flex": 0.6,
+                                         "filter": "agTextColumnFilter", "floatingFilter": True},
+                                        {"field": "description", "headerName": "Description", "flex": 1.8,
+                                         "filter": "agTextColumnFilter", "floatingFilter": True},
+                                        {"field": "category", "headerName": "Category", "flex": 1,
+                                         "editable": True,
+                                         "cellEditor": "agSelectCellEditor",
+                                         "cellEditorParams": {"values": [""] + BODY_SYSTEMS + ["Unknown"]},
+                                         "cellStyle": {"cursor": "pointer"},
+                                         "filter": "agTextColumnFilter", "floatingFilter": True},
+                                        {"field": "subcategory", "headerName": "Subcategory", "flex": 1,
+                                         "editable": True,
+                                         "cellEditor": "agSelectCellEditor",
+                                         "cellEditorParams": {"function": "getSubcategoryValues(params)"},
+                                         "cellStyle": {"cursor": "pointer"},
+                                         "filter": "agTextColumnFilter", "floatingFilter": True},
+                                        {"field": "patients", "headerName": "Patients", "flex": 0.4,
+                                         "cellRenderer": "DiagCountLink",
+                                         "cellRendererParams": {"storeId": f"{PAGE_ID}-rpm-diag-detail-store"},
+                                         "type": "numericColumn", "sort": "desc",
+                                         "filter": "agNumberColumnFilter"},
+                                        {"field": "source", "headerName": "Source", "flex": 0.4,
+                                         "filter": "agTextColumnFilter", "floatingFilter": True,
+                                         "cellStyle": {"fontStyle": "italic", "color": NEUTRAL["text_muted"]}},
+                                        {"field": "reviewed", "headerName": "Reviewed", "flex": 0.3,
+                                         "cellDataType": "boolean", "editable": True,
+                                         "cellStyle": {"textAlign": "center"}},
+                                    ],
+                                    defaultColDef={"sortable": True, "resizable": True},
+                                    dashGridOptions={
+                                        "pagination": True,
+                                        "paginationPageSize": 50,
+                                        "animateRows": True,
+                                        "singleClickEdit": True,
+                                        "rowHeight": 36,
+                                        "headerHeight": 36,
+                                        "floatingFiltersHeight": 32,
+                                        "rowSelection": {"mode": "multiRow"},
+                                    },
+                                    style={"flex": 1, "minHeight": 0},
+                                    className="ag-theme-alpine",
+                                ),
+                                # Diagnosis detail panel
+                                dmc.Paper(
+                                    id=f"{PAGE_ID}-rpm-diag-detail-panel",
+                                    style={"display": "none"},
+                                    p="sm", radius="md", withBorder=True,
+                                    children=[
+                                        dmc.Group(
+                                            justify="space-between", mb=4,
+                                            children=[
+                                                dmc.Text(id=f"{PAGE_ID}-rpm-diag-detail-title",
+                                                         size="sm", fw=600, c=PRIMARY),
+                                                dmc.ActionIcon(
+                                                    DashIconify(icon="tabler:x", width=14),
+                                                    id=f"{PAGE_ID}-rpm-diag-detail-close",
+                                                    variant="subtle", color="gray", size="sm",
+                                                ),
+                                            ],
+                                        ),
+                                        dag.AgGrid(
+                                            id=f"{PAGE_ID}-rpm-diag-detail-grid",
+                                            columnDefs=[
+                                                {"field": "Created", "headerName": "Date", "flex": 0.6, "sort": "desc"},
+                                                {"field": "MRN", "headerName": "MRN", "flex": 0.5},
+                                                {"field": "Patient Name", "headerName": "Patient", "flex": 1},
+                                                {"field": "Rfl Prim Dx", "headerName": "Primary Dx", "flex": 1.2},
+                                                {"field": "Diagnoses", "headerName": "Diagnoses", "flex": 1.5},
+                                                {"field": "Status", "headerName": "Status", "flex": 0.6},
+                                            ],
+                                            defaultColDef={"sortable": True, "resizable": True,
+                                                           "filter": True, "floatingFilter": True},
+                                            dashGridOptions={
+                                                "rowHeight": 30, "headerHeight": 30,
+                                                "floatingFiltersHeight": 28,
+                                                "pagination": True, "paginationPageSize": 10,
+                                            },
+                                            style={"height": "250px"},
+                                            className="ag-theme-alpine",
+                                        ),
+                                    ],
+                                ),
+                            ],
+                        ),
                     ],
                 ),
                 dcc.Download(id=f"{PAGE_ID}-rpm-inst-download"),
+                dcc.Download(id=f"{PAGE_ID}-rpm-diag-download"),
+                dcc.Store(id=f"{PAGE_ID}-rpm-diag-detail-store", data=None),
             ],
         ),
         # RPM stores and interval
@@ -2571,6 +2721,7 @@ def _build_rpm_grid_data() -> tuple[list[dict], str]:
         source = "lookup" if (spec or inst) else ""
 
         reviewed = False
+        address_source = ""  # "": source data, "manual": user-edited/added
         if row_key in overrides:
             ov = overrides[row_key]
             if ov.get("specialty"):
@@ -2579,15 +2730,26 @@ def _build_rpm_grid_data() -> tuple[list[dict], str]:
                 inst = ov["institution"]
             source = ov.get("source", source)
             reviewed = ov.get("reviewed", False)
+            # Use DB address if it was manually set
+            if ov.get("address_source") == "manual":
+                address_source = "manual"
+                if ov.get("address"):
+                    r = r.copy()
+                    r["address"] = ov["address"]
+                if ov.get("city"):
+                    r["city"] = ov["city"]
+                if ov.get("state"):
+                    r["state"] = ov["state"]
+                if ov.get("zip_code"):
+                    r["zip_code"] = ov["zip_code"]
 
-        # Build full address for display
         _clean = lambda v: str(v) if v and str(v) not in ("", "nan") else ""
         addr = _clean(r["address"])
         city = _clean(r["city"])
         state = _clean(r["state"])
         zip_c = _clean(r["zip_code"])
-        addr_parts = [addr, city, state, zip_c]
-        full_address = ", ".join(p for p in addr_parts if p)
+
+        full_address = ", ".join(p for p in [addr, city, state, zip_c] if p)
 
         rows.append({
             "npi": npi,
@@ -2601,11 +2763,50 @@ def _build_rpm_grid_data() -> tuple[list[dict], str]:
             "state": state,
             "zip": zip_c,
             "full_address": full_address,
+            "address_source": address_source,
             "specialty": spec,
             "institution": inst,
             "source": source,
             "patient_count": int(r["referral_count"]),
             "reviewed": reviewed,
+        })
+
+    # Add DB-only rows (manually added addresses not in source data)
+    seen_keys = {r["row_key"] for r in rows}
+    for ov_key, ov in overrides.items():
+        if ov_key in seen_keys:
+            continue
+        if ov.get("address_source") != "manual":
+            continue
+        npi, addr_k = ov_key.split("|", 1) if "|" in ov_key else (ov_key, "")
+        # Find the provider name from existing rows with same NPI
+        name = ""
+        dept = ""
+        for r in rows:
+            if r["npi"] == npi:
+                name = r["name"]
+                dept = r["department"]
+                break
+        a_parts = [ov.get("address", ""), ov.get("city", ""), ov.get("state", ""), ov.get("zip_code", "")]
+        full_addr = ", ".join(p for p in a_parts if p)
+        rows.append({
+            "npi": npi,
+            "address_key": addr_k,
+            "row_key": ov_key,
+            "name": name,
+            "name_raw": name,
+            "department": dept,
+            "address": ov.get("address", ""),
+            "city": ov.get("city", ""),
+            "state": ov.get("state", ""),
+            "zip": ov.get("zip_code", ""),
+            "full_address": full_addr,
+            "address_source": "manual",
+            "specialty": ov.get("specialty", ""),
+            "institution": ov.get("institution", ""),
+            "source": ov.get("source", "manual"),
+            "patient_count": 0,
+            "reviewed": ov.get("reviewed", False),
         })
 
     # Stats
@@ -2652,6 +2853,21 @@ def _rpm_open(n):
 
 
 @callback(
+    Output(f"{PAGE_ID}-rpm-diag-grid", "rowData"),
+    Output(f"{PAGE_ID}-rpm-diag-count", "children"),
+    Output(f"{PAGE_ID}-rpm-diag-stats", "children"),
+    Input(f"{PAGE_ID}-rpm-tabs", "value"),
+    prevent_initial_call=True,
+)
+def _rpm_diag_tab_load(tab):
+    """Lazy-load diagnosis grid only when the Diagnoses tab is selected."""
+    if tab != "diagnoses":
+        return dash.no_update, dash.no_update, dash.no_update
+    rows, count, stats = _build_diag_grid_data()
+    return rows, count, stats
+
+
+@callback(
     Output(f"{PAGE_ID}-rpm-grid", "rowData", allow_duplicate=True),
     Output(f"{PAGE_ID}-rpm-stats", "children", allow_duplicate=True),
     Input(f"{PAGE_ID}-rpm-grid", "cellValueChanged"),
@@ -2674,10 +2890,47 @@ def _rpm_save_edit(changed, row_data):
     col = changed[0].get("colId", "") if isinstance(changed, list) else changed.get("colId", "")
 
     if col == "reviewed":
-        # Toggle reviewed status
         reviewed = bool(row.get("reviewed", False))
         upsert_referring(npi, address_key=addr_k, source=row.get("source", "manual"))
         set_reviewed_bulk([(npi, addr_k)], reviewed=reviewed)
+    elif col == "full_address":
+        # Parse the edited address string back into components
+        full = row.get("full_address", "")
+        parts = [p.strip() for p in full.split(",")]
+        # Best-effort parse: last part = zip, second-to-last = state, etc.
+        addr_str, city_str, state_str, zip_str = "", "", "", ""
+        if len(parts) >= 4:
+            addr_str = ", ".join(parts[:-3])
+            city_str, state_str, zip_str = parts[-3], parts[-2], parts[-1]
+        elif len(parts) == 3:
+            addr_str, city_str = parts[0], parts[1]
+            # Last part could be "WA 98503" or just "98503"
+            last = parts[2].strip()
+            sp = last.split()
+            if len(sp) == 2 and len(sp[0]) == 2:
+                state_str, zip_str = sp[0], sp[1]
+            else:
+                state_str = last
+        elif len(parts) == 2:
+            addr_str, city_str = parts[0], parts[1]
+        elif len(parts) == 1:
+            addr_str = parts[0]
+        upsert_referring(
+            npi, address_key=addr_k,
+            address=addr_str, city=city_str,
+            state=state_str, zip_code=zip_str,
+            address_source="manual", source="manual",
+        )
+        if row_data:
+            for r in row_data:
+                if r.get("row_key") == row_key:
+                    r["address_source"] = "manual"
+                    r["full_address"] = full
+                    r["address"] = addr_str
+                    r["city"] = city_str
+                    r["state"] = state_str
+                    r["zip"] = zip_str
+                    break
     else:
         spec = row.get("specialty") if col == "specialty" else None
         inst = row.get("institution") if col == "institution" else None
@@ -2685,7 +2938,6 @@ def _rpm_save_edit(changed, row_data):
         if inst:
             add_institution(inst)
 
-        # Update source in grid data
         if row_data:
             for r in row_data:
                 if r.get("row_key") == row_key:
@@ -2707,6 +2959,66 @@ def _rpm_save_edit(changed, row_data):
     )
 
     return row_data, stats
+
+
+@callback(
+    Output(f"{PAGE_ID}-rpm-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-stats", "children", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-prov-count", "children", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rpm-add-addr-btn", "n_clicks"),
+    State(f"{PAGE_ID}-rpm-grid", "rowData"),
+    State(f"{PAGE_ID}-rpm-grid", "selectedRows"),
+    prevent_initial_call=True,
+)
+def _rpm_add_address(n, row_data, selected_rows):
+    """Add a new blank address row for the selected provider's NPI."""
+    if not n or not row_data:
+        return dash.no_update, dash.no_update, dash.no_update
+    if not selected_rows or len(selected_rows) == 0:
+        return dash.no_update, dash.no_update, dash.no_update
+
+    src = selected_rows[0]
+    npi = src.get("npi", "")
+    if not npi:
+        return dash.no_update, dash.no_update, dash.no_update
+
+    # Create a new empty-address row with the same NPI
+    new_addr_key = f"NEW_{pd.Timestamp.now().strftime('%H%M%S')}"
+    new_row_key = f"{npi}|{new_addr_key}"
+
+    new_row = {
+        "npi": npi,
+        "address_key": new_addr_key,
+        "row_key": new_row_key,
+        "name": src.get("name", ""),
+        "name_raw": src.get("name_raw", ""),
+        "department": src.get("department", ""),
+        "address": "",
+        "city": "",
+        "state": "",
+        "zip": "",
+        "full_address": "",
+        "address_source": "manual",
+        "specialty": src.get("specialty", ""),
+        "institution": "",
+        "source": "manual",
+        "patient_count": 0,
+        "reviewed": False,
+    }
+
+    # Insert at the top of the grid so the user can see it
+    row_data = [new_row] + row_data
+
+    total = len(row_data)
+    with_spec = sum(1 for r in row_data if r.get("specialty"))
+    with_inst = sum(1 for r in row_data if r.get("institution"))
+    reviewed_n = sum(1 for r in row_data if r.get("reviewed"))
+    stats = (
+        f"{total:,} providers  |  "
+        f"{reviewed_n:,} reviewed  |  {total - reviewed_n:,} unreviewed  |  "
+        f"{with_spec:,} specialty  |  {with_inst:,} institution"
+    )
+    return row_data, stats, str(total)
 
 
 @callback(
@@ -3284,3 +3596,449 @@ def _rpm_show_detail(store_data, close_clicks):
 
     title, records = _fetch_referral_detail(npi, addr_key, name)
     return {"display": "block", "marginTop": "6px"}, title, records
+
+
+# ==========================================================================
+# Diagnosis Manager Callbacks
+# ==========================================================================
+
+# ---------------------------------------------------------------------------
+# Subcategory inference from free text (given a known category)
+# ---------------------------------------------------------------------------
+_SUBCAT_TEXT_PATTERNS: dict[str, list[tuple[str, re.Pattern]]] = {
+    "Breast": [
+        ("Left",                    re.compile(r"\bleft\b|\blt\b|\b[Ll]\s+breast|\b[Ll]\.?\s*breast", re.I)),
+        ("Right",                   re.compile(r"\bright\b|\brt\b|\b[Rr]\s+breast|\b[Rr]\.?\s*breast", re.I)),
+        ("Male",                    re.compile(r"\bmale\b", re.I)),
+        ("Unspecified Laterality",  re.compile(r"breast|breaast|bresst|brest|bilat|mammary", re.I)),
+    ],
+    "Central Nervous System": [
+        ("Meningioma",              re.compile(r"mening", re.I)),
+        ("Pituitary / Pineal",      re.compile(r"pituit|pineal", re.I)),
+        ("Schwannoma",              re.compile(r"schwann|acoustic.?neuroma|vestibul", re.I)),
+        ("AVM",                     re.compile(r"\bAVM\b|arteriovenous", re.I)),
+        ("Ocular / Orbit",          re.compile(r"\borbit\b|orbital|\beye\b|ocular|choroid|chorodial|retino|uveal", re.I)),
+        ("Paraganglioma",           re.compile(r"paraganglio|glomus|chemodectoma", re.I)),
+        ("Craniopharyngioma",       re.compile(r"craniopharyn", re.I)),
+        ("Spinal Cord",             re.compile(r"spinal.?cord|intramedull|cauda.?equina|brachial.?plex", re.I)),
+        ("Glioma / Primary Brain",  re.compile(r"glioma|oligodendro|astrocyt|ependym", re.I)),
+        ("Primary Brain",           re.compile(r"\bbrain\b|\bGBM\b|glioblas|cerebr|frontal.?lobe|parietal|temporal.?lobe|occipital|brain.?stem|cerebell", re.I)),
+    ],
+    "GU – Prostate": [
+        ("Prostate Cancer",         re.compile(r".", re.I)),  # all prostate is one subcategory
+    ],
+    "GU – Non-Prostate": [
+        ("Bladder",                 re.compile(r"bladder|bkadder|urothel|transitional.?cell", re.I)),
+        ("Kidney / RCC",            re.compile(r"renal|kidney|\bRCC\b", re.I)),
+        ("Testicular",              re.compile(r"testic|testis|seminoma", re.I)),
+        ("Penile",                  re.compile(r"penile|penis", re.I)),
+        ("Adrenal",                 re.compile(r"adrenal", re.I)),
+        ("Urethra",                 re.compile(r"ureth", re.I)),
+    ],
+    "Gastrointestinal": [
+        ("Rectal",                  re.compile(r"rectal|rectum|rectosig", re.I)),
+        ("Esophageal",              re.compile(r"esophag|esphag|esopah|esopheal|gastic", re.I)),
+        ("Pancreatic",              re.compile(r"pancrea", re.I)),
+        ("Colon",                   re.compile(r"colon|cecum|sigmoid|splenic.?flex", re.I)),
+        ("Anal",                    re.compile(r"\banal\b|\banus\b", re.I)),
+        ("Gastric",                 re.compile(r"gastri|stomach", re.I)),
+        ("Liver / HCC",             re.compile(r"liver|\bHCC\b|hepato", re.I)),
+        ("Biliary",                 re.compile(r"bile|biliary|cholang|gallbladder", re.I)),
+        ("GIST",                    re.compile(r"\bGIST\b|gastrointestinal.?stromal", re.I)),
+        ("Small Intestine",         re.compile(r"small.?bowel|small.?intestin|duoden|jejun|ileum", re.I)),
+    ],
+    "Gynecologic": [
+        ("Cervical",                re.compile(r"cervi|cerivx", re.I)),
+        ("Uterine / Endometrial",   re.compile(r"uter|endomet|edometr|endrometr", re.I)),
+        ("Ovarian",                 re.compile(r"ovar", re.I)),
+        ("Vulvar",                  re.compile(r"vulv", re.I)),
+        ("Vaginal",                 re.compile(r"vagin", re.I)),
+    ],
+    "Head and Neck": [
+        ("Oropharynx",              re.compile(r"tonsil|oropharyn|\bBOT\b|base.?of.?tongue|tongue|tounge", re.I)),
+        ("Larynx",                  re.compile(r"laryn|vocal.?cord|glotti|epiglott|arytenoid", re.I)),
+        ("Nasopharynx",             re.compile(r"nasopharyn", re.I)),
+        ("Oral Cavity",             re.compile(r"oral|mouth|buccal|gingiv|palat|retromolar|mandib|floor.?of.?mouth|lingual", re.I)),
+        ("Salivary Gland",          re.compile(r"saliva|parotid|submandib|adenoid.?cystic", re.I)),
+        ("Nasal Cavity / Sinus",    re.compile(r"sinus|nasal|maxill|ethmoid", re.I)),
+        ("Thyroid",                 re.compile(r"thyroid", re.I)),
+        ("Hypopharynx",             re.compile(r"hypopharyn|hypoharyn|pyriform", re.I)),
+        ("Lip",                     re.compile(r"\blip\b", re.I)),
+        ("Trachea",                 re.compile(r"trache", re.I)),
+        ("Unknown Primary/Other",   re.compile(r"unknown.?prim|\bSCCA\b|neck.?mass|\bH&N\b|head.?neck|head.?and.?neck|head.?\s*neck|\bneck\b|\bthroat\b|pharynx$", re.I)),
+    ],
+    "Hematologic": [
+        ("Myeloma / Plasmacytoma",  re.compile(r"myelom|meyloma|plasmacyt|\bMGUS\b|amyloid", re.I)),
+        ("Hodgkin Lymphoma",        re.compile(r"hodgkin", re.I)),
+        ("Mycosis Fungoides",       re.compile(r"mycosis|fungoid|sezary", re.I)),
+        ("Leukemia",                re.compile(r"leukemi|\bAML\b|\bCLL\b|\bALL\b", re.I)),
+        ("MDS/PMF/Splenomegaly",    re.compile(r"myelofibro|polycythem|spleen|spleno|myelodyspl|\bMDS\b", re.I)),
+        ("Mantle Cell",             re.compile(r"mantle", re.I)),
+        ("MALT",                    re.compile(r"\bMALT\b|marginal.?zone", re.I)),
+        ("T-Cell Lymphoma",         re.compile(r"T.?cell", re.I)),
+        ("Non-Hodgkin Lymphoma (Diffuse)", re.compile(r"\bDLBCL\b|diffuse.?large", re.I)),
+        ("Non-Hodgkin Lymphoma (Follicular)", re.compile(r"follicular", re.I)),
+        ("Non-Hodgkin Lymphoma (Other)", re.compile(r"lymph|lymhoma|\bNHL\b", re.I)),
+    ],
+    "Metastases & Palliative": [
+        ("Brain Metastases",        re.compile(r"brain.?met|brain.?mets|cerebr.?met", re.I)),
+        ("Bone Metastases",         re.compile(r"bone.?met|bone.?les|bony|lytic|patholog.?fract|spine|spinal|vertebr|femur|humer|rib|pelvi|sacr|hip|sternum|skull|lumbar|thorac.?spine|cervic.?spine|\bT\d|L\d|C\d.?spin", re.I)),
+        ("Lung Metastases",         re.compile(r"lung.?met|pulm.?met|lung.?nod", re.I)),
+        ("Liver Metastases",        re.compile(r"liver.?met|hepat.?met", re.I)),
+        ("Lymph Node Metastases",   re.compile(r"lymph.?node|nodal.?met|supraclavic|axiall|mediast.?met|inguinal.?met", re.I)),
+        ("Skin Metastases",         re.compile(r"skin.?met|cutane.?met", re.I)),
+        ("Adrenal Metastases",      re.compile(r"adrenal.?met", re.I)),
+        ("Other Metastases",        re.compile(r"met|palliati|\bSVC\b|\bPCI\b|cord.?compress|chest.?wall|chest\b|flank|thigh|arm\b|leg\b|shoulder|back.?pain|clavicle|axilla|maxill|orbit|mandib|groin|parotid|scalp|abdom", re.I)),
+        ("Bone Metastases",         re.compile(r"\bbone\b", re.I)),
+    ],
+    "Sarcomas": [
+        ("Bone Sarcoma",            re.compile(r"osteosarc|osteoblas|chondro|ewing|bone.?sarc|giant.?cell", re.I)),
+        ("Peripheral Nerve Sheath", re.compile(r"nerve.?sheath|\bMPNST\b|neurofibro.?sarc", re.I)),
+        ("Retroperitoneal Sarcoma", re.compile(r"retroperit|liposarcoma", re.I)),
+        ("Soft Tissue Sarcoma",     re.compile(r"sarc|soft.?tissue|leiomyo|fibro|synovial|rhabdo|spindle|angiosarcoma|desmoid|fibromyxoid|dermatofibro|myxoid|undifferentiated.?pleo", re.I)),
+    ],
+    "Skin": [
+        ("Melanoma",                re.compile(r"melan", re.I)),
+        ("Merkel Cell",             re.compile(r"merkel|\bMCC\b", re.I)),
+        ("Non-Melanoma Skin Cancer", re.compile(r"squam|basal.?cell|basil.?cell|\bBCC\b|\bSCC\b|skin|cutane|scalp|ear\b|nose\b|eyelid|forehead|cheek|temple|sebaceous|carcinoma|\blip\b", re.I)),
+    ],
+    "Benign Diseases": [
+        ("Dupuytren / Plantar",     re.compile(r"dupuytr|plantar.?fibro|palmar|ledderhose|finger", re.I)),
+        ("Keloid / Scar",           re.compile(r"keloid|hypertrophic.?scar|\bHHT\b|osler.?weber", re.I)),
+        ("Heterotopic Ossification", re.compile(r"heterotopic|het\s*erotrophic|\bHO\b", re.I)),
+        ("Hemangioma",              re.compile(r"hemangioma|\bAVM\b|arteriovenous", re.I)),
+        ("Orbital Pseudotumor",     re.compile(r"orbital|pseudotumor|trigeminal|neuralgia|graves", re.I)),
+        ("Gynecomastia",            re.compile(r"gynecomast", re.I)),
+        ("Osteoarthritis",          re.compile(r"osteoarthr|arthriti|bursitis|osteopor", re.I)),
+        ("Neurofibromatosis",       re.compile(r"neurofibro", re.I)),
+    ],
+    "Thoracic": [
+        ("Lung Cancer",             re.compile(r"lung|\bNSCL\b|\bSCLC\b|pulmon|bronch", re.I)),
+        ("Mesothelioma",            re.compile(r"mesothel", re.I)),
+        ("Thymic",                  re.compile(r"thym", re.I)),
+        ("Mediastinal",             re.compile(r"mediast", re.I)),
+        ("Neuroendocrine",          re.compile(r"neuroendoc|carcinoid|\bNET\b", re.I)),
+    ],
+}
+
+
+def _infer_subcategory(text: str, category: str) -> str:
+    """Infer subcategory from free text given a known category."""
+    if not text or not category:
+        return ""
+    patterns = _SUBCAT_TEXT_PATTERNS.get(category)
+    if not patterns:
+        return ""
+    for subcat, pat in patterns:
+        if pat.search(text):
+            return subcat
+    return ""
+
+
+# Load descriptions from the CSV file at module level
+def _load_diag_descriptions() -> dict[str, str]:
+    """Load ICD code descriptions from diagnosis_subcategories.csv."""
+    import csv as csv_mod
+    csv_path = Path(__file__).resolve().parent.parent / "data" / "diagnosis_subcategories.csv"
+    if not csv_path.exists():
+        return {}
+    result = {}
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        for row in csv_mod.DictReader(f):
+            code = row["icd_code"].strip()
+            desc = row.get("description", "").strip()
+            if code and desc:
+                result[code] = desc
+    return result
+
+_DIAG_DESCRIPTIONS: dict[str, str] = _load_diag_descriptions()
+
+
+def _build_diag_grid_data():
+    """Build diagnosis grid for referral-only entries.
+
+    Shows ICD codes and free-text diagnoses found in referral data that are
+    NOT already in the base ARIA lookup CSV (diagnosis_subcategories.csv).
+    The ARIA CSV codes are managed on the Diagnosis page instead.
+    """
+    from data.loader import load_referrals
+    from data.reviews_db import get_all_diagnosis_overrides
+
+    ref = load_referrals()
+    overrides = get_all_diagnosis_overrides()
+    base_map = get_all_subcategory_entries()  # {code: (category, subcategory)}
+
+    # --- ICD codes extracted from referral Diagnoses text ---
+    code_patients: dict[str, int] = {}
+    code_desc: dict[str, str] = {}
+    # --- Free-text diagnoses (no ICD code) ---
+    freetext_patients: dict[str, int] = {}  # keyed by normalized text
+    freetext_raw: dict[str, str] = {}       # normalized → first raw form
+    freetext_cat: dict[str, str] = {}       # normalized → regex-resolved category
+
+    if not ref.empty and "Diagnoses" in ref.columns:
+        for _, row in ref[ref["Diagnoses"].notna()].iterrows():
+            diag_text = str(row["Diagnoses"])
+            prim_dx = str(row.get("Rfl Prim Dx", "")) if pd.notna(row.get("Rfl Prim Dx")) else ""
+            found_icd = False
+
+            for m in _ICD10_RE.finditer(diag_text):
+                code = m.group(1)
+                found_icd = True
+                # Only track codes NOT in base ARIA CSV
+                if code not in base_map:
+                    code_patients[code] = code_patients.get(code, 0) + 1
+                    if code not in code_desc:
+                        idx = diag_text.find(code)
+                        if idx > 0:
+                            prefix = diag_text[:idx].rstrip(" (").strip()
+                            parts = prefix.split(",")
+                            desc = parts[-1].strip()
+                            if desc:
+                                code_desc[code] = desc
+
+            for m in _ICD9_RE.finditer(diag_text):
+                code = m.group(1)
+                found_icd = True
+                if code not in base_map:
+                    code_patients[code] = code_patients.get(code, 0) + 1
+
+            # Track free-text entries that had no ICD code
+            if not found_icd:
+                # Use Rfl Prim Dx if available, else Diagnoses text
+                text = prim_dx.strip() if prim_dx.strip() else diag_text.strip()
+                if text and text.lower() not in ("nan", "none", ""):
+                    key = text.lower().strip()
+                    freetext_patients[key] = freetext_patients.get(key, 0) + 1
+                    if key not in freetext_raw:
+                        freetext_raw[key] = text
+                    # Try regex classification
+                    if key not in freetext_cat:
+                        cat = _categorise_text(text)
+                        if cat:
+                            freetext_cat[key] = cat
+
+    # Build rows — ICD codes not in base CSV
+    rows = []
+    for code in sorted(code_patients.keys()):
+        pts = code_patients[code]
+        cat = _DIAG_C2C.get(code, "")
+        sub = ""
+        source = "referral"
+        reviewed = False
+
+        if code in overrides:
+            ov = overrides[code]
+            cat = ov["category"]
+            sub = ov["subcategory"]
+            source = ov["source"]
+            reviewed = ov.get("reviewed", False)
+
+        desc = code_desc.get(code) or _DIAG_DESCRIPTIONS.get(code, "")
+
+        # Infer subcategory from description if we have a category but no subcategory
+        if cat and not sub and desc:
+            sub = _infer_subcategory(desc, cat)
+
+        rows.append({
+            "icd_code": code,
+            "description": desc,
+            "category": cat,
+            "subcategory": sub,
+            "patients": pts,
+            "source": source,
+            "reviewed": reviewed,
+        })
+
+    # Build rows — free-text diagnoses (no ICD code)
+    for key in sorted(freetext_patients.keys()):
+        pts = freetext_patients[key]
+        raw_text = freetext_raw[key]
+        cat = freetext_cat.get(key, "")
+        sub = ""
+        source = "free-text"
+        reviewed = False
+
+        # Infer subcategory from the text
+        if cat:
+            sub = _infer_subcategory(raw_text, cat)
+
+        # Check DB override keyed by the raw text
+        if raw_text in overrides:
+            ov = overrides[raw_text]
+            cat = ov["category"]
+            sub = ov["subcategory"]
+            source = ov["source"]
+            reviewed = ov.get("reviewed", False)
+
+        rows.append({
+            "icd_code": "",
+            "description": raw_text,
+            "category": cat,
+            "subcategory": sub,
+            "patients": pts,
+            "source": source,
+            "reviewed": reviewed,
+        })
+
+    rows.sort(key=lambda r: r["patients"], reverse=True)
+
+    total = len(rows)
+    icd_count = sum(1 for r in rows if r["icd_code"])
+    text_count = total - icd_count
+    categorized = sum(1 for r in rows if r["category"])
+    overridden = sum(1 for r in rows if r["source"] not in ("referral", "free-text"))
+    stats = (
+        f"{icd_count:,} ICD codes  |  {text_count:,} free-text  |  "
+        f"{categorized:,} categorized  |  {total - categorized:,} unmapped  |  "
+        f"{overridden:,} overrides"
+    )
+    return rows, str(total), stats
+
+
+@callback(
+    Output(f"{PAGE_ID}-rpm-diag-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-diag-stats", "children", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rpm-diag-grid", "cellValueChanged"),
+    State(f"{PAGE_ID}-rpm-diag-grid", "rowData"),
+    prevent_initial_call=True,
+)
+def _rpm_diag_save_edit(changed, row_data):
+    """Save a manual cell edit (category or subcategory) to SQLite."""
+    if not changed:
+        return dash.no_update, dash.no_update
+    from data.reviews_db import upsert_diagnosis_override
+
+    row = changed[0].get("data", {}) if isinstance(changed, list) else changed.get("data", {})
+    code = row.get("icd_code", "")
+    if not code:
+        return dash.no_update, dash.no_update
+
+    cat = row.get("category", "")
+    sub = row.get("subcategory", "")
+    upsert_diagnosis_override(code, category=cat, subcategory=sub, source="manual")
+
+    # Update row data source indicator
+    if row_data:
+        for r in row_data:
+            if r["icd_code"] == code:
+                r["category"] = cat
+                r["subcategory"] = sub
+                r["source"] = "manual"
+                break
+
+    total = len(row_data) if row_data else 0
+    categorized = sum(1 for r in row_data if r.get("category")) if row_data else 0
+    with_sub = sum(1 for r in row_data if r.get("subcategory")) if row_data else 0
+    overridden = sum(1 for r in row_data if r.get("source") != "csv") if row_data else 0
+    stats = (
+        f"{total:,} codes  |  {categorized:,} categorized  |  "
+        f"{with_sub:,} with subcategory  |  {overridden:,} overrides"
+    )
+    return row_data, stats
+
+
+@callback(
+    Output(f"{PAGE_ID}-rpm-diag-download", "data"),
+    Input(f"{PAGE_ID}-rpm-diag-export-btn", "n_clicks"),
+    State(f"{PAGE_ID}-rpm-diag-grid", "rowData"),
+    prevent_initial_call=True,
+)
+def _rpm_diag_export(n, diag_data):
+    """Export diagnosis mapping as CSV."""
+    if not n or not diag_data:
+        return dash.no_update
+    df = pd.DataFrame(diag_data)[["icd_code", "description", "category", "subcategory", "patients", "source"]]
+    df.columns = ["ICD Code", "Description", "Category", "Subcategory", "Patients", "Source"]
+    return dcc.send_data_frame(df.to_csv, "referral_diagnosis_mappings.csv", index=False)
+
+
+# --- Diagnosis Manager: Mark Reviewed ---
+@callback(
+    Output(f"{PAGE_ID}-rpm-diag-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-diag-stats", "children", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rpm-diag-reviewed-btn", "n_clicks"),
+    State(f"{PAGE_ID}-rpm-diag-grid", "rowData"),
+    State(f"{PAGE_ID}-rpm-diag-grid", "selectedRows"),
+    prevent_initial_call=True,
+)
+def _rpm_diag_mark_reviewed(n, row_data, selected_rows):
+    if not n or not row_data or not selected_rows:
+        return dash.no_update, dash.no_update
+    from data.reviews_db import upsert_diagnosis_override, set_diagnosis_reviewed_bulk
+
+    # Ensure rows exist in DB, then mark reviewed
+    codes = []
+    for r in selected_rows:
+        key = r.get("icd_code") or r.get("description", "")
+        if key:
+            upsert_diagnosis_override(
+                key, category=r.get("category", ""),
+                subcategory=r.get("subcategory", ""), source=r.get("source", "manual"),
+            )
+            codes.append(key)
+    if codes:
+        set_diagnosis_reviewed_bulk(codes, reviewed=True)
+
+    target_keys = {r.get("icd_code") or r.get("description", "") for r in selected_rows}
+    for r in row_data:
+        key = r.get("icd_code") or r.get("description", "")
+        if key in target_keys:
+            r["reviewed"] = True
+
+    total = len(row_data)
+    categorized = sum(1 for r in row_data if r.get("category"))
+    reviewed_n = sum(1 for r in row_data if r.get("reviewed"))
+    stats = (
+        f"{total:,} entries  |  {categorized:,} categorized  |  "
+        f"{reviewed_n:,} reviewed  |  {total - reviewed_n:,} unreviewed"
+    )
+    return row_data, stats
+
+
+# --- Diagnosis Manager: Detail Panel ---
+@callback(
+    Output(f"{PAGE_ID}-rpm-diag-detail-panel", "style"),
+    Output(f"{PAGE_ID}-rpm-diag-detail-title", "children"),
+    Output(f"{PAGE_ID}-rpm-diag-detail-grid", "rowData"),
+    Input(f"{PAGE_ID}-rpm-diag-detail-store", "data"),
+    Input(f"{PAGE_ID}-rpm-diag-detail-close", "n_clicks"),
+    prevent_initial_call=True,
+)
+def _rpm_diag_show_detail(store_data, close_clicks):
+    from dash import ctx
+    if ctx.triggered_id == f"{PAGE_ID}-rpm-diag-detail-close":
+        return {"display": "none"}, "", []
+    if not store_data:
+        return dash.no_update, dash.no_update, dash.no_update
+
+    icd_code = store_data.get("icd_code", "")
+    description = store_data.get("description", "")
+
+    from data.loader import load_referrals
+    ref = load_referrals()
+    if ref.empty:
+        return {"display": "none"}, "", []
+
+    # Match referrals containing this ICD code or matching free-text
+    if icd_code:
+        mask = ref["Diagnoses"].fillna("").str.contains(re.escape(icd_code), case=False, na=False)
+        title = f"Referrals with ICD {icd_code} — {description[:40]}"
+    else:
+        # Free-text match
+        mask = (
+            ref["Rfl Prim Dx"].fillna("").str.lower().str.strip() == description.lower().strip()
+        ) | (
+            ref["Diagnoses"].fillna("").str.lower().str.strip() == description.lower().strip()
+        )
+        title = f"Referrals — \"{description[:50]}\""
+
+    detail = ref[mask].copy()
+    cols = ["Created", "MRN", "Patient Name", "Rfl Prim Dx", "Diagnoses", "Status"]
+    detail = detail[[c for c in cols if c in detail.columns]]
+    for dc in ["Created"]:
+        if dc in detail.columns:
+            detail[dc] = detail[dc].dt.strftime("%m/%d/%Y").fillna("")
+
+    title = f"{title} — {len(detail)} records"
+    return {"display": "block", "marginTop": "6px"}, title, detail.fillna("").to_dict("records")

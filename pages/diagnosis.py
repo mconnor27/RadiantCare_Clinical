@@ -1,6 +1,7 @@
 """Diagnosis page — ridgeline trend and current-vs-prior comparison by diagnosis group."""
 
 import dash
+import dash_ag_grid as dag
 import dash_mantine_components as dmc
 from dash import callback, Input, Output, State, dcc, html, clientside_callback, ClientsideFunction
 from dash_iconify import DashIconify
@@ -22,8 +23,11 @@ from utils.date_slider import (
 )
 from utils.diagnosis_categories import (
     CATEGORIES as BODY_SYSTEMS,
+    SUBCATEGORIES as DIAG_SUBCATEGORIES,
+    ALL_SUBCATEGORIES,
     build_code_to_category,
     get_categories_for_codes,
+    get_all_subcategory_entries,
     primary_category,
 )
 
@@ -452,8 +456,18 @@ layout = dmc.Stack(
         dmc.Box(
             className="page-sticky-header",
             children=[
-                dmc.Title("Diagnosis", order=2, className="page-title",
-                          style={"margin": 0, "textAlign": "center"}),
+                dmc.Group(
+                    justify="center", align="center", gap="sm",
+                    children=[
+                        dmc.Title("Diagnosis", order=2, className="page-title",
+                                  style={"margin": 0}),
+                        dmc.ActionIcon(
+                            DashIconify(icon="tabler:dna", width=20),
+                            id="diag-mgr-btn",
+                            variant="subtle", color="violet", size="lg",
+                        ),
+                    ],
+                ),
                 _build_filter_bar(),
             ],
         ),
@@ -534,6 +548,148 @@ layout = dmc.Stack(
                 ),
             ],
         ),
+        # ---------------------------------------------------------------
+        # Diagnosis Classification Manager Modal
+        # ---------------------------------------------------------------
+        dmc.Modal(
+            id="diag-mgr-modal",
+            opened=False,
+            title=dmc.Group(
+                children=[
+                    DashIconify(icon="tabler:dna", width=22, color=PRIMARY),
+                    dmc.Text("Diagnosis Classification Manager", fw=600, size="lg"),
+                ],
+                gap="xs",
+            ),
+            size="95%",
+            centered=True,
+            zIndex=1000,
+            styles={
+                "header": {"padding": "6px 16px"},
+                "content": {"height": "95vh", "display": "flex", "flexDirection": "column"},
+                "body": {"padding": "0px 16px 4px 16px", "flex": 1, "overflow": "hidden",
+                         "display": "flex", "flexDirection": "column"},
+            },
+            children=[
+                dmc.Group(
+                    justify="space-between", mb=6,
+                    children=[
+                        dmc.Text(
+                            "ARIA Lookup diagnoses — edit category / subcategory assignments. "
+                            "Overrides persist to the database.",
+                            size="sm", c=NEUTRAL["text_secondary"],
+                        ),
+                        dmc.Group(
+                            gap="sm",
+                            children=[
+                                dmc.Text(id="diag-mgr-stats", size="xs",
+                                         c=NEUTRAL["text_muted"]),
+                                dmc.Button(
+                                    "Mark Reviewed",
+                                    id="diag-mgr-reviewed-btn",
+                                    leftSection=DashIconify(icon="tabler:check", width=14),
+                                    variant="light", color="green", size="xs",
+                                ),
+                                dmc.Button(
+                                    "Export CSV",
+                                    id="diag-mgr-export-btn",
+                                    leftSection=DashIconify(icon="tabler:download", width=14),
+                                    variant="light", color="gray", size="xs",
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+                dag.AgGrid(
+                    id="diag-mgr-grid",
+                    columnDefs=[
+                        {"field": "icd_code", "headerName": "ICD Code", "flex": 0.6,
+                         "filter": "agTextColumnFilter", "floatingFilter": True},
+                        {"field": "description", "headerName": "Description", "flex": 2,
+                         "filter": "agTextColumnFilter", "floatingFilter": True},
+                        {"field": "category", "headerName": "Category", "flex": 1,
+                         "editable": True,
+                         "cellEditor": "agSelectCellEditor",
+                         "cellEditorParams": {"values": [""] + BODY_SYSTEMS + ["Unknown"]},
+                         "cellStyle": {"cursor": "pointer"},
+                         "filter": "agTextColumnFilter", "floatingFilter": True},
+                        {"field": "subcategory", "headerName": "Subcategory", "flex": 1,
+                         "editable": True,
+                         "cellEditor": "agSelectCellEditor",
+                         "cellEditorParams": {"function": "getSubcategoryValues(params)"},
+                         "cellStyle": {"cursor": "pointer"},
+                         "filter": "agTextColumnFilter", "floatingFilter": True},
+                        {"field": "patients", "headerName": "Patients", "flex": 0.4,
+                         "cellRenderer": "DiagCountLink",
+                         "cellRendererParams": {"storeId": "diag-mgr-detail-store"},
+                         "type": "numericColumn", "sort": "desc",
+                         "filter": "agNumberColumnFilter"},
+                        {"field": "source", "headerName": "Source", "flex": 0.4,
+                         "filter": "agTextColumnFilter", "floatingFilter": True,
+                         "cellStyle": {"fontStyle": "italic", "color": NEUTRAL["text_muted"]}},
+                        {"field": "reviewed", "headerName": "Reviewed", "flex": 0.3,
+                         "cellDataType": "boolean", "editable": True,
+                         "cellStyle": {"textAlign": "center"}},
+                    ],
+                    defaultColDef={"sortable": True, "resizable": True},
+                    dashGridOptions={
+                        "pagination": True,
+                        "paginationPageSize": 50,
+                        "animateRows": True,
+                        "singleClickEdit": True,
+                        "rowHeight": 36,
+                        "headerHeight": 36,
+                        "floatingFiltersHeight": 32,
+                        "rowSelection": {"mode": "multiRow"},
+                    },
+                    style={"flex": 1, "minHeight": 0},
+                    className="ag-theme-alpine",
+                ),
+                # Detail panel
+                dmc.Paper(
+                    id="diag-mgr-detail-panel",
+                    style={"display": "none"},
+                    p="sm", radius="md", withBorder=True,
+                    children=[
+                        dmc.Group(
+                            justify="space-between", mb=4,
+                            children=[
+                                dmc.Text(id="diag-mgr-detail-title",
+                                         size="sm", fw=600, c=PRIMARY),
+                                dmc.ActionIcon(
+                                    DashIconify(icon="tabler:x", width=14),
+                                    id="diag-mgr-detail-close",
+                                    variant="subtle", color="gray", size="sm",
+                                ),
+                            ],
+                        ),
+                        dag.AgGrid(
+                            id="diag-mgr-detail-grid",
+                            columnDefs=[
+                                {"field": "ScheduledDateTime", "headerName": "Date", "flex": 0.6, "sort": "desc"},
+                                {"field": "PatientId", "headerName": "MRN", "flex": 0.5},
+                                {"field": "PatientFullName", "headerName": "Patient", "flex": 1},
+                                {"field": "ActivityName", "headerName": "Activity", "flex": 1},
+                                {"field": "DiagnosisCodes", "headerName": "Diagnosis Codes", "flex": 1.5},
+                                {"field": "Department", "headerName": "Dept", "flex": 0.5},
+                            ],
+                            defaultColDef={"sortable": True, "resizable": True,
+                                           "filter": True, "floatingFilter": True},
+                            dashGridOptions={
+                                "rowHeight": 30, "headerHeight": 30,
+                                "floatingFiltersHeight": 28,
+                                "pagination": True, "paginationPageSize": 10,
+                            },
+                            style={"height": "250px"},
+                            className="ag-theme-alpine",
+                        ),
+                    ],
+                ),
+                dcc.Download(id="diag-mgr-download"),
+                dcc.Store(id="diag-mgr-detail-store", data=None),
+            ],
+        ),
+
         dcc.Interval(id="diag-interval", interval=5 * 60 * 1000, n_intervals=0),
     ],
 )
@@ -763,3 +919,221 @@ clientside_callback(
     Input("diag-chart-trend-settings-type", "value"),
     Input("diag-trend-agg", "value"),
 )
+
+
+# ==========================================================================
+# Diagnosis Classification Manager Callbacks
+# ==========================================================================
+
+def _build_diag_mgr_data():
+    """Build grid data from ARIA lookup CSV mapping + DB overrides.
+
+    This is the Diagnosis page version — shows the 991 curated ICD codes
+    from diagnosis_subcategories.csv (the ARIA lookup mapping), not the
+    raw referral extraction.
+    """
+    import csv as csv_mod
+    from pathlib import Path
+    from data.reviews_db import get_all_diagnosis_overrides
+
+    overrides = get_all_diagnosis_overrides()
+
+    # Load directly from the curated CSV
+    csv_path = Path(__file__).resolve().parent.parent / "data" / "diagnosis_subcategories.csv"
+    rows = []
+    if csv_path.exists():
+        with open(csv_path, newline="", encoding="utf-8") as f:
+            for row in csv_mod.DictReader(f):
+                code = row["icd_code"].strip()
+                desc = row.get("description", "").strip()
+                cat = row.get("category", "").strip()
+                sub = row.get("subcategory", "").strip()
+
+                source = "csv"
+                reviewed = False
+                if code in overrides:
+                    ov = overrides[code]
+                    cat = ov["category"]
+                    sub = ov["subcategory"]
+                    source = ov["source"]
+                    reviewed = ov.get("reviewed", False)
+
+                rows.append({
+                    "icd_code": code,
+                    "description": desc,
+                    "category": cat,
+                    "subcategory": sub,
+                    "patients": 0,  # populated below
+                    "source": source,
+                    "reviewed": reviewed,
+                })
+
+    # Enrich with patient counts from clinic visits DiagnosisCodes
+    try:
+        from data.loader import load_clinic_visits
+        cv = load_clinic_visits()
+        if not cv.empty and "DiagnosisCodes" in cv.columns:
+            code_counts: dict[str, int] = {}
+            for codes_str in cv["DiagnosisCodes"].dropna():
+                for code in str(codes_str).split(","):
+                    c = code.strip()
+                    if c:
+                        code_counts[c] = code_counts.get(c, 0) + 1
+            for r in rows:
+                r["patients"] = code_counts.get(r["icd_code"], 0)
+    except Exception:
+        pass
+
+    rows.sort(key=lambda r: r["patients"], reverse=True)
+
+    total = len(rows)
+    categorized = sum(1 for r in rows if r["category"])
+    with_sub = sum(1 for r in rows if r["subcategory"])
+    overridden = sum(1 for r in rows if r["source"] != "csv")
+    stats = (
+        f"{total:,} codes  |  {categorized:,} categorized  |  "
+        f"{with_sub:,} with subcategory  |  {overridden:,} overrides"
+    )
+    return rows, stats
+
+
+@callback(
+    Output("diag-mgr-modal", "opened"),
+    Output("diag-mgr-grid", "rowData"),
+    Output("diag-mgr-stats", "children"),
+    Input("diag-mgr-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def _diag_mgr_open(n):
+    if not n:
+        return dash.no_update, dash.no_update, dash.no_update
+    rows, stats = _build_diag_mgr_data()
+    return True, rows, stats
+
+
+@callback(
+    Output("diag-mgr-grid", "rowData", allow_duplicate=True),
+    Output("diag-mgr-stats", "children", allow_duplicate=True),
+    Input("diag-mgr-grid", "cellValueChanged"),
+    State("diag-mgr-grid", "rowData"),
+    prevent_initial_call=True,
+)
+def _diag_mgr_save_edit(changed, row_data):
+    """Save a category or subcategory edit to SQLite."""
+    if not changed:
+        return dash.no_update, dash.no_update
+    from data.reviews_db import upsert_diagnosis_override
+
+    row = changed[0].get("data", {}) if isinstance(changed, list) else changed.get("data", {})
+    code = row.get("icd_code", "")
+    if not code:
+        return dash.no_update, dash.no_update
+
+    cat = row.get("category", "")
+    sub = row.get("subcategory", "")
+    upsert_diagnosis_override(code, category=cat, subcategory=sub, source="manual")
+
+    if row_data:
+        for r in row_data:
+            if r["icd_code"] == code:
+                r["category"] = cat
+                r["subcategory"] = sub
+                r["source"] = "manual"
+                break
+
+    total = len(row_data) if row_data else 0
+    categorized = sum(1 for r in row_data if r.get("category")) if row_data else 0
+    with_sub = sum(1 for r in row_data if r.get("subcategory")) if row_data else 0
+    overridden = sum(1 for r in row_data if r.get("source") != "csv") if row_data else 0
+    stats = (
+        f"{total:,} codes  |  {categorized:,} categorized  |  "
+        f"{with_sub:,} with subcategory  |  {overridden:,} overrides"
+    )
+    return row_data, stats
+
+
+@callback(
+    Output("diag-mgr-download", "data"),
+    Input("diag-mgr-export-btn", "n_clicks"),
+    State("diag-mgr-grid", "rowData"),
+    prevent_initial_call=True,
+)
+def _diag_mgr_export(n, diag_data):
+    """Export diagnosis classification as CSV."""
+    if not n or not diag_data:
+        return dash.no_update
+    df = pd.DataFrame(diag_data)[["icd_code", "description", "category", "subcategory", "patients", "source"]]
+    df.columns = ["ICD Code", "Description", "Category", "Subcategory", "Patients", "Source"]
+    return dcc.send_data_frame(df.to_csv, "diagnosis_classifications.csv", index=False)
+
+
+# --- Diagnosis Manager: Mark Reviewed ---
+@callback(
+    Output("diag-mgr-grid", "rowData", allow_duplicate=True),
+    Output("diag-mgr-stats", "children", allow_duplicate=True),
+    Input("diag-mgr-reviewed-btn", "n_clicks"),
+    State("diag-mgr-grid", "rowData"),
+    State("diag-mgr-grid", "selectedRows"),
+    prevent_initial_call=True,
+)
+def _diag_mgr_mark_reviewed(n, row_data, selected_rows):
+    if not n or not row_data or not selected_rows:
+        return dash.no_update, dash.no_update
+    from data.reviews_db import set_diagnosis_reviewed_bulk
+
+    codes = [r["icd_code"] for r in selected_rows if r.get("icd_code")]
+    if codes:
+        set_diagnosis_reviewed_bulk(codes, reviewed=True)
+
+    target_codes = {r["icd_code"] for r in selected_rows if r.get("icd_code")}
+    for r in row_data:
+        if r.get("icd_code") in target_codes:
+            r["reviewed"] = True
+
+    total = len(row_data)
+    reviewed_n = sum(1 for r in row_data if r.get("reviewed"))
+    categorized = sum(1 for r in row_data if r.get("category"))
+    stats = (
+        f"{total:,} codes  |  {categorized:,} categorized  |  "
+        f"{reviewed_n:,} reviewed  |  {total - reviewed_n:,} unreviewed"
+    )
+    return row_data, stats
+
+
+# --- Diagnosis Manager: Detail Panel ---
+@callback(
+    Output("diag-mgr-detail-panel", "style"),
+    Output("diag-mgr-detail-title", "children"),
+    Output("diag-mgr-detail-grid", "rowData"),
+    Input("diag-mgr-detail-store", "data"),
+    Input("diag-mgr-detail-close", "n_clicks"),
+    prevent_initial_call=True,
+)
+def _diag_mgr_show_detail(store_data, close_clicks):
+    from dash import ctx
+    if ctx.triggered_id == "diag-mgr-detail-close":
+        return {"display": "none"}, "", []
+    if not store_data:
+        return dash.no_update, dash.no_update, dash.no_update
+
+    icd_code = store_data.get("icd_code", "")
+    if not icd_code:
+        return {"display": "none"}, "", []
+
+    from data.loader import load_clinic_visits
+    cv = load_clinic_visits()
+    if cv.empty or "DiagnosisCodes" not in cv.columns:
+        return {"display": "none"}, "", []
+
+    mask = cv["DiagnosisCodes"].fillna("").str.contains(icd_code, case=False, na=False)
+    detail = cv[mask].copy()
+
+    cols = ["ScheduledDateTime", "PatientId", "PatientFullName", "ActivityName",
+            "DiagnosisCodes", "Department"]
+    detail = detail[[c for c in cols if c in detail.columns]]
+    if "ScheduledDateTime" in detail.columns:
+        detail["ScheduledDateTime"] = detail["ScheduledDateTime"].dt.strftime("%m/%d/%Y").fillna("")
+
+    desc = store_data.get("description", "")[:40]
+    title = f"Patients with {icd_code} — {desc} — {len(detail)} records"
+    return {"display": "block", "marginTop": "6px"}, title, detail.fillna("").to_dict("records")
