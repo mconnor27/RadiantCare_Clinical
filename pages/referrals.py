@@ -798,6 +798,9 @@ layout = dmc.Stack(
                                                  "cellEditorParams": {"values": [""] + ABMS_SPECIALTIES},
                                                  "cellStyle": {"fontWeight": 600, "cursor": "pointer"}},
                                                 {"field": "status", "headerName": "Status", "flex": 0.5},
+                                                {"field": "referral_count", "headerName": "Referrals", "flex": 0.4,
+                                                 "cellRenderer": "ReferralCountLink",
+                                                 "type": "numericColumn"},
                                             ],
                                             defaultColDef={"sortable": True, "resizable": True},
                                             dashGridOptions={
@@ -891,6 +894,7 @@ layout = dmc.Stack(
                                             columnDefs=[
                                                 {"field": "Created", "headerName": "Date", "flex": 0.6,
                                                  "sort": "desc"},
+                                                {"field": "MRN", "headerName": "MRN", "flex": 0.5},
                                                 {"field": "Patient Name", "headerName": "Patient", "flex": 1},
                                                 {"field": "Rfl Prim Dx", "headerName": "Primary Dx", "flex": 1.2},
                                                 {"field": "Diagnoses", "headerName": "Diagnoses", "flex": 1.5},
@@ -973,6 +977,7 @@ layout = dmc.Stack(
         # RPM stores and interval
         dcc.Store(id=f"{PAGE_ID}-rpm-running", data=False),
         dcc.Store(id=f"{PAGE_ID}-rpm-npi-pending", data=None),
+        dcc.Store(id=f"{PAGE_ID}-rpm-detail-store", data=None),
         dcc.Interval(id=f"{PAGE_ID}-rpm-poll", interval=2000, disabled=True),
         dcc.Download(id=f"{PAGE_ID}-rpm-download"),
 
@@ -2773,6 +2778,7 @@ def _rpm_start_npi_lookup(n, row_data, selected_rows):
                 "status": r["status"],
                 "address_key": row_info.get("address_key", ""),
                 "row_key": row_info.get("row_key", ""),
+                "referral_count": row_info.get("patient_count", 0),
             })
 
         with _rpm_lock:
@@ -2937,7 +2943,7 @@ def _rpm_export(n, row_data):
     return dcc.send_data_frame(df.to_csv, "referring_physicians.csv", index=False)
 
 
-# --- Badge X clear (cellRendererData from main grid) ---
+# --- Main grid cellRendererData: badge X clear ---
 @callback(
     Output(f"{PAGE_ID}-rpm-grid", "rowData", allow_duplicate=True),
     Output(f"{PAGE_ID}-rpm-stats", "children", allow_duplicate=True),
@@ -2947,26 +2953,23 @@ def _rpm_export(n, row_data):
     State(f"{PAGE_ID}-rpm-grid", "rowData"),
     prevent_initial_call=True,
 )
-def _rpm_badge_clear(renderer_data, row_data):
-    """Handle institution badge X clear."""
+def _rpm_main_grid_action(renderer_data, row_data):
+    """Handle badge X clear from main grid."""
+    no = dash.no_update
     if not renderer_data or not row_data:
-        return (dash.no_update,) * 4
+        return (no,) * 4
+
+    npi = renderer_data.get("npi", "")
+    if not npi:
+        return (no,) * 4
 
     from data.reviews_db import upsert_referring
+    addr_k = renderer_data.get("address_key", "")
+    row_key = renderer_data.get("row_key", "")
+    new_inst = renderer_data.get("institution", "")
 
-    row = renderer_data
-    npi = row.get("npi", "")
-    addr_k = row.get("address_key", "")
-    row_key = row.get("row_key", "")
-    new_inst = row.get("institution", "")
-
-    if not npi:
-        return (dash.no_update,) * 4
-
-    # Save the cleared institution
     upsert_referring(npi, address_key=addr_k, institution=new_inst or None, source="manual")
 
-    # Update grid data
     for r in row_data:
         if r.get("row_key") == row_key:
             r["institution"] = new_inst
@@ -2976,10 +2979,11 @@ def _rpm_badge_clear(renderer_data, row_data):
     total = len(row_data)
     with_spec = sum(1 for r in row_data if r.get("specialty"))
     with_inst = sum(1 for r in row_data if r.get("institution"))
+    reviewed_n = sum(1 for r in row_data if r.get("reviewed"))
     stats = (
-        f"{total:,} referring physicians  |  "
-        f"{with_spec:,} with specialty  |  {with_inst:,} with institution  |  "
-        f"{total - with_spec:,} specialty blank  |  {total - with_inst:,} institution blank"
+        f"{total:,} providers  |  "
+        f"{reviewed_n:,} reviewed  |  {total - reviewed_n:,} unreviewed  |  "
+        f"{with_spec:,} specialty  |  {with_inst:,} institution"
     )
     inst_rows, inst_count = _build_inst_grid_data(row_data)
     return row_data, stats, inst_rows, inst_count
@@ -3224,41 +3228,16 @@ def _rpm_npi_apply(n, review_data, row_data):
     return rows, stats, {"display": "none"}, f"Applied {len(accepted)} specialty updates."
 
 
-# --- Referral detail panel: click provider row to see their referrals ---
-@callback(
-    Output(f"{PAGE_ID}-rpm-detail-panel", "style"),
-    Output(f"{PAGE_ID}-rpm-detail-title", "children"),
-    Output(f"{PAGE_ID}-rpm-detail-grid", "rowData"),
-    Input(f"{PAGE_ID}-rpm-grid", "selectedRows"),
-    Input(f"{PAGE_ID}-rpm-detail-close", "n_clicks"),
-    prevent_initial_call=True,
-)
-def _rpm_show_detail(selected, close_clicks):
-    from dash import ctx
-    if ctx.triggered_id == f"{PAGE_ID}-rpm-detail-close":
-        return {"display": "none"}, "", []
-
-    if not selected or len(selected) == 0:
-        return {"display": "none"}, "", []
-
-    row = selected[0]
-    npi = row.get("npi", "")
-    addr_key = row.get("address_key", "")
-    name = row.get("name", "")
-
-    if not npi:
-        return {"display": "none"}, "", []
-
+def _fetch_referral_detail(npi, addr_key, name):
+    """Fetch referral detail rows for a given NPI + address key."""
     from data.loader import load_referrals
     ref = load_referrals()
 
-    # Filter to this NPI
     mask = ref["Referred By Prov NPI"].notna()
     ref_npi = ref[mask].copy()
     ref_npi["_npi"] = ref_npi["Referred By Prov NPI"].astype(float).astype(int).astype(str)
     ref_npi = ref_npi[ref_npi["_npi"] == npi]
 
-    # Further filter by address if we have one
     if addr_key:
         from data.reviews_db import _addr_key
         ref_npi["_ak"] = ref_npi.apply(
@@ -3270,19 +3249,38 @@ def _rpm_show_detail(selected, close_clicks):
         )
         ref_npi = ref_npi[ref_npi["_ak"] == addr_key]
 
-    # Build detail rows
-    cols = ["Created", "Patient Name", "Rfl Prim Dx", "Diagnoses", "Status", "First Appt", "Days to First Appt"]
+    cols = ["Created", "MRN", "Patient Name", "Rfl Prim Dx", "Diagnoses", "Status", "First Appt", "Days to First Appt"]
     detail = ref_npi[[c for c in cols if c in ref_npi.columns]].copy()
 
-    # Format dates
     for dc in ["Created", "First Appt"]:
         if dc in detail.columns:
             detail[dc] = detail[dc].dt.strftime("%m/%d/%Y").fillna("")
 
     title = f"Referrals from {name} ({npi}) — {len(detail)} records"
+    return title, detail.fillna("").to_dict("records")
 
-    return (
-        {"display": "block", "maxHeight": "280px", "marginTop": "6px"},
-        title,
-        detail.fillna("").to_dict("records"),
-    )
+
+# --- Referral detail: from Store (both grids write to it) or close button ---
+@callback(
+    Output(f"{PAGE_ID}-rpm-detail-panel", "style"),
+    Output(f"{PAGE_ID}-rpm-detail-title", "children"),
+    Output(f"{PAGE_ID}-rpm-detail-grid", "rowData"),
+    Input(f"{PAGE_ID}-rpm-detail-store", "data"),
+    Input(f"{PAGE_ID}-rpm-detail-close", "n_clicks"),
+    prevent_initial_call=True,
+)
+def _rpm_show_detail(store_data, close_clicks):
+    from dash import ctx
+
+    if ctx.triggered_id == f"{PAGE_ID}-rpm-detail-close":
+        return {"display": "none"}, "", []
+
+    if not store_data or not store_data.get("npi"):
+        return dash.no_update, dash.no_update, dash.no_update
+
+    npi = store_data["npi"]
+    addr_key = store_data.get("address_key", "")
+    name = store_data.get("name", "")
+
+    title, records = _fetch_referral_detail(npi, addr_key, name)
+    return {"display": "block", "marginTop": "6px"}, title, records

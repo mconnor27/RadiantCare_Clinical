@@ -15,8 +15,17 @@ dagcomponentfuncs.ReferralCountLink = function (props) {
     }
     function handleClick(e) {
         e.stopPropagation();
-        var updated = Object.assign({}, props.data, {_action: "show_detail"});
-        props.setData(updated);
+        // Write to a hidden Store to trigger the detail callback
+        var data = props.data || {};
+        var payload = {
+            npi: data.npi || "",
+            address_key: data.address_key || "",
+            name: data.name || "",
+            ts: Date.now(),
+        };
+        if (window.dash_clientside) {
+            window.dash_clientside.set_props("referrals-rpm-detail-store", {data: payload});
+        }
     }
     return React.createElement(
         "span",
