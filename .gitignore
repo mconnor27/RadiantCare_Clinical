@@ -3,6 +3,7 @@
 __pycache__/
 *.pyc
 *.log
+*.db
 .DS_Store
 
 # RVU raw files (ZIPs, extracted CMS data, scripts) — only the lookup CSV is committed

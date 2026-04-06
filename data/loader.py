@@ -4,7 +4,7 @@ import pandas as pd
 from functools import lru_cache
 from pathlib import Path
 
-from config.settings import DATA_COMPLETE, DATA_INCREMENTAL, DATA_LOOKUP
+from config.settings import DATA_DIR, DATA_COMPLETE, DATA_INCREMENTAL, DATA_LOOKUP
 
 
 def _read_csv_safe(path, **kwargs):
@@ -646,6 +646,470 @@ def load_patients():
 
 
 @lru_cache(maxsize=1)
+def load_referrals():
+    """Load the Referrals Report Excel file.
+
+    Source: Referrals_Report_RadiantCare_All_*.xlsx (single file, not incremental).
+    Contains referral lifecycle data: created, assigned, authorized, first appt,
+    referring provider/dept, status, diagnoses, payer, lead-time columns.
+
+    Columns include MRN (patient ID matching CV PatientId), DOB, and
+    Rfl Prim Dx (structured primary diagnosis from referral).
+    """
+    import glob as _glob
+
+    pattern = str(DATA_DIR / "Referrals_Report_RadiantCare_All_*.xlsx")
+    matches = sorted(_glob.glob(pattern))
+    if not matches:
+        return pd.DataFrame()
+
+    # Use the latest file if multiple exist
+    df = pd.read_excel(matches[-1])
+
+    # Parse date columns
+    date_cols = ["Created", "Expires", "First Appt", "Assigned On",
+                 "Final Status Date", "Authorized On", "DOB"]
+    for col in date_cols:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], errors="coerce")
+
+    # Normalise MRN to nullable integer (matches CV PatientId)
+    if "MRN" in df.columns:
+        df["MRN"] = pd.to_numeric(df["MRN"], errors="coerce").astype("Int64")
+
+    # --- Preprocess referring departments ---
+    if "Referred by Department" in df.columns:
+        dept = df["Referred by Department"]
+        # Strip "DO NOT USE - " prefix
+        dept = dept.str.replace(r"^DO NOT USE\s*-\s*", "", regex=True)
+        # Remap known renames
+        _DEPT_RENAMES = {
+            "PMG SW WA CENTRALIA UROLOGY": "PMG SW WA OLYMPIA UROLOGY",
+            "PMG SW WA HAWKS PRAIRIE IM": "PMG SW WA HAWKS PRAIRIE FM",
+            "PMG SW WA CENTRALIA INT MED": "PMG SW WA CENTRALIA INT MED RHC",
+            "PMG SW WA SOUTH SOUND INT MED": "PMG SW WA CENTRALIA INT MED RHC",
+        }
+        dept = dept.replace(_DEPT_RENAMES)
+        # Flag internal referrals (from our own RadiantCare departments)
+        df["Referred by Department"] = dept
+        df["InternalReferral"] = dept.str.contains(
+            r"WCH PRCS.*RADIANTCARE|WCH PRCS.*INFUSION",
+            case=False, na=False,
+        )
+
+    # --- Enrich with specialty from Referring Lookup ---
+    if "Referred by Provider" in df.columns:
+        _lookup = load_referring()
+        if not _lookup.empty and "DoctorFullName" in _lookup.columns:
+            import re as _re2
+
+            _cred_re = _re2.compile(
+                r",?\s*(?:MD|DO|ARNP|PA-C|PA|NP|FNP|FACS|PhD|DPM|DDS|DMD|FACP)"
+                r"(?:\s+(?:MD|DO|ARNP|PA-C|PA|NP|FNP|FACS|PhD))*\.?\s*$",
+                _re2.IGNORECASE,
+            )
+            # Suffixes/titles that are not part of the last name
+            _suffix_re = _re2.compile(
+                r"\s+(?:III|II|IV|Jr\.?|Sr\.?|PT|OT|RN|LPN|CNA|LCSW|MSW"
+                r"|Speech\s+Therapist|Physician\s+Assistant|Nurse\s+Practitioner)\s*$",
+                _re2.IGNORECASE,
+            )
+
+            def _norm_ref(name):
+                if pd.isna(name) or not str(name).strip():
+                    return None
+                s = _cred_re.sub("", str(name)).strip().strip(",").strip()
+                s = _suffix_re.sub("", s).strip()
+                parts = s.split()
+                if len(parts) < 2:
+                    return parts[0].upper() if parts else None
+                return f"{parts[-1].upper()}, {parts[0].upper()}"
+
+            def _norm_lookup(name):
+                if pd.isna(name) or not str(name).strip():
+                    return None
+                parts = str(name).strip().split(",")
+                if len(parts) >= 2:
+                    first_part = parts[1].strip()
+                    first = first_part.split()[0].upper() if first_part else ""
+                    last = parts[0].strip().upper()
+                    return f"{last}, {first}" if first else last
+                return str(name).strip().upper()
+
+            df["_prov_key"] = df["Referred by Provider"].apply(_norm_ref)
+            _lookup["_prov_key"] = _lookup["DoctorFullName"].apply(_norm_lookup)
+            # When multiple lookup rows share the same key (e.g. two
+            # "Edward Kim"s), prefer the row whose specialty is not
+            # "Unknown" and that has an institution listed.
+            _lk = _lookup[["_prov_key", "DoctorId", "DoctorSpecialty", "DoctorInstitution"]].copy()
+            _lk["_rank"] = (
+                (_lk["DoctorSpecialty"].fillna("Unknown").ne("Unknown")).astype(int)
+                + _lk["DoctorInstitution"].notna().astype(int)
+            )
+            _lk = _lk.sort_values("_rank", ascending=False).drop_duplicates("_prov_key")
+            _lk = _lk.drop(columns=["_rank"])
+
+            df = df.merge(_lk, on="_prov_key", how="left")
+            df = df.drop(columns=["_prov_key"])
+
+            # Normalise specialty: fix typos, merge variants
+            _SPEC_MAP = {
+                # Medical Oncology
+                "Medical Onoclogy": "Medical Oncology",
+                "Medical Oncologist": "Medical Oncology",
+                "Hematology/Oncology": "Medical Oncology",
+                "Hematology-Oncogology": "Medical Oncology",
+                "Hematology/ Medical Oncology": "Medical Oncology",
+                "Hematology/Medical Oncology": "Medical Oncology",
+                "Hematology and Oncology": "Medical Oncology",
+                "Internal Medicine Hematology & Oncology": "Medical Oncology",
+                "Oncology and Hematology": "Medical Oncology",
+                "Hematology": "Medical Oncology",
+                "Oncologist": "Medical Oncology",
+                "Medical oncology": "Medical Oncology",
+                "Medical  Oncology": "Medical Oncology",
+                "Med Onc": "Medical Oncology",
+                "Neuro Oncology": "Neuro-Oncology",
+                "Neuro-Oncology": "Neuro-Oncology",
+                "Ophthalomology Oncology": "Medical Oncology",
+                "Prostate Oncology": "Urology",
+                "Urologic Oncology": "Urology",
+                "Orthopaedic Oncology": "Orthopedic Oncology",
+                "Orthopeadic Oncology": "Orthopedic Oncology",
+                # Radiation Oncology
+                "Radiation Onocology": "Radiation Oncology",
+                "Resident-Radiation Onc": "Radiation Oncology",
+                # Pulmonary
+                "Pulmonary Disease": "Pulmonary Medicine",
+                "Pulmonary": "Pulmonary Medicine",
+                "Interventional Pulmonology": "Pulmonary Medicine",
+                "Infectious Disease & Pulmonary Disease": "Pulmonary Medicine",
+                # Primary Care / Family Medicine
+                "Family Practice": "Primary Care",
+                "family Medicine": "Primary Care",
+                "Family medicine": "Primary Care",
+                "Family Practie": "Primary Care",
+                "FAMILY PRACTICE": "Primary Care",
+                "Family Medicine w/ OB": "Primary Care",
+                "Family Practice/Palliative Care": "Primary Care",
+                "General Practice": "Primary Care",
+                "PCP": "Primary Care",
+                "Sports Medicine (Family Practice)": "Primary Care",
+                # Internal Medicine
+                "Family Practice/Internal Medicine": "Internal Medicine",
+                "Endocrinology/Internal Medicine": "Internal Medicine",
+                "Internal Medicine/Pulmonology": "Pulmonary Medicine",
+                "Internal Medicine/Nephrology": "Nephrology",
+                "Endocrinology, Diabetes, and Metabolism": "Endocrinology",
+                # Surgery variants
+                "Gerneral Surgery": "General Surgery",
+                "Surgery": "General Surgery",
+                "Surgeon": "General Surgery",
+                "Surgery- Surgical Oncology": "Surgical Oncology",
+                # ENT
+                "Otolaryngology, Facial plastic reconstructive surgery": "Otolaryngology",
+                "ENT/Otolaryngology": "Otolaryngology",
+                "ENT/Aberdeen": "Otolaryngology",
+                "ENT- Group Health": "Otolaryngology",
+                "Otology/Neurotology": "Otolaryngology",
+                "Head and Neck Surgery": "Otolaryngology",
+                # GYN
+                "GYN Oncologist": "Gynecologic Oncology",
+                "Gynecological Oncology": "Gynecologic Oncology",
+                "Gyn Onc": "Gynecologic Oncology",
+                "Gynecologic Oncology, Obstetrics and Gynecology": "Gynecologic Oncology",
+                "General/GYN": "OB/GYN",
+                # Colorectal
+                "Colon & rectal surgery": "Colorectal Surgery",
+                "Colon Rectal Surgeon": "Colorectal Surgery",
+                "Colorectal surgery": "Colorectal Surgery",
+                # Dermatology
+                "Derm": "Dermatology",
+                "Dermatopathology (Pathology)": "Dermatology",
+                # Neurology
+                "Nuerology": "Neurology",
+                # Neurosurgery
+                "Neurosurgery (UWMC)": "Neurosurgery",
+                # Cardiology
+                "cardiology": "Cardiology",
+                "Cardiologist": "Cardiology",
+                "Interventional Cardiology": "Cardiology",
+                "Cardiovascular Disease": "Cardiology",
+                # Orthopedics
+                "Orthopeadic": "Orthopedics",
+                "Orthopedic Surgery": "Orthopedics",
+                "Orthopaedic Surgery": "Orthopedics",
+                # Ophthalmology
+                "Ophthalmoogy": "Ophthalmology",
+                # PA / NP / Resident
+                "physician Assistant": "PA/NP",
+                "Physician assistant": "PA/NP",
+                "Physician Assitant": "PA/NP",
+                "PA": "PA/NP",
+                "PA-C": "PA/NP",
+                "Nurse Practioner": "PA/NP",
+                "ARNP": "PA/NP",
+                "D.O": "Primary Care",
+                # Other
+                "Pediatric Hematology Oncology": "Pediatric Oncology",
+                "Emergency": "Emergency Medicine",
+                "Emergency medicine": "Emergency Medicine",
+                "Palliative Medicine": "Palliative Care",
+                "Hospitalist": "Hospital Medicine",
+                "GASTROENTEROLOGY": "Gastroenterology",
+                "Unspecified": "Unknown",
+                "Acute Care": "Hospital Medicine",
+                "Physical Medicine and Rehabilitation": "PM&R",
+                "Spinal Cord Injury Medicine (Physical Medicine and Rehab.)": "PM&R",
+                "Transplant Hepatology": "Hepatology",
+                "Plastic and Reconstructive Surgery": "Plastic Surgery",
+                "Interventional Radiology": "Radiology",
+                "Summit Pacific Mark Reed Healthcare Clinic": "Primary Care",
+                "Military Health Care": "Primary Care",
+                # More variants found in data
+                "Otalaryngology": "Otolaryngology",
+                "Otolaryngology/Facial Plastic Surgery": "Otolaryngology",
+                "General and Minimally Invasive Surgery": "General Surgery",
+                "Pulmonary Disease and Critical Care Medicine": "Pulmonary Medicine",
+                "Family Nurse Practitioner": "PA/NP",
+                "Medical Oncology/Hemotology": "Medical Oncology",
+                "Medical Oncology & Hematology": "Medical Oncology",
+                "Oncology Hematology": "Medical Oncology",
+                "Rad Oncology": "Radiation Oncology",
+                "Dermatology and Skin Oncology": "Dermatology",
+                "Internal Medicine/Pediatrics": "Internal Medicine",
+                "GYN": "OB/GYN",
+                "GYN Oncology": "Gynecologic Oncology",
+                "Ophthalomology": "Ophthalmology",
+                "DO": "Primary Care",
+                "Neuroradiology": "Radiology",
+                "Orthopeadic Surgeon": "Orthopedics",
+                "Orthopaedics": "Orthopedics",
+                "Neurolosurgery": "Neurosurgery",
+                "Resident": "Resident",
+                "Oral and Maxillofacial Surgery": "Oral Surgery",
+                "Dentistry and Maxillofacial Surgery": "Oral Surgery",
+                "Dentistry (Periodontics)": "Oral Surgery",
+                "Oral Surgeon": "Oral Surgery",
+                "Surgery, Surgical Oncology": "Surgical Oncology",
+                "Vascular and interventional Radiology": "Radiology",
+                "Acupuncture": "Alternative Medicine",
+                "Occupational Therapy": "Other",
+                "Critical Care Medicine": "Hospital Medicine",
+                "Anesthesiology": "Other",
+                "Geriatric Medicine": "Internal Medicine",
+                "Urologist": "Urology",
+                "Breast Cancer Surgeon": "Breast Surgery",
+                "Hematology & Oncology": "Medical Oncology",
+                "Hematology oncology": "Medical Oncology",
+                "MD": "Unknown",
+                "Oncology": "Medical Oncology",
+                "Neuro-oncology": "Neuro-Oncology",
+                "Gynecology": "OB/GYN",
+                "Pediatric Medicine": "Pediatrics",
+                "Med Onc/Hematology": "Medical Oncology",
+                "Family Medicine": "Primary Care",
+                "Pulmonology": "Pulmonary Medicine",
+                "Colon and Rectal Surgery": "Colorectal Surgery",
+                "Physician Assistant": "PA/NP",
+            }
+            if "DoctorSpecialty" in df.columns:
+                df["DoctorSpecialty"] = df["DoctorSpecialty"].replace(_SPEC_MAP)
+                # Case-insensitive regex pass for remaining variants
+                _SPEC_REGEX = [
+                    (r"(?i)^medical\s*onc", "Medical Oncology"),
+                    (r"(?i)^radiation\s*onc", "Radiation Oncology"),
+                    (r"(?i)^urol", "Urology"),
+                    (r"(?i)^gynecol.*onc", "Gynecologic Oncology"),
+                    (r"(?i)^obstetrics|^ob/?gyn", "Obstetrics & Gynecology"),
+                    (r"(?i)^neuro.*surg|^neurological\s*surg", "Neurological Surgery"),
+                    (r"(?i)^cardiothoracic", "Thoracic & Cardiac Surgery"),
+                    (r"(?i)^vascular\s*surg", "General Surgery"),
+                ]
+                import re as _re3
+                for pat, repl in _SPEC_REGEX:
+                    mask = df["DoctorSpecialty"].str.match(pat, na=False)
+                    df.loc[mask, "DoctorSpecialty"] = repl
+
+                # Final normalisation: map DoctorSpecialty to DeptSpecialty
+                # categories (ABMS-aligned) so both columns use the same set
+                _DOC_TO_DEPT = {
+                    # Direct renames to ABMS categories
+                    "Primary Care": "Family Medicine",
+                    "Pulmonary Medicine": "Pulmonary Disease",
+                    "Neurosurgery": "Neurological Surgery",
+                    "Colorectal Surgery": "Colon & Rectal Surgery",
+                    "Thoracic Surgery": "Thoracic & Cardiac Surgery",
+                    "Cardiac Surgery": "Thoracic & Cardiac Surgery",
+                    "Cardiology": "Cardiovascular Disease",
+                    "Palliative Care": "Hospice & Palliative Medicine",
+                    "OB/GYN": "Obstetrics & Gynecology",
+                    "Orthopedics": "Orthopaedic Surgery",
+                    "Orthopedic Oncology": "Orthopaedic Surgery",
+                    "PM&R": "Physical Medicine & Rehabilitation",
+                    "ENT": "Otolaryngology",
+                    "Vascular Surgery": "General Surgery",
+                    "Surgical Oncology": "General Surgery",
+                    "Plastic Surgery": "General Surgery",
+                    # Merge small categories
+                    "PA/NP": "Unknown",
+                    "Nurse Practitioner": "Unknown",
+                    "Resident": "Unknown",
+                    "Neuro-Oncology": "Neurology",
+                    "Hematalogy & Oncology": "Medical Oncology",
+                    "Nephrology": "Internal Medicine",
+                    "Hepatology": "Internal Medicine",
+                    "Ophthalmology": "Ophthalmology",  # keep
+                    "Dermatology": "Dermatology",      # keep
+                    "Gynecologic Oncology": "Gynecologic Oncology",  # keep (onc)
+                    "Oral Surgery": "Otolaryngology",
+                    "Radiology": "Radiology",
+                    "Pain Management": "Physical Medicine & Rehabilitation",
+                    "Podiatry": "Other",
+                    "Hospital Medicine": "Hospital Medicine",
+                }
+                if "DoctorSpecialty" in df.columns:
+                    df["DoctorSpecialty"] = df["DoctorSpecialty"].replace(_DOC_TO_DEPT)
+
+            # Infer specialty from department name when lookup missed.
+            # Also build DeptSpecialty for ALL rows (dept-derived, independent
+            # of provider lookup) since dept specialty is often more accurate
+            # than provider specialty for referral source analysis.
+            #
+            # Categories based on ABMS member boards, kept sparse with
+            # oncology-relevant subspecialties preserved.
+            _DEPT_SPEC = [
+                # Oncology subspecialties (keep granular)
+                (r"MED(?:ICAL)?\s*ONC|PROVIDER ONCOLOGY|ONCOLOGY(?!.*RADIAT)", "Medical Oncology"),
+                (r"RADIATION|RADIOSURGERY|RADIANTCARE", "Radiation Oncology"),
+                (r"PRCS\s+(?:LACEY|CENTRALIA|ABERDEEN)\b", "Medical Oncology"),
+                (r"GYN ONCOLOGY", "Gynecologic Oncology"),
+                (r"BREAST SURGERY", "Breast Surgery"),
+                # Surgical specialties
+                (r"GEN SURG", "General Surgery"),
+                (r"CARDIAC SURGERY", "Thoracic & Cardiac Surgery"),
+                (r"THORACIC", "Thoracic & Cardiac Surgery"),
+                (r"COLORECTAL|COLON AND RECTAL", "Colon & Rectal Surgery"),
+                (r"NEUROSURGERY", "Neurological Surgery"),
+                (r"PROVIDER SURGICAL|INTRA OP", "General Surgery"),
+                # Medical specialties
+                (r"UROLOGY", "Urology"),
+                (r"PULMONARY|LUNG NODULE|PULMONOLOGY", "Pulmonary Disease"),
+                (r"NEUROLOGY|NEURO TRAUMA", "Neurology"),
+                (r"GASTROENTEROLOGY", "Gastroenterology"),
+                (r"ENDOCRINE", "Endocrinology"),
+                (r"CARDIO(?!.*SURG)", "Cardiovascular Disease"),
+                (r"ORTHOPEDICS", "Orthopaedic Surgery"),
+                (r"OPHTHALMOLOGY", "Ophthalmology"),
+                (r"HEAD AND NECK", "Otolaryngology"),
+                # OB/GYN
+                (r"OBGYN|WOMEN CTR", "Obstetrics & Gynecology"),
+                # Primary Care / FM / IM
+                (r"FAM MED|FAMILY MED|FAMILY MEDICINE", "Family Medicine"),
+                (r"PRIMARY CARE|WELLNESS CLINIC", "Family Medicine"),
+                (r"PRCS\s", "Family Medicine"),
+                (r"INT MED", "Internal Medicine"),
+                (r"65 PLUS", "Internal Medicine"),
+                # Hospital-based
+                (r"EMERGENCY", "Emergency Medicine"),
+                (r"IMMEDIATE CARE", "Emergency Medicine"),
+                (r"PALLIATIVE", "Hospice & Palliative Medicine"),
+                (r"PROGRESSIVE CARE|MEDICAL TELEMETRY|ICU", "Hospital Medicine"),
+                (r"INFUSION", "Infusion Services"),
+                (r"CENTRALIZED CARE", "Internal Medicine"),
+                (r"RADIOLOGY", "Radiology"),
+                (r"PROVIDER MED SURG", "Hospital Medicine"),
+                (r"HAWKS PRAIRIE", "Family Medicine"),
+                (r"PANORAMA", "Internal Medicine"),
+                (r"PHY MED", "Physical Medicine & Rehabilitation"),
+            ]
+            # Build DeptSpecialty for all rows
+            if "Referred by Department" in df.columns:
+                df["DeptSpecialty"] = None
+                dept_all = df["Referred by Department"].fillna("")
+                for pattern, spec in _DEPT_SPEC:
+                    mask = dept_all.str.contains(pattern, case=False, na=False) & df["DeptSpecialty"].isna()
+                    df.loc[mask, "DeptSpecialty"] = spec
+
+            # Cross-fill: DoctorSpecialty ↔ DeptSpecialty where one is missing
+            if "DoctorSpecialty" in df.columns and "DeptSpecialty" in df.columns:
+                needs_doc = df["DoctorSpecialty"].isna()
+                df.loc[needs_doc, "DoctorSpecialty"] = df.loc[needs_doc, "DeptSpecialty"]
+                needs_dept = df["DeptSpecialty"].isna()
+                df.loc[needs_dept, "DeptSpecialty"] = df.loc[needs_dept, "DoctorSpecialty"]
+
+    # --- Provider-level overrides for ambiguous lookup matches ---
+    # Applied after all specialty normalization and cross-fill.
+    if "Referred by Provider" in df.columns:
+        _PROVIDER_OVERRIDES = {
+            "Edward Y Kim": ("Radiation Oncology", "UWMC"),
+            "Edward J Kim": ("Radiation Oncology", "UWMC"),
+        }
+        for prov_name, (spec, inst) in _PROVIDER_OVERRIDES.items():
+            mask = df["Referred by Provider"].str.startswith(prov_name, na=False)
+            if mask.any():
+                df.loc[mask, "DoctorSpecialty"] = spec
+                df.loc[mask, "DoctorInstitution"] = inst
+                if "DeptSpecialty" in df.columns:
+                    df.loc[mask, "DeptSpecialty"] = spec
+
+    # --- Apply SQLite referring physician overrides (final authority) ---
+    if "DoctorId" in df.columns:
+        try:
+            from data.reviews_db import get_all_referring_overrides, _addr_key
+            _overrides = get_all_referring_overrides()
+            if _overrides:
+                # Build composite key in the dataframe to match overrides
+                _npi_col = df["DoctorId"].dropna().astype(int).astype(str)
+                _city = df.get("Referring Provider City", pd.Series("", index=df.index)).fillna("").astype(str)
+                _state = df.get("Referring Provider State", pd.Series("", index=df.index)).fillna("").astype(str)
+                _zip = df.get("Referring Provider Zip Code", pd.Series("", index=df.index)).fillna("").astype(str)
+                _ak = pd.Series(
+                    [_addr_key(c, s, z) for c, s, z in zip(_city, _state, _zip)],
+                    index=df.index,
+                )
+                _row_key = _npi_col + "|" + _ak
+                for key, vals in _overrides.items():
+                    mask = _row_key == key
+                    if not mask.any():
+                        # Fall back to NPI-only match if address_key is empty
+                        npi_part = key.split("|")[0]
+                        if "|" in key and key.split("|", 1)[1] == "":
+                            mask = _npi_col == npi_part
+                    if not mask.any():
+                        continue
+                    idx = mask[mask].index
+                    if vals.get("specialty"):
+                        df.loc[idx, "DoctorSpecialty"] = vals["specialty"]
+                        if "DeptSpecialty" in df.columns:
+                            df.loc[idx, "DeptSpecialty"] = vals["specialty"]
+                    if vals.get("institution"):
+                        df.loc[idx, "DoctorInstitution"] = vals["institution"]
+        except Exception:
+            pass
+
+    # --- Normalise referring provider names (strip credential suffixes) ---
+    if "Referred by Provider" in df.columns:
+        # Preserve original name with credentials for search/display
+        df["Referred by Provider Raw"] = df["Referred by Provider"].copy()
+        import re as _re
+        _CRED = _re.compile(
+            r",?\s*(?:MD|DO|ARNP|PA-C|PA|NP|FNP|FACS|PhD|DPM|DDS|DMD|FACP)"
+            r"(?:\s+(?:MD|DO|ARNP|PA-C|PA|NP|FNP|FACS|PhD))*\.?\s*$",
+            _re.IGNORECASE,
+        )
+        df["Referred by Provider"] = (
+            df["Referred by Provider"]
+            .str.replace(_CRED, "", regex=True)
+            .str.strip()
+            .str.strip(",")
+            .str.strip()
+        )
+
+    return df
+
+
+@lru_cache(maxsize=1)
 def load_referring():
     """Load Lookup - Referring.csv."""
     return _read_csv_safe(DATA_LOOKUP / "Lookup - Referring.csv")
@@ -710,6 +1174,7 @@ def clear_cache():
         load_downtime_gaps,
         load_billing, load_cpt_audit, load_procedures, load_machine_statistics,
         load_patients,
+        load_referrals,
         load_referring, load_diagnosis, load_physician_schedule,
         load_geocode_cache,
     ]:

@@ -271,22 +271,36 @@ layout = dmc.Stack(
                                 ),
                                 dmc.Box(
                                     children=[
-                                        dmc.Text("Business hours", size="10px", c=NEUTRAL["text_muted"],
-                                                 ta="center", mb=0),
-                                        dmc.RangeSlider(
-                                            id=f"{PAGE_ID}-ah-hours",
-                                            min=0, max=48, step=1,
-                                            value=[14, 36],
-                                            marks=[
-                                                {"value": 0, "label": "12a"},
-                                                {"value": 12, "label": "6a"},
-                                                {"value": 24, "label": "12p"},
-                                                {"value": 36, "label": "6p"},
-                                                {"value": 48, "label": "12a"},
+                                        dmc.Group(
+                                            gap=4, justify="center", mb=0,
+                                            children=[
+                                                dmc.Switch(
+                                                    id=f"{PAGE_ID}-ah-hours-active",
+                                                    size="xs",
+                                                    checked=True,
+                                                    color="orange",
+                                                ),
+                                                dmc.Text("Business hours", size="10px", c=NEUTRAL["text_muted"]),
                                             ],
-                                            color="orange",
-                                            size="xs",
-                                            minRange=1,
+                                        ),
+                                        dmc.Box(
+                                            id=f"{PAGE_ID}-ah-hours-wrapper",
+                                            children=dmc.RangeSlider(
+                                                id=f"{PAGE_ID}-ah-hours",
+                                                min=0, max=48, step=1,
+                                                value=[14, 36],
+                                                marks=[
+                                                    {"value": 0, "label": "12a"},
+                                                    {"value": 12, "label": "6a"},
+                                                    {"value": 24, "label": "12p"},
+                                                    {"value": 36, "label": "6p"},
+                                                    {"value": 48, "label": "12a"},
+                                                ],
+                                                color="orange",
+                                                size="xs",
+                                                minRange=1,
+                                                disabled=False,
+                                            ),
                                         ),
                                     ],
                                     style={"width": "280px", "flexShrink": 0},
@@ -443,6 +457,16 @@ def _register_filter_callbacks():
 
 _register_filter_callbacks()
 
+# Toggle business-hours slider disabled state
+clientside_callback(
+    """function(checked) {
+        return [!checked, {opacity: checked ? 1 : 0.35, pointerEvents: checked ? 'auto' : 'none'}];
+    }""",
+    Output(f"{PAGE_ID}-ah-hours", "disabled"),
+    Output(f"{PAGE_ID}-ah-hours-wrapper", "style"),
+    Input(f"{PAGE_ID}-ah-hours-active", "checked"),
+)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -497,9 +521,10 @@ def _trend(curr, prior, invert=False):
     Input(f"{PAGE_ID}-sites-mode", "value"),
     Input(f"{PAGE_ID}-ah-toggles", "value"),
     Input(f"{PAGE_ID}-ah-hours", "value"),
+    Input(f"{PAGE_ID}-ah-hours-active", "checked"),
 )
 def update_physicians(_n, range_start, range_end, slider_val, manpower_agg, sites_mode,
-                      ah_toggles, ah_hours):
+                      ah_toggles, ah_hours, ah_hours_active):
     from data.loader import load_physician_schedule, load_tasks
 
     # Initialize empty outputs
@@ -567,6 +592,7 @@ def update_physicians(_n, range_start, range_end, slider_val, manpower_agg, site
         "toggles": ah_toggles or [],
         "biz_start": ah_start_tick * 0.5,
         "biz_end": ah_end_tick * 0.5,
+        "hours_active": ah_hours_active if ah_hours_active is not None else True,
     }
     kpi_ah, spark_ah = _kpi_afterhours(task_df, task_prior, df, ah_opts)
     kpi_cc, spark_cc = _kpi_crosscoverage(task_df, task_prior)
@@ -729,13 +755,17 @@ def _filter_afterhours(task_df, schedule_df, opts):
                 off_df, left_on=["_date", "CompletingMD"],
                 right_on=["Date", "Physician"], how="left",
             )
-            non_working = non_working | merged["_is_off"].fillna(False)
+            non_working = non_working | merged["_is_off"].fillna(False).values
 
     # Time-based: outside business hours, but only on normal working days
-    outside_hours = (completed["_time_frac"] < biz_start) | (completed["_time_frac"] >= biz_end)
-
-    # Final: non-working day (all tasks count) OR working day outside business hours
-    mask = non_working | (~non_working & outside_hours)
+    hours_active = opts.get("hours_active", True)
+    if hours_active:
+        outside_hours = (completed["_time_frac"] < biz_start) | (completed["_time_frac"] >= biz_end)
+        # Final: non-working day (all tasks count) OR working day outside business hours
+        mask = non_working | (~non_working & outside_hours)
+    else:
+        # Hours filter disabled — only day-type toggles matter
+        mask = non_working
 
     return completed[mask]
 

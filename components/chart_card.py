@@ -93,7 +93,9 @@ def chart_card(
     # Flex: 1 on the outer box claims remaining space; the inner absolute-
     # positioned wrapper gives Plotly a fixed pixel size without the
     # measure→render→resize feedback loop that height:100% causes.
-    config = graph_config or DEFAULT_GRAPH_CONFIG
+    config = {**DEFAULT_GRAPH_CONFIG, "responsive": True}
+    if graph_config:
+        config.update(graph_config)
 
     inner_children = []
     if show_loading:
@@ -106,7 +108,12 @@ def chart_card(
             )
         )
     inner_children.append(
-        dcc.Graph(id=chart_id, config=config, style={"height": "100%"})
+        dcc.Graph(
+            id=chart_id,
+            config=config,
+            responsive=True,
+            style={"height": "100%", "width": "100%"},
+        )
     )
 
     graph_box = dmc.Box(

@@ -33,6 +33,7 @@ DATA_INCREMENTAL = DATA_DIR / "Incremental"
 DATA_LOOKUP = DATA_DIR / "Lookup"
 
 MAPBOX_TOKEN = os.environ.get("MAPBOX_TOKEN", "")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 # ---------------------------------------------------------------------------
 # Colors
@@ -172,6 +173,60 @@ DEFAULT_GRID_OPTIONS = {
 # ---------------------------------------------------------------------------
 # Mapbox
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# ABMS-aligned specialty list (canonical names for referring physician manager)
+# ---------------------------------------------------------------------------
+ABMS_SPECIALTIES = [
+    "Allergy & Immunology",
+    "Alternative Medicine",
+    "Breast Surgery",
+    "Cardiology",
+    "Colorectal Surgery",
+    "Dermatology",
+    "Emergency Medicine",
+    "Endocrinology",
+    "Gastroenterology",
+    "General Surgery",
+    "Gynecologic Oncology",
+    "Hepatology",
+    "Hospital Medicine",
+    "Infectious Disease",
+    "Internal Medicine",
+    "Medical Oncology",
+    "Nephrology",
+    "Neuro-Oncology",
+    "Neurology",
+    "Neurosurgery",
+    "OB/GYN",
+    "Ophthalmology",
+    "Oral Surgery",
+    "Orthopedic Oncology",
+    "Orthopedics",
+    "Otolaryngology",
+    "PA/NP",
+    "Palliative Care",
+    "Pathology",
+    "Pediatric Oncology",
+    "Pediatrics",
+    "Plastic Surgery",
+    "PM&R",
+    "Primary Care",
+    "Psychiatry",
+    "Pulmonary Medicine",
+    "Radiation Oncology",
+    "Radiology",
+    "Resident",
+    "Rheumatology",
+    "Surgical Oncology",
+    "Thoracic Surgery",
+    "Unknown",
+    "Urology",
+    "Vascular Surgery",
+]
+
+# ---------------------------------------------------------------------------
+# Mapbox
+# ---------------------------------------------------------------------------
 MAPBOX_CENTER = dict(lat=47.0, lon=-122.9)
 MAPBOX_ZOOM = 7
 MAPBOX_STYLE = "light"
@@ -195,11 +250,13 @@ NAV_SECTIONS = [
             {"label": "Simulations",   "path": "/simulations",   "icon": "tabler:scan"},
             {"label": "Tasks",         "path": "/tasks",         "icon": "tabler:checklist"},
             {"label": "OTVs",          "path": "/otvs",          "icon": "tabler:clipboard-check"},
+            {"label": "Diagnosis",    "path": "/diagnosis",    "icon": "tabler:dna"},
         ],
     },
     {
         "section": "TREATMENT",
         "pages": [
+            {"label": "Treatment", "path": "/treatment", "icon": "tabler:activity"},
             {"label": "Courses", "path": "/courses", "icon": "tabler:package"},
             {"label": "Plans",   "path": "/plans",   "icon": "tabler:ruler-measure"},
             {"label": "Procedures", "path": "/procedures", "icon": "tabler:needle"},

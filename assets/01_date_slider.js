@@ -107,6 +107,11 @@
     // Physicians: same BASE_YEAR as Python utils/date_slider.py
     registerSlider("physDateSlider", 2004, ["phys-date-slider"]);
     registerSlider("billingDateSlider", 2004, ["billing-date-slider"]);
+    registerSlider("cptDateSlider", 2004, ["cpt-date-slider"]);
+    registerSlider("patientsDateSlider", 2004, ["patients-date-slider"]);
+    registerSlider("diagDateSlider", 2004, ["diag-date-slider"]);
+    registerSlider("referralsDateSlider", 2004, ["referrals-date-slider"]);
+    registerSlider("txDateSlider", 2004, ["tx-date-slider"]);
 
     // Expose factory for future pages
     window._registerDateSlider = registerSlider;

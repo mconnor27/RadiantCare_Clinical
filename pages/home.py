@@ -1071,6 +1071,10 @@ def update_kpis(_n, date_preset, departments, sims_scope):
         kpi_consults = kpi_card("Consults", "N/A")
 
     # --- 2. Simulations ---
+    # Deduplicate by patient-day (matches simulations.py logic)
+    if not sims.empty and "PatientId" in sims.columns and "ScheduledDateTime" in sims.columns:
+        sims["_SimDate"] = sims["ScheduledDateTime"].dt.normalize()
+        sims = sims.drop_duplicates(subset=["PatientId", "_SimDate"], keep="first")
     if not sims.empty and "ScheduledDateTime" in sims.columns:
         last_sim = sims["ScheduledDateTime"].dt.normalize().max()
         start = _preset_start(last_sim, date_preset)

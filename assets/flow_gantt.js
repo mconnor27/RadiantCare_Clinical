@@ -1044,8 +1044,11 @@ window.dash_clientside.flowGantt = {
         }
 
         // ─── Total pipeline duration ────────────────────────────────────
-        var totalDays = 0;
-        for (var i = 0; i < mDays.length; i++) totalDays += mDays[i];
+        var totalDays = rawData.totalMedianDays;
+        if (totalDays == null) {
+            totalDays = 0;
+            for (var i = 0; i < mDays.length; i++) totalDays += mDays[i];
+        }
         totalDays = Math.round(totalDays * 10) / 10;
         var totalRowY = bars[0].top + (showLoopbacks ? 0.09 : 0.055);
         var totalMidX = (bars[0].cx + bars[nStages - 1].cx) / 2;

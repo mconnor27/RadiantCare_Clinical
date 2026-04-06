@@ -200,5 +200,24 @@ window.dash_clientside.sparklines = {
         }
 
         return buildSparkline(normalized, smoothPct != null ? smoothPct : 0.3, key);
+    },
+    // Treatment page sparklines
+    smoothTxVolume: function(data, smoothPct) {
+        return buildSparkline(data, smoothPct, "volume");
+    },
+    smoothTxNewstarts: function(data, smoothPct) {
+        return buildSparkline(data, smoothPct, "newstarts");
+    },
+    smoothTxPatients: function(data, smoothPct) {
+        return buildSparkline(data, smoothPct, "patients");
+    },
+    smoothTxElapsed: function(data, smoothPct) {
+        return buildSparkline(data, smoothPct, "elapsed");
+    },
+    smoothTxFields: function(data, smoothPct) {
+        return buildSparkline(data, smoothPct, "fields");
+    },
+    smoothTxGating: function(data, smoothPct) {
+        return buildSparkline(data, smoothPct, "gating");
     }
 };

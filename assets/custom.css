@@ -247,7 +247,8 @@ body {
 
 /* ─── Flow-Gantt SVG chart ────────────────────────────────── */
 
-#wf-flow-gantt {
+#wf-flow-gantt,
+#referrals-flow-gantt {
     aspect-ratio: 2.2;
     min-height: 300px;
     max-height: 600px;
@@ -306,7 +307,12 @@ body {
 #machines-date-slider .mantine-Slider-bar,
 #proc-date-slider .mantine-Slider-bar,
 #phys-date-slider .mantine-Slider-bar,
-#billing-date-slider .mantine-Slider-bar {
+#billing-date-slider .mantine-Slider-bar,
+#cpt-date-slider .mantine-Slider-bar,
+#patients-date-slider .mantine-Slider-bar,
+#diag-date-slider .mantine-Slider-bar,
+#referrals-date-slider .mantine-Slider-bar,
+#tx-date-slider .mantine-Slider-bar {
     background: linear-gradient(90deg, #9B40A9, #7C2A83);
 }
 #wf-date-slider .mantine-Slider-markLabel,
@@ -320,7 +326,12 @@ body {
 #machines-date-slider .mantine-Slider-markLabel,
 #proc-date-slider .mantine-Slider-markLabel,
 #phys-date-slider .mantine-Slider-markLabel,
-#billing-date-slider .mantine-Slider-markLabel {
+#billing-date-slider .mantine-Slider-markLabel,
+#cpt-date-slider .mantine-Slider-markLabel,
+#patients-date-slider .mantine-Slider-markLabel,
+#diag-date-slider .mantine-Slider-markLabel,
+#referrals-date-slider .mantine-Slider-markLabel,
+#tx-date-slider .mantine-Slider-markLabel {
     font-size: 10px;
     color: #9CA3AF;
     margin-top: 2px;
@@ -336,7 +347,12 @@ body {
 #machines-date-slider,
 #proc-date-slider,
 #phys-date-slider,
-#billing-date-slider {
+#billing-date-slider,
+#cpt-date-slider,
+#patients-date-slider,
+#diag-date-slider,
+#referrals-date-slider,
+#tx-date-slider {
     margin-bottom: 20px;  /* room for mark labels */
 }
 #wf-date-range-label,
@@ -350,7 +366,12 @@ body {
 #machines-date-range-label,
 #proc-date-range-label,
 #phys-date-range-label,
-#billing-date-range-label {
+#billing-date-range-label,
+#cpt-date-range-label,
+#patients-date-range-label,
+#diag-date-range-label,
+#referrals-date-range-label,
+#tx-date-range-label {
     letter-spacing: 0.5px;
 }
 /* Slider thumb hover label styling */
@@ -365,7 +386,12 @@ body {
 #machines-date-slider .mantine-Slider-label,
 #proc-date-slider .mantine-Slider-label,
 #phys-date-slider .mantine-Slider-label,
-#billing-date-slider .mantine-Slider-label {
+#billing-date-slider .mantine-Slider-label,
+#cpt-date-slider .mantine-Slider-label,
+#patients-date-slider .mantine-Slider-label,
+#diag-date-slider .mantine-Slider-label,
+#referrals-date-slider .mantine-Slider-label,
+#tx-date-slider .mantine-Slider-label {
     font-size: 11px;
     white-space: nowrap;
     padding: 2px 6px;
@@ -691,5 +717,17 @@ div:has(> .wf-filter-clear-btn[style*="inline-flex"]) > .mantine-Button-root .ma
 }
 #proc-kpi-row .mantine-Grid-col > .mantine-Paper-root {
     height: 100%;
+}
+
+/* Patients KPI row — compact cards (no sparklines/trends) */
+#patients-kpi-row .mantine-Paper-root {
+    padding-top: 6px;
+    padding-bottom: 14px !important;
+}
+#patients-kpi-row .mantine-Paper-root .mantine-Stack-root {
+    gap: 0;
+}
+#patients-kpi-row .mantine-Paper-root .mantine-Stack-root > :last-child {
+    display: none;  /* hide empty trend line */
 }
 

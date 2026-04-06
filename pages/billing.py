@@ -29,6 +29,12 @@ dash.register_page(__name__, path="/billing", name="Billing", order=7)
 PAGE_ID = "billing"
 _DEFAULT_DATE_PRESET = "12mo"
 
+# CMS Conversion Factor (Medicare PFS) — update annually
+_CMS_CF = {2024: 33.29, 2025: 32.35, 2026: 32.35}
+_CMS_CF_DEFAULT = 32.35
+# Freestanding sites bill global; hospital-based bill pro only
+_FREESTANDING_SITES = {"Aberdeen"}
+
 
 # ---------------------------------------------------------------------------
 # CPT Category Mapping
@@ -47,6 +53,7 @@ CPT_CATEGORIES = {
         "99441", "99442", "99443", "99459", "99499",
         "98003", "98004", "98006", "98007", "98015",
         "G2211", "G2212",
+        "99406", "99407", "G0436", "G0437",  # smoking/tobacco cessation
     },
     "Simulation": {
         "77280", "77285", "77290", "77293", "77011", "76370",
@@ -54,10 +61,11 @@ CPT_CATEGORIES = {
     "Treatment Planning": {
         "77261", "77263", "77295", "77300", "77301",
         "77305", "77306", "77307", "77310", "77315", "77316", "77318",
-        "77321", "77328",
+        "77320", "77321", "77328",
     },
     "Physics & Devices": {
         "77331", "77332", "77333", "77334", "77336", "77338", "77370", "77399",
+        "77470",
     },
     "Treatment Delivery": {
         "77385", "77386", "77402", "77403", "77404",
@@ -92,7 +100,7 @@ for _cat, _codes in CPT_CATEGORIES.items():
     for _code in _codes:
         _CODE_TO_CATEGORY[_code] = _cat
 
-CATEGORY_NAMES = list(CPT_CATEGORIES.keys())
+CATEGORY_NAMES = list(CPT_CATEGORIES.keys()) + ["Other"]
 
 CATEGORY_SLUGS = {
     "E&M": "em", "Simulation": "simulation", "Treatment Planning": "planning",
@@ -100,6 +108,7 @@ CATEGORY_SLUGS = {
     "Image Guidance": "igrt", "Treatment Management": "management",
     "Brachytherapy": "brachy", "Procedures": "procedures",
     "Drug Administration": "drugs", "Radiopharmaceutical": "radiopharm",
+    "Other": "other",
 }
 SLUG_TO_CATEGORY = {v: k for k, v in CATEGORY_SLUGS.items()}
 
@@ -142,15 +151,46 @@ def _broad_payor(name):
     nl = name.lower()
     if "medicare" in nl:
         return "Medicare"
-    if any(kw in nl for kw in ("medicaid", "apple health", "molina")):
+    if any(kw in nl for kw in (
+        "medicaid", "apple health", "dshs",
+        "molina medicaid", "molina healthcare",
+        "amerigroup medicaid", "coordinated care medicaid",
+        "community hlth plan chpw medicaid",
+        "careoregon medicaid", "wellpoint wa medicaid",
+        "united healthcare medicaid",
+    )):
         return "Medicaid"
+    if any(kw in nl for kw in (
+        "tricare", "champva", "veterans admin", "veteran",
+        "us family healthplan",
+    )):
+        return "Military/VA"
+    if any(kw in nl for kw in (
+        "labor and ind", "dept of labor", "workers comp", " wc",
+        "corvel", "sedgwick",
+    )):
+        return "Workers Comp"
+    if any(kw in nl for kw in (
+        "indian health", "quinault", "chehalis", "nisqually",
+        "tongas",
+    )):
+        return "Tribal/IHS"
+    if any(kw in nl for kw in ("self pay",)):
+        return "Self Pay"
+    if any(kw in nl for kw in (
+        "correction", "mcneil island", "stafford creek",
+        "thurston county jail",
+    )):
+        return "Other/Unknown"
     return "Private"
 
 
 def _merge_rvu(df, rvu):
-    """Add wRVU and Fac_Total_RVU columns to billing dataframe."""
+    """Add wRVU, MP_RVU, Fac_PE_RVU, and Fac_Total_RVU columns to billing dataframe."""
     if df.empty:
         df["wRVU"] = 0.0
+        df["MP_RVU"] = 0.0
+        df["Fac_PE_RVU"] = 0.0
         df["Fac_Total_RVU"] = 0.0
         return df
 
@@ -165,11 +205,15 @@ def _merge_rvu(df, rvu):
     rvu_key = rvu["HCPCS"] + "|" + rvu["MOD"] + "|" + rvu["Year"].astype(str)
     wrvu_dict = dict(zip(rvu_key, rvu["wRVU"]))
     total_dict = dict(zip(rvu_key, rvu["Fac_Total_RVU"]))
+    mp_dict = dict(zip(rvu_key, rvu["MP_RVU"]))
+    fac_pe_dict = dict(zip(rvu_key, rvu["Fac_PE_RVU"]))
 
     # Exact match
     exact_key = df["_base"] + "|" + df["_mod"] + "|" + df["_yr"].astype(str)
     df["wRVU"] = exact_key.map(wrvu_dict)
     df["Fac_Total_RVU"] = exact_key.map(total_dict)
+    df["MP_RVU"] = exact_key.map(mp_dict)
+    df["Fac_PE_RVU"] = exact_key.map(fac_pe_dict)
 
     # Fallback to Global for unmatched
     mask = df["wRVU"].isna()
@@ -177,8 +221,12 @@ def _merge_rvu(df, rvu):
         global_key = df.loc[mask, "_base"] + "||" + df.loc[mask, "_yr"].astype(str)
         df.loc[mask, "wRVU"] = global_key.map(wrvu_dict)
         df.loc[mask, "Fac_Total_RVU"] = global_key.map(total_dict)
+        df.loc[mask, "MP_RVU"] = global_key.map(mp_dict)
+        df.loc[mask, "Fac_PE_RVU"] = global_key.map(fac_pe_dict)
 
     df["wRVU"] = df["wRVU"].fillna(0)
+    df["MP_RVU"] = df["MP_RVU"].fillna(0)
+    df["Fac_PE_RVU"] = df["Fac_PE_RVU"].fillna(0)
     df["Fac_Total_RVU"] = df["Fac_Total_RVU"].fillna(0)
 
     df.drop(columns=["_base", "_mod", "_yr"], inplace=True)
@@ -242,32 +290,34 @@ def _count_spark_raw(df, date_col, start, end):
 
 
 def _build_census_data(df, date_col, start, end, group_col, group_names, group_colors,
-                       value_col=None, agg="sum", y_title="Count", stacked=True):
+                       value_col=None, y_title="Count", stacked=True, freq="M"):
     """Build census-format store data for smoothChartWithType.
 
-    If value_col is None, counts rows per group per month.
-    If value_col is given, sums that column per group per month.
+    freq: 'W' (weekly), 'M' (monthly), 'Y' (yearly).
     """
     if df.empty or date_col not in df.columns:
         return None
 
     df = df.copy()
-    df["_month"] = df[date_col].dt.to_period("M").dt.to_timestamp()
+    freq_map = {"W": "W-MON", "M": "M", "Y": "Y"}
+    pd_freq = freq_map.get(freq, "M")
+    df["_period"] = df[date_col].dt.to_period(pd_freq).dt.to_timestamp()
 
-    months = pd.date_range(df["_month"].min(), df["_month"].max(), freq="MS")
-    dates = [d.strftime("%Y-%m-%d") for d in months]
+    # Use actual unique periods from data (date_range can misalign for weekly)
+    periods = sorted(df["_period"].unique())
+    dates = [pd.Timestamp(d).strftime("%Y-%m-%d") for d in periods]
 
     series = []
     for name in group_names:
         sub = df[df[group_col] == name] if group_col in df.columns else df
         if value_col and value_col in sub.columns:
-            monthly = sub.groupby("_month")[value_col].sum()
+            grouped = sub.groupby("_period")[value_col].sum()
         else:
-            monthly = sub.groupby("_month").size()
-        monthly = monthly.reindex(months, fill_value=0)
+            grouped = sub.groupby("_period").size()
+        grouped = grouped.reindex(periods, fill_value=0)
         series.append({
             "name": name,
-            "values": monthly.tolist(),
+            "values": grouped.tolist(),
             "color": group_colors.get(name, CHART_COLORWAY[len(series) % len(CHART_COLORWAY)]),
         })
 
@@ -280,8 +330,16 @@ def _build_census_data(df, date_col, start, end, group_col, group_names, group_c
     }
 
 
-def _build_cumulative_data(df, date_col, start, end, date_preset, y_title="Cumulative"):
-    """Build prior-period overlay cumulative data for renderCumulative."""
+def _build_cumulative(df, date_col, start, end, date_preset,
+                      value_col=None, y_title="Cumulative",
+                      mode="prior", period_type="calendar",
+                      slice_by="department", slice_configs=None):
+    """Build cumulative data for renderCumulative JS.
+
+    mode: "prior" or "slice".
+    period_type: "calendar" (shift by year) or "rolling" (shift by period length).
+    slice_configs: dict {dim_key: (group_col, names, colors)}.
+    """
     if df.empty or date_col not in df.columns:
         return None
 
@@ -294,62 +352,123 @@ def _build_cumulative_data(df, date_col, start, end, date_preset, y_title="Cumul
 
     day_indices = list(range(period_days))
 
-    def _cum_for_window(w_start, w_end):
+    def _daily(sub):
+        if value_col and value_col in sub.columns:
+            return sub.groupby(sub[date_col].dt.normalize())[value_col].sum()
+        return sub.groupby(sub[date_col].dt.normalize()).size()
+
+    def _cum_window(w_start, w_end):
         sub = df[(df[date_col] >= w_start) & (df[date_col] <= w_end)]
-        daily = sub.groupby(sub[date_col].dt.normalize()).size()
+        daily = _daily(sub)
         idx = pd.date_range(w_start.normalize(), w_end.normalize(), freq="D")
-        daily = daily.reindex(idx, fill_value=0)
-        return daily.cumsum().tolist()
+        return daily.reindex(idx, fill_value=0).cumsum().tolist()
 
-    def _cum_rvu_for_window(w_start, w_end):
-        sub = df[(df[date_col] >= w_start) & (df[date_col] <= w_end)]
-        if "wRVU" not in sub.columns:
-            return _cum_for_window(w_start, w_end)
-        daily = sub.groupby(sub[date_col].dt.normalize())["wRVU"].sum()
-        idx = pd.date_range(w_start.normalize(), w_end.normalize(), freq="D")
-        daily = daily.reindex(idx, fill_value=0)
-        return daily.cumsum().tolist()
+    current_vals = _cum_window(start, end_norm)
 
-    current_vals = _cum_for_window(start, end_norm)
-
-    # Build tick labels
-    tick_positions = []
-    tick_labels = []
+    # Tick labels
+    tick_positions, tick_labels = [], []
     d = start_norm
     while d <= end_norm:
-        pos = (d - start_norm).days
         if d.day == 1:
-            tick_positions.append(pos)
+            tick_positions.append((d - start_norm).days)
             tick_labels.append(d.strftime("%b"))
         d += timedelta(days=1)
 
-    # Prior periods
+    def _plabel(s, e):
+        same_yr = s.year == e.year
+        if date_preset in ("ytd", "last_year") or (same_yr and s.month == 1 and e.month == 12):
+            return str(s.year)
+        if same_yr and s.month == e.month:
+            return s.strftime("%b %Y")
+        if same_yr:
+            return f"{s.strftime('%b')} – {e.strftime('%b %Y')}"
+        fmt = "%b '%y"
+        return f"{s.strftime(fmt)} – {e.strftime(fmt)}"
+
+    # Prior period windows
     data_min = df[date_col].min() if not df.empty else start
-    prior = []
+    windows = []
     if date_preset != "all":
         for i in range(1, 6):
-            try:
-                p_start = start - pd.DateOffset(years=i)
-                p_end = end_norm - pd.DateOffset(years=i)
-            except Exception:
-                continue
+            if period_type == "calendar":
+                try:
+                    p_start = start - pd.DateOffset(years=i)
+                    p_end = end_norm - pd.DateOffset(years=i)
+                except Exception:
+                    continue
+            else:  # rolling
+                shift = pd.Timedelta(days=period_days * i)
+                p_start = start - shift
+                p_end = end_norm - shift
             if p_end < data_min:
                 break
-            vals = _cum_for_window(p_start, p_end)
-            if vals and any(v > 0 for v in vals):
-                if len(vals) < period_days:
-                    vals = vals + [vals[-1] if vals else 0] * (period_days - len(vals))
-                elif len(vals) > period_days:
-                    vals = vals[:period_days]
-                label = f"{p_start.year}" if date_preset in ("ytd", "last_year") else p_start.strftime("%b '%y")
-                prior.append({"label": label, "values": vals, "color": "#D1D5DB"})
+            windows.append((_plabel(p_start, p_end), p_start, p_end))
 
-    current_label = f"{start.year}" if date_preset in ("ytd", "last_year") else start.strftime("%b '%y")
+    prior = []
+    for label, p_start, p_end in windows:
+        vals = _cum_window(p_start, p_end)
+        if vals and any(v > 0 for v in vals):
+            if len(vals) < period_days:
+                vals += [vals[-1] if vals else 0] * (period_days - len(vals))
+            elif len(vals) > period_days:
+                vals = vals[:period_days]
+            prior.append({"label": label, "values": vals, "color": "#D1D5DB"})
+
+    current_label = _plabel(start, end_norm)
     if len(current_vals) < period_days:
-        current_vals = current_vals + [None] * (period_days - len(current_vals))
+        current_vals += [None] * (period_days - len(current_vals))
+
+    # Slice breakdown (for bar chart in both modes, and for slice line/area)
+    slice_breakdown = {"periods": [], "slices": []}
+    series = []  # For slice mode line/area
+    dates = []
+
+    if slice_configs and slice_by in slice_configs:
+        group_col, names, colors = slice_configs[slice_by]
+
+        # Bar breakdown: totals per period per slice
+        all_windows = [(current_label, start, end_norm)] + \
+                      [(l, s, e) for l, s, e in windows]
+        all_totals, all_keys = [], set()
+        for wlabel, ws, we in all_windows:
+            sub = df[(df[date_col] >= ws) & (df[date_col] <= we)]
+            if group_col in sub.columns:
+                if value_col and value_col in sub.columns:
+                    totals = sub.groupby(group_col)[value_col].sum().to_dict()
+                else:
+                    totals = sub.groupby(group_col).size().to_dict()
+            else:
+                totals = {}
+            all_totals.append((wlabel, totals))
+            all_keys.update(totals.keys())
+
+        sorted_keys = [k for k in names if k in all_keys]
+        periods_rev = [t[0] for t in reversed(all_totals)]
+        slices = []
+        for sk in sorted_keys:
+            vals = [t[1].get(sk, 0) for t in reversed(all_totals)]
+            slices.append({"name": sk, "values": vals,
+                           "color": colors.get(sk, "#9CA3AF")})
+        slice_breakdown = {"periods": periods_rev, "slices": slices}
+
+        # Line/area series for slice mode: cumulative per group over current period
+        current_sub = df[(df[date_col] >= start) & (df[date_col] <= end_norm)]
+        date_range = pd.date_range(start_norm, end_norm, freq="D")
+        dates = [d.strftime("%Y-%m-%d") for d in date_range]
+        for sk in sorted_keys:
+            if group_col in current_sub.columns:
+                grp = current_sub[current_sub[group_col] == sk]
+            else:
+                grp = pd.DataFrame()
+            daily = _daily(grp).reindex(date_range, fill_value=0)
+            series.append({
+                "name": sk,
+                "values": daily.cumsum().tolist(),
+                "color": colors.get(sk, "#9CA3AF"),
+            })
 
     return {
-        "mode": "prior",
+        "mode": mode,
         "startDate": start_norm.isoformat(),
         "dayIndices": day_indices,
         "tickPositions": tick_positions,
@@ -361,83 +480,9 @@ def _build_cumulative_data(df, date_col, start, end, date_preset, y_title="Cumul
             "endpoint": next((v for v in reversed(current_vals) if v is not None), 0),
         },
         "prior": prior,
-        "sliceBreakdown": {"periods": [], "slices": []},
-        "height": 350,
-        "yTitle": y_title,
-    }
-
-
-def _build_cumulative_rvu_data(df, date_col, start, end, date_preset, y_title="Cumulative wRVU"):
-    """Build prior-period overlay cumulative wRVU data."""
-    if df.empty or date_col not in df.columns or "wRVU" not in df.columns:
-        return None
-
-    today = pd.Timestamp.now().normalize()
-    end_norm = min(end.normalize(), today)
-    start_norm = start.normalize()
-    period_days = (end_norm - start_norm).days + 1
-    if period_days < 2:
-        return None
-
-    day_indices = list(range(period_days))
-
-    def _cum_for_window(w_start, w_end):
-        sub = df[(df[date_col] >= w_start) & (df[date_col] <= w_end)]
-        daily = sub.groupby(sub[date_col].dt.normalize())["wRVU"].sum()
-        idx = pd.date_range(w_start.normalize(), w_end.normalize(), freq="D")
-        daily = daily.reindex(idx, fill_value=0)
-        return daily.cumsum().tolist()
-
-    current_vals = _cum_for_window(start, end_norm)
-
-    tick_positions = []
-    tick_labels = []
-    d = start_norm
-    while d <= end_norm:
-        pos = (d - start_norm).days
-        if d.day == 1:
-            tick_positions.append(pos)
-            tick_labels.append(d.strftime("%b"))
-        d += timedelta(days=1)
-
-    data_min = df[date_col].min() if not df.empty else start
-    prior = []
-    if date_preset != "all":
-        for i in range(1, 6):
-            try:
-                p_start = start - pd.DateOffset(years=i)
-                p_end = end_norm - pd.DateOffset(years=i)
-            except Exception:
-                continue
-            if p_end < data_min:
-                break
-            vals = _cum_for_window(p_start, p_end)
-            if vals and any(v > 0 for v in vals):
-                if len(vals) < period_days:
-                    vals = vals + [vals[-1] if vals else 0] * (period_days - len(vals))
-                elif len(vals) > period_days:
-                    vals = vals[:period_days]
-                label = f"{p_start.year}" if date_preset in ("ytd", "last_year") else p_start.strftime("%b '%y")
-                prior.append({"label": label, "values": vals, "color": "#D1D5DB"})
-
-    current_label = f"{start.year}" if date_preset in ("ytd", "last_year") else start.strftime("%b '%y")
-    if len(current_vals) < period_days:
-        current_vals = current_vals + [None] * (period_days - len(current_vals))
-
-    return {
-        "mode": "prior",
-        "startDate": start_norm.isoformat(),
-        "dayIndices": day_indices,
-        "tickPositions": tick_positions,
-        "tickLabels": tick_labels,
-        "current": {
-            "label": current_label,
-            "values": current_vals,
-            "color": PRIMARY,
-            "endpoint": next((v for v in reversed(current_vals) if v is not None), 0),
-        },
-        "prior": prior,
-        "sliceBreakdown": {"periods": [], "slices": []},
+        "sliceBreakdown": slice_breakdown,
+        "series": series,
+        "dates": dates,
         "height": 350,
         "yTitle": y_title,
     }
@@ -467,10 +512,15 @@ def _build_payor_data(df, label_col, count_col=None, top_n=10):
     # Broad categories
     df = df.copy()
     df["_broad"] = df[label_col].apply(_broad_payor)
-    broad_order = ["Medicare", "Medicaid", "Private", "Other/Unknown"]
+    broad_order = [
+        "Medicare", "Medicaid", "Private", "Military/VA",
+        "Workers Comp", "Tribal/IHS", "Self Pay", "Other/Unknown",
+    ]
     broad_colors_map = {
         "Medicare": "#2196F3", "Medicaid": "#4CAF50",
-        "Private": "#FF9800", "Other/Unknown": "#9CA3AF",
+        "Private": "#FF9800", "Military/VA": "#7C2A83",
+        "Workers Comp": "#00BCD4", "Tribal/IHS": "#795548",
+        "Self Pay": "#F44336", "Other/Unknown": "#9CA3AF",
     }
     if count_col:
         broad_totals = df.groupby("_broad")[count_col].sum()
@@ -487,8 +537,95 @@ def _build_payor_data(df, label_col, count_col=None, top_n=10):
 
 
 # ---------------------------------------------------------------------------
+# Cached enriched billing dataframe
+# ---------------------------------------------------------------------------
+
+_enriched_cache = {"key": None, "df": None}
+
+
+def _get_enriched_billing():
+    """Return billing df with Category, ChargeStatus, wRVU columns added.
+
+    Caches result — only recomputes when the underlying loader cache changes
+    (i.e., new data loaded).
+    """
+    from data.loader import load_billing, load_rvu_lookup
+
+    billing = load_billing()
+    rvu = load_rvu_lookup()
+
+    # Use object ids as cache key (lru_cache returns same object if unchanged)
+    key = (id(billing), id(rvu))
+    if _enriched_cache["key"] == key and _enriched_cache["df"] is not None:
+        return _enriched_cache["df"]
+
+    df = billing.copy()
+    # Auto-exclude incomplete, credited, and waived charges
+    if "Completed" in df.columns:
+        df = df[df["Completed"] == "Yes"]
+    if "Credited" in df.columns:
+        df = df[df["Credited"] != "Yes"]
+    if "Waived" in df.columns:
+        df = df[df["Waived"] != "Yes"]
+
+    df["_base_code"] = df["ProcedureCode"].apply(_strip_modifier)
+    df["Category"] = df["_base_code"].apply(_assign_category)
+    df["ChargeStatus"] = df["ProcedureCode"].apply(_derive_charge_status)
+    if not rvu.empty:
+        df = _merge_rvu(df, rvu)
+    else:
+        df["wRVU"] = 0.0
+        df["MP_RVU"] = 0.0
+        df["Fac_PE_RVU"] = 0.0
+        df["Fac_Total_RVU"] = 0.0
+
+    _enriched_cache["key"] = key
+    _enriched_cache["df"] = df
+    return df
+
+
+# ---------------------------------------------------------------------------
 # Filter Bar
 # ---------------------------------------------------------------------------
+
+def _chip_dropdown(page_id, name, chip_id, multiple=True, children=None):
+    """Reusable chip-dropdown: button + clear + floating panel."""
+    return html.Div(
+        children=[
+            html.Div(
+                children=[
+                    dmc.Button(
+                        name,
+                        id=f"{page_id}-{chip_id}-trigger",
+                        variant="default",
+                        size="sm",
+                        rightSection=DashIconify(icon="mdi:chevron-down", width=14),
+                    ),
+                    dmc.ActionIcon(
+                        DashIconify(icon="mdi:close-circle", width=18),
+                        id=f"{page_id}-{chip_id}-clear",
+                        variant="subtle",
+                        color="gray",
+                        size="sm",
+                        className="wf-filter-clear-btn",
+                    ),
+                ],
+                style={"position": "relative", "display": "inline-block"},
+            ),
+            dmc.Paper(
+                id=f"{page_id}-{chip_id}-panel",
+                children=children or [],
+                p="xs",
+                shadow="md",
+                withBorder=True,
+                radius="md",
+                className="wf-chip-dropdown",
+                style={"display": "none"},
+            ),
+        ],
+        style={"position": "relative", "display": "inline-block"},
+    )
+
 
 def _build_filter_bar():
     """Two-row filter bar: dimension filters + date controls."""
@@ -498,20 +635,50 @@ def _build_filter_bar():
             dmc.Group(
                 children=[
                     department_chips(PAGE_ID),
-                    dmc.Select(
-                        id=f"{PAGE_ID}-filter-physician",
-                        data=[{"value": p, "label": p} for p in PHYSICIANS],
-                        placeholder="Physician",
-                        clearable=True,
-                        size="sm",
-                        w=200,
+                    # Physician dropdown + role toggle
+                    _chip_dropdown(PAGE_ID, "Physician", "physician", multiple=False, children=[
+                        dmc.ChipGroup(
+                            children=[],
+                            id=f"{PAGE_ID}-filter-physician",
+                            multiple=False,
+                        ),
+                    ]),
+                    dmc.SegmentedControl(
+                        id=f"{PAGE_ID}-filter-physician-role",
+                        data=[
+                            {"value": "supervising", "label": "Supervising"},
+                            {"value": "attending", "label": "Attending"},
+                        ],
+                        value="supervising",
+                        size="xs",
                     ),
+                    # Category dropdown with Select All / None
+                    _chip_dropdown(PAGE_ID, "Category", "category", multiple=True, children=[
+                        dmc.Group(
+                            children=[
+                                dmc.Button("All", id=f"{PAGE_ID}-category-all",
+                                           variant="subtle", size="compact-xs", color="violet"),
+                                dmc.Button("None", id=f"{PAGE_ID}-category-none",
+                                           variant="subtle", size="compact-xs", color="gray"),
+                            ],
+                            gap="xs", mb=4,
+                        ),
+                        dmc.ChipGroup(
+                            children=[
+                                dmc.Chip(c, value=c, size="xs", variant="filled")
+                                for c in CATEGORY_NAMES
+                            ],
+                            id=f"{PAGE_ID}-filter-category",
+                            multiple=True,
+                            value=[],
+                        ),
+                    ]),
                     dmc.SegmentedControl(
                         id=f"{PAGE_ID}-filter-codetype",
                         data=[
                             {"value": "all", "label": "All"},
-                            {"value": "Professional", "label": "Prof"},
-                            {"value": "Technical", "label": "Tech"},
+                            {"value": "Professional", "label": "Professional"},
+                            {"value": "Technical", "label": "Technical"},
                             {"value": "Global", "label": "Global"},
                         ],
                         value="all",
@@ -527,14 +694,18 @@ def _build_filter_bar():
                         value="all",
                         size="xs",
                     ),
-                    dmc.MultiSelect(
-                        id=f"{PAGE_ID}-filter-category",
-                        data=[{"value": c, "label": c} for c in CATEGORY_NAMES],
-                        placeholder="All Categories",
-                        clearable=True,
-                        size="sm",
-                        w=250,
+                    dmc.Button(
+                        "Reviewed",
+                        id=f"{PAGE_ID}-btn-reviewed",
+                        variant="default", size="compact-sm",
                     ),
+                    dcc.Store(id=f"{PAGE_ID}-filter-reviewed", data="all"),
+                    dmc.Button(
+                        "Exported",
+                        id=f"{PAGE_ID}-btn-exported",
+                        variant="default", size="compact-sm",
+                    ),
+                    dcc.Store(id=f"{PAGE_ID}-filter-exported", data="all"),
                     dmc.Group(
                         children=[
                             dmc.Text("Smoothing", size="xs", c="#6B7280", fw=500),
@@ -620,8 +791,15 @@ def _build_filter_bar():
 # ---------------------------------------------------------------------------
 
 _SLICE_TOGGLE = [
-    {"value": "category", "label": "By Category"},
-    {"value": "department", "label": "By Department"},
+    {"value": "category", "label": "Category"},
+    {"value": "department", "label": "Site"},
+    {"value": "physician", "label": "MD"},
+    {"value": "cpt", "label": "CPT"},
+]
+_AGG_TOGGLE = [
+    {"value": "W", "label": "Weekly"},
+    {"value": "M", "label": "Monthly"},
+    {"value": "Y", "label": "Yearly"},
 ]
 _PAYOR_TOGGLE = [
     {"value": "actual", "label": "Actual"},
@@ -651,7 +829,20 @@ layout = dmc.Stack(
         ),
 
         # KPI row — dynamic (zero-count categories hidden)
-        dmc.Grid(id=f"{PAGE_ID}-kpi-row", gutter="sm"),
+        dmc.Group(
+            id=f"{PAGE_ID}-kpi-row",
+            gap="sm",
+            grow=True,
+            wrap="nowrap",
+            style={"overflow": "hidden"},
+        ),
+
+        # Dollar estimate row — thin summary bar
+        dmc.Group(
+            id=f"{PAGE_ID}-dollar-row",
+            gap="md",
+            grow=True,
+        ),
 
         # Row 1: Volume Trend + Cumulative
         dmc.Grid(
@@ -666,10 +857,16 @@ layout = dmc.Stack(
                         show_smooth=True,
                         smooth_max=50, smooth_default=15,
                         paper_padding="md",
-                        extra_controls=[
+                        extra_controls_left=[
                             dmc.SegmentedControl(
                                 id=f"{PAGE_ID}-vol-slice",
                                 data=_SLICE_TOGGLE, value="category", size="xs",
+                            ),
+                        ],
+                        extra_controls=[
+                            dmc.SegmentedControl(
+                                id=f"{PAGE_ID}-vol-agg",
+                                data=_AGG_TOGGLE, value="M", size="xs",
                             ),
                         ],
                     ),
@@ -685,8 +882,20 @@ layout = dmc.Stack(
                         paper_padding="md",
                         extra_controls=[
                             dmc.SegmentedControl(
+                                id=f"{PAGE_ID}-volcum-mode",
+                                data=[{"value": "prior", "label": "Prior Periods"},
+                                      {"value": "slice", "label": "Slice By"}],
+                                value="prior", size="xs",
+                            ),
+                            dmc.SegmentedControl(
+                                id=f"{PAGE_ID}-volcum-period-type",
+                                data=[{"value": "calendar", "label": "Calendar"},
+                                      {"value": "rolling", "label": "Rolling"}],
+                                value="calendar", size="xs",
+                            ),
+                            dmc.SegmentedControl(
                                 id=f"{PAGE_ID}-volcum-slice",
-                                data=_SLICE_TOGGLE, value="category", size="xs",
+                                data=_SLICE_TOGGLE, value="department", size="xs",
                             ),
                         ],
                     ),
@@ -708,10 +917,16 @@ layout = dmc.Stack(
                         show_smooth=True,
                         smooth_max=50, smooth_default=15,
                         paper_padding="md",
-                        extra_controls=[
+                        extra_controls_left=[
                             dmc.SegmentedControl(
                                 id=f"{PAGE_ID}-rvu-slice",
                                 data=_SLICE_TOGGLE, value="category", size="xs",
+                            ),
+                        ],
+                        extra_controls=[
+                            dmc.SegmentedControl(
+                                id=f"{PAGE_ID}-rvu-agg",
+                                data=_AGG_TOGGLE, value="M", size="xs",
                             ),
                         ],
                     ),
@@ -727,8 +942,20 @@ layout = dmc.Stack(
                         paper_padding="md",
                         extra_controls=[
                             dmc.SegmentedControl(
+                                id=f"{PAGE_ID}-rvucum-mode",
+                                data=[{"value": "prior", "label": "Prior Periods"},
+                                      {"value": "slice", "label": "Slice By"}],
+                                value="prior", size="xs",
+                            ),
+                            dmc.SegmentedControl(
+                                id=f"{PAGE_ID}-rvucum-period-type",
+                                data=[{"value": "calendar", "label": "Calendar"},
+                                      {"value": "rolling", "label": "Rolling"}],
+                                value="calendar", size="xs",
+                            ),
+                            dmc.SegmentedControl(
                                 id=f"{PAGE_ID}-rvucum-slice",
-                                data=_SLICE_TOGGLE, value="category", size="xs",
+                                data=_SLICE_TOGGLE, value="department", size="xs",
                             ),
                         ],
                     ),
@@ -740,6 +967,7 @@ layout = dmc.Stack(
         # Row 3: Payor Mix
         dmc.Grid(
             gutter="md",
+            mb=0,
             children=[
                 dmc.GridCol(
                     chart_card(
@@ -753,6 +981,12 @@ layout = dmc.Stack(
                             dmc.SegmentedControl(
                                 id=f"{PAGE_ID}-payor-event-mode",
                                 data=_PAYOR_TOGGLE, value="actual", size="xs",
+                            ),
+                            dmc.SegmentedControl(
+                                id=f"{PAGE_ID}-payor-event-unit",
+                                data=[{"value": "count", "label": "Count"},
+                                      {"value": "pct", "label": "%"}],
+                                value="count", size="xs",
                             ),
                         ],
                     ),
@@ -770,6 +1004,12 @@ layout = dmc.Stack(
                             dmc.SegmentedControl(
                                 id=f"{PAGE_ID}-payor-patient-mode",
                                 data=_PAYOR_TOGGLE, value="actual", size="xs",
+                            ),
+                            dmc.SegmentedControl(
+                                id=f"{PAGE_ID}-payor-patient-unit",
+                                data=[{"value": "count", "label": "Count"},
+                                      {"value": "pct", "label": "%"}],
+                                value="count", size="xs",
                             ),
                         ],
                     ),
@@ -826,12 +1066,11 @@ clientside_callback(
 
 @callback(
     Output(f"{PAGE_ID}-kpi-row", "children"),
-    # Store outputs (7)
+    Output(f"{PAGE_ID}-dollar-row", "children"),
+    # Store outputs (5 — cumulative stores handled by separate callback)
     Output(f"{PAGE_ID}-store-kpi-sparklines", "data"),
     Output(f"{PAGE_ID}-store-volume", "data"),
-    Output(f"{PAGE_ID}-store-volume-cum", "data"),
     Output(f"{PAGE_ID}-store-rvu", "data"),
-    Output(f"{PAGE_ID}-store-rvu-cum", "data"),
     Output(f"{PAGE_ID}-store-payor-event", "data"),
     Output(f"{PAGE_ID}-store-payor-patient", "data"),
     # Inputs
@@ -840,56 +1079,33 @@ clientside_callback(
     Input(f"{PAGE_ID}-filter-daterange", "end_date"),
     Input(f"{PAGE_ID}-filter-department", "value"),
     Input(f"{PAGE_ID}-filter-physician", "value"),
+    Input(f"{PAGE_ID}-filter-physician-role", "value"),
     Input(f"{PAGE_ID}-filter-codetype", "value"),
     Input(f"{PAGE_ID}-filter-charge-status", "value"),
     Input(f"{PAGE_ID}-filter-category", "value"),
+    Input(f"{PAGE_ID}-filter-reviewed", "data"),
+    Input(f"{PAGE_ID}-filter-exported", "data"),
     Input(f"{PAGE_ID}-filter-date-preset", "value"),
 )
 def update_billing(_n, start_date, end_date, departments, physician,
-                   codetype, charge_status, categories, date_preset):
+                   physician_role, codetype, charge_status, categories,
+                   reviewed_filter, exported_filter, date_preset):
     """Master callback: KPIs, sparklines, volume, RVU, payor stores."""
-    from data.loader import load_billing, load_patients, load_rvu_lookup
+    from data.loader import load_patients
 
-    n_kpis = len(CATEGORY_SLUGS)
-    empty_stores = [None] * 7
-
-    # ------------------------------------------------------------------
-    # Load data
-    # ------------------------------------------------------------------
-    try:
-        billing = load_billing()
-    except Exception:
-        return [], *empty_stores
-
-    if billing.empty or "DateOfService" not in billing.columns:
-        return [], *empty_stores
+    empty_stores = [None] * 5
 
     try:
-        rvu = load_rvu_lookup()
+        df = _get_enriched_billing()
     except Exception:
-        rvu = pd.DataFrame()
+        return [], [], *empty_stores
+    if df.empty or "DateOfService" not in df.columns:
+        return [], [], *empty_stores
 
     try:
         patients = load_patients()
     except Exception:
         patients = pd.DataFrame()
-
-    # ------------------------------------------------------------------
-    # Enrich billing data
-    # ------------------------------------------------------------------
-    df = billing.copy()
-
-    # Category + charge status
-    df["_base_code"] = df["ProcedureCode"].apply(_strip_modifier)
-    df["Category"] = df["_base_code"].apply(_assign_category)
-    df["ChargeStatus"] = df["ProcedureCode"].apply(_derive_charge_status)
-
-    # RVU
-    if not rvu.empty:
-        df = _merge_rvu(df, rvu)
-    else:
-        df["wRVU"] = 0.0
-        df["Fac_Total_RVU"] = 0.0
 
     # Payor join
     if not patients.empty and "PatientId" in df.columns and "PatientId" in patients.columns:
@@ -920,41 +1136,36 @@ def update_billing(_n, start_date, end_date, departments, physician,
     # ------------------------------------------------------------------
     # Apply filters
     # ------------------------------------------------------------------
-    mask = (df["DateOfService"] >= start) & (df["DateOfService"] <= end)
-    if departments and "Department" in df.columns:
-        mask &= df["Department"].isin(departments)
-    if physician:
-        phys_mask = pd.Series(False, index=df.index)
-        for col in ("SupervisingPhysician", "AttendingPhysician"):
-            if col in df.columns:
-                phys_mask |= df[col] == physician
-        mask &= phys_mask
-    if codetype and codetype != "all" and "CodeType" in df.columns:
-        mask &= df["CodeType"] == codetype
-    if charge_status and charge_status != "all":
-        mask &= df["ChargeStatus"] == charge_status
-    if categories:
-        mask &= df["Category"].isin(categories)
+    # Build a reusable non-date dimension mask
+    def _dim_mask(base_mask):
+        m = base_mask
+        if departments and "Department" in df.columns:
+            m = m & df["Department"].isin(departments)
+        if physician:
+            rc = "AttendingPhysician" if physician_role == "attending" else "SupervisingPhysician"
+            if rc in df.columns:
+                m = m & (df[rc] == physician)
+        if codetype and codetype != "all" and "CodeType" in df.columns:
+            m = m & (df["CodeType"] == codetype)
+        if charge_status and charge_status != "all":
+            m = m & (df["ChargeStatus"] == charge_status)
+        if categories:
+            m = m & df["Category"].isin(categories)
+        if reviewed_filter and reviewed_filter != "all" and "Reviewed" in df.columns:
+            m = m & (df["Reviewed"] == ("Yes" if reviewed_filter == "yes" else "No"))
+        if exported_filter and exported_filter != "all" and "Exported" in df.columns:
+            m = m & (df["Exported"] == ("Yes" if exported_filter == "yes" else "No"))
+        return m
 
+    mask = _dim_mask((df["DateOfService"] >= start) & (df["DateOfService"] <= end))
     bf = df.loc[mask].copy()
+
+    # All-time data with non-date filters (for cumulative prior periods)
+    df_all = df.loc[_dim_mask(pd.Series(True, index=df.index))]
 
     # Prior period for trend comparison
     p_start, p_end = _prior_range(start, end, date_preset or "12mo")
-    prior_mask = (df["DateOfService"] >= p_start) & (df["DateOfService"] <= p_end)
-    if departments and "Department" in df.columns:
-        prior_mask &= df["Department"].isin(departments)
-    if physician:
-        phys_mask_p = pd.Series(False, index=df.index)
-        for col in ("SupervisingPhysician", "AttendingPhysician"):
-            if col in df.columns:
-                phys_mask_p |= df[col] == physician
-        prior_mask &= phys_mask_p
-    if codetype and codetype != "all" and "CodeType" in df.columns:
-        prior_mask &= df["CodeType"] == codetype
-    if charge_status and charge_status != "all":
-        prior_mask &= df["ChargeStatus"] == charge_status
-    if categories:
-        prior_mask &= df["Category"].isin(categories)
+    prior_mask = _dim_mask((df["DateOfService"] >= p_start) & (df["DateOfService"] <= p_end))
     bf_prior = df.loc[prior_mask]
 
     # ------------------------------------------------------------------
@@ -989,58 +1200,78 @@ def update_billing(_n, start_date, end_date, departments, physician,
         spark["color"] = color
         sparkline_data[slug] = spark
 
-    # Wrap cards in GridCols with equal width to fit one row
-    n_active = len(kpi_children)
-    if n_active > 0:
-        # 12-col grid: compute span to fit all in one row
-        span_md = max(1, round(12 / n_active, 1))
-        kpi_children = [
-            dmc.GridCol(
-                card,
-                span={"base": 6, "sm": 4, "md": span_md},
-                style={"display": "flex"},
+    # Wrap cards as flex items — equal width, max 20% each
+    if kpi_children:
+        wrapped = []
+        for card in kpi_children:
+            card.style = {**(card.style or {}), "width": "100%", "minHeight": 0}
+            wrapped.append(
+                html.Div(
+                    card,
+                    style={
+                        "flex": "1 1 0",
+                        "minWidth": "120px",
+                        "maxWidth": "20%",
+                        "display": "flex",
+                    },
+                )
             )
-            for card in kpi_children
-        ]
+        kpi_children = wrapped
 
     # ------------------------------------------------------------------
-    # Volume stores (by category + by department)
+    # Volume + RVU stores (category × department × physician × W/M/Y)
     # ------------------------------------------------------------------
-    vol_by_cat = _build_census_data(
-        bf, "DateOfService", start, end,
-        "Category", [c for c in CATEGORY_NAMES if c in bf["Category"].unique()],
-        CATEGORY_COLORS, y_title="Billing Events",
-    )
     dept_names = [d for d in DEPARTMENTS if d in bf["Department"].unique()] if "Department" in bf.columns else []
-    vol_by_dept = _build_census_data(
-        bf, "DateOfService", start, end,
-        "Department", dept_names, DEPARTMENT_COLORS, y_title="Billing Events",
-    )
-    volume_store = {"byCategory": vol_by_cat, "byDepartment": vol_by_dept}
 
-    # Cumulative volume
-    vol_cum = _build_cumulative_data(bf, "DateOfService", start, end, date_preset or "12mo",
-                                     y_title="Cumulative Events")
+    # Physician names for MD slice (use the role column)
+    _role_col = "AttendingPhysician" if physician_role == "attending" else "SupervisingPhysician"
+    if _role_col in bf.columns:
+        phys_names = sorted(bf[_role_col].dropna().unique())
+        phys_colors = {p: CHART_COLORWAY[i % len(CHART_COLORWAY)] for i, p in enumerate(phys_names)}
+    else:
+        phys_names, phys_colors = [], {}
 
-    # ------------------------------------------------------------------
-    # RVU stores (by category + by department)
-    # ------------------------------------------------------------------
-    rvu_by_cat = _build_census_data(
-        bf, "DateOfService", start, end,
-        "Category", [c for c in CATEGORY_NAMES if c in bf["Category"].unique()],
-        CATEGORY_COLORS, value_col="wRVU", y_title="wRVU",
-    )
-    rvu_by_dept = _build_census_data(
-        bf, "DateOfService", start, end,
-        "Department", dept_names, DEPARTMENT_COLORS,
-        value_col="wRVU", y_title="wRVU",
-    )
-    rvu_store = {"byCategory": rvu_by_cat, "byDepartment": rvu_by_dept}
+    active_cat_names = [c for c in CATEGORY_NAMES if c in bf["Category"].unique()]
 
-    # Cumulative wRVU
-    rvu_cum = _build_cumulative_rvu_data(bf, "DateOfService", start, end, date_preset or "12mo",
-                                         y_title="Cumulative wRVU")
+    def _build_all_aggs(group_col, group_names, group_colors, value_col=None, y_title="Count"):
+        """Build W/M/Y variants for one slice dimension."""
+        out = {}
+        for freq in ("W", "M", "Y"):
+            out[freq] = _build_census_data(
+                bf, "DateOfService", start, end,
+                group_col, group_names, group_colors,
+                value_col=value_col, y_title=y_title, freq=freq,
+            )
+        return out
 
+    volume_store = {
+        "category": _build_all_aggs("Category", active_cat_names, CATEGORY_COLORS,
+                                     y_title="Billing Events"),
+        "department": _build_all_aggs("Department", dept_names, DEPARTMENT_COLORS,
+                                       y_title="Billing Events"),
+        "physician": _build_all_aggs(_role_col, phys_names, phys_colors,
+                                      y_title="Billing Events"),
+    }
+
+    rvu_store = {
+        "category": _build_all_aggs("Category", active_cat_names, CATEGORY_COLORS,
+                                     value_col="wRVU", y_title="wRVU"),
+        "department": _build_all_aggs("Department", dept_names, DEPARTMENT_COLORS,
+                                       value_col="wRVU", y_title="wRVU"),
+        "physician": _build_all_aggs(_role_col, phys_names, phys_colors,
+                                      value_col="wRVU", y_title="wRVU"),
+    }
+
+    # CPT-code breakdown (only meaningful when exactly 1 category is selected)
+    if categories and len(categories) == 1:
+        cpt_codes = sorted(bf["_base_code"].dropna().unique())
+        cpt_colors = {c: CHART_COLORWAY[i % len(CHART_COLORWAY)] for i, c in enumerate(cpt_codes)}
+        volume_store["cpt"] = _build_all_aggs("_base_code", cpt_codes, cpt_colors,
+                                               y_title="Billing Events")
+        rvu_store["cpt"] = _build_all_aggs("_base_code", cpt_codes, cpt_colors,
+                                            value_col="wRVU", y_title="wRVU")
+
+    # Cumulative stores
     # ------------------------------------------------------------------
     # Payor stores
     # ------------------------------------------------------------------
@@ -1058,48 +1289,229 @@ def update_billing(_n, start_date, end_date, departments, physician,
     else:
         payor_patient = _build_payor_data(pd.DataFrame(), "PrimaryInsurance")
 
-    return (*kpi_cards, sparkline_data, volume_store, vol_cum,
-            rvu_store, rvu_cum, payor_event, payor_patient)
+    # ------------------------------------------------------------------
+    # Dollar estimate row
+    # ------------------------------------------------------------------
+    # Professional: (wRVU + MP_RVU) × CF for all sites
+    # Facility: Fac_PE_RVU × CF — hospital-based sites only (Lacey, Centralia)
+    # For freestanding (Aberdeen): pro group gets full Fac_Total_RVU × CF
+    def _dollar_card(label, amount, color=NEUTRAL["text_primary"]):
+        return dmc.Paper(
+            dmc.Group(
+                gap="xs", align="center",
+                children=[
+                    dmc.Text(label, size="xs", c=NEUTRAL["text_secondary"], fw=500),
+                    dmc.Text(
+                        f"${amount:,.0f}",
+                        size="sm", fw=700, c=color,
+                    ),
+                ],
+            ),
+            px="md", py=6, radius="md", shadow="xs", withBorder=True,
+            style={"flex": "1 1 0", "minWidth": "140px"},
+        )
+
+    cf = bf["DateOfService"].dt.year.map(_CMS_CF).fillna(_CMS_CF_DEFAULT)
+    has_dept = "Department" in bf.columns
+    has_ct = "CodeType" in bf.columns
+
+    if has_dept:
+        freestanding = bf["Department"].isin(_FREESTANDING_SITES)
+    else:
+        freestanding = pd.Series(False, index=bf.index)
+    hosp_based = ~freestanding
+
+    if has_ct:
+        is_group = bf["CodeType"].isin(["Professional", "Global"])
+        is_tech = bf["CodeType"] == "Technical"
+    else:
+        is_group = pd.Series(True, index=bf.index)
+        is_tech = pd.Series(False, index=bf.index)
+
+    # Group revenue:
+    #   Hospital-based Pro/Global: (wRVU + MP) × CF (facility PE goes to hospital)
+    #   Freestanding Pro/Global: Fac_Total × CF (group keeps everything)
+    hb_group = is_group & hosp_based
+    fs_group = is_group & freestanding
+    group_dollars = (
+        ((bf.loc[hb_group, "wRVU"] + bf.loc[hb_group, "MP_RVU"]) * cf.loc[hb_group]).sum()
+        + (bf.loc[fs_group, "Fac_Total_RVU"] * cf.loc[fs_group]).sum()
+    )
+
+    # Hospital revenue:
+    #   All Technical rows: Fac_Total × CF
+    #   Hospital-based Pro/Global: Fac_PE × CF (hospital keeps facility component)
+    hosp_dollars = (
+        (bf.loc[is_tech, "Fac_Total_RVU"] * cf.loc[is_tech]).sum()
+        + (bf.loc[hb_group, "Fac_PE_RVU"] * cf.loc[hb_group]).sum()
+    )
+
+    total_dollars = group_dollars + hosp_dollars
+
+    dollar_children = [
+        _dollar_card("Est. Group Revenue", group_dollars, PRIMARY),
+        _dollar_card("Est. Hospital Revenue", hosp_dollars),
+        _dollar_card("Est. All-In Total", total_dollars, SEMANTIC_COLORS["success"]),
+    ]
+
+    return (kpi_children, dollar_children, sparkline_data, volume_store,
+            rvu_store, payor_event, payor_patient)
+
+
+# ---------------------------------------------------------------------------
+# Cumulative Callback (separate for performance — toggles don't recompute KPIs)
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output(f"{PAGE_ID}-store-volume-cum", "data"),
+    Output(f"{PAGE_ID}-store-rvu-cum", "data"),
+    Input(f"{PAGE_ID}-interval", "n_intervals"),
+    Input(f"{PAGE_ID}-filter-daterange", "start_date"),
+    Input(f"{PAGE_ID}-filter-daterange", "end_date"),
+    Input(f"{PAGE_ID}-filter-department", "value"),
+    Input(f"{PAGE_ID}-filter-physician", "value"),
+    Input(f"{PAGE_ID}-filter-physician-role", "value"),
+    Input(f"{PAGE_ID}-filter-codetype", "value"),
+    Input(f"{PAGE_ID}-filter-charge-status", "value"),
+    Input(f"{PAGE_ID}-filter-category", "value"),
+    Input(f"{PAGE_ID}-filter-reviewed", "data"),
+    Input(f"{PAGE_ID}-filter-exported", "data"),
+    Input(f"{PAGE_ID}-filter-date-preset", "value"),
+    Input(f"{PAGE_ID}-volcum-mode", "value"),
+    Input(f"{PAGE_ID}-volcum-period-type", "value"),
+    Input(f"{PAGE_ID}-volcum-slice", "value"),
+    Input(f"{PAGE_ID}-rvucum-mode", "value"),
+    Input(f"{PAGE_ID}-rvucum-period-type", "value"),
+    Input(f"{PAGE_ID}-rvucum-slice", "value"),
+)
+def update_cumulative(_n, start_date, end_date, departments, physician,
+                      physician_role, codetype, charge_status, categories,
+                      reviewed_filter, exported_filter, date_preset,
+                      volcum_mode, volcum_period_type, volcum_slice,
+                      rvucum_mode, rvucum_period_type, rvucum_slice):
+    """Cumulative stores only — separate callback so toggle changes are fast."""
+    try:
+        df = _get_enriched_billing()
+    except Exception:
+        return None, None
+    if df.empty or "DateOfService" not in df.columns:
+        return None, None
+
+    # Date range
+    last_date = df["DateOfService"].dt.normalize().max()
+    earliest_date = df["DateOfService"].dt.normalize().min()
+    if start_date and end_date:
+        start = pd.Timestamp(start_date)
+        end = pd.Timestamp(end_date)
+    else:
+        start = _preset_start(last_date, date_preset or "12mo", earliest_date)
+        end = last_date
+
+    # Non-date filters (all-time dataset for prior period lookback)
+    mask = pd.Series(True, index=df.index)
+    if departments and "Department" in df.columns:
+        mask &= df["Department"].isin(departments)
+    if physician:
+        rc = "AttendingPhysician" if physician_role == "attending" else "SupervisingPhysician"
+        if rc in df.columns:
+            mask &= df[rc] == physician
+    if codetype and codetype != "all" and "CodeType" in df.columns:
+        mask &= df["CodeType"] == codetype
+    if charge_status and charge_status != "all":
+        mask &= df["ChargeStatus"] == charge_status
+    if categories:
+        mask &= df["Category"].isin(categories)
+    if reviewed_filter and reviewed_filter != "all" and "Reviewed" in df.columns:
+        mask &= df["Reviewed"] == ("Yes" if reviewed_filter == "yes" else "No")
+    if exported_filter and exported_filter != "all" and "Exported" in df.columns:
+        mask &= df["Exported"] == ("Yes" if exported_filter == "yes" else "No")
+    df_all = df.loc[mask]
+
+    # Slice configs
+    _role_col = "AttendingPhysician" if physician_role == "attending" else "SupervisingPhysician"
+    dept_names = [d for d in DEPARTMENTS if "Department" in df_all.columns and d in df_all["Department"].unique()]
+    active_cat_names = [c for c in CATEGORY_NAMES if c in df_all["Category"].unique()]
+    if _role_col in df_all.columns:
+        phys_names = sorted(df_all[_role_col].dropna().unique())
+        phys_colors = {p: CHART_COLORWAY[i % len(CHART_COLORWAY)] for i, p in enumerate(phys_names)}
+    else:
+        phys_names, phys_colors = [], {}
+
+    _slice_cfgs = {
+        "category": ("Category", active_cat_names, CATEGORY_COLORS),
+        "department": ("Department", dept_names, DEPARTMENT_COLORS),
+        "physician": (_role_col, phys_names, phys_colors),
+    }
+
+    # CPT-code slice for cumulative (only when exactly 1 category selected)
+    if categories and len(categories) == 1:
+        cpt_codes = sorted(df_all["_base_code"].dropna().unique())
+        cpt_colors = {c: CHART_COLORWAY[i % len(CHART_COLORWAY)] for i, c in enumerate(cpt_codes)}
+        _slice_cfgs["cpt"] = ("_base_code", cpt_codes, cpt_colors)
+
+    _dp = date_preset or "12mo"
+
+    vol_cum = _build_cumulative(
+        df_all, "DateOfService", start, end, _dp,
+        y_title="Cumulative Events",
+        mode=volcum_mode or "prior",
+        period_type=volcum_period_type or "calendar",
+        slice_by=volcum_slice or "department",
+        slice_configs=_slice_cfgs,
+    )
+    rvu_cum = _build_cumulative(
+        df_all, "DateOfService", start, end, _dp,
+        value_col="wRVU", y_title="Cumulative wRVU",
+        mode=rvucum_mode or "prior",
+        period_type=rvucum_period_type or "calendar",
+        slice_by=rvucum_slice or "department",
+        slice_configs=_slice_cfgs,
+    )
+    return vol_cum, rvu_cum
 
 
 # ---------------------------------------------------------------------------
 # Clientside: Volume & RVU Charts (with slice toggle)
 # ---------------------------------------------------------------------------
 
-# Wrapper JS to select byCategory/byDepartment from store, then pass to census
-_SLICE_JS = """
-function(storeData, sliceMode, smoothPct, chartType, currentFig) {
+# Wrapper JS: store[sliceMode][agg] → census renderer
+_SLICE_AGG_JS = """
+function(storeData, sliceMode, agg, smoothPct, chartType, currentFig) {
     if (!storeData) return window.dash_clientside.no_update;
-    var key = sliceMode === "department" ? "byDepartment" : "byCategory";
-    var rawData = storeData[key];
+    var sliceData = storeData[sliceMode || "category"];
+    if (!sliceData) return window.dash_clientside.no_update;
+    var rawData = sliceData[agg || "M"];
     if (!rawData) return window.dash_clientside.no_update;
     return window.dash_clientside.census.smoothChartWithType(rawData, smoothPct, chartType, currentFig);
 }
 """
 
 clientside_callback(
-    _SLICE_JS,
+    _SLICE_AGG_JS,
     Output(f"{PAGE_ID}-chart-vol-trend", "figure"),
     Input(f"{PAGE_ID}-store-volume", "data"),
     Input(f"{PAGE_ID}-vol-slice", "value"),
+    Input(f"{PAGE_ID}-vol-agg", "value"),
     Input(f"{PAGE_ID}-vol-settings-smooth", "value"),
     Input(f"{PAGE_ID}-vol-settings-type", "value"),
     State(f"{PAGE_ID}-chart-vol-trend", "figure"),
 )
 
 clientside_callback(
-    _SLICE_JS,
+    _SLICE_AGG_JS,
     Output(f"{PAGE_ID}-chart-rvu-trend", "figure"),
     Input(f"{PAGE_ID}-store-rvu", "data"),
     Input(f"{PAGE_ID}-rvu-slice", "value"),
+    Input(f"{PAGE_ID}-rvu-agg", "value"),
     Input(f"{PAGE_ID}-rvu-settings-smooth", "value"),
     Input(f"{PAGE_ID}-rvu-settings-type", "value"),
     State(f"{PAGE_ID}-chart-rvu-trend", "figure"),
 )
 
-# Cumulative charts (no smooth slider — pass 0 for smoothPct)
+# Cumulative charts (mode/slice handled server-side in store data)
 _CUM_JS = """
 function(rawData, chartType, currentFig) {
+    if (!rawData) return window.dash_clientside.no_update;
     return window.dash_clientside.cumulative.renderCumulative(rawData, 0, chartType, currentFig);
 }
 """
@@ -1126,7 +1538,7 @@ clientside_callback(
 # ---------------------------------------------------------------------------
 
 _PAYOR_BAR_JS = """
-function(storeData, mode) {
+function(storeData, mode, unit) {
     if (!storeData) return window.dash_clientside.no_update;
     var d = storeData[mode] || storeData["actual"];
     if (!d || !d.labels || d.labels.length === 0) {
@@ -1134,23 +1546,41 @@ function(storeData, mode) {
             xaxis: {visible: false}, yaxis: {visible: false},
             annotations: [{text: "No payor data", xref: "paper", yref: "paper",
                 x: 0.5, y: 0.5, showarrow: false, font: {size: 14, color: "#9CA3AF"}}],
-            height: 350, margin: {l: 40, r: 20, t: 20, b: 40}
+            height: 300, margin: {l: 40, r: 20, t: 8, b: 2}
         })};
     }
     var labels = d.labels.slice().reverse();
-    var values = d.values.slice().reverse();
+    var rawValues = d.values.slice().reverse();
     var colors = d.colors.slice().reverse();
+    var isPct = unit === "pct";
+    var total = 0;
+    for (var i = 0; i < rawValues.length; i++) total += rawValues[i];
+    var values = isPct ? rawValues.map(function(v) { return total > 0 ? (v / total * 100) : 0; }) : rawValues;
+    var hoverFmt = isPct
+        ? "%{y}: %{x:.1f}%<extra></extra>"
+        : "%{y}: %{x:,}<extra></extra>";
+    var textVals = isPct
+        ? values.map(function(v) { return v.toFixed(1) + "%"; })
+        : null;
     return {
         data: [{
             y: labels, x: values, orientation: "h", type: "bar",
             marker: {color: colors},
-            hovertemplate: "%{y}: %{x:,}<extra></extra>"
+            text: textVals,
+            textposition: isPct ? "outside" : "none",
+            cliponaxis: false,
+            hovertemplate: hoverFmt
         }],
         layout: Object.assign({}, window.dmc_default_layout || {}, {
             height: 380,
-            margin: {l: 160, r: 16, t: 8, b: 40},
-            xaxis: {title: {text: "Count"}, showgrid: true, gridcolor: "#F0F0F0"},
-            yaxis: {showgrid: false},
+            margin: {l: 160, r: 16, t: 8, b: 18},
+            xaxis: {
+                title: {text: ""},
+                showgrid: true,
+                gridcolor: "#F0F0F0",
+                ticksuffix: isPct ? "%" : ""
+            },
+            yaxis: {showgrid: false, automargin: true},
         })
     };
 }
@@ -1161,6 +1591,7 @@ clientside_callback(
     Output(f"{PAGE_ID}-chart-payor-event", "figure"),
     Input(f"{PAGE_ID}-store-payor-event", "data"),
     Input(f"{PAGE_ID}-payor-event-mode", "value"),
+    Input(f"{PAGE_ID}-payor-event-unit", "value"),
 )
 
 clientside_callback(
@@ -1168,6 +1599,7 @@ clientside_callback(
     Output(f"{PAGE_ID}-chart-payor-patient", "figure"),
     Input(f"{PAGE_ID}-store-payor-patient", "data"),
     Input(f"{PAGE_ID}-payor-patient-mode", "value"),
+    Input(f"{PAGE_ID}-payor-patient-unit", "value"),
 )
 
 
@@ -1197,3 +1629,220 @@ register_chart_callbacks([
     (f"{PAGE_ID}-rvu", f"{PAGE_ID}-chart-rvu-trend"),
     (f"{PAGE_ID}-rvucum", f"{PAGE_ID}-chart-rvu-cum"),
 ])
+
+# Cumulative control visibility: hide slice toggle when "prior", show when "slice"
+_CUM_VIS_JS = """function(mode) {
+    if (mode === "prior") {
+        return [{}, {"display": "none"}];
+    }
+    return [{"display": "none"}, {}];
+}"""
+
+clientside_callback(
+    _CUM_VIS_JS,
+    Output(f"{PAGE_ID}-volcum-period-type", "style"),
+    Output(f"{PAGE_ID}-volcum-slice", "style"),
+    Input(f"{PAGE_ID}-volcum-mode", "value"),
+)
+clientside_callback(
+    _CUM_VIS_JS,
+    Output(f"{PAGE_ID}-rvucum-period-type", "style"),
+    Output(f"{PAGE_ID}-rvucum-slice", "style"),
+    Input(f"{PAGE_ID}-rvucum-mode", "value"),
+)
+
+
+# ---------------------------------------------------------------------------
+# CPT slice option: show only when exactly 1 category is selected
+# ---------------------------------------------------------------------------
+
+_CPT_SLICE_VIS_JS = """
+function(categories, currentVal) {
+    var base = [
+        {value: "category", label: "Category"},
+        {value: "department", label: "Site"},
+        {value: "physician", label: "MD"}
+    ];
+    var show = categories && categories.length === 1;
+    if (show) {
+        base.push({value: "cpt", label: "CPT"});
+        return [base, currentVal];
+    }
+    // Hide CPT — if currently selected, reset to category
+    return [base, currentVal === "cpt" ? "category" : currentVal];
+}
+"""
+
+clientside_callback(
+    _CPT_SLICE_VIS_JS,
+    Output(f"{PAGE_ID}-vol-slice", "data"),
+    Output(f"{PAGE_ID}-vol-slice", "value"),
+    Input(f"{PAGE_ID}-filter-category", "value"),
+    State(f"{PAGE_ID}-vol-slice", "value"),
+)
+
+clientside_callback(
+    _CPT_SLICE_VIS_JS,
+    Output(f"{PAGE_ID}-rvu-slice", "data"),
+    Output(f"{PAGE_ID}-rvu-slice", "value"),
+    Input(f"{PAGE_ID}-filter-category", "value"),
+    State(f"{PAGE_ID}-rvu-slice", "value"),
+)
+
+clientside_callback(
+    _CPT_SLICE_VIS_JS,
+    Output(f"{PAGE_ID}-volcum-slice", "data"),
+    Output(f"{PAGE_ID}-volcum-slice", "value"),
+    Input(f"{PAGE_ID}-filter-category", "value"),
+    State(f"{PAGE_ID}-volcum-slice", "value"),
+)
+
+clientside_callback(
+    _CPT_SLICE_VIS_JS,
+    Output(f"{PAGE_ID}-rvucum-slice", "data"),
+    Output(f"{PAGE_ID}-rvucum-slice", "value"),
+    Input(f"{PAGE_ID}-filter-category", "value"),
+    State(f"{PAGE_ID}-rvucum-slice", "value"),
+)
+
+
+# ---------------------------------------------------------------------------
+# Chip Dropdown: Physician (trigger label, clear, dynamic population)
+# ---------------------------------------------------------------------------
+
+# Trigger label
+clientside_callback(
+    """function(val) {
+        if (!val) return "Physician";
+        return val.split(", ")[0];
+    }""",
+    Output(f"{PAGE_ID}-physician-trigger", "children"),
+    Input(f"{PAGE_ID}-filter-physician", "value"),
+)
+
+# Clear button visibility
+clientside_callback(
+    """function(val) { return val ? {"display": "inline-flex"} : {"display": "none"}; }""",
+    Output(f"{PAGE_ID}-physician-clear", "style"),
+    Input(f"{PAGE_ID}-filter-physician", "value"),
+)
+
+# Clear button action
+clientside_callback(
+    """function(n) { return null; }""",
+    Output(f"{PAGE_ID}-filter-physician", "value", allow_duplicate=True),
+    Input(f"{PAGE_ID}-physician-clear", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+# Populate physician chips dynamically from filtered billing data + role
+@callback(
+    Output(f"{PAGE_ID}-filter-physician", "children"),
+    Input(f"{PAGE_ID}-filter-daterange", "start_date"),
+    Input(f"{PAGE_ID}-filter-daterange", "end_date"),
+    Input(f"{PAGE_ID}-filter-department", "value"),
+    Input(f"{PAGE_ID}-filter-physician-role", "value"),
+)
+def _populate_physicians(start_date, end_date, departments, role):
+    from data.loader import load_billing
+    try:
+        billing = load_billing()
+    except Exception:
+        return []
+
+    if billing.empty:
+        return []
+
+    # Apply date + department filters
+    if start_date and end_date:
+        mask = (billing["DateOfService"] >= pd.Timestamp(start_date)) & \
+               (billing["DateOfService"] <= pd.Timestamp(end_date))
+        billing = billing.loc[mask]
+
+    if departments and "Department" in billing.columns:
+        billing = billing[billing["Department"].isin(departments)]
+
+    # Use the selected role column
+    col = "AttendingPhysician" if role == "attending" else "SupervisingPhysician"
+    if col not in billing.columns:
+        return []
+
+    physicians = sorted(billing[col].dropna().unique())
+    return [dmc.Chip(p, value=p, size="xs", variant="filled") for p in physicians]
+
+
+# ---------------------------------------------------------------------------
+# Chip Dropdown: Category (trigger label, clear, select all/none)
+# ---------------------------------------------------------------------------
+
+# Trigger label
+clientside_callback(
+    """function(vals) {
+        if (!vals || vals.length === 0) return "Category";
+        return vals.length + " selected";
+    }""",
+    Output(f"{PAGE_ID}-category-trigger", "children"),
+    Input(f"{PAGE_ID}-filter-category", "value"),
+)
+
+# Clear button visibility
+clientside_callback(
+    """function(vals) { return vals && vals.length > 0 ? {"display": "inline-flex"} : {"display": "none"}; }""",
+    Output(f"{PAGE_ID}-category-clear", "style"),
+    Input(f"{PAGE_ID}-filter-category", "value"),
+)
+
+# Clear button action
+clientside_callback(
+    """function(n) { return []; }""",
+    Output(f"{PAGE_ID}-filter-category", "value", allow_duplicate=True),
+    Input(f"{PAGE_ID}-category-clear", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+# Select All
+_ALL_CATS = [c for c in CATEGORY_NAMES]
+clientside_callback(
+    "function(n) { return " + str(_ALL_CATS).replace("'", '"') + "; }",
+    Output(f"{PAGE_ID}-filter-category", "value", allow_duplicate=True),
+    Input(f"{PAGE_ID}-category-all", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+# Select None
+clientside_callback(
+    """function(n) { return []; }""",
+    Output(f"{PAGE_ID}-filter-category", "value", allow_duplicate=True),
+    Input(f"{PAGE_ID}-category-none", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+# ---------------------------------------------------------------------------
+# Reviewed / Exported cycling buttons
+# ---------------------------------------------------------------------------
+_CYCLE_JS = """
+function(n, current) {
+    var cycle = {"all": "yes", "yes": "no", "no": "all"};
+    var next = cycle[current || "all"];
+    var labels = {"all": "%s", "yes": "%s: Yes", "no": "%s: No"};
+    var variants = {"all": "default", "yes": "filled", "no": "light"};
+    var colors = {"all": "gray", "yes": "green", "no": "red"};
+    return [next, labels[next], variants[next], colors[next]];
+}
+"""
+
+for _col in ("Reviewed", "Exported"):
+    _btn_id = f"{PAGE_ID}-btn-{_col.lower()}"
+    _store_id = f"{PAGE_ID}-filter-{_col.lower()}"
+    clientside_callback(
+        _CYCLE_JS % (_col, _col, _col),
+        Output(_store_id, "data"),
+        Output(_btn_id, "children"),
+        Output(_btn_id, "variant"),
+        Output(_btn_id, "color"),
+        Input(_btn_id, "n_clicks"),
+        State(_store_id, "data"),
+        prevent_initial_call=True,
+    )

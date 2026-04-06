@@ -1157,7 +1157,7 @@ def update_simulations(_n, agg, volume_slice, volume_scope,
         df = df[~df["ActivityName"].isin(_SIM_TYPE_EXCLUDE)]
 
     if departments and "Department" in df.columns:
-        df = df[df["Department"].isin(departments)]
+        df = df[df["Department"].isin(departments) | df["Department"].isna()]
 
     if physician and "SupervisingPhysician" in df.columns:
         df = df[df["SupervisingPhysician"] == physician]
@@ -1193,9 +1193,11 @@ def update_simulations(_n, agg, volume_slice, volume_scope,
     # Save pre-status-filtered copy for cancellation rate
     df_all_status = df.copy()
 
-    # Filter to completed only for all other charts/KPIs
+    # Filter to completed or billed simulations only
     if "Status" in df.columns:
-        df = df[df["Status"].str.lower().str.contains("completed", na=False)]
+        completed = df["Status"].str.contains("Completed", case=False, na=False)
+        billed = df["ProcedureCodes"].notna() & (df["ProcedureCodes"].astype(str).str.strip() != "") if "ProcedureCodes" in df.columns else pd.Series(False, index=df.index)
+        df = df[completed | billed]
 
     # Weekend filter
     if weekend_only and "ScheduledDateTime" in df.columns:

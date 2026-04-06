@@ -1,9 +1,11 @@
-"""Referrals page — referring physician patterns, specialties, volume trends, and institution analysis."""
+"""Referrals page — conversion funnel, lead times, referring sources, and trends."""
 
+import re
 import dash
 import dash_mantine_components as dmc
 import dash_ag_grid as dag
-from dash import callback, Input, Output, dcc
+from dash import callback, Input, Output, State, dcc, html, clientside_callback, ClientsideFunction
+from dash_iconify import DashIconify
 import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
@@ -11,69 +13,338 @@ from datetime import timedelta
 
 from config.settings import (
     PHYSICIANS, DEPARTMENTS, DEPARTMENT_COLORS, CHART_COLORWAY, PRIMARY,
-    DEFAULT_LAYOUT, FONT_FAMILY, SEMANTIC_COLORS, NEUTRAL,
-    DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS,
+    DEFAULT_LAYOUT, FONT_FAMILY, SEMANTIC_COLORS, NEUTRAL, CHART_PAPER_HEIGHT,
+    DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, ABMS_SPECIALTIES,
 )
-from components.filter_bar import filter_bar, date_presets, department_chips
-from components.kpi_card import kpi_card
+from components.filter_bar import department_chips
+from components.kpi_card import kpi_card, create_sparkline
+from components.chart_card import chart_card, register_chart_callbacks
+from components.outlier_panel import outlier_panel, register_outlier_callbacks
 from utils.charts import apply_default_layout, empty_figure, dept_color, color_for_index
+from utils.diagnosis_categories import build_code_to_category, CATEGORIES as BODY_SYSTEMS
+from utils.date_slider import (
+    month_idx, idx_to_date, MAX_IDX, DEFAULT_SLIDER, SLIDER_MARKS,
+    preset_to_slider_val,
+)
 
 dash.register_page(__name__, path="/referrals", name="Referrals", order=12)
 
+PAGE_ID = "referrals"
+_DEFAULT_DATE_PRESET = "12mo"
+
+# Outlier caps for duration computations (days)
+_CAP_CREATED_TO_SCHEDULED = 14   # > 2 weeks = outlier
+_CAP_SCHEDULED_TO_VISIT = 28     # > 4 weeks = outlier
+_CAP_TOTAL = _CAP_CREATED_TO_SCHEDULED + _CAP_SCHEDULED_TO_VISIT
+
+# Dimension trend/comparison chart height
+_DIM_RIDGE_HEIGHT = 720
+
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Diagnosis Categorisation
+# ---------------------------------------------------------------------------
+# Priority cascade:
+#   1. ICD-10/ICD-9 code extracted from "Diagnoses" → diagnosis_categories lookup
+#   2. Free-text regex on "Rfl Prim Dx"
+#   3. Free-text regex on "Diagnoses"
+#
+# Free-text patterns use the same category names as diagnosis_categories.py
+# so that ICD-resolved and text-resolved rows appear in the same buckets.
+
+_ICD10_RE = re.compile(r"([A-Z]\d[0-9A-Z](?:\.[0-9A-Z]+)?)\s*\(ICD-10")
+_ICD9_RE = re.compile(r"(\d{3}(?:\.\d+)?)\s*\(ICD-9")
+
+# Free-text patterns → category names matching diagnosis_categories.py
+# Order matters — first match wins, so specific patterns precede broad ones.
+# Sarcomas early so "osteoblastoma" doesn't fall through to Mets via "bone".
+_DIAG_TEXT_PATTERNS = [
+    # --- Sarcomas (before Mets — osteoblastoma/fibromatosis are NOT mets) ---
+    ("Sarcomas",               re.compile(
+        r"sarcoma|soft.?tissue|lipomatous.?tumor|spindle.?cell"
+        r"|giant.?cell.?tumor|osteoblas|fibrous.?tumor|fibromatosis", re.I)),
+    # --- Mets / palliative (before organ-specific: "spine mets" ≠ CNS) ---
+    ("Metastases & Palliative", re.compile(
+        r"bone\s*met|brain\s*met|secondary.*bone|secondary.*brain|C79\.[35]"
+        r"|metasta|\bmet\b|\bmets\b|spine\s*met|cord.?compress|spinal.?cord"
+        r"|sternal\s*met|rib\s*met|hip\s*met|sacr\w*\s*met|pelvic\s*met"
+        r"|lytic.?lesion|lystic|bone.?lesion|pathologic\w*\s*fracture"
+        r"|\bbone\b|\bspine\b|lspine|\bfemur\b|femurs|\bhumerus\b|\brib\b|\bpelvi"
+        r"|pevic|skull.?lesion|sternum|SVC.?syndrom|\bPCI\b"
+        r"|T\d+\b|L\s*\d+\b|C\d+\s*spin|sacrum|clavicle|lumbar"
+        r"|\bhip\b|shoulder|scapula|chest.?wall|chest\b|axilla"
+        r"|flank|leg.?mass|thigh.?mass|arm\b|elbow|forearm|T-\d+"
+        r"|calf\b|knee\b|dorsal.?hand|finger|ankle|wrist"
+        r"|face.?mass|back.?pain", re.I)),
+    # --- Specific organ sites ---
+    ("GU – Prostate",          re.compile(r"prostat", re.I)),
+    ("Breast",                 re.compile(
+        r"breast|breat|bresst|breaast|mammary|left brest", re.I)),
+    ("Thoracic",               re.compile(
+        r"\blung\b|pulmon|bronch|\bSCLC\b|\bNSCL\b|mesothelioma"
+        r"|mediastin|thymom|thymus|thymic|paratracheal", re.I)),
+    ("Central Nervous System", re.compile(
+        r"\bbrain\b|\bGBM\b|gliob|glioma|oligodendro|astrocyt|mening"
+        r"|ependymoma|pituitary|schwannoma|acoustic.?neuroma|cerebell"
+        r"|cranial|\borbit\b|orbital|choroid|chorodial|vestibul\w+\s*schwann"
+        r"|frontal.?lobe.?lesion|parietal.?lobe|\bcns\b|optic.?nerve"
+        r"|cauda.?equina|brachial.?plex|neuropath", re.I)),
+    ("Head and Neck",          re.compile(
+        r"tongue|tounge|tonsil|tonge|laryn|pharyn|pharny|hypo.?pharyn|hypoharyn"
+        r"|oral|oropharyn|orophayn|nasopharyn|salivary|thyroid|palat"
+        r"|sinus|nasal|\bBOT\b|base of tongue|parotid|vocal.?cord"
+        r"|epiglott|glotti|mandib|submandib|buccal|retromolar"
+        r"|adenoid.?cystic|lingual|\bH&N\b|\bSCCA\b|mouth|throat"
+        r"|arytenoid|supraclav|neck.?mass|head.?neck|\bneck\b"
+        r"|midface|zygoma|auditory|adenoid\b|otalgia|perianal", re.I)),
+    ("Gastrointestinal",       re.compile(
+        r"pancrea|hepato|esophag|esphag|esopah|esopheal|rectal|rectum"
+        r"|recral|retum|rectosigmoid|colon|gastri|gastic|bile|biliary"
+        r"|cholang|\banal\b|\banus\b|stomach|small.?bowel|pyloric|cecum"
+        r"|splenic.?flexure|\bGI\b|\bliver\b|peritoneum|peritoneal"
+        r"|stomal.?tumor", re.I)),
+    ("Gynecologic",            re.compile(
+        r"cervi|cerivx|uter|endomet|edometr|endrometr|ovar|vulv|vagin|vlava", re.I)),
+    ("Hematologic",            re.compile(
+        r"lymph|lymhoma|hodgkin|leukemi|\bAML\b|myelom|meyloma|myelona"
+        r"|myelofibro|polycythem|plasmacytom|plasma.?cyt|plasma.?cell"
+        r"|mycosis.?fungoid|mycosis.?fungod|spleen|spleno|\bSPLEN\b"
+        r"|pancytopen|\bMGUS\b|amyloid", re.I)),
+    ("Skin",                   re.compile(
+        r"melan|squamous.{0,10}skin|basal.?cell|basil.?cell|\bBCC\b|\bSCC\b"
+        r"|\bskin\b|cutane|merkel|\bMCC\b|keloid|scalp|ear\b|forehead"
+        r"|cheek|temple|lip\b|nose\b|eyelid|sebaceous.?carcinom"
+        r"|\bAFX\b|hidradenitis|squamous.?cell.?carcinom", re.I)),
+    ("GU – Non-Prostate",      re.compile(
+        r"bladder|bkadder|renal|kidney|ureter|ureth|urothel"
+        r"|transitional.?cell|testic|testis|penile|penis|adrenocort|adrenal"
+        r"|seminoma", re.I)),
+    ("Benign Diseases",        re.compile(
+        r"benign|keloid|dupuytren|\bAVM\b|arteriovenous|hemangioma"
+        r"|heterotopic.?oss|het\s*erotrophic|hypertrophic.?scar"
+        r"|osteopor|osteopeni|neurofibroma|Graves|psoriasis"
+        r"|\bHHT\b|Osler.?Weber|trigeminal.?neuralgia|neuralgia"
+        r"|arthritis|bursitis", re.I)),
+]
+
+# Build ICD→category lookup once at import time
+from data.loader import load_diagnosis as _load_diag, load_clinic_visits as _load_cv
+from utils.diagnosis_categories import primary_category as _primary_category
+_DIAG_C2C: dict[str, str] = build_code_to_category(_load_diag())
+
+# Build MRN→category map from clinic visit DiagnosisCodes (tier 3 fallback)
+def _build_cv_mrn_map() -> dict[int, str]:
+    cv = _load_cv()
+    if cv.empty or "DiagnosisCodes" not in cv.columns:
+        return {}
+    cv_diag = cv[cv["DiagnosisCodes"].notna()][["PatientId", "DiagnosisCodes"]]
+    cv_diag = cv_diag.drop_duplicates("PatientId")
+    cv_diag["_cat"] = cv_diag["DiagnosisCodes"].apply(
+        lambda v: _primary_category(v, _DIAG_C2C)
+    )
+    return cv_diag[cv_diag["_cat"] != "Unknown"].set_index("PatientId")["_cat"].to_dict()
+
+_CV_MRN_MAP: dict[int, str] = _build_cv_mrn_map()
+
+
+def _extract_icd_code(text):
+    """Extract the first ICD-10 (preferred) or ICD-9 code from Diagnoses text."""
+    if pd.isna(text):
+        return None
+    s = str(text)
+    m = _ICD10_RE.search(s)
+    if m:
+        return m.group(1)
+    m = _ICD9_RE.search(s)
+    if m:
+        return m.group(1)
+    return None
+
+
+def _categorise_text(text):
+    """Map free-text diagnosis to a category via regex."""
+    if pd.isna(text) or not str(text).strip():
+        return None
+    s = str(text)
+    for name, pat in _DIAG_TEXT_PATTERNS:
+        if pat.search(s):
+            return name
+    return None
+
+
+def _categorise_diagnosis(diagnoses_text, prim_dx_text=None, mrn=None):
+    """Cascade: ICD code → Rfl Prim Dx text → Diagnoses text → CV dx → 'Other'."""
+    # 1. Try ICD code from Diagnoses column
+    code = _extract_icd_code(diagnoses_text)
+    if code:
+        cat = _DIAG_C2C.get(code)
+        if cat:
+            return cat
+    # 2. Try free-text on Rfl Prim Dx
+    if prim_dx_text is not None:
+        cat = _categorise_text(prim_dx_text)
+        if cat:
+            return cat
+    # 3. Try free-text on Diagnoses column
+    cat = _categorise_text(diagnoses_text)
+    if cat:
+        return cat
+    # 4. Try clinic visit diagnosis for this patient
+    if mrn is not None and pd.notna(mrn):
+        cat = _CV_MRN_MAP.get(int(mrn))
+        if cat:
+            return cat
+    return "Other"
+
+
+# ---------------------------------------------------------------------------
+# Department mapping from Referred-by Department
 # ---------------------------------------------------------------------------
 
-def _preset_start(last_date, preset):
-    """Return the start date for a given date preset, relative to data."""
-    if preset == "ytd":
-        return pd.Timestamp(last_date.year, 1, 1)
-    elif preset == "12mo":
-        return last_date - timedelta(days=365)
-    else:  # "all"
-        return pd.Timestamp("1970-01-01")
+_DEPT_MAP_PATTERNS = [
+    ("Lacey",     re.compile(r"LACEY", re.I)),
+    ("Centralia", re.compile(r"CENTRALIA", re.I)),
+    ("Aberdeen",  re.compile(r"ABERDEEN", re.I)),
+]
 
 
-def _prior_range(last_date, preset):
-    """Return (start, end) for the comparison period."""
-    if preset == "ytd":
-        try:
-            pe = pd.Timestamp(last_date.year - 1, last_date.month, last_date.day)
-        except ValueError:
-            pe = pd.Timestamp(last_date.year - 1, last_date.month, 28)
-        return pd.Timestamp(last_date.year - 1, 1, 1), pe
-    elif preset == "12mo":
-        return last_date - timedelta(days=730), last_date - timedelta(days=366)
-    else:  # "all" -- no comparison
-        return None, None
+def _map_to_our_dept(ref_dept):
+    """Map 'Referred by Department' to our three departments (or None)."""
+    if pd.isna(ref_dept):
+        return None
+    s = str(ref_dept)
+    for dept, pat in _DEPT_MAP_PATTERNS:
+        if pat.search(s):
+            return dept
+    return None
 
 
-def _trend(curr, prior, invert=False):
-    """Return (pct_text, direction, prior_value) for trend display."""
-    if prior is None or prior == 0:
-        return None, None, None
-    pct = (curr - prior) / prior * 100
-    direction = ("down" if pct > 0 else "up") if invert else ("up" if pct > 0 else "down")
-    return f"{abs(pct):.0f}%", direction, prior
+# ---------------------------------------------------------------------------
+# Status grouping
+# ---------------------------------------------------------------------------
+
+_STATUS_GROUPS = {
+    "Closed":                     "Closed",
+    "Pending Review":             "Pending",
+    "Authorized":                 "Authorized",
+    "Authorization not Required": "Auth Not Req",
+    "Canceled":                   "Canceled",
+    "Denied":                     "Denied",
+    "Open":                       "Open",
+}
 
 
-def _resolve_physician_name(row):
-    """Get the best available referring physician name from merged data."""
-    for col in ("DoctorFullName", "ReferringPhysician"):
-        val = row.get(col)
-        if pd.notna(val) and str(val).strip():
-            return str(val).strip()
-    return "Unknown"
+# ---------------------------------------------------------------------------
+# Filter Bar
+# ---------------------------------------------------------------------------
+
+_STATUS_OPTIONS = [
+    {"value": "Closed", "label": "Closed"},
+    {"value": "Pending Review", "label": "Pending Review"},
+    {"value": "Authorized", "label": "Authorized"},
+    {"value": "Authorization not Required", "label": "Auth Not Req"},
+    {"value": "Canceled", "label": "Canceled"},
+    {"value": "Denied", "label": "Denied"},
+    {"value": "Open", "label": "Open"},
+]
 
 
-def _resolve_specialty(row):
-    """Get the best available specialty from merged data."""
-    for col in ("DoctorSpecialty", "ReferringPhysicianSpecialty"):
-        val = row.get(col)
-        if pd.notna(val) and str(val).strip():
-            return str(val).strip()
-    return "Unknown"
+def _build_filter_bar():
+    """Two-row filter bar: dimension filters + date controls."""
+    return dmc.Paper(
+        children=[
+            # Row 1: dimension filters
+            dmc.Group(
+                children=[
+                    department_chips(PAGE_ID),
+                    dmc.Select(
+                        id=f"{PAGE_ID}-filter-specialty",
+                        data=[],  # populated by callback
+                        placeholder="All Specialties",
+                        clearable=True,
+                        searchable=True,
+                        size="sm",
+                        w=220,
+                        maxDropdownHeight=800,
+                        comboboxProps={"zIndex": 500},
+                    ),
+                    dmc.Select(
+                        id=f"{PAGE_ID}-filter-diagnosis",
+                        data=[{"value": bs, "label": bs} for bs in BODY_SYSTEMS],
+                        placeholder="All Diagnoses",
+                        clearable=True,
+                        size="sm",
+                        w=220,
+                        maxDropdownHeight=800,
+                        comboboxProps={"zIndex": 500},
+                    ),
+                    outlier_panel(PAGE_ID, transitions=[
+                        ("Created \u2192 Scheduled", _CAP_CREATED_TO_SCHEDULED),
+                        ("Scheduled \u2192 Visit", _CAP_SCHEDULED_TO_VISIT),
+                    ]),
+                ],
+                gap="md", wrap="wrap", align="center",
+            ),
+            # Row 2: date controls
+            dmc.Group(
+                children=[
+                    dmc.Select(
+                        id=f"{PAGE_ID}-filter-date-preset",
+                        data=[
+                            {"value": "12mo", "label": "Prior 12 mo"},
+                            {"value": "6mo", "label": "Prior 6 mo"},
+                            {"value": "3mo", "label": "Prior 3 mo"},
+                            {"value": "ytd", "label": "Year to Date"},
+                            {"value": "last_year", "label": "Last Year"},
+                            {"value": "all", "label": "All Time"},
+                            {"value": "custom", "label": "Custom Range"},
+                        ],
+                        value=_DEFAULT_DATE_PRESET,
+                        size="xs", w=150, allowDeselect=False,
+                        leftSection=DashIconify(icon="mdi:clock-outline", width=14),
+                        comboboxProps={"zIndex": 500, "offset": 2},
+                        maxDropdownHeight=400,
+                    ),
+                    dmc.Paper(
+                        dcc.DatePickerRange(
+                            id=f"{PAGE_ID}-filter-daterange",
+                            display_format="MMM D, YYYY",
+                            start_date_placeholder_text="Start",
+                            end_date_placeholder_text="End",
+                            clearable=True,
+                            number_of_months_shown=2,
+                            minimum_nights=0,
+                            start_date=idx_to_date(
+                                preset_to_slider_val(_DEFAULT_DATE_PRESET, MAX_IDX)[0]
+                            ).strftime("%Y-%m-%d"),
+                            end_date=idx_to_date(
+                                preset_to_slider_val(_DEFAULT_DATE_PRESET, MAX_IDX)[1],
+                                end_of_month=True,
+                            ).strftime("%Y-%m-%d"),
+                            className="wf-date-picker-range",
+                        ),
+                        px="xs", py=4, radius="sm", withBorder=True,
+                        className="wf-datepicker-wrapper",
+                    ),
+                    dmc.Box(
+                        children=[
+                            html.Div(id=f"{PAGE_ID}-date-range-label", style={"display": "none"}),
+                            dmc.RangeSlider(
+                                id=f"{PAGE_ID}-date-slider",
+                                min=0, max=MAX_IDX, step=1,
+                                value=preset_to_slider_val(_DEFAULT_DATE_PRESET, MAX_IDX),
+                                marks=SLIDER_MARKS,
+                                color="violet", size="sm", minRange=0,
+                            ),
+                        ],
+                        style={"flex": "1", "minWidth": "280px"},
+                    ),
+                ],
+                gap="md", align="center", mt="xs",
+            ),
+        ],
+        p="sm", px="md", radius="md", shadow="xs", withBorder=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -84,49 +355,743 @@ layout = dmc.Stack(
     gap=16,
     className="page-content",
     children=[
-        # Sticky header with title and filter bar
+        # Sticky header
         dmc.Box(
             className="page-sticky-header",
             children=[
-                dmc.Title("Referrals", order=2, className="page-title"),
-                dmc.Paper(
+                dmc.Group(
+                    justify="center", align="center", gap="sm",
                     children=[
-                        dmc.Group(
-                            children=[
-                                date_presets("referrals"),
-                                department_chips("referrals"),
-                            ],
-                            gap="lg",
-                            wrap="wrap",
+                        dmc.Title("Referrals", order=2, className="page-title"),
+                        dmc.ActionIcon(
+                            DashIconify(icon="tabler:address-book", width=20),
+                            id=f"{PAGE_ID}-rpm-btn",
+                            variant="subtle", color="violet", size="lg",
                         ),
                     ],
-                    p="sm", px="md", radius="md", shadow="xs", withBorder=True,
+                ),
+                _build_filter_bar(),
+            ],
+        ),
+
+        # KPI row — 6 cards, evenly spaced
+        dmc.Group(
+            id=f"{PAGE_ID}-kpi-row",
+            gap="sm",
+            grow=True,
+            wrap="nowrap",
+            style={"overflow": "hidden"},
+        ),
+
+        # Flow Gantt — referral pathway
+        dmc.Paper(
+            children=[
+                dmc.Text("Referral Pathway", size="sm", fw=500, c=NEUTRAL["text_secondary"], mb="sm"),
+                html.Div(
+                    id=f"{PAGE_ID}-flow-gantt",
+                    style={
+                        "width": "100%",
+                        "aspectRatio": "2.45 / 1",
+                        "minHeight": "340px",
+                        "maxHeight": "480px",
+                    },
+                ),
+            ],
+            p="md", radius="md", shadow="xs", withBorder=True,
+        ),
+
+        # Flow distribution + trend (driven by Gantt band selection)
+        dmc.Grid(
+            gutter="md",
+            children=[
+                dmc.GridCol(
+                    span={"base": 12, "md": 6},
+                    children=dmc.Paper(
+                        children=[
+                            dmc.Group(
+                                justify="space-between", mb=8,
+                                children=[
+                                    dmc.Text(
+                                        id=f"{PAGE_ID}-dist-title",
+                                        children="Duration Distribution",
+                                        size="sm", fw=500, c=NEUTRAL["text_secondary"],
+                                    ),
+                                    dmc.SegmentedControl(
+                                        id=f"{PAGE_ID}-dist-type",
+                                        data=[
+                                            {"value": "density", "label": "Density"},
+                                            {"value": "histogram", "label": "Histogram"},
+                                        ],
+                                        value="density", size="xs",
+                                    ),
+                                ],
+                            ),
+                            dcc.Graph(
+                                id=f"{PAGE_ID}-flow-dist",
+                                config={"displayModeBar": False, "responsive": True},
+                                style={"height": "340px"},
+                            ),
+                        ],
+                        p="sm", radius="md", shadow="xs", withBorder=True,
+                    ),
+                ),
+                dmc.GridCol(
+                    span={"base": 12, "md": 6},
+                    children=dmc.Paper(
+                        children=[
+                            dmc.Group(
+                                justify="space-between", mb=8,
+                                children=[
+                                    dmc.Text(
+                                        id=f"{PAGE_ID}-trend-title",
+                                        children="Duration Trend",
+                                        size="sm", fw=500, c=NEUTRAL["text_secondary"],
+                                    ),
+                                    dmc.SegmentedControl(
+                                        id=f"{PAGE_ID}-trend-agg",
+                                        data=[
+                                            {"value": "W", "label": "Weekly"},
+                                            {"value": "M", "label": "Monthly"},
+                                        ],
+                                        value="M", size="xs",
+                                    ),
+                                ],
+                            ),
+                            dcc.Graph(
+                                id=f"{PAGE_ID}-flow-trend",
+                                config={"displayModeBar": False, "responsive": True},
+                                style={"height": "340px"},
+                            ),
+                        ],
+                        p="sm", radius="md", shadow="xs", withBorder=True,
+                    ),
                 ),
             ],
         ),
 
-        # KPI row -- 5 cards
+        # Dimension Trend + Current vs Prior comparison
         dmc.Grid(
-            id="referrals-kpi-row",
-            gutter=16,
+            gutter="md",
             children=[
-                dmc.GridCol(span={"base": 12, "sm": 6, "md": 2.4}),
-                dmc.GridCol(span={"base": 12, "sm": 6, "md": 2.4}),
-                dmc.GridCol(span={"base": 12, "sm": 6, "md": 2.4}),
-                dmc.GridCol(span={"base": 12, "sm": 6, "md": 2.4}),
-                dmc.GridCol(span={"base": 12, "sm": 6, "md": 2.4}),
+                dmc.GridCol(
+                    chart_card(
+                        f"{PAGE_ID}-chart-dim-trend",
+                        "Referral Trend",
+                        chart_types=[
+                            {"value": "area", "label": "Area"},
+                            {"value": "line", "label": "Line"},
+                            {"value": "bar", "label": "Bar"},
+                        ],
+                        show_smooth=True,
+                        smooth_max=30,
+                        smooth_default=0,
+                        graph_height="100%",
+                        paper_height=f"{_DIM_RIDGE_HEIGHT + 60}px",
+                        store_data=True,
+                        extra_controls=[
+                            dmc.SegmentedControl(
+                                id=f"{PAGE_ID}-dim-trend-agg",
+                                data=[
+                                    {"value": "W", "label": "Weekly"},
+                                    {"value": "M", "label": "Monthly"},
+                                    {"value": "Y", "label": "Yearly"},
+                                ],
+                                value="M",
+                                size="xs",
+                            ),
+                        ],
+                        extra_controls_left=[
+                            dmc.SegmentedControl(
+                                id=f"{PAGE_ID}-dim-toggle",
+                                data=[
+                                    {"value": "provider", "label": "Referring MD"},
+                                    {"value": "department", "label": "Referring Dept"},
+                                    {"value": "specialty", "label": "Specialty"},
+                                    {"value": "diagnosis", "label": "Diagnosis"},
+                                ],
+                                value="diagnosis",
+                                size="xs",
+                                color="violet",
+                            ),
+                        ],
+                    ),
+                    span=6,
+                ),
+                dmc.GridCol(
+                    dmc.Paper(
+                        children=[
+                            dmc.Group(
+                                justify="space-between",
+                                mb=8,
+                                children=[
+                                    dmc.Text("Current vs Prior Period", size="sm", fw=500,
+                                             c=NEUTRAL["text_secondary"]),
+                                    dmc.SegmentedControl(
+                                        id=f"{PAGE_ID}-dim-compare-period",
+                                        data=[
+                                            {"value": "calendar", "label": "Calendar"},
+                                            {"value": "rolling", "label": "Rolling"},
+                                        ],
+                                        value="calendar",
+                                        size="xs",
+                                    ),
+                                ],
+                            ),
+                            dmc.Box(
+                                pos="relative",
+                                style={"flex": "1", "minHeight": 0},
+                                children=[
+                                    dmc.Box(
+                                        style={"position": "absolute", "top": 0, "left": 0,
+                                               "right": 0, "bottom": 0},
+                                        children=[
+                                            dcc.Graph(
+                                                id=f"{PAGE_ID}-chart-dim-comparison",
+                                                config={"displayModeBar": False},
+                                                responsive=True,
+                                                style={"height": "100%", "width": "100%"},
+                                            ),
+                                        ],
+                                    ),
+                                ],
+                            ),
+                        ],
+                        p="sm", pb=8, radius="md", shadow="xs", withBorder=True,
+                        h=f"{_DIM_RIDGE_HEIGHT + 60}px",
+                        style={"display": "flex", "flexDirection": "column"},
+                    ),
+                    span=6,
+                ),
             ],
         ),
 
-        # Charts container -- dynamically populated by callback
-        dmc.Stack(id="referrals-charts", gap=16),
+        # Row: Top Referring Providers + Top Referring Departments
+        dmc.Grid(
+            gutter="md",
+            children=[
+                dmc.GridCol(
+                    span={"base": 12, "md": 6},
+                    children=chart_card(
+                        f"{PAGE_ID}-chart-providers", "Top Referring Providers",
+                        show_settings=False, show_smooth=False,
+                    ),
+                ),
+                dmc.GridCol(
+                    span={"base": 12, "md": 6},
+                    children=chart_card(
+                        f"{PAGE_ID}-chart-departments", "Top Referring Departments",
+                        show_settings=False, show_smooth=False,
+                    ),
+                ),
+            ],
+        ),
 
-        # Detail table container
-        dmc.Box(id="referrals-table-container"),
+        # Row: Monthly Volume Trend + Conversion by Dept
+        dmc.Grid(
+            gutter="md",
+            children=[
+                dmc.GridCol(
+                    span={"base": 12, "md": 6},
+                    children=chart_card(
+                        f"{PAGE_ID}-chart-trend", "Monthly Referral Volume & Conversion",
+                        show_settings=False, show_smooth=False,
+                    ),
+                ),
+                dmc.GridCol(
+                    span={"base": 12, "md": 6},
+                    children=chart_card(
+                        f"{PAGE_ID}-chart-conv-dept", "Conversion Rate by Referring Dept",
+                        show_settings=False, show_smooth=False,
+                    ),
+                ),
+            ],
+        ),
 
-        # Interval for periodic refresh
-        dcc.Interval(id="referrals-interval", interval=300_000, n_intervals=0),
+        # Row: New Referrer Trend + Diagnosis Ridge Plot
+        dmc.Grid(
+            gutter="md",
+            children=[
+                dmc.GridCol(
+                    span={"base": 12, "md": 6},
+                    children=chart_card(
+                        f"{PAGE_ID}-chart-new-referrers", "New Referrer Trend",
+                        show_settings=False, show_smooth=False,
+                    ),
+                ),
+                dmc.GridCol(
+                    span={"base": 12, "md": 6},
+                    children=chart_card(
+                        f"{PAGE_ID}-chart-ridge", "Referral Volume by Diagnosis (Ridge)",
+                        show_settings=False, show_smooth=False,
+                    ),
+                ),
+            ],
+        ),
+
+        # Detail table
+        dmc.Box(id=f"{PAGE_ID}-table-container"),
+
+        # ---------------------------------------------------------------
+        # Referring Physician Manager Modal
+        # ---------------------------------------------------------------
+        dmc.Modal(
+            id=f"{PAGE_ID}-rpm-modal",
+            opened=False,
+            title=dmc.Group(
+                children=[
+                    DashIconify(icon="tabler:address-book", width=22, color=PRIMARY),
+                    dmc.Text("Referring Physician Manager", fw=600, size="lg"),
+                ],
+                gap="xs",
+            ),
+            size="95%",
+            centered=True,
+            zIndex=1000,
+            styles={
+                "header": {"padding": "6px 16px"},
+                "content": {"height": "95vh", "display": "flex", "flexDirection": "column"},
+                "body": {"padding": "0px 16px 4px 16px", "flex": 1, "overflow": "hidden", "display": "flex", "flexDirection": "column"},
+            },
+            children=[
+                dmc.Tabs(
+                    id=f"{PAGE_ID}-rpm-tabs",
+                    value="providers",
+                    style={"flex": 1, "display": "flex", "flexDirection": "column", "overflow": "hidden"},
+                    children=[
+                        # Tab row: tabs left, buttons right (same line)
+                        dmc.Group(
+                            justify="space-between", align="center", mb=4,
+                            style={"borderBottom": "1px solid #dee2e6"},
+                            children=[
+                                dmc.TabsList(
+                                    style={"borderBottom": "none"},
+                                    children=[
+                                        dmc.TabsTab(
+                                            dmc.Group(gap=6, children=[
+                                                DashIconify(icon="tabler:stethoscope", width=16),
+                                                "Providers",
+                                                dmc.Badge(
+                                                    id=f"{PAGE_ID}-rpm-prov-count", size="sm",
+                                                    variant="light", color="violet",
+                                                ),
+                                            ]),
+                                            value="providers",
+                                        ),
+                                        dmc.TabsTab(
+                                            dmc.Group(gap=6, children=[
+                                                DashIconify(icon="tabler:building-hospital", width=16),
+                                                "Institutions",
+                                                dmc.Badge(
+                                                    id=f"{PAGE_ID}-rpm-inst-count", size="sm",
+                                                    variant="light", color="violet",
+                                                ),
+                                            ]),
+                                            value="institutions",
+                                        ),
+                                    ],
+                                ),
+                                # Buttons — visible only on Providers tab
+                                dmc.Group(
+                                    id=f"{PAGE_ID}-rpm-action-btns",
+                                    gap="sm", mr="xs",
+                                    children=[
+                                        dmc.Text(id=f"{PAGE_ID}-rpm-stats", size="xs",
+                                                 c=NEUTRAL["text_muted"]),
+                                        dmc.Button(
+                                            "Look Up Specialties (NPI)",
+                                            id=f"{PAGE_ID}-rpm-npi-btn",
+                                            leftSection=DashIconify(icon="tabler:search", width=14),
+                                            variant="light", color="blue", size="xs",
+                                        ),
+                                        dmc.Button(
+                                            "Research Institutions (AI)",
+                                            id=f"{PAGE_ID}-rpm-ai-btn",
+                                            leftSection=DashIconify(icon="tabler:brain", width=14),
+                                            variant="light", color="grape", size="xs",
+                                        ),
+                                        dmc.Button(
+                                            "Mark Reviewed",
+                                            id=f"{PAGE_ID}-rpm-reviewed-btn",
+                                            leftSection=DashIconify(icon="tabler:check", width=14),
+                                            variant="light", color="green", size="xs",
+                                        ),
+                                        dmc.Button(
+                                            "Export CSV",
+                                            id=f"{PAGE_ID}-rpm-export-btn",
+                                            leftSection=DashIconify(icon="tabler:download", width=14),
+                                            variant="light", color="gray", size="xs",
+                                        ),
+                                    ],
+                                ),
+                            ],
+                        ),
+
+                        # ── Providers tab ──
+                        dmc.TabsPanel(
+                            value="providers",
+                            pt=4,
+                            style={"flex": 1, "display": "flex", "flexDirection": "column", "overflow": "hidden"},
+                            children=[
+                                # Progress bar
+                                dmc.Progress(
+                                    id=f"{PAGE_ID}-rpm-progress",
+                                    value=0, size="sm", color="blue",
+                                    style={"display": "none"}, mb=4,
+                                ),
+                                dmc.Text(
+                                    id=f"{PAGE_ID}-rpm-progress-text", size="xs",
+                                    c=NEUTRAL["text_muted"],
+                                    style={"display": "none"}, mb=4,
+                                ),
+                                # NPI Lookup Review Panel (hidden until results ready)
+                                dmc.Paper(
+                                    id=f"{PAGE_ID}-rpm-npi-review",
+                                    style={"display": "none"},
+                                    p="sm", radius="md", withBorder=True, mb=6,
+                                    children=[
+                                        dmc.Group(
+                                            justify="space-between", mb=6,
+                                            children=[
+                                                dmc.Text("NPI Lookup Results — Review before applying",
+                                                         size="sm", fw=600, c=PRIMARY),
+                                                dmc.Group(
+                                                    gap="sm",
+                                                    children=[
+                                                        dmc.Button(
+                                                            "Accept All",
+                                                            id=f"{PAGE_ID}-rpm-npi-accept-all",
+                                                            leftSection=DashIconify(icon="tabler:checks", width=14),
+                                                            variant="light", color="green", size="xs",
+                                                        ),
+                                                        dmc.Button(
+                                                            "Reject All",
+                                                            id=f"{PAGE_ID}-rpm-npi-reject-all",
+                                                            leftSection=DashIconify(icon="tabler:x", width=14),
+                                                            variant="light", color="red", size="xs",
+                                                        ),
+                                                        dmc.Button(
+                                                            "Apply Selected",
+                                                            id=f"{PAGE_ID}-rpm-npi-apply",
+                                                            leftSection=DashIconify(icon="tabler:check", width=14),
+                                                            variant="filled", color="green", size="xs",
+                                                        ),
+                                                    ],
+                                                ),
+                                            ],
+                                        ),
+                                        dag.AgGrid(
+                                            id=f"{PAGE_ID}-rpm-npi-review-grid",
+                                            columnDefs=[
+                                                {"field": "accept", "headerName": "Accept", "width": 70,
+                                                 "cellDataType": "boolean", "editable": True},
+                                                {"field": "npi", "headerName": "NPI", "flex": 0.7,
+                                                 "cellRenderer": "NpiLink"},
+                                                {"field": "name", "headerName": "Name", "flex": 1.4,
+                                                 "cellRenderer": "NameSearchFull"},
+                                                {"field": "current_specialty", "headerName": "Current", "flex": 1,
+                                                 "cellStyle": {"color": NEUTRAL["text_muted"]}},
+                                                {"field": "raw_taxonomy", "headerName": "NPI Taxonomy", "flex": 1.2,
+                                                 "cellStyle": {"fontStyle": "italic"}},
+                                                {"field": "mapped_specialty", "headerName": "Mapped To", "flex": 1,
+                                                 "editable": True,
+                                                 "cellEditor": "agSelectCellEditor",
+                                                 "cellEditorParams": {"values": [""] + ABMS_SPECIALTIES},
+                                                 "cellStyle": {"fontWeight": 600, "cursor": "pointer"}},
+                                                {"field": "status", "headerName": "Status", "flex": 0.5},
+                                            ],
+                                            defaultColDef={"sortable": True, "resizable": True},
+                                            dashGridOptions={
+                                                "rowHeight": 32,
+                                                "headerHeight": 32,
+                                                "domLayout": "autoHeight",
+                                                "pagination": True,
+                                                "paginationPageSize": 15,
+                                                "singleClickEdit": True,
+                                            },
+                                            style={"maxHeight": "300px"},
+                                            className="ag-theme-alpine",
+                                        ),
+                                    ],
+                                ),
+                                # Providers grid
+                                dag.AgGrid(
+                                    id=f"{PAGE_ID}-rpm-grid",
+                                    columnDefs=[
+                                        {"field": "npi", "headerName": "NPI", "flex": 0.7,
+                                         "cellRenderer": "NpiLink",
+                                         "filter": "agTextColumnFilter", "floatingFilter": True},
+                                        {"field": "name", "headerName": "Name", "flex": 1.2,
+                                         "cellRenderer": "NameSearch",
+                                         "filter": "agTextColumnFilter", "floatingFilter": True},
+                                        {"field": "department", "headerName": "Department", "flex": 1.4,
+                                         "filter": "agTextColumnFilter", "floatingFilter": True},
+                                        {"field": "full_address", "headerName": "Address", "flex": 1.6,
+                                         "cellRenderer": "AddressLinks",
+                                         "filter": "agTextColumnFilter", "floatingFilter": True},
+                                        {"field": "specialty", "headerName": "Specialty", "flex": 1.1,
+                                         "editable": True,
+                                         "cellEditor": "agSelectCellEditor",
+                                         "cellEditorParams": {"values": [""] + ABMS_SPECIALTIES},
+                                         "cellStyle": {"cursor": "pointer"},
+                                         "filter": "agTextColumnFilter", "floatingFilter": True},
+                                        {"field": "institution", "headerName": "Institution", "flex": 1.3,
+                                         "editable": True,
+                                         "cellRenderer": "InstitutionBadge",
+                                         "cellStyle": {"cursor": "pointer"},
+                                         "filter": "agTextColumnFilter", "floatingFilter": True},
+                                        {"field": "source", "headerName": "Source", "flex": 0.5,
+                                         "filter": "agTextColumnFilter", "floatingFilter": True,
+                                         "cellStyle": {"fontStyle": "italic", "color": NEUTRAL["text_muted"]}},
+                                        {"field": "patient_count", "headerName": "Referrals", "flex": 0.5,
+                                         "cellRenderer": "ReferralCountLink",
+                                         "filter": "agNumberColumnFilter", "sort": "desc",
+                                         "type": "numericColumn"},
+                                        {"field": "reviewed", "headerName": "Reviewed", "flex": 0.4,
+                                         "cellDataType": "boolean",
+                                         "editable": True,
+                                         "cellStyle": {"textAlign": "center"}},
+                                    ],
+                                    defaultColDef={"sortable": True, "resizable": True},
+                                    dashGridOptions={
+                                        "pagination": True,
+                                        "paginationPageSize": 50,
+                                        "animateRows": True,
+                                        "undoRedoCellEditing": True,
+                                        "singleClickEdit": True,
+                                        "rowHeight": 36,
+                                        "headerHeight": 36,
+                                        "floatingFiltersHeight": 32,
+                                        "rowSelection": {"mode": "multiRow"},
+                                    },
+                                    style={"flex": 1, "minHeight": 0},
+                                    className="ag-theme-alpine",
+                                ),
+                                # Referral detail panel — shows when a provider row is clicked
+                                dmc.Paper(
+                                    id=f"{PAGE_ID}-rpm-detail-panel",
+                                    style={"display": "none"},
+                                    p="sm", radius="md", withBorder=True,
+                                    children=[
+                                        dmc.Group(
+                                            justify="space-between", mb=4,
+                                            children=[
+                                                dmc.Text(
+                                                    id=f"{PAGE_ID}-rpm-detail-title",
+                                                    size="sm", fw=600, c=PRIMARY,
+                                                ),
+                                                dmc.ActionIcon(
+                                                    DashIconify(icon="tabler:x", width=14),
+                                                    id=f"{PAGE_ID}-rpm-detail-close",
+                                                    variant="subtle", color="gray", size="sm",
+                                                ),
+                                            ],
+                                        ),
+                                        dag.AgGrid(
+                                            id=f"{PAGE_ID}-rpm-detail-grid",
+                                            columnDefs=[
+                                                {"field": "Created", "headerName": "Date", "flex": 0.6,
+                                                 "sort": "desc"},
+                                                {"field": "Patient Name", "headerName": "Patient", "flex": 1},
+                                                {"field": "Rfl Prim Dx", "headerName": "Primary Dx", "flex": 1.2},
+                                                {"field": "Diagnoses", "headerName": "Diagnoses", "flex": 1.5},
+                                                {"field": "Status", "headerName": "Status", "flex": 0.6},
+                                                {"field": "First Appt", "headerName": "First Appt", "flex": 0.6},
+                                                {"field": "Days to First Appt", "headerName": "Days", "flex": 0.4,
+                                                 "type": "numericColumn"},
+                                            ],
+                                            defaultColDef={"sortable": True, "resizable": True,
+                                                           "filter": True, "floatingFilter": True},
+                                            dashGridOptions={
+                                                "rowHeight": 30,
+                                                "headerHeight": 30,
+                                                "floatingFiltersHeight": 28,
+                                                "pagination": True,
+                                                "paginationPageSize": 10,
+                                            },
+                                            style={"height": "250px"},
+                                            className="ag-theme-alpine",
+                                        ),
+                                    ],
+                                ),
+                            ],
+                        ),
+
+                        # ── Institutions tab ──
+                        dmc.TabsPanel(
+                            value="institutions",
+                            pt=4,
+                            style={"flex": 1, "display": "flex", "flexDirection": "column", "overflow": "hidden"},
+                            children=[
+                                dmc.Group(
+                                    justify="space-between", mb=6,
+                                    children=[
+                                        dmc.Text(
+                                            "Edit an institution name to rename it across all providers. "
+                                            "Delete removes the assignment from all providers.",
+                                            size="sm", c=NEUTRAL["text_secondary"],
+                                        ),
+                                        dmc.Button(
+                                            "Export Institutions",
+                                            id=f"{PAGE_ID}-rpm-inst-export-btn",
+                                            leftSection=DashIconify(icon="tabler:download", width=16),
+                                            variant="light", color="gray", size="sm",
+                                        ),
+                                    ],
+                                ),
+                                dag.AgGrid(
+                                    id=f"{PAGE_ID}-rpm-inst-grid",
+                                    columnDefs=[
+                                        {"field": "name", "headerName": "Institution Name", "flex": 2,
+                                         "editable": True, "cellEditor": "agTextCellEditor",
+                                         "filter": "agTextColumnFilter", "floatingFilter": True},
+                                        {"field": "physician_count", "headerName": "Providers",
+                                         "flex": 0.5, "type": "numericColumn", "sort": "desc",
+                                         "filter": "agNumberColumnFilter"},
+                                        {"field": "delete", "headerName": "", "flex": 0.3,
+                                         "cellRenderer": "InstitutionDelete",
+                                         "cellStyle": {"textAlign": "center"}},
+                                    ],
+                                    defaultColDef={"sortable": True, "resizable": True},
+                                    dashGridOptions={
+                                        "pagination": True,
+                                        "paginationPageSize": 25,
+                                        "rowHeight": 36,
+                                        "headerHeight": 36,
+                                        "floatingFiltersHeight": 32,
+                                        "animateRows": True,
+                                    },
+                                    style={"flex": 1, "minHeight": 0},
+                                    className="ag-theme-alpine",
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+                dcc.Download(id=f"{PAGE_ID}-rpm-inst-download"),
+            ],
+        ),
+        # RPM stores and interval
+        dcc.Store(id=f"{PAGE_ID}-rpm-running", data=False),
+        dcc.Store(id=f"{PAGE_ID}-rpm-npi-pending", data=None),
+        dcc.Interval(id=f"{PAGE_ID}-rpm-poll", interval=2000, disabled=True),
+        dcc.Download(id=f"{PAGE_ID}-rpm-download"),
+
+        # Stores
+        dcc.Store(id=f"{PAGE_ID}-store-flow-gantt"),
+        dcc.Store(id=f"{PAGE_ID}-store-flow-details"),
+        dcc.Store(id=f"{PAGE_ID}-store-selected-flow"),
+        dcc.Store(id=f"{PAGE_ID}-flow-gantt-trigger"),
+        # Dummy stores/inputs for clientside callback compatibility
+        dcc.Store(id=f"{PAGE_ID}-store-flow-details-b"),
+        dcc.Store(id=f"{PAGE_ID}-compare-mode", data=False),
+        dcc.Store(id=f"{PAGE_ID}-agg-toggle", data="median"),
+        dcc.Store(id=f"{PAGE_ID}-agg-toggle-b", data="median"),
+        dcc.Store(id=f"{PAGE_ID}-dist-km-switch", data=False),
+        dcc.Store(id=f"{PAGE_ID}-store-trend-legacy"),
+        dcc.Store(id=f"{PAGE_ID}-store-trend-legacy-b"),
+        dcc.Store(id=f"{PAGE_ID}-trend-smooth", data=0),
+        dcc.Store(id=f"{PAGE_ID}-trend-settings-type", data="line"),
+        dcc.Store(id=f"{PAGE_ID}-trend-km-switch", data=False),
+        html.Div(id=f"{PAGE_ID}-trend-maturity", style={"display": "none"}),
+        dcc.Store(id=f"{PAGE_ID}-store-funnel"),
+        dcc.Store(id=f"{PAGE_ID}-store-leadtime"),
+        dcc.Store(id=f"{PAGE_ID}-store-providers"),
+        dcc.Store(id=f"{PAGE_ID}-store-departments"),
+        dcc.Store(id=f"{PAGE_ID}-store-trend"),
+        dcc.Store(id=f"{PAGE_ID}-store-ridge"),
+        dcc.Store(id=f"{PAGE_ID}-store-conv-dept"),
+        dcc.Store(id=f"{PAGE_ID}-store-new-referrers"),
+
+        dcc.Interval(id=f"{PAGE_ID}-interval", interval=300_000, n_intervals=0),
     ],
+)
+
+
+# ---------------------------------------------------------------------------
+# Date Slider Sync Callbacks
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output(f"{PAGE_ID}-date-slider", "value"),
+    Input(f"{PAGE_ID}-filter-date-preset", "value"),
+    prevent_initial_call=True,
+)
+def _preset_to_slider(preset):
+    if preset == "custom":
+        return dash.no_update
+    return preset_to_slider_val(preset, MAX_IDX)
+
+
+clientside_callback(
+    ClientsideFunction(namespace="referralsDateSlider", function_name="syncSlider"),
+    Output(f"{PAGE_ID}-filter-daterange", "start_date"),
+    Output(f"{PAGE_ID}-filter-daterange", "end_date"),
+    Output(f"{PAGE_ID}-date-range-label", "children"),
+    Input(f"{PAGE_ID}-date-slider", "value"),
+    State(f"{PAGE_ID}-filter-daterange", "start_date"),
+    State(f"{PAGE_ID}-filter-daterange", "end_date"),
+)
+
+# Flow Gantt renderer — reuses flow_gantt.js via referralFlowGantt wrapper
+clientside_callback(
+    ClientsideFunction(namespace="referralFlowGantt", function_name="render"),
+    Output(f"{PAGE_ID}-flow-gantt-trigger", "data"),
+    Input(f"{PAGE_ID}-store-flow-gantt", "data"),
+)
+
+# Distribution chart — reuses flowGantt.renderFlowDistribution
+clientside_callback(
+    ClientsideFunction(namespace="flowGantt", function_name="renderFlowDistribution"),
+    Output(f"{PAGE_ID}-flow-dist", "figure"),
+    Output(f"{PAGE_ID}-dist-title", "children"),
+    Input(f"{PAGE_ID}-store-flow-details", "data"),
+    Input(f"{PAGE_ID}-store-selected-flow", "data"),
+    Input(f"{PAGE_ID}-dist-type", "value"),
+    Input(f"{PAGE_ID}-dist-km-switch", "data"),
+    Input(f"{PAGE_ID}-store-flow-details-b", "data"),
+    Input(f"{PAGE_ID}-compare-mode", "data"),
+    Input(f"{PAGE_ID}-agg-toggle", "data"),
+    Input(f"{PAGE_ID}-agg-toggle-b", "data"),
+)
+
+# Trend chart — reuses flowGantt.renderFlowTrend
+clientside_callback(
+    ClientsideFunction(namespace="flowGantt", function_name="renderFlowTrend"),
+    Output(f"{PAGE_ID}-flow-trend", "figure"),
+    Output(f"{PAGE_ID}-trend-title", "children"),
+    Output(f"{PAGE_ID}-trend-maturity", "style"),
+    Input(f"{PAGE_ID}-store-flow-details", "data"),
+    Input(f"{PAGE_ID}-store-selected-flow", "data"),
+    Input(f"{PAGE_ID}-store-trend-legacy", "data"),
+    Input(f"{PAGE_ID}-trend-smooth", "data"),
+    Input(f"{PAGE_ID}-trend-settings-type", "data"),
+    Input(f"{PAGE_ID}-trend-agg", "value"),
+    Input(f"{PAGE_ID}-trend-km-switch", "data"),
+    Input(f"{PAGE_ID}-store-flow-details-b", "data"),
+    Input(f"{PAGE_ID}-store-trend-legacy-b", "data"),
+    Input(f"{PAGE_ID}-compare-mode", "data"),
+    Input(f"{PAGE_ID}-agg-toggle", "data"),
+    Input(f"{PAGE_ID}-agg-toggle-b", "data"),
+)
+
+
+# Register outlier panel callbacks
+register_outlier_callbacks(
+    PAGE_ID, n_transitions=2,
+    defaults=[_CAP_CREATED_TO_SCHEDULED, _CAP_SCHEDULED_TO_VISIT],
+)
+
+# Register gear-icon toggle + export callbacks for dimension trend chart
+register_chart_callbacks([f"{PAGE_ID}-chart-dim-trend"])
+
+# Clientside callback — renders dimension trend ridgeline from store + settings
+clientside_callback(
+    ClientsideFunction(namespace="referralRidge", function_name="renderTrend"),
+    Output(f"{PAGE_ID}-chart-dim-trend", "figure"),
+    Input(f"{PAGE_ID}-chart-dim-trend-store", "data"),
+    Input(f"{PAGE_ID}-chart-dim-trend-settings-smooth", "value"),
+    Input(f"{PAGE_ID}-chart-dim-trend-settings-type", "value"),
+    Input(f"{PAGE_ID}-dim-trend-agg", "value"),
 )
 
 
@@ -134,244 +1099,360 @@ layout = dmc.Stack(
 # Chart Builders
 # ---------------------------------------------------------------------------
 
-def _build_top_physicians_chart(df, n=20):
-    """Horizontal bar chart of top N referring physicians by consult count."""
+def _build_funnel(df):
+    """Horizontal bar chart showing referral funnel stages including CV confirmation."""
     if df.empty:
-        return empty_figure("No referral data available")
+        return empty_figure("No referral data")
 
-    df = df.copy()
-    df["_physician"] = df.apply(_resolve_physician_name, axis=1)
-    df["_specialty"] = df.apply(_resolve_specialty, axis=1)
+    total = len(df)
+    auth_ok = len(df[df["Status"].isin(["Closed", "Authorized", "Authorization not Required", "Open"])])
+    with_appt = len(df[df["Appt Attached"] == "Yes"])
+    confirmed = len(df[df["CVMatch"].isin(["Confirmed", "Rescheduled"])]) if "CVMatch" in df.columns else 0
+    closed = len(df[df["Status"] == "Closed"])
 
-    # Count consults per physician
-    counts = df.groupby(["_physician", "_specialty"]).size().reset_index(name="count")
-    counts = counts.sort_values("count", ascending=False).head(n)
-    counts = counts.sort_values("count", ascending=True)  # Reverse for horizontal bar
+    stages = ["Total Referrals", "Authorized / Auth Not Req", "Appt Attached",
+              "Visit Confirmed (CV)", "Closed"]
+    values = [total, auth_ok, with_appt, confirmed, closed]
+    pcts = [100] + [v / total * 100 if total else 0 for v in values[1:]]
 
-    if counts.empty:
-        return empty_figure("No referral data available")
-
-    # Assign colors by specialty
-    specialties = counts["_specialty"].unique().tolist()
-    spec_colors = {s: color_for_index(i) for i, s in enumerate(specialties)}
+    colors = [CHART_COLORWAY[0], CHART_COLORWAY[1], CHART_COLORWAY[3],
+              SEMANTIC_COLORS["success"], CHART_COLORWAY[5]]
 
     fig = go.Figure()
-
-    # Group by specialty for legend
-    for spec in specialties:
-        spec_data = counts[counts["_specialty"] == spec]
+    for i, (stage, val, pct, clr) in enumerate(zip(stages, values, pcts, colors)):
         fig.add_trace(go.Bar(
-            y=spec_data["_physician"],
-            x=spec_data["count"],
-            orientation="h",
-            name=spec if len(spec) <= 30 else spec[:27] + "...",
-            marker_color=spec_colors[spec],
-            hovertemplate="%{y}<br>%{x} consults<br>" + spec + "<extra></extra>",
+            y=[stage], x=[val], orientation="h",
+            marker_color=clr,
+            text=f"{val:,} ({pct:.0f}%)",
+            textposition="auto",
+            textfont=dict(size=12, color="white"),
+            hovertemplate=f"{stage}: %{{x:,}} ({pct:.1f}%)<extra></extra>",
+            showlegend=False,
         ))
 
     fig = apply_default_layout(fig,
         height=380,
-        barmode="stack",
-        margin=dict(l=160, r=16, t=8, b=32),
-        legend=dict(
-            orientation="h", yanchor="bottom", y=1.02,
-            xanchor="left", x=0, font=dict(size=10),
-        ),
-        yaxis=dict(
-            showgrid=False, linecolor="#E0E0E0", gridcolor="#F0F0F0",
-            tickfont=dict(size=11),
-        ),
-        xaxis=dict(
-            showgrid=True, gridcolor="#F0F0F0", linecolor="#E0E0E0",
-            title="Consults",
-        ),
+        margin=dict(l=180, r=16, t=8, b=32),
+        yaxis=dict(showgrid=False, autorange="reversed", categoryorder="array",
+                   categoryarray=stages),
+        xaxis=dict(showgrid=True, gridcolor="#F0F0F0", title="Referrals"),
     )
     return fig
 
 
-def _build_specialty_donut(df):
-    """Donut chart of consult count by specialty (top 10 + Other)."""
+def _build_leadtime(df):
+    """Box plots for lead time metrics."""
     if df.empty:
-        return empty_figure("No referral data available")
+        return empty_figure("No referral data")
 
-    df = df.copy()
-    df["_specialty"] = df.apply(_resolve_specialty, axis=1)
-
-    counts = df.groupby("_specialty").size().reset_index(name="count")
-    counts = counts.sort_values("count", ascending=False)
-
-    # Top 10 + Other
-    if len(counts) > 10:
-        top10 = counts.head(10)
-        other_count = counts.iloc[10:]["count"].sum()
-        other_row = pd.DataFrame([{"_specialty": "Other", "count": other_count}])
-        counts = pd.concat([top10, other_row], ignore_index=True)
-
-    colors = [color_for_index(i) for i in range(len(counts))]
-
-    fig = go.Figure(data=[go.Pie(
-        labels=counts["_specialty"],
-        values=counts["count"],
-        hole=0.45,
-        marker=dict(colors=colors),
-        textinfo="percent+label",
-        textposition="outside",
-        textfont=dict(size=10),
-        hovertemplate="%{label}<br>%{value} consults (%{percent})<extra></extra>",
-        sort=False,
-    )])
-
-    fig = apply_default_layout(fig,
-        height=380,
-        margin=dict(l=16, r=16, t=16, b=16),
-        showlegend=False,
-    )
-    return fig
-
-
-def _build_volume_trend(df):
-    """Line chart of referral volume by month."""
-    if df.empty or "ScheduledDateTime" not in df.columns:
-        return empty_figure("No referral data available")
-
-    df = df.copy()
-    df["_month"] = df["ScheduledDateTime"].dt.to_period("M").dt.to_timestamp()
-
-    monthly = df.groupby("_month").size().reset_index(name="count")
-    monthly = monthly.sort_values("_month")
-
-    if monthly.empty:
-        return empty_figure("No referral data available")
+    metrics = [
+        ("Days to Assign", "Assign"),
+        ("Days to Auth", "Authorize"),
+        ("Auth to Appt", "Auth to Appt"),
+        ("Days to First Appt", "To First Appt"),
+    ]
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=monthly["_month"],
-        y=monthly["count"],
-        mode="lines+markers",
-        line=dict(color=PRIMARY, width=2),
-        marker=dict(size=5, color=PRIMARY),
-        hovertemplate="%{x|%b %Y}: %{y} consults<extra></extra>",
-        name="Referrals",
-    ))
-
-    # Add trend line (simple linear regression)
-    if len(monthly) >= 3:
-        x_num = np.arange(len(monthly))
-        z = np.polyfit(x_num, monthly["count"].values, 1)
-        p = np.poly1d(z)
-        fig.add_trace(go.Scatter(
-            x=monthly["_month"],
-            y=p(x_num),
-            mode="lines",
-            line=dict(color=NEUTRAL["text_muted"], width=1.5, dash="dash"),
-            hoverinfo="skip",
-            name="Trend",
+    colors = [CHART_COLORWAY[0], CHART_COLORWAY[1], CHART_COLORWAY[3], CHART_COLORWAY[5]]
+    for i, (col, label) in enumerate(metrics):
+        if col not in df.columns:
+            continue
+        vals = df[col].dropna()
+        # Cap outliers at 99th percentile for cleaner display
+        if not vals.empty:
+            cap = vals.quantile(0.99)
+            vals = vals[vals <= cap]
+        fig.add_trace(go.Box(
+            y=vals, name=label,
+            marker_color=colors[i % len(colors)],
+            boxmean="sd",
+            hovertemplate="%{y:.0f} days<extra></extra>",
         ))
 
     fig = apply_default_layout(fig,
         height=380,
         margin=dict(l=48, r=16, t=8, b=48),
-        xaxis=dict(
-            showgrid=False, linecolor="#E0E0E0", gridcolor="#F0F0F0",
-            dtick="M3", tickformat="%b %Y",
-        ),
-        yaxis=dict(
-            showgrid=True, gridcolor="#F0F0F0", linecolor="#E0E0E0",
-            title="Consults",
-        ),
-        legend=dict(
-            orientation="h", yanchor="bottom", y=1.02,
-            xanchor="left", x=0, font=dict(size=11),
-        ),
+        showlegend=False,
+        yaxis=dict(showgrid=True, gridcolor="#F0F0F0", title="Days"),
+        xaxis=dict(showgrid=False),
     )
     return fig
 
 
-def _build_institution_chart(df, n=15):
-    """Horizontal bar chart of top N institutions by consult count."""
-    if df.empty:
-        return empty_figure("No referral data available")
+def _build_top_providers(df, n=20):
+    """Horizontal bar chart of top N referring providers."""
+    if df.empty or "Referred by Provider" not in df.columns:
+        return empty_figure("No referral data")
 
-    inst_col = "DoctorInstitution"
-    if inst_col not in df.columns:
-        return empty_figure("Institution data not available")
-
-    df = df.copy()
-    df["_institution"] = df[inst_col].fillna("Unknown").astype(str).str.strip()
-    df.loc[df["_institution"] == "", "_institution"] = "Unknown"
-
-    counts = df.groupby("_institution").size().reset_index(name="count")
-    counts = counts.sort_values("count", ascending=False).head(n)
-    counts = counts.sort_values("count", ascending=True)  # Reverse for horizontal bar
-
-    if counts.empty:
-        return empty_figure("No institution data available")
-
-    # Truncate long names for display
-    counts["_display"] = counts["_institution"].apply(
-        lambda x: x if len(x) <= 35 else x[:32] + "..."
-    )
+    counts = df["Referred by Provider"].dropna().value_counts().head(n)
+    counts = counts.sort_values(ascending=True)
 
     fig = go.Figure()
     fig.add_trace(go.Bar(
-        y=counts["_display"],
-        x=counts["count"],
+        y=counts.index,
+        x=counts.values,
         orientation="h",
-        marker_color=CHART_COLORWAY[1],
-        hovertemplate="%{y}<br>%{x} consults<extra></extra>",
+        marker_color=CHART_COLORWAY[0],
+        hovertemplate="%{y}<br>%{x:,} referrals<extra></extra>",
         showlegend=False,
     ))
 
     fig = apply_default_layout(fig,
         height=380,
         margin=dict(l=200, r=16, t=8, b=32),
-        yaxis=dict(
-            showgrid=False, linecolor="#E0E0E0", gridcolor="#F0F0F0",
-            tickfont=dict(size=11),
+        yaxis=dict(showgrid=False, tickfont=dict(size=10)),
+        xaxis=dict(showgrid=True, gridcolor="#F0F0F0", title="Referrals"),
+    )
+    return fig
+
+
+def _build_top_departments(df, n=15):
+    """Horizontal bar chart of top N referring departments."""
+    if df.empty or "Referred by Department" not in df.columns:
+        return empty_figure("No department data")
+
+    counts = df["Referred by Department"].dropna().value_counts().head(n)
+    counts = counts.sort_values(ascending=True)
+
+    # Truncate long names
+    labels = [n if len(n) <= 40 else n[:37] + "..." for n in counts.index]
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        y=labels,
+        x=counts.values,
+        orientation="h",
+        marker_color=CHART_COLORWAY[1],
+        hovertemplate="%{y}<br>%{x:,} referrals<extra></extra>",
+        showlegend=False,
+        customdata=counts.index.tolist(),
+    ))
+
+    fig = apply_default_layout(fig,
+        height=380,
+        margin=dict(l=260, r=16, t=8, b=32),
+        yaxis=dict(showgrid=False, tickfont=dict(size=10)),
+        xaxis=dict(showgrid=True, gridcolor="#F0F0F0", title="Referrals"),
+    )
+    return fig
+
+
+def _build_volume_trend(df):
+    """Monthly referral volume with conversion rate on secondary axis."""
+    if df.empty or "Created" not in df.columns:
+        return empty_figure("No referral data")
+
+    df = df.copy()
+    df["_month"] = df["Created"].dt.to_period("M").dt.to_timestamp()
+
+    monthly = df.groupby("_month").agg(
+        total=("Referral ID", "count"),
+        converted=("Appt Attached", lambda x: (x == "Yes").sum()),
+    ).reset_index().sort_values("_month")
+
+    monthly["conv_rate"] = (monthly["converted"] / monthly["total"] * 100).round(1)
+
+    # Drop the last month if it's partial (< 15 days of data)
+    if len(monthly) > 1:
+        last_month_data = df[df["_month"] == monthly["_month"].iloc[-1]]
+        if len(last_month_data) < 15:
+            monthly = monthly.iloc[:-1]
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=monthly["_month"], y=monthly["total"],
+        name="Total Referrals",
+        marker_color=CHART_COLORWAY[0],
+        opacity=0.6,
+        hovertemplate="%{x|%b %Y}: %{y:,} referrals<extra></extra>",
+        yaxis="y",
+    ))
+    fig.add_trace(go.Scatter(
+        x=monthly["_month"], y=monthly["conv_rate"],
+        name="Conversion %",
+        mode="lines+markers",
+        line=dict(color=SEMANTIC_COLORS["success"], width=2),
+        marker=dict(size=4),
+        hovertemplate="%{x|%b %Y}: %{y:.1f}%<extra></extra>",
+        yaxis="y2",
+    ))
+
+    fig = apply_default_layout(fig,
+        height=380,
+        margin=dict(l=48, r=48, t=8, b=48),
+        xaxis=dict(showgrid=False, dtick="M3", tickformat="%b '%y"),
+        yaxis=dict(showgrid=True, gridcolor="#F0F0F0", title="Referrals"),
+        yaxis2=dict(
+            title="Conversion %", overlaying="y", side="right",
+            showgrid=False, range=[0, 105],
+            ticksuffix="%",
         ),
-        xaxis=dict(
-            showgrid=True, gridcolor="#F0F0F0", linecolor="#E0E0E0",
-            title="Consults",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        barmode="overlay",
+    )
+    return fig
+
+
+def _build_ridge_plot(df):
+    """Ridge-line plot of monthly referral volume by diagnosis category."""
+    if df.empty or "Created" not in df.columns:
+        return empty_figure("No referral data")
+
+    df = df.copy()
+    df["_diag_cat"] = df.apply(
+        lambda r: _categorise_diagnosis(
+            r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("MRN")
+        ),
+        axis=1,
+    )
+    df["_month"] = df["Created"].dt.to_period("M").dt.to_timestamp()
+
+    # Get top categories by volume (exclude Other)
+    cat_counts = df["_diag_cat"].value_counts()
+    categories = [c for c in cat_counts.index if c != "Other"][:8]
+    categories = list(reversed(categories))  # Bottom to top
+
+    if not categories:
+        return empty_figure("No diagnosis data")
+
+    # Monthly counts per category
+    pivot = (
+        df[df["_diag_cat"].isin(categories)]
+        .groupby(["_month", "_diag_cat"]).size()
+        .unstack(fill_value=0)
+    )
+
+    fig = go.Figure()
+    spacing = 1.0  # vertical spacing between ridges
+
+    for i, cat in enumerate(categories):
+        if cat not in pivot.columns:
+            continue
+        y_vals = pivot[cat].values.astype(float)
+        x_vals = pivot.index
+
+        # Normalise to [0, spacing*0.8] for visual consistency
+        y_max = y_vals.max() if y_vals.max() > 0 else 1
+        y_norm = y_vals / y_max * spacing * 0.7
+        y_offset = i * spacing
+
+        color = color_for_index(i)
+
+        # Convert hex to rgba for fill
+        def _hex_to_rgba(hex_c, alpha=0.3):
+            r = int(hex_c[1:3], 16)
+            g = int(hex_c[3:5], 16)
+            b = int(hex_c[5:7], 16)
+            return f"rgba({r},{g},{b},{alpha})"
+
+        fill_color = _hex_to_rgba(color, 0.3) if color.startswith("#") else color
+
+        # Fill area
+        fig.add_trace(go.Scatter(
+            x=x_vals, y=y_norm + y_offset,
+            mode="lines",
+            line=dict(color=color, width=1.5),
+            fill="toself",
+            fillcolor=fill_color,
+            hovertemplate=f"{cat}<br>%{{x|%b %Y}}: %{{customdata:,}}<extra></extra>",
+            customdata=y_vals.astype(int),
+            showlegend=False,
+        ))
+        # Baseline
+        fig.add_trace(go.Scatter(
+            x=x_vals, y=[y_offset] * len(x_vals),
+            mode="lines",
+            line=dict(color=color, width=0.5),
+            hoverinfo="skip",
+            showlegend=False,
+        ))
+
+    # Y-axis labels for categories
+    tickvals = [i * spacing for i in range(len(categories))]
+    ticktext = categories
+
+    fig = apply_default_layout(fig,
+        height=380,
+        margin=dict(l=90, r=16, t=8, b=48),
+        xaxis=dict(showgrid=False, dtick="M6", tickformat="%b '%y"),
+        yaxis=dict(
+            showgrid=False, zeroline=False,
+            tickmode="array", tickvals=tickvals, ticktext=ticktext,
+            tickfont=dict(size=10),
         ),
     )
     return fig
 
 
-def _build_new_referrer_trend(df):
-    """Bar chart of new referrers by month (first referral month per physician)."""
-    if df.empty or "ScheduledDateTime" not in df.columns:
-        return empty_figure("No referral data available")
+def _build_conv_by_dept(df, n=15):
+    """Horizontal bar chart of conversion rate by referring department."""
+    if df.empty or "Referred by Department" not in df.columns:
+        return empty_figure("No department data")
 
-    ref_col = "ReferringPhysicianDimDoctorID"
-    if ref_col not in df.columns:
-        return empty_figure("Referring physician ID not available")
+    grp = df.groupby("Referred by Department").agg(
+        total=("Referral ID", "count"),
+        converted=("Appt Attached", lambda x: (x == "Yes").sum()),
+    ).reset_index()
 
-    df = df.copy()
-    df_with_ref = df[df[ref_col].notna()]
+    # Only departments with meaningful volume
+    grp = grp[grp["total"] >= 10].copy()
+    grp["conv_rate"] = (grp["converted"] / grp["total"] * 100).round(1)
+    grp = grp.sort_values("conv_rate", ascending=True).tail(n)
 
-    if df_with_ref.empty:
-        return empty_figure("No referring physician data available")
-
-    # Find each referring MD's first referral date
-    first_referral = (
-        df_with_ref
-        .groupby(ref_col)["ScheduledDateTime"]
-        .min()
-        .reset_index()
-    )
-    first_referral.columns = [ref_col, "FirstReferralDate"]
-    first_referral["_month"] = first_referral["FirstReferralDate"].dt.to_period("M").dt.to_timestamp()
-
-    monthly_new = first_referral.groupby("_month").size().reset_index(name="count")
-    monthly_new = monthly_new.sort_values("_month")
-
-    if monthly_new.empty:
-        return empty_figure("No new referrer data available")
+    labels = [n if len(n) <= 40 else n[:37] + "..." for n in grp["Referred by Department"]]
 
     fig = go.Figure()
     fig.add_trace(go.Bar(
-        x=monthly_new["_month"],
-        y=monthly_new["count"],
+        y=labels,
+        x=grp["conv_rate"].values,
+        orientation="h",
+        marker_color=[
+            SEMANTIC_COLORS["success"] if v >= 85
+            else SEMANTIC_COLORS["warning"] if v >= 70
+            else SEMANTIC_COLORS["error"]
+            for v in grp["conv_rate"]
+        ],
+        text=[f"{v:.0f}%" for v in grp["conv_rate"]],
+        textposition="auto",
+        textfont=dict(size=11),
+        hovertemplate="%{y}<br>%{x:.1f}% (%{customdata:,} total)<extra></extra>",
+        customdata=grp["total"].values,
+        showlegend=False,
+    ))
+
+    fig = apply_default_layout(fig,
+        height=380,
+        margin=dict(l=260, r=16, t=8, b=32),
+        yaxis=dict(showgrid=False, tickfont=dict(size=10)),
+        xaxis=dict(showgrid=True, gridcolor="#F0F0F0", title="Conversion %",
+                   range=[0, 105], ticksuffix="%"),
+    )
+    return fig
+
+
+def _build_new_referrer_trend(df):
+    """Bar chart of new referring providers by month."""
+    if df.empty or "Created" not in df.columns or "Referred by Provider" not in df.columns:
+        return empty_figure("No referral data")
+
+    df = df.copy()
+    df_with = df[df["Referred by Provider"].notna()]
+    if df_with.empty:
+        return empty_figure("No provider data")
+
+    first_ref = df_with.groupby("Referred by Provider")["Created"].min().reset_index()
+    first_ref.columns = ["Provider", "FirstDate"]
+    first_ref["_month"] = first_ref["FirstDate"].dt.to_period("M").dt.to_timestamp()
+
+    monthly = first_ref.groupby("_month").size().reset_index(name="count").sort_values("_month")
+
+    # Drop partial last month
+    if len(monthly) > 1 and monthly["count"].iloc[-1] < 3:
+        monthly = monthly.iloc[:-1]
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=monthly["_month"], y=monthly["count"],
         marker_color=CHART_COLORWAY[4],
         hovertemplate="%{x|%b %Y}: %{y} new referrers<extra></extra>",
         showlegend=False,
@@ -380,72 +1461,289 @@ def _build_new_referrer_trend(df):
     fig = apply_default_layout(fig,
         height=380,
         margin=dict(l=48, r=16, t=8, b=48),
-        xaxis=dict(
-            showgrid=False, linecolor="#E0E0E0", gridcolor="#F0F0F0",
-            dtick="M3", tickformat="%b %Y",
-        ),
+        xaxis=dict(showgrid=False, dtick="M3", tickformat="%b '%y"),
+        yaxis=dict(showgrid=True, gridcolor="#F0F0F0", title="New Referring MDs"),
+    )
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# Dimension-grouped Trend + Comparison (like Diagnosis page)
+# ---------------------------------------------------------------------------
+
+_DIM_TOP_N = 15  # max groups in trend/comparison
+
+# Stable colorway for dimension groups
+_DIM_COLORS = [
+    "#7C2A83", "#2196F3", "#F44336", "#4CAF50", "#FF9800",
+    "#00BCD4", "#9C27B0", "#795548", "#E91E63", "#3F51B5",
+    "#8BC34A", "#FF5722", "#607D8B", "#009688", "#CDDC39",
+]
+
+
+def _assign_dimension_group(df, dimension):
+    """Add _dim_group column based on the chosen dimension.
+
+    dimension: "provider" | "department" | "specialty" | "diagnosis"
+    Returns df with _dim_group column (rows with None/_dim_group==None dropped).
+    """
+    df = df.copy()
+    if dimension == "provider":
+        col = "Referred by Provider"
+        if col not in df.columns:
+            df["_dim_group"] = None
+        else:
+            df["_dim_group"] = df[col]
+    elif dimension == "department":
+        col = "Referred by Department"
+        if col not in df.columns:
+            df["_dim_group"] = None
+        else:
+            df["_dim_group"] = df[col].apply(
+                lambda v: v if len(str(v)) <= 40 else str(v)[:37] + "..."
+                if pd.notna(v) else None
+            )
+    elif dimension == "specialty":
+        col = "DeptSpecialty"
+        if col not in df.columns:
+            df["_dim_group"] = None
+        else:
+            df["_dim_group"] = df[col]
+    elif dimension == "diagnosis":
+        df["_dim_group"] = df.apply(
+            lambda r: _categorise_diagnosis(
+                r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("MRN")
+            ),
+            axis=1,
+        )
+        # Drop "Other" from diagnosis grouping for cleaner charts
+        df.loc[df["_dim_group"] == "Other", "_dim_group"] = None
+    else:
+        df["_dim_group"] = None
+
+    df = df[df["_dim_group"].notna()]
+    return df
+
+
+def _dim_color_map(groups):
+    """Return {group_name: hex_color} for a list of group names."""
+    return {g: _DIM_COLORS[i % len(_DIM_COLORS)] for i, g in enumerate(groups)}
+
+
+def _prepare_ref_trend_store(df, dimension):
+    """Build per-group time-series data for W/M/Y aggregation.
+
+    Same JSON format as diagnosis page, consumed by referralRidge.renderTrend.
+    """
+    if df.empty or "_dim_group" not in df.columns or "Created" not in df.columns:
+        return None
+
+    tmp = df[["Created", "_dim_group"]].dropna(subset=["Created"]).copy()
+
+    # Limit to top N groups by total count
+    group_counts = tmp["_dim_group"].value_counts()
+    top_groups = group_counts.head(_DIM_TOP_N).index.tolist()
+    tmp = tmp[tmp["_dim_group"].isin(top_groups)]
+
+    groups = list(reversed(
+        tmp["_dim_group"].value_counts().index.tolist()
+    ))  # ascending (bottom→top)
+    if not groups:
+        return None
+
+    cmap = _dim_color_map(groups)
+
+    combos = {}
+    for agg in ("W", "M", "Y"):
+        period_code = "Y" if agg == "Y" else agg
+        t = tmp.copy()
+        t["period"] = t["Created"].dt.to_period(period_code).dt.to_timestamp()
+        all_periods = sorted(t["period"].unique())
+        dates = [d.isoformat() for d in all_periods]
+
+        series = []
+        for grp in groups:
+            sub = t[t["_dim_group"] == grp]
+            counts = sub.groupby("period").size().reindex(all_periods, fill_value=0)
+            series.append({
+                "name": grp,
+                "values": counts.tolist(),
+                "color": cmap.get(grp, CHART_COLORWAY[0]),
+            })
+
+        combos[agg] = {"dates": dates, "series": series}
+
+    return {"combos": combos, "groups": groups, "height": _DIM_RIDGE_HEIGHT}
+
+
+def _period_label(start, end):
+    """Smart period label for date ranges."""
+    same_year = start.year == end.year
+    same_month = same_year and start.month == end.month
+    if same_month:
+        return start.strftime("%b %Y")
+    if same_year:
+        if start.month == 1 and end.month == 12:
+            return str(start.year)
+        return f"{start.strftime('%b')} – {end.strftime('%b %Y')}"
+    return f"{start.strftime('%b %y')} – {end.strftime('%b %y')}"
+
+
+def _build_ref_comparison_bars(dff_curr, dff_prior, start, end, prior_start, prior_end):
+    """Horizontal grouped bar chart: current vs prior period per dimension group.
+
+    Same layout as the Diagnosis page comparison chart.
+    """
+    if dff_curr.empty or "_dim_group" not in dff_curr.columns:
+        fig = empty_figure("No data for selected filters")
+        fig.update_layout(height=_DIM_RIDGE_HEIGHT)
+        return fig
+
+    curr_label = _period_label(start, end)
+    prior_label = _period_label(prior_start, prior_end)
+
+    curr_counts = dff_curr["_dim_group"].value_counts()
+    prior_counts = (
+        dff_prior["_dim_group"].value_counts()
+        if dff_prior is not None and not dff_prior.empty and "_dim_group" in dff_prior.columns
+        else pd.Series(dtype=int)
+    )
+
+    all_groups = sorted(set(curr_counts.index) | set(prior_counts.index))
+    # Sort by absolute change (biggest movers first), then keep top N
+    # This highlights what shifted between periods, not just what's largest
+    all_groups = sorted(
+        all_groups,
+        key=lambda g: abs(curr_counts.get(g, 0) - prior_counts.get(g, 0)),
+        reverse=True,
+    )
+    all_groups = all_groups[:_DIM_TOP_N]
+    # Re-sort ascending by current count for horizontal bar display (largest at top)
+    all_groups = sorted(all_groups, key=lambda g: curr_counts.get(g, 0))
+
+    cmap = _dim_color_map(all_groups)
+    curr_vals = [int(curr_counts.get(g, 0)) for g in all_groups]
+    prior_vals = [int(prior_counts.get(g, 0)) for g in all_groups]
+
+    fig = go.Figure()
+
+    # Prior bars (behind, muted)
+    fig.add_trace(go.Bar(
+        x=prior_vals, y=all_groups, orientation="h",
+        marker_color="rgba(156, 163, 175, 0.45)",
+        name=prior_label,
+        text=[f"{v:,}" for v in prior_vals],
+        textposition="inside", insidetextanchor="end", textangle=0,
+        textfont=dict(size=12, color="#6B7280"),
+        hovertemplate=[
+            f"<b>{g}</b><br>{prior_label}: {v:,}<extra></extra>"
+            for g, v in zip(all_groups, prior_vals)
+        ],
+    ))
+
+    # Current bars (front, colored per group)
+    bar_colors = [cmap.get(g, CHART_COLORWAY[0]) for g in all_groups]
+    fig.add_trace(go.Bar(
+        x=curr_vals, y=all_groups, orientation="h",
+        marker_color=bar_colors,
+        name=curr_label,
+        text=[f"{v:,}" for v in curr_vals],
+        textposition="inside", insidetextanchor="end", textangle=0,
+        textfont=dict(size=12, color="white"),
+        hovertemplate=[
+            f"<b>{g}</b><br>{curr_label}: {v:,}<extra></extra>"
+            for g, v in zip(all_groups, curr_vals)
+        ],
+    ))
+
+    # Delta annotations
+    max_val = max(max(curr_vals, default=0), max(prior_vals, default=0))
+    annot_x = max_val * 1.05 if max_val > 0 else 1
+
+    annotations = []
+    for i, g in enumerate(all_groups):
+        c, p = curr_vals[i], prior_vals[i]
+        if p > 0:
+            pct = (c - p) / p * 100
+            if pct > 0:
+                txt, color = f"▲ {pct:.0f}%", "#10B981"
+            elif pct < 0:
+                txt, color = f"▼ {abs(pct):.0f}%", "#EF4444"
+            else:
+                txt, color = "—", "#9CA3AF"
+        elif c > 0:
+            txt, color = "● new", "#3B82F6"
+        else:
+            continue
+        annotations.append(dict(
+            x=annot_x, y=g, text=txt, showarrow=False,
+            font=dict(size=12, color=color, family=FONT_FAMILY),
+            xanchor="left", yanchor="middle",
+        ))
+
+    apply_default_layout(fig, barmode="group")
+    fig.update_layout(
+        height=_DIM_RIDGE_HEIGHT,
+        xaxis_title="", yaxis_title="",
+        xaxis=dict(visible=False, range=[0, annot_x * 1.15]),
         yaxis=dict(
-            showgrid=True, gridcolor="#F0F0F0", linecolor="#E0E0E0",
-            title="New Referring MDs",
+            automargin="left+top+bottom", ticklabelstandoff=0,
+            categoryorder="array", categoryarray=all_groups,
+            tickfont=dict(size=11),
         ),
+        margin=dict(l=0, r=60, t=24, b=12),
+        showlegend=True,
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
+            font=dict(size=11),
+        ),
+        bargroupgap=0.15,
+        annotations=annotations,
     )
     return fig
 
 
 def _build_detail_table(df):
-    """AG Grid detail table of referral consult records."""
+    """AG Grid detail table."""
     if df.empty:
-        return dmc.Text(
-            "No referral data to display.",
-            c="#9CA3AF", ta="center", py="xl",
-        )
+        return dmc.Text("No referral data to display.", c="#9CA3AF", ta="center", py="xl")
 
     df = df.copy()
-    df["RefPhysician"] = df.apply(_resolve_physician_name, axis=1)
-    df["Specialty"] = df.apply(_resolve_specialty, axis=1)
 
-    # Format the scheduled date
-    if "ScheduledDateTime" in df.columns:
-        df["Date"] = df["ScheduledDateTime"].dt.strftime("%m/%d/%Y %I:%M %p")
-    else:
-        df["Date"] = ""
+    # Format dates
+    for col in ["Created", "First Appt"]:
+        if col in df.columns:
+            df[col] = df[col].dt.strftime("%m/%d/%Y")
 
-    # Select and order columns for display
-    col_map = {
-        "Date": "Consult Date",
-        "PatientFullName": "Patient",
-        "Department": "Department",
-        "RefPhysician": "Referring Physician",
-        "Specialty": "Specialty",
+    # Select display columns
+    display_cols = {
+        "Created": "Created",
+        "Patient Name": "Patient",
+        "Status": "Status",
+        "Referred by Provider": "Referring Provider",
+        "Referred by Department": "Referring Dept",
+        "Diagnoses": "Diagnosis",
+        "First Appt": "First Appt",
+        "Days to First Appt": "Days to Appt",
+        "Appt Attached": "Appt?",
+        "CVMatch": "Visit Status",
     }
-    if "DoctorInstitution" in df.columns:
-        col_map["DoctorInstitution"] = "Institution"
-    if "DiagnosisDescriptions" in df.columns:
-        col_map["DiagnosisDescriptions"] = "Diagnosis"
-
-    available_cols = [c for c in col_map.keys() if c in df.columns]
-    table_df = df[available_cols].rename(columns=col_map)
-
-    # Sort by date descending
-    if "Consult Date" in table_df.columns:
-        table_df = table_df.sort_values("Consult Date", ascending=False)
+    available = {k: v for k, v in display_cols.items() if k in df.columns}
+    table_df = df[list(available.keys())].rename(columns=available)
+    table_df = table_df.sort_values("Created", ascending=False, na_position="last")
 
     column_defs = []
+    widths = {
+        "Created": 110, "Patient": 180, "Status": 120,
+        "Referring Provider": 200, "Referring Dept": 220,
+        "Diagnosis": 250, "First Appt": 110,
+        "Days to Appt": 100, "Appt?": 70, "Visit Status": 110,
+    }
     for col in table_df.columns:
         col_def = {"field": col, "headerName": col, **DEFAULT_COLUMN_DEFS}
-        if col == "Consult Date":
-            col_def["width"] = 170
-        elif col == "Patient":
-            col_def["width"] = 160
-        elif col == "Department":
-            col_def["width"] = 110
-        elif col == "Referring Physician":
-            col_def["width"] = 180
-        elif col == "Specialty":
-            col_def["width"] = 160
-        elif col == "Institution":
-            col_def["width"] = 200
-        elif col == "Diagnosis":
+        if col in widths:
+            col_def["width"] = widths[col]
+        if col == "Diagnosis":
             col_def["flex"] = 1
             col_def["minWidth"] = 200
         column_defs.append(col_def)
@@ -456,21 +1754,15 @@ def _build_detail_table(df):
                 justify="space-between", mb="sm",
                 children=[
                     dmc.Text("Referral Detail", size="sm", fw=500, c="#6B7280"),
-                    dmc.Text(
-                        f"{len(table_df):,} records",
-                        size="xs", c="#9CA3AF",
-                    ),
+                    dmc.Text(f"{len(table_df):,} records", size="xs", c="#9CA3AF"),
                 ],
             ),
             dag.AgGrid(
-                id="referrals-detail-grid",
+                id=f"{PAGE_ID}-detail-grid",
                 rowData=table_df.to_dict("records"),
                 columnDefs=column_defs,
                 defaultColDef=DEFAULT_COLUMN_DEFS,
-                dashGridOptions={
-                    **DEFAULT_GRID_OPTIONS,
-                    "paginationPageSize": 25,
-                },
+                dashGridOptions={**DEFAULT_GRID_OPTIONS, "paginationPageSize": 25},
                 style={"height": "500px"},
                 className="ag-theme-alpine",
             ),
@@ -480,328 +1772,1517 @@ def _build_detail_table(df):
 
 
 # ---------------------------------------------------------------------------
-# Chart wrapper helper
+# Referral Flow-Gantt Data
 # ---------------------------------------------------------------------------
 
-def _chart_paper(title, figure):
-    """Wrap a Plotly figure in a titled Paper card."""
-    return dmc.Paper(
-        children=[
-            dmc.Text(title, size="sm", fw=500, c="#6B7280", mb="sm"),
-            dcc.Graph(
-                figure=figure,
-                config={"displayModeBar": False},
-            ),
-        ],
-        p="sm", radius="md", shadow="xs", withBorder=True,
+_FLOW_STAGES = ["Created", "Scheduled", "Visit Completed"]
+_FLOW_COLORS = ["#7C2A83", "#2196F3", "#4CAF50"]
+
+
+def _compute_referral_flow_data(df, cap_0=_CAP_CREATED_TO_SCHEDULED, cap_1=_CAP_SCHEDULED_TO_VISIT):
+    """Build the data dict consumed by the flow_gantt.js renderer.
+
+    Three reality-based stages:
+      Created -> Scheduled (MRN-matched to CV) -> Visit Completed
+
+    Dropoff categories:
+      Pending  = appointment is genuinely in the future (First Appt > today)
+      Cancelled = referral Denied/Canceled, or CV status is Canceled/No-Show
+    """
+    if df.empty:
+        return None
+
+    stages = list(_FLOW_STAGES)
+    n = len(stages)
+    today = pd.Timestamp.now().normalize()
+
+    # --- Stage boolean masks ---
+    created = pd.Series(True, index=df.index)
+
+    # Scheduled = found in CV OR has a future appointment OR referral says appt attached
+    cv_matched = df["CVMatch"].isin([
+        "Confirmed", "Rescheduled", "Canceled", "No Show",
+    ]) if "CVMatch" in df.columns else created & False
+    has_future_appt = (
+        df["First Appt"].notna() & (df["First Appt"] >= today)
+    ) if "First Appt" in df.columns else created & False
+    appt_attached = (df["Appt Attached"] == "Yes") if "Appt Attached" in df.columns else created & False
+    scheduled = cv_matched | has_future_appt | appt_attached
+
+    # Visit Completed = CV-confirmed as actually happened
+    completed = df["CVMatch"].isin([
+        "Confirmed", "Rescheduled",
+    ]) if "CVMatch" in df.columns else created & False
+
+    masks = [created, scheduled, completed]
+    stage_counts = [int(m.sum()) for m in masks]
+
+    # --- Flow values ---
+    flow_values = [
+        int((created & scheduled).sum()),
+        int((scheduled & completed).sum()),
+    ]
+
+    # --- Dropoffs ---
+    dropoffs = [
+        int((created & ~scheduled).sum()),
+        int((scheduled & ~completed).sum()),
+    ]
+
+    # --- Pending vs Cancelled in dropoffs ---
+    is_cancelled = df["Status"].isin(["Denied", "Canceled"])
+    cv_cancelled = df["CVMatch"].isin(["Canceled", "No Show"]) if "CVMatch" in df.columns else created & False
+
+    pending_counts = []
+    cancelled_counts = []
+
+    # Drop from Created -> Scheduled (never got an appointment — all are lost/closed)
+    drop_0 = created & ~scheduled
+    # Pending if status is still active (Pending Review, Authorized, Open)
+    is_terminal = df["Status"].isin(["Closed", "Denied", "Canceled"])
+    pending_counts.append(int((drop_0 & ~is_terminal).sum()))
+    cancelled_counts.append(int((drop_0 & is_terminal).sum()))
+
+    # Drop from Scheduled -> Completed
+    drop_1 = scheduled & ~completed
+    # Pending = future appt OR appt attached but no CV yet (visit hasn't happened)
+    drop_1_pending = drop_1 & (has_future_appt | (appt_attached & ~cv_matched))
+    pending_counts.append(int(drop_1_pending.sum()))
+    # Cancelled = the rest (CV canceled/no-show or referral denied/canceled)
+    cancelled_counts.append(int((drop_1 & ~drop_1_pending).sum()))
+
+    # --- Inter-stage durations (with outlier caps) ---
+    def _safe_stat(series, cap, func="median"):
+        s = series.dropna()
+        s = s[(s >= 0) & (s <= cap)]
+        if s.empty:
+            return 0.0
+        return float(s.median()) if func == "median" else float(s.mean())
+
+    # Created -> Scheduled: days from referral Created to appointment booked
+    if "CVBookedDate" in df.columns and "Created" in df.columns:
+        d0 = (df["CVBookedDate"] - df["Created"]).dt.days
+    else:
+        d0 = pd.Series(dtype=float)
+    cap_total = cap_0 + cap_1
+    median_days = [_safe_stat(d0, cap_0, "median")]
+    mean_days = [_safe_stat(d0, cap_0, "mean")]
+
+    # Scheduled -> Completed: days from booked to visit
+    d1 = df["CVDaysBookedToAppt"] if "CVDaysBookedToAppt" in df.columns else pd.Series(dtype=float)
+    median_days.append(_safe_stat(d1, cap_1, "median"))
+    mean_days.append(_safe_stat(d1, cap_1, "mean"))
+
+    # --- True per-patient total (median of individual totals, not sum of medians) ---
+    if "CVBookedDate" in df.columns and "CVDaysBookedToAppt" in df.columns:
+        _per_patient = (df["CVBookedDate"] - df["Created"]).dt.days + df["CVDaysBookedToAppt"]
+        _per_patient = _per_patient[(_per_patient >= 0) & (_per_patient <= cap_total)].dropna()
+        total_median = float(_per_patient.median()) if not _per_patient.empty else sum(median_days)
+    else:
+        total_median = sum(median_days)
+
+    # --- X positions (evenly spaced for 3 stages) ---
+    x_positions = [0.0, 0.5, 1.0]
+
+    return {
+        "stages": stages,
+        "stageKeys": stages,
+        "stageCounts": stage_counts,
+        "flowValues": flow_values,
+        "dropoffs": dropoffs,
+        "pendingCounts": pending_counts,
+        "cancelledCounts": cancelled_counts,
+        "medianDays": median_days,
+        "meanDays": mean_days,
+        "aggFunc": "median",
+        "allottedDays": [None] * (n - 1),
+        "onTimePcts": [None] * (n - 1),
+        "xPositions": x_positions,
+        "colors": _FLOW_COLORS,
+        "loopbacks": [0] * n,
+        "loopbackPairs": [],
+        "totalMedianDays": total_median,
+        "totalPatients": stage_counts[0],
+        "height": 480,
+    }
+
+
+def _simple_kde(values, n_points=200):
+    """Quick KDE for distribution chart (Gaussian kernel, Silverman bandwidth)."""
+    arr = np.asarray(values, dtype=float)
+    if len(arr) < 2:
+        return [0.0], [0.0]
+    std = np.std(arr, ddof=1) or 1.0
+    bw = 1.06 * std * len(arr) ** -0.2
+    lo = max(0, arr.min() - 3 * bw)
+    hi = arr.max() + 3 * bw
+    x = np.linspace(lo, hi, n_points)
+    density = np.zeros(n_points)
+    for v in arr:
+        density += np.exp(-0.5 * ((x - v) / bw) ** 2)
+    density /= len(arr) * bw * np.sqrt(2 * np.pi)
+    return [round(float(v), 3) for v in x], [round(float(v), 6) for v in density]
+
+
+def _compute_referral_flow_details(df, cap_0=_CAP_CREATED_TO_SCHEDULED, cap_1=_CAP_SCHEDULED_TO_VISIT):
+    """Compute per-transition detail data for clientside distribution & trend.
+
+    Transitions:
+        0: Created -> Scheduled   (days = Days to First Appt)
+        1: Scheduled -> Completed (days = |CVDateOffset|, usually 0)
+    Total: Created -> Completed   (days = Days to First Appt)
+    """
+    if df.empty:
+        return None
+
+    transitions = []
+    today = pd.Timestamp.now().normalize()
+
+    # Helper to build one transition dict
+    def _build_transition(days_series, ref_dates, label, color, cap=365):
+        days_arr = days_series.dropna().values
+        days_arr = days_arr[(days_arr >= 0) & (days_arr <= cap)]
+        if len(days_arr) == 0:
+            return None
+
+        kde_x, kde_y = _simple_kde(days_arr)
+
+        # Build trend data at monthly granularity
+        temp = pd.DataFrame({"_days": days_series, "_ref": ref_dates}).dropna()
+        temp = temp[(temp["_days"] >= 0) & (temp["_days"] <= cap)]
+        trend_by_agg = {}
+        for agg_key in ("W", "M"):
+            temp["_period"] = temp["_ref"].dt.to_period(agg_key).dt.to_timestamp()
+            gmed = temp.groupby("_period")["_days"].median()
+            gmean = temp.groupby("_period")["_days"].mean()
+            gcnt = temp.groupby("_period")["_days"].size()
+            all_periods = sorted(gmed.index)
+            trend_by_agg[agg_key] = {
+                "dates": [d.isoformat() for d in all_periods],
+                "medians": [round(float(gmed[d]), 1) for d in all_periods],
+                "means": [round(float(gmean[d]), 1) for d in all_periods],
+                "kmMedians": [None] * len(all_periods),
+                "counts": [int(gcnt.get(d, 0)) for d in all_periods],
+                "completionRates": [1.0] * len(all_periods),
+            }
+
+        return {
+            "label": label,
+            "color": color,
+            "days": [round(float(d), 3) for d in days_arr],
+            "density": {"x": kde_x, "y": kde_y},
+            "trendByAgg": trend_by_agg,
+            "n": int(len(days_arr)),
+            "nCensored": 0,
+            "median": round(float(np.median(days_arr)), 3),
+            "mean": round(float(np.mean(days_arr)), 3),
+            "kmMedian": None,
+            "p25": round(float(np.percentile(days_arr, 25)), 3),
+            "p75": round(float(np.percentile(days_arr, 75)), 3),
+        }
+
+    # Transition 0: Created -> Scheduled (referral created to appt booked)
+    if "CVBookedDate" in df.columns and "Created" in df.columns:
+        d0 = (df["CVBookedDate"] - df["Created"]).dt.days
+    else:
+        d0 = pd.Series(dtype=float)
+    ref0 = df["Created"] if "Created" in df.columns else pd.Series(dtype="datetime64[ns]")
+    transitions.append(_build_transition(
+        d0, ref0, "Created \u2192 Scheduled", _FLOW_COLORS[0],
+        cap=cap_0,
+    ))
+
+    # Transition 1: Scheduled -> Completed (booked to visit)
+    d1 = df["CVDaysBookedToAppt"] if "CVDaysBookedToAppt" in df.columns else pd.Series(dtype=float)
+    ref1 = df["CVBookedDate"] if "CVBookedDate" in df.columns else pd.Series(dtype="datetime64[ns]")
+    transitions.append(_build_transition(
+        d1, ref1, "Scheduled \u2192 Visit", _FLOW_COLORS[1],
+        cap=cap_1,
+    ))
+
+    # Total: Created -> Visit (same methodology as Gantt/KPI: booked + booked-to-visit)
+    cap_total = cap_0 + cap_1
+    if "CVBookedDate" in df.columns and "CVDaysBookedToAppt" in df.columns:
+        d_total = (df["CVBookedDate"] - df["Created"]).dt.days + df["CVDaysBookedToAppt"]
+    else:
+        d_total = df["Days to First Appt"] if "Days to First Appt" in df.columns else pd.Series(dtype=float)
+    total = _build_transition(
+        d_total, ref0, "Total: Created \u2192 Visit", PRIMARY,
+        cap=cap_total,
     )
 
+    return {
+        "transitions": transitions,
+        "total": total,
+        "aggFunc": "median",
+    }
+
 
 # ---------------------------------------------------------------------------
-# Main Callback
+# CV Cross-Validation
+# ---------------------------------------------------------------------------
+
+def _cross_validate_with_cv(df):
+    """Enrich referrals with clinic-visit match status via tiered MRN matching.
+
+    Adds columns:
+        CVMatch: "Confirmed" | "Rescheduled" | "Canceled" | "No Show" | "No CV Match" | "Future" | ""
+        CVStatus: raw clinic visit status from best match
+        CVDateOffset: days between First Appt and matched CV date (0 = exact)
+
+    Matching tiers:
+        1. MRN + exact First Appt date
+        2. MRN + first CV visit after referral Created (within reasonable window)
+    """
+    from data.loader import load_clinic_visits
+
+    df = df.copy()
+    df["CVMatch"] = ""
+    df["CVStatus"] = ""
+    df["CVDateOffset"] = pd.NA
+    df["CVBookedDate"] = pd.NaT
+    df["CVDaysBookedToAppt"] = pd.NA
+
+    if "MRN" not in df.columns or "First Appt" not in df.columns:
+        return df
+
+    try:
+        cv = load_clinic_visits()
+    except Exception:
+        return df
+
+    if cv.empty or "PatientId" not in cv.columns:
+        return df
+
+    cv_slim = cv[["PatientId", "ScheduledDateTime", "Status",
+                   "AppointmentCreatedDate", "DaysFromCreatedToAppt"]].copy()
+    cv_slim["PatientId"] = pd.to_numeric(cv_slim["PatientId"], errors="coerce").astype("Int64")
+    cv_slim["_cv_date"] = cv_slim["ScheduledDateTime"].dt.normalize()
+
+    today = pd.Timestamp.now().normalize()
+
+    # Classify referrals without any appt date
+    no_appt = df["First Appt"].isna()
+    df.loc[no_appt, "CVMatch"] = "No Appt"
+
+    has_appt = df["First Appt"].notna()
+    work_idx = df.index[has_appt]
+    if work_idx.empty:
+        return df
+
+    appt_dates = df.loc[work_idx, "First Appt"].dt.normalize()
+    is_future = appt_dates >= today
+
+    # --- Vectorised CV status classifier ---
+    def _classify_cv(status_series, default_match):
+        """Vectorised: map CV status string to CVMatch label."""
+        s = status_series.fillna("").astype(str)
+        result = pd.Series(default_match, index=s.index)
+        result[s.str.contains("Cancel", case=False)] = "Canceled"
+        result[s.str.contains("No Show", case=False)] = "No Show"
+        return result
+
+    # --- Tier 1: MRN + exact date (vectorised merge) ---
+    cv_dedup = cv_slim.drop_duplicates(subset=["PatientId", "_cv_date"], keep="first")
+    t1_keys = pd.DataFrame({
+        "Referral ID": df.loc[work_idx, "Referral ID"].values,
+        "MRN": df.loc[work_idx, "MRN"].values,
+        "_appt_date": appt_dates.values,
+        "_orig_idx": work_idx,
+    })
+    tier1 = t1_keys.merge(
+        cv_dedup[["PatientId", "_cv_date", "Status",
+                  "AppointmentCreatedDate", "DaysFromCreatedToAppt"]].rename(
+            columns={"Status": "_cvs"}),
+        left_on=["MRN", "_appt_date"],
+        right_on=["PatientId", "_cv_date"],
+        how="left",
+    ).drop_duplicates(subset="Referral ID", keep="first")
+
+    matched_t1 = tier1["_cvs"].notna()
+    if matched_t1.any():
+        t1_hit = tier1.loc[matched_t1].set_index("_orig_idx")
+        df.loc[t1_hit.index, "CVStatus"] = t1_hit["_cvs"].values
+        df.loc[t1_hit.index, "CVDateOffset"] = 0
+        df.loc[t1_hit.index, "CVBookedDate"] = t1_hit["AppointmentCreatedDate"].values
+        df.loc[t1_hit.index, "CVDaysBookedToAppt"] = t1_hit["DaysFromCreatedToAppt"].values
+        # Past visits → Confirmed; future visits → Future (scheduled but not yet seen)
+        future_idx = t1_hit.index[t1_hit.index.isin(df.index[is_future.reindex(df.index, fill_value=False)])]
+        past_idx = t1_hit.index.difference(future_idx)
+        if len(past_idx):
+            df.loc[past_idx, "CVMatch"] = _classify_cv(
+                df.loc[past_idx, "CVStatus"], "Confirmed"
+            ).values
+        if len(future_idx):
+            df.loc[future_idx, "CVMatch"] = "Future"
+
+    # --- Tier 2: MRN + first post-referral CV visit (vectorised) ---
+    unmatched = tier1.loc[~matched_t1]
+    if not unmatched.empty:
+        t2_keys = unmatched[["Referral ID", "MRN", "_appt_date", "_orig_idx"]].copy()
+        t2_keys["_created"] = df.loc[t2_keys["_orig_idx"].values, "Created"].dt.normalize().values
+
+        t2_joined = t2_keys.merge(
+            cv_slim[["PatientId", "_cv_date", "Status",
+                      "AppointmentCreatedDate", "DaysFromCreatedToAppt"]],
+            left_on="MRN", right_on="PatientId", how="inner",
+        )
+        # Keep only visits on or after referral created
+        t2_joined = t2_joined[t2_joined["_cv_date"] >= t2_joined["_created"]]
+
+        if not t2_joined.empty:
+            t2_joined = t2_joined.sort_values("_cv_date")
+            t2_first = t2_joined.drop_duplicates(subset="Referral ID", keep="first")
+            t2_first["_offset"] = (t2_first["_cv_date"] - t2_first["_appt_date"]).dt.days
+
+            # Map back to original index
+            t2_map = t2_first.set_index("Referral ID")[
+                ["Status", "_offset", "_orig_idx",
+                 "AppointmentCreatedDate", "DaysFromCreatedToAppt"]
+            ]
+            oidx = t2_map["_orig_idx"].values
+            df.loc[oidx, "CVStatus"] = t2_map["Status"].values
+            df.loc[oidx, "CVDateOffset"] = t2_map["_offset"].astype(int).values
+            df.loc[oidx, "CVMatch"] = _classify_cv(t2_map["Status"], "Rescheduled").values
+            df.loc[oidx, "CVBookedDate"] = t2_map["AppointmentCreatedDate"].values
+            df.loc[oidx, "CVDaysBookedToAppt"] = t2_map["DaysFromCreatedToAppt"].values
+
+    # Still blank + future appt → Future; still blank + past appt → No CV Match
+    still_blank = has_appt & (df["CVMatch"] == "")
+    future_blank = still_blank & is_future.reindex(df.index, fill_value=False)
+    past_blank = still_blank & ~future_blank
+    df.loc[future_blank, "CVMatch"] = "Future"
+    df.loc[past_blank, "CVMatch"] = "No CV Match"
+
+    return df
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _trend(curr, prior, invert=False):
+    """Return (pct_text, direction, prior_value) for trend display."""
+    if prior is None or prior == 0:
+        return None, None, None
+    pct = (curr - prior) / prior * 100
+    direction = ("down" if pct > 0 else "up") if invert else ("up" if pct > 0 else "down")
+    return f"{abs(pct):.0f}%", direction, prior
+
+
+def _prior_range(start, end):
+    """Return (prior_start, prior_end) of equal length before the current range."""
+    delta = end - start
+    return start - delta - timedelta(days=1), start - timedelta(days=1)
+
+
+# ---------------------------------------------------------------------------
+# Main Server Callback
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output("referrals-kpi-row", "children"),
-    Output("referrals-charts", "children"),
-    Output("referrals-table-container", "children"),
-    Input("referrals-interval", "n_intervals"),
-    Input("referrals-filter-date-preset", "value"),
-    Input("referrals-filter-department", "value"),
+    Output(f"{PAGE_ID}-kpi-row", "children"),
+    Output(f"{PAGE_ID}-store-flow-gantt", "data"),
+    Output(f"{PAGE_ID}-store-flow-details", "data"),
+    Output(f"{PAGE_ID}-chart-providers", "figure"),
+    Output(f"{PAGE_ID}-chart-departments", "figure"),
+    Output(f"{PAGE_ID}-chart-trend", "figure"),
+    Output(f"{PAGE_ID}-chart-ridge", "figure"),
+    Output(f"{PAGE_ID}-chart-conv-dept", "figure"),
+    Output(f"{PAGE_ID}-chart-new-referrers", "figure"),
+    Output(f"{PAGE_ID}-table-container", "children"),
+    Output(f"{PAGE_ID}-chart-dim-trend-store", "data"),
+    Output(f"{PAGE_ID}-chart-dim-comparison", "figure"),
+    Output(f"{PAGE_ID}-filter-specialty", "data"),
+    # Inputs
+    Input(f"{PAGE_ID}-interval", "n_intervals"),
+    Input(f"{PAGE_ID}-filter-daterange", "start_date"),
+    Input(f"{PAGE_ID}-filter-daterange", "end_date"),
+    Input(f"{PAGE_ID}-filter-department", "value"),
+    Input(f"{PAGE_ID}-filter-specialty", "value"),
+    Input(f"{PAGE_ID}-filter-diagnosis", "value"),
+    Input(f"{PAGE_ID}-outlier-enabled", "data"),
+    Input(f"{PAGE_ID}-outlier-cap-0", "value"),
+    Input(f"{PAGE_ID}-outlier-cap-1", "value"),
+    Input(f"{PAGE_ID}-dim-toggle", "value"),
+    Input(f"{PAGE_ID}-dim-compare-period", "value"),
 )
-def update_referrals(_n, date_preset, departments):
-    """Update all Referrals page components on filter change."""
-    from data.loader import load_clinic_visits, load_referring
+def update_referrals(_n, start_date, end_date, departments, specialty_filter,
+                     diagnosis_filter, outlier_enabled, cap_0, cap_1,
+                     dim_toggle, dim_compare_period):
+    """Master callback: KPIs + all charts."""
+    from data.loader import load_referrals, load_referring
 
-    PERIOD_LABELS = {"ytd": "YTD", "12mo": "12 Mo", "all": "All Time"}
-    TREND_LABELS = {"ytd": "vs prior year", "12mo": "vs prior 12 mo", "all": ""}
-    period_label = PERIOD_LABELS.get(date_preset, "12 Mo")
-    trend_label = TREND_LABELS.get(date_preset, "")
+    # Resolve outlier caps (dynamic from sliders, or disabled)
+    if not outlier_enabled:
+        cap_0 = 365
+        cap_1 = 365
+    cap_0 = cap_0 or _CAP_CREATED_TO_SCHEDULED
+    cap_1 = cap_1 or _CAP_SCHEDULED_TO_VISIT
+    cap_total = cap_0 + cap_1
 
-    # -- Load and join data ------------------------------------------------
+    empty = empty_figure("No data")
+    empty_kpis = [kpi_card("--", "N/A")] * 5
+    empty_dim = empty_figure("No data for selected filters")
+    empty_dim.update_layout(height=_DIM_RIDGE_HEIGHT)
+    no_spec = []
+    empty_out = (empty_kpis, None, None, empty, empty, empty, empty, empty, empty,
+                 dmc.Text("No data", c="#9CA3AF"), None, empty_dim, no_spec)
+
     try:
-        cv = load_clinic_visits()
-        ref = load_referring()
+        df = load_referrals()
+        df = _cross_validate_with_cv(df)
     except Exception:
-        empty_kpis = [kpi_card("Total Referrals", "N/A")] * 5
-        return empty_kpis, [], dmc.Text("Error loading data", c="#9CA3AF")
+        return empty_out
 
-    if cv.empty or "ActivityName" not in cv.columns:
-        empty_kpis = [kpi_card("Total Referrals", "N/A")] * 5
-        return empty_kpis, [], dmc.Text("No clinic visit data", c="#9CA3AF")
+    if df.empty:
+        return empty_out
 
-    # Filter to consult activities
-    consults = cv[cv["ActivityName"].str.contains("Consult", case=False, na=False)].copy()
+    # --- Date filter ---
+    if start_date and end_date:
+        s = pd.Timestamp(start_date)
+        e = pd.Timestamp(end_date) + timedelta(days=1)
+        df = df[(df["Created"] >= s) & (df["Created"] < e)]
 
-    # Filter to completed
-    if "Status" in consults.columns:
-        consults = consults[
-            consults["Status"].str.contains("Completed", case=False, na=False)
-        ]
+    if df.empty:
+        return empty_out
 
-    if consults.empty:
-        empty_kpis = [kpi_card("Total Referrals", "N/A")] * 5
-        return empty_kpis, [], dmc.Text("No completed consult data", c="#9CA3AF")
+    # --- Department filter ---
+    # Map "Referred by Department" to our departments, filter
+    if departments and "Referred by Department" in df.columns:
+        our_dept = df["Referred by Department"].apply(_map_to_our_dept)
+        df = df[our_dept.isin(departments) | our_dept.isna()]
 
-    # Department filter
-    if departments and "Department" in consults.columns:
-        consults = consults[
-            consults["Department"].isin(departments) | consults["Department"].isna()
-        ]
+    # --- Build specialty options (after dept filter, before specialty filter) ---
+    spec_options = []
+    if "DeptSpecialty" in df.columns:
+        spec_options = sorted(df["DeptSpecialty"].dropna().unique().tolist())
 
-    # Join to referring lookup
-    if not ref.empty and "DimDoctorID" in ref.columns:
-        merge_cols = ["DimDoctorID"]
-        for col in [
-            "DoctorFullName", "DoctorSpecialty",
-            "DoctorInstitution", "PatientCount",
-        ]:
-            if col in ref.columns:
-                merge_cols.append(col)
-        ref_consults = consults.merge(
-            ref[merge_cols],
-            left_on="ReferringPhysicianDimDoctorID",
-            right_on="DimDoctorID",
-            how="left",
+    # --- Specialty filter ---
+    if specialty_filter and "DeptSpecialty" in df.columns:
+        df = df[df["DeptSpecialty"] == specialty_filter]
+
+    # --- Diagnosis filter ---
+    if diagnosis_filter:
+        df["_diag_filt"] = df.apply(
+            lambda r: _categorise_diagnosis(
+                r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("MRN")
+            ),
+            axis=1,
         )
+        df = df[df["_diag_filt"] == diagnosis_filter]
+        df = df.drop(columns=["_diag_filt"])
+
+    if df.empty:
+        return empty_out
+
+    # Keep the full filtered set for charts that need all data
+    all_data = df.copy()
+
+    # --- KPI Calculations ---
+    total = len(df)
+    converted = (df["Appt Attached"] == "Yes").sum()
+    conv_rate = converted / total * 100 if total else 0
+    # Median days: Created → booked + booked → visit (same as Gantt total)
+    if "CVBookedDate" in df.columns and "CVDaysBookedToAppt" in df.columns:
+        _d_to_book = (df["CVBookedDate"] - df["Created"]).dt.days
+        _d_book_to_visit = df["CVDaysBookedToAppt"]
+        _total_days = _d_to_book + _d_book_to_visit
+        _total_days = _total_days[(_total_days >= 0) & (_total_days <= cap_total)]
+        median_days = _total_days.median()
     else:
-        ref_consults = consults
+        median_days = df["Days to First Appt"].median()
+    # True pending = same logic as Gantt flow: not yet completed, waiting
+    _today = pd.Timestamp.now().normalize()
+    _cv_matched = df["CVMatch"].isin(["Confirmed", "Rescheduled", "Canceled", "No Show"]) if "CVMatch" in df.columns else pd.Series(False, index=df.index)
+    _has_future = (df["First Appt"].notna() & (df["First Appt"] >= _today)) if "First Appt" in df.columns else pd.Series(False, index=df.index)
+    _appt_att = (df["Appt Attached"] == "Yes") if "Appt Attached" in df.columns else pd.Series(False, index=df.index)
+    _scheduled = _cv_matched | _has_future | _appt_att
+    _completed = df["CVMatch"].isin(["Confirmed", "Rescheduled"]) if "CVMatch" in df.columns else pd.Series(False, index=df.index)
+    _is_terminal = df["Status"].isin(["Closed", "Denied", "Canceled"])
+    # Pending off Created (not scheduled, not terminal)
+    _p0 = (~_scheduled & ~_is_terminal).sum()
+    # Pending off Scheduled (scheduled but not completed, future appt or appt without CV)
+    _p1 = (_scheduled & ~_completed & (_has_future | (_appt_att & ~_cv_matched))).sum()
+    pending = int(_p0 + _p1)
+    unique_mds = df["Referred by Provider"].dropna().nunique()
+    denied_canceled = len(df[df["Status"].isin(["Denied", "Canceled"])])
+    denial_rate = denied_canceled / total * 100 if total else 0
 
-    # -- Date filtering (data-relative) ------------------------------------
-    if "ScheduledDateTime" not in ref_consults.columns or ref_consults.empty:
-        empty_kpis = [kpi_card("Total Referrals", "N/A")] * 5
-        return empty_kpis, [], dmc.Text("No data available", c="#9CA3AF")
-
-    last_date = ref_consults["ScheduledDateTime"].dt.normalize().max()
-    start_date = _preset_start(last_date, date_preset)
-
-    # Full dataset for "new referrer" calculation (need all history)
-    all_ref_consults = ref_consults.copy()
-
-    # Filter to selected period
-    period_data = ref_consults[
-        ref_consults["ScheduledDateTime"] >= start_date
-    ].copy()
-
-    if period_data.empty:
-        empty_kpis = [
-            kpi_card(f"Total Referrals ({period_label})", "0")
-        ] * 5
-        return (
-            empty_kpis, [],
-            dmc.Text("No data for selected period", c="#9CA3AF"),
-        )
-
-    # -- KPI Calculations --------------------------------------------------
-    ref_id_col = "ReferringPhysicianDimDoctorID"
-
-    # 1. Total Referrals -- consults with a non-null referring physician
-    has_ref = period_data[period_data[ref_id_col].notna()]
-    total_referrals = len(has_ref)
-
-    # Prior period comparison
-    ps, pe = _prior_range(last_date, date_preset)
-    if ps is not None and pe is not None:
-        prior_data = ref_consults[
-            (ref_consults["ScheduledDateTime"] >= ps)
-            & (ref_consults["ScheduledDateTime"] <= pe)
-        ]
-        prior_referrals = len(prior_data[prior_data[ref_id_col].notna()])
+    # Prior period for trends
+    if start_date and end_date:
+        ps, pe = _prior_range(pd.Timestamp(start_date), pd.Timestamp(end_date))
+        prior_df = load_referrals()
+        prior_df = prior_df[(prior_df["Created"] >= ps) & (prior_df["Created"] < pe + timedelta(days=1))]
+        if departments and "Referred by Department" in prior_df.columns:
+            p_dept = prior_df["Referred by Department"].apply(_map_to_our_dept)
+            prior_df = prior_df[p_dept.isin(departments) | p_dept.isna()]
+        prior_total = len(prior_df) if not prior_df.empty else None
+        prior_conv = ((prior_df["Appt Attached"] == "Yes").sum() / prior_total * 100
+                      if prior_total else None)
+        prior_median = prior_df["Days to First Appt"].median() if not prior_df.empty else None
+        prior_mds = prior_df["Referred by Provider"].dropna().nunique() if not prior_df.empty else None
     else:
-        prior_data = pd.DataFrame()
-        prior_referrals = None
+        prior_total = prior_conv = prior_median = prior_mds = None
 
-    t_text, t_dir, t_prior = _trend(total_referrals, prior_referrals)
+    # --- Sparkline data (monthly) ---
+    spark_df = df.copy()
+    spark_df["_month"] = spark_df["Created"].dt.to_period("M").dt.to_timestamp()
+    monthly_grp = spark_df.groupby("_month")
+
+    sp_total = monthly_grp.size()
+    sp_conv = monthly_grp.apply(
+        lambda g: (g["Appt Attached"] == "Yes").sum() / len(g) * 100 if len(g) else 0,
+        include_groups=False,
+    )
+    # Sparkline lead time: same methodology as KPI (Created→booked + booked→visit)
+    if "CVBookedDate" in spark_df.columns and "CVDaysBookedToAppt" in spark_df.columns:
+        spark_df["_total_days"] = (spark_df["CVBookedDate"] - spark_df["Created"]).dt.days + spark_df["CVDaysBookedToAppt"]
+        spark_df.loc[(spark_df["_total_days"] < 0) | (spark_df["_total_days"] > cap_total), "_total_days"] = pd.NA
+        sp_lead = spark_df.groupby("_month")["_total_days"].median()
+    else:
+        sp_lead = monthly_grp["Days to First Appt"].median()
+    sp_mds = monthly_grp["Referred by Provider"].nunique()
+
+    # Drop partial last month
+    for sp in [sp_total, sp_conv, sp_lead, sp_mds]:
+        if len(sp) > 1 and sp.index[-1].month == pd.Timestamp.now().month:
+            sp.drop(sp.index[-1], inplace=True, errors="ignore")
+
+    sp_labels = list(sp_total.index)
+
+    # Build KPIs
+    t1, d1, p1 = _trend(total, prior_total)
     kpi_total = kpi_card(
-        f"Total Referrals ({period_label})",
-        f"{total_referrals:,}",
-        trend_text=(
-            f"{t_text} {trend_label} ({t_prior:,.0f})" if t_text else None
-        ),
-        trend_direction=t_dir,
-        accent_color=PRIMARY,
+        "Total Referrals", f"{total:,}",
+        trend_text=f"{t1} vs prior ({p1:,.0f})" if t1 else None,
+        trend_direction=d1, accent_color=PRIMARY,
+        sparkline_past=sp_total.tolist(),
+        sparkline_past_labels=sp_labels,
     )
 
-    # 2. Unique Referring MDs
-    unique_mds = has_ref[ref_id_col].nunique()
-    if ps is not None and pe is not None and not prior_data.empty:
-        prior_unique = (
-            prior_data[prior_data[ref_id_col].notna()][ref_id_col].nunique()
-        )
+    t2, d2, p2 = _trend(conv_rate, prior_conv)
+    kpi_conv = kpi_card(
+        "Conversion Rate", f"{conv_rate:.1f}%",
+        trend_text=f"{t2} vs prior ({p2:.1f}%)" if t2 else None,
+        trend_direction=d2, accent_color=SEMANTIC_COLORS["success"],
+        sparkline_past=sp_conv.tolist(),
+        sparkline_past_labels=sp_labels,
+    )
+
+    t3, d3, p3 = _trend(median_days, prior_median, invert=True)
+    kpi_lead = kpi_card(
+        "Median Days to Appt", f"{median_days:.0f}" if pd.notna(median_days) else "N/A",
+        trend_text=f"{t3} vs prior ({p3:.0f}d)" if t3 else None,
+        trend_direction=d3, accent_color=CHART_COLORWAY[1],
+        sparkline_past=sp_lead.tolist(),
+        sparkline_past_labels=sp_labels,
+    )
+
+    kpi_pending = kpi_card(
+        "Pending Pipeline", f"{pending:,}",
+        trend_text=f"{pending / total * 100:.0f}% of total" if total else None,
+        accent_color=SEMANTIC_COLORS["warning"],
+        sparkline_id=" ",
+    )
+
+    t5, d5, p5 = _trend(unique_mds, prior_mds)
+    kpi_mds = kpi_card(
+        "Unique Referring MDs", f"{unique_mds:,}",
+        trend_text=f"{t5} vs prior ({p5:,.0f})" if t5 else None,
+        trend_direction=d5, accent_color=CHART_COLORWAY[5],
+        sparkline_past=sp_mds.tolist(),
+        sparkline_past_labels=sp_labels,
+    )
+
+    kpis = [kpi_total, kpi_conv, kpi_lead, kpi_pending, kpi_mds]
+
+    # --- Flow Gantt ---
+    flow_data = _compute_referral_flow_data(all_data, cap_0=cap_0, cap_1=cap_1)
+    flow_details = _compute_referral_flow_details(all_data, cap_0=cap_0, cap_1=cap_1)
+
+    # --- Charts ---
+    fig_providers = _build_top_providers(all_data)
+    fig_departments = _build_top_departments(all_data)
+    fig_trend = _build_volume_trend(all_data)
+    fig_ridge = _build_ridge_plot(all_data)
+    fig_conv_dept = _build_conv_by_dept(all_data)
+    fig_new = _build_new_referrer_trend(all_data)
+    table = _build_detail_table(all_data)
+
+    # --- Dimension trend + comparison ---
+    dimension = dim_toggle or "diagnosis"
+    dim_df = _assign_dimension_group(all_data, dimension)
+
+    dim_trend_store = _prepare_ref_trend_store(dim_df, dimension) if not dim_df.empty else None
+
+    # Comparison: current vs prior period
+    compare_type = dim_compare_period or "calendar"
+    if start_date and end_date:
+        dim_start = pd.Timestamp(start_date)
+        dim_end = pd.Timestamp(end_date)
+        if compare_type == "calendar":
+            try:
+                dim_prior_start = dim_start - pd.DateOffset(years=1)
+                dim_prior_end = dim_end - pd.DateOffset(years=1)
+            except Exception:
+                span = dim_end - dim_start
+                dim_prior_end = dim_start - pd.Timedelta(days=1)
+                dim_prior_start = dim_prior_end - span
+        else:
+            span = dim_end - dim_start
+            dim_prior_end = dim_start - pd.Timedelta(days=1)
+            dim_prior_start = dim_prior_end - span
     else:
-        prior_unique = None
-    t_text2, t_dir2, t_prior2 = _trend(unique_mds, prior_unique)
-    kpi_unique = kpi_card(
-        f"Unique Referring MDs ({period_label})",
-        f"{unique_mds:,}",
-        trend_text=(
-            f"{t_text2} {trend_label} ({t_prior2:,.0f})" if t_text2 else None
-        ),
-        trend_direction=t_dir2,
-        accent_color=CHART_COLORWAY[1],
-    )
+        dim_start = all_data["Created"].min()
+        dim_end = all_data["Created"].max()
+        span = dim_end - dim_start
+        dim_prior_end = dim_start - pd.Timedelta(days=1)
+        dim_prior_start = dim_prior_end - span
 
-    # 3. Top Referrer
-    if not has_ref.empty:
-        has_ref_named = has_ref.copy()
-        has_ref_named["_physician"] = has_ref_named.apply(
-            _resolve_physician_name, axis=1
-        )
-        physician_counts = (
-            has_ref_named.groupby("_physician").size()
-            .sort_values(ascending=False)
-        )
-        top_ref_name = physician_counts.index[0]
-        top_ref_count = physician_counts.iloc[0]
-        display_name = (
-            top_ref_name
-            if len(top_ref_name) <= 22
-            else top_ref_name[:19] + "..."
-        )
-    else:
-        display_name = "N/A"
-        top_ref_count = 0
-
-    kpi_top_ref = kpi_card(
-        "Top Referrer",
-        display_name,
-        trend_text=(
-            f"{top_ref_count:,} consults" if top_ref_count > 0 else None
-        ),
-        accent_color=CHART_COLORWAY[2],
-    )
-
-    # 4. Top Specialty
-    if not has_ref.empty:
-        has_ref_spec = has_ref.copy()
-        has_ref_spec["_specialty"] = has_ref_spec.apply(
-            _resolve_specialty, axis=1
-        )
-        spec_counts = (
-            has_ref_spec.groupby("_specialty").size()
-            .sort_values(ascending=False)
-        )
-        top_spec = spec_counts.index[0] if not spec_counts.empty else "N/A"
-        top_spec_count = spec_counts.iloc[0] if not spec_counts.empty else 0
-        display_spec = (
-            top_spec if len(top_spec) <= 25 else top_spec[:22] + "..."
-        )
-    else:
-        display_spec = "N/A"
-        top_spec_count = 0
-
-    kpi_top_spec = kpi_card(
-        "Top Specialty",
-        display_spec,
-        trend_text=(
-            f"{top_spec_count:,} consults" if top_spec_count > 0 else None
-        ),
-        accent_color=CHART_COLORWAY[3],
-    )
-
-    # 5. New Referrers -- MDs whose first-ever referral is within the period
-    new_ref_count = 0
-    prior_new_count = None
-    if ref_id_col in all_ref_consults.columns:
-        all_with_ref = all_ref_consults[all_ref_consults[ref_id_col].notna()]
-        first_referral = (
-            all_with_ref
-            .groupby(ref_id_col)["ScheduledDateTime"]
-            .min()
-            .reset_index()
-        )
-        first_referral.columns = [ref_id_col, "FirstReferralDate"]
-        new_referrers = first_referral[
-            first_referral["FirstReferralDate"] >= start_date
+    # Build prior-period dimension-grouped data from unfiltered referrals
+    try:
+        prior_raw = load_referrals()
+        prior_raw = prior_raw[
+            (prior_raw["Created"] >= dim_prior_start) &
+            (prior_raw["Created"] <= dim_prior_end)
         ]
-        new_ref_count = len(new_referrers)
+        if departments and "Referred by Department" in prior_raw.columns:
+            p_dept = prior_raw["Referred by Department"].apply(_map_to_our_dept)
+            prior_raw = prior_raw[p_dept.isin(departments) | p_dept.isna()]
+        if specialty_filter and "DeptSpecialty" in prior_raw.columns:
+            prior_raw = prior_raw[prior_raw["DeptSpecialty"] == specialty_filter]
+        if diagnosis_filter:
+            prior_raw["_diag_filt"] = prior_raw.apply(
+                lambda r: _categorise_diagnosis(
+                    r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("MRN")
+                ),
+                axis=1,
+            )
+            prior_raw = prior_raw[prior_raw["_diag_filt"] == diagnosis_filter]
+            prior_raw = prior_raw.drop(columns=["_diag_filt"])
+        dim_prior_df = _assign_dimension_group(prior_raw, dimension)
+    except Exception:
+        dim_prior_df = pd.DataFrame()
 
-        if ps is not None and pe is not None:
-            prior_new = first_referral[
-                (first_referral["FirstReferralDate"] >= ps)
-                & (first_referral["FirstReferralDate"] <= pe)
-            ]
-            prior_new_count = len(prior_new)
+    fig_dim_comparison = _build_ref_comparison_bars(
+        dim_df, dim_prior_df, dim_start, dim_end, dim_prior_start, dim_prior_end,
+    ) if not dim_df.empty else empty_dim
 
-    t_text5, t_dir5, t_prior5 = _trend(new_ref_count, prior_new_count)
-    kpi_new = kpi_card(
-        f"New Referrers ({period_label})",
-        f"{new_ref_count:,}",
-        trend_text=(
-            f"{t_text5} {trend_label} ({t_prior5:,.0f})" if t_text5 else None
-        ),
-        trend_direction=t_dir5,
-        accent_color=CHART_COLORWAY[4],
+    return (kpis, flow_data, flow_details, fig_providers,
+            fig_departments, fig_trend, fig_ridge, fig_conv_dept, fig_new, table,
+            dim_trend_store, fig_dim_comparison, spec_options)
+
+
+# ==========================================================================
+# Referring Physician Manager (RPM) Callbacks
+# ==========================================================================
+import threading
+
+# Module-level progress state for background NPI/AI operations
+_rpm_progress = {"done": 0, "total": 0, "running": False, "message": ""}
+_rpm_npi_results = []  # Pending NPI lookup results for review
+_rpm_lock = threading.Lock()
+
+
+def _build_rpm_grid_data() -> tuple[list[dict], str]:
+    """Build the grid rowData from the Referrals Report + SQLite overrides.
+
+    Aggregates unique referring physicians by NPI from the referrals xlsx.
+    Returns (row_data, stats_text).
+    """
+    from data.loader import load_referrals
+    from data.reviews_db import (
+        get_all_referring_overrides, referring_table_is_empty,
+        bulk_upsert_referring, sync_institutions_from_physicians,
+        _addr_key,
     )
 
-    kpis = [kpi_total, kpi_unique, kpi_top_ref, kpi_top_spec, kpi_new]
+    ref = load_referrals()
 
-    # -- Charts ------------------------------------------------------------
-    charts = []
+    # Only rows with a valid 10-digit NPI
+    ref = ref[ref["Referred By Prov NPI"].notna()].copy()
+    ref["_npi"] = ref["Referred By Prov NPI"].astype(float).astype(int).astype(str)
+    ref = ref[ref["_npi"].str.match(r"^\d{10}$")]
 
-    # Row 1: Top Physicians (half) + Specialty Donut (half)
-    fig_physicians = _build_top_physicians_chart(period_data)
-    fig_specialty = _build_specialty_donut(period_data)
-    charts.append(
-        dmc.Grid(
-            gutter=16,
-            children=[
-                dmc.GridCol(
-                    span={"base": 12, "md": 6},
-                    children=_chart_paper(
-                        "Top Referring Physicians", fig_physicians
-                    ),
-                ),
-                dmc.GridCol(
-                    span={"base": 12, "md": 6},
-                    children=_chart_paper(
-                        "Referrals by Specialty", fig_specialty
-                    ),
-                ),
-            ],
+    if ref.empty:
+        return [], "No referral data with valid NPIs"
+
+    # Normalize address fields for grouping
+    for col in ["Referring Provider City", "Referring Provider State", "Referring Provider Zip Code"]:
+        ref[col] = ref[col].fillna("").astype(str).str.strip()
+
+    # Build composite key: NPI + city/state/zip
+    ref["_addr_key"] = ref.apply(
+        lambda r: _addr_key(r["Referring Provider City"], r["Referring Provider State"], r["Referring Provider Zip Code"]),
+        axis=1,
+    )
+    ref["_row_key"] = ref["_npi"] + "|" + ref["_addr_key"]
+
+    # Aggregate per NPI+address: pick most common name/dept, count referrals
+    def _mode_or_first(s):
+        s = s.dropna()
+        if s.empty:
+            return ""
+        m = s.mode()
+        return m.iloc[0] if len(m) > 0 else s.iloc[0]
+
+    agg = ref.groupby(["_npi", "_addr_key"]).agg(
+        name=("Referred by Provider", _mode_or_first),
+        department=("Referred by Department", _mode_or_first),
+        address=("Referring Provider Address", _mode_or_first),
+        city=("Referring Provider City", _mode_or_first),
+        state=("Referring Provider State", _mode_or_first),
+        zip_code=("Referring Provider Zip Code", _mode_or_first),
+        specialty=("DoctorSpecialty", _mode_or_first),
+        institution=("DoctorInstitution", _mode_or_first),
+        name_raw=("Referred by Provider Raw", _mode_or_first),
+        referral_count=("Referral ID", "count"),
+    ).reset_index().rename(columns={"_npi": "npi", "_addr_key": "address_key"})
+
+    # Seed SQLite from referrals data on first open
+    if referring_table_is_empty():
+        seed = [
+            {"npi": r["npi"], "address_key": r["address_key"],
+             "specialty": r["specialty"] or None,
+             "institution": r["institution"] or None, "source": "lookup"}
+            for _, r in agg.iterrows()
+            if r["specialty"] or r["institution"]
+        ]
+        if seed:
+            bulk_upsert_referring(seed)
+        sync_institutions_from_physicians()
+
+    # Apply SQLite overrides (keyed on "npi|address_key")
+    overrides = get_all_referring_overrides()
+
+    rows = []
+    for _, r in agg.iterrows():
+        npi = r["npi"]
+        addr_k = r["address_key"]
+        row_key = f"{npi}|{addr_k}"
+        spec = r["specialty"] or ""
+        inst = r["institution"] or ""
+        source = "lookup" if (spec or inst) else ""
+
+        reviewed = False
+        if row_key in overrides:
+            ov = overrides[row_key]
+            if ov.get("specialty"):
+                spec = ov["specialty"]
+            if ov.get("institution"):
+                inst = ov["institution"]
+            source = ov.get("source", source)
+            reviewed = ov.get("reviewed", False)
+
+        # Build full address for display
+        _clean = lambda v: str(v) if v and str(v) not in ("", "nan") else ""
+        addr = _clean(r["address"])
+        city = _clean(r["city"])
+        state = _clean(r["state"])
+        zip_c = _clean(r["zip_code"])
+        addr_parts = [addr, city, state, zip_c]
+        full_address = ", ".join(p for p in addr_parts if p)
+
+        rows.append({
+            "npi": npi,
+            "address_key": addr_k,
+            "row_key": row_key,
+            "name": r["name"],
+            "name_raw": r.get("name_raw") or r["name"],
+            "department": r["department"],
+            "address": addr,
+            "city": city,
+            "state": state,
+            "zip": zip_c,
+            "full_address": full_address,
+            "specialty": spec,
+            "institution": inst,
+            "source": source,
+            "patient_count": int(r["referral_count"]),
+            "reviewed": reviewed,
+        })
+
+    # Stats
+    total = len(rows)
+    with_spec = sum(1 for r in rows if r["specialty"])
+    with_inst = sum(1 for r in rows if r["institution"])
+    reviewed_n = sum(1 for r in rows if r.get("reviewed"))
+    stats = (
+        f"{total:,} providers  |  "
+        f"{reviewed_n:,} reviewed  |  {total - reviewed_n:,} unreviewed  |  "
+        f"{with_spec:,} specialty  |  {with_inst:,} institution"
+    )
+
+    return rows, stats
+
+
+def _build_inst_grid_data(phys_rows: list[dict]) -> tuple[list[dict], str]:
+    """Build institution management grid data from physician rows."""
+    from collections import Counter
+    counts = Counter(r["institution"] for r in phys_rows if r.get("institution"))
+    inst_rows = [
+        {"name": name, "physician_count": cnt, "original_name": name}
+        for name, cnt in sorted(counts.items())
+    ]
+    return inst_rows, str(len(inst_rows))
+
+
+@callback(
+    Output(f"{PAGE_ID}-rpm-modal", "opened"),
+    Output(f"{PAGE_ID}-rpm-grid", "rowData"),
+    Output(f"{PAGE_ID}-rpm-stats", "children"),
+    Output(f"{PAGE_ID}-rpm-inst-grid", "rowData"),
+    Output(f"{PAGE_ID}-rpm-inst-count", "children"),
+    Output(f"{PAGE_ID}-rpm-prov-count", "children"),
+    Input(f"{PAGE_ID}-rpm-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def _rpm_open(n):
+    if not n:
+        return (dash.no_update,) * 6
+    rows, stats = _build_rpm_grid_data()
+    inst_rows, inst_count = _build_inst_grid_data(rows)
+    return True, rows, stats, inst_rows, inst_count, str(len(rows))
+
+
+@callback(
+    Output(f"{PAGE_ID}-rpm-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-stats", "children", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rpm-grid", "cellValueChanged"),
+    State(f"{PAGE_ID}-rpm-grid", "rowData"),
+    prevent_initial_call=True,
+)
+def _rpm_save_edit(changed, row_data):
+    """Save a manual cell edit (specialty, institution, or reviewed) to SQLite."""
+    if not changed:
+        return dash.no_update, dash.no_update
+    from data.reviews_db import upsert_referring, add_institution, set_reviewed_bulk
+
+    row = changed[0].get("data", {}) if isinstance(changed, list) else changed.get("data", {})
+    row_key = row.get("row_key", "")
+    npi = row.get("npi", "")
+    addr_k = row.get("address_key", "")
+    if not npi:
+        return dash.no_update, dash.no_update
+
+    col = changed[0].get("colId", "") if isinstance(changed, list) else changed.get("colId", "")
+
+    if col == "reviewed":
+        # Toggle reviewed status
+        reviewed = bool(row.get("reviewed", False))
+        upsert_referring(npi, address_key=addr_k, source=row.get("source", "manual"))
+        set_reviewed_bulk([(npi, addr_k)], reviewed=reviewed)
+    else:
+        spec = row.get("specialty") if col == "specialty" else None
+        inst = row.get("institution") if col == "institution" else None
+        upsert_referring(npi, address_key=addr_k, specialty=spec, institution=inst, source="manual")
+        if inst:
+            add_institution(inst)
+
+        # Update source in grid data
+        if row_data:
+            for r in row_data:
+                if r.get("row_key") == row_key:
+                    r["source"] = "manual"
+                    if spec is not None:
+                        r["specialty"] = spec
+                    if inst is not None:
+                        r["institution"] = inst
+                    break
+
+    total = len(row_data) if row_data else 0
+    with_spec = sum(1 for r in row_data if r.get("specialty")) if row_data else 0
+    with_inst = sum(1 for r in row_data if r.get("institution")) if row_data else 0
+    reviewed_n = sum(1 for r in row_data if r.get("reviewed")) if row_data else 0
+    stats = (
+        f"{total:,} providers  |  "
+        f"{reviewed_n:,} reviewed  |  {total - reviewed_n:,} unreviewed  |  "
+        f"{with_spec:,} specialty  |  {with_inst:,} institution"
+    )
+
+    return row_data, stats
+
+
+@callback(
+    Output(f"{PAGE_ID}-rpm-poll", "disabled", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-progress", "style", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-progress-text", "style", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-progress-text", "children", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rpm-npi-btn", "n_clicks"),
+    State(f"{PAGE_ID}-rpm-grid", "rowData"),
+    State(f"{PAGE_ID}-rpm-grid", "selectedRows"),
+    prevent_initial_call=True,
+)
+def _rpm_start_npi_lookup(n, row_data, selected_rows):
+    """Start background NPI specialty lookup. Uses selected rows if any, else unreviewed blanks."""
+    if not n or not row_data:
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+
+    with _rpm_lock:
+        if _rpm_progress["running"]:
+            return dash.no_update, dash.no_update, dash.no_update, "Already running..."
+
+    # Only run on selected rows
+    if not selected_rows:
+        return True, {"display": "none"}, {"display": "block"}, "Select rows first, then click to look up."
+    blanks = [r for r in selected_rows if r.get("npi") and not r.get("specialty")]
+    if not blanks:
+        return True, {"display": "none"}, {"display": "block"}, "Selected rows already have specialties."
+
+    # Deduplicate NPIs for API calls (same NPI at different addresses = same specialty)
+    unique_npis = list({r["npi"] for r in blanks})
+
+    with _rpm_lock:
+        _rpm_progress.update(done=0, total=len(unique_npis), running=True, message="Starting NPI lookups...")
+
+    # Build a map from NPI to the row info for display in review
+    npi_to_rows = {}
+    for r in blanks:
+        if r["npi"] not in npi_to_rows:
+            npi_to_rows[r["npi"]] = r
+
+    def _bg():
+        global _rpm_npi_results
+        from utils.npi_lookup import batch_lookup_npis
+
+        def _on_progress(done, total):
+            with _rpm_lock:
+                _rpm_progress["done"] = done
+                _rpm_progress["message"] = f"Looking up NPI {done}/{total}..."
+
+        api_results = batch_lookup_npis(unique_npis, on_progress=_on_progress)
+
+        # Build review rows — one per NPI+address that was in blanks
+        review = []
+        for r in api_results:
+            npi = r["npi"]
+            row_info = npi_to_rows.get(npi, {})
+            review.append({
+                "accept": r["status"] == "found" and bool(r.get("specialty")),
+                "npi": npi,
+                "name": row_info.get("name", ""),
+                "name_raw": row_info.get("name_raw", row_info.get("name", "")),
+                "city": row_info.get("city", ""),
+                "state": row_info.get("state", ""),
+                "address": row_info.get("address", ""),
+                "full_address": row_info.get("full_address", ""),
+                "current_specialty": row_info.get("specialty", ""),
+                "raw_taxonomy": r.get("raw_taxonomy") or "",
+                "mapped_specialty": r.get("specialty") or "",
+                "status": r["status"],
+                "address_key": row_info.get("address_key", ""),
+                "row_key": row_info.get("row_key", ""),
+            })
+
+        with _rpm_lock:
+            _rpm_npi_results.clear()
+            _rpm_npi_results.extend(review)
+            _rpm_progress["running"] = False
+            found = sum(1 for r in review if r["status"] == "found")
+            _rpm_progress["message"] = f"Done. {found} found, {len(review) - found} not found. Review below."
+
+    t = threading.Thread(target=_bg, daemon=True)
+    t.start()
+
+    return (
+        False,  # enable polling
+        {"display": "block"},
+        {"display": "block"},
+        f"Starting NPI lookups for {len(unique_npis)} NPIs...",
+    )
+
+
+@callback(
+    Output(f"{PAGE_ID}-rpm-poll", "disabled", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-progress", "value"),
+    Output(f"{PAGE_ID}-rpm-progress", "style", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-progress-text", "children", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-progress-text", "style", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-npi-review", "style"),
+    Output(f"{PAGE_ID}-rpm-npi-review-grid", "rowData"),
+    Input(f"{PAGE_ID}-rpm-poll", "n_intervals"),
+    prevent_initial_call=True,
+)
+def _rpm_poll_progress(n):
+    """Poll background task progress."""
+    with _rpm_lock:
+        done = _rpm_progress["done"]
+        total = _rpm_progress["total"]
+        running = _rpm_progress["running"]
+        msg = _rpm_progress["message"]
+
+    pct = int(done / total * 100) if total > 0 else 0
+    no = dash.no_update
+
+    if running:
+        return (False, pct, {"display": "block"}, msg, {"display": "block"}, no, no)
+
+    # Finished — show review panel with results
+    with _rpm_lock:
+        review_data = list(_rpm_npi_results)
+
+    if review_data:
+        return (
+            True, 100, {"display": "none"}, msg, {"display": "block"},
+            {"display": "block"}, review_data,
         )
+    # No results (e.g. AI lookup finished) — just hide progress
+    return (True, 100, {"display": "none"}, msg, {"display": "block"}, no, no)
+
+
+@callback(
+    Output(f"{PAGE_ID}-rpm-poll", "disabled", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-progress", "style", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-progress", "color"),
+    Output(f"{PAGE_ID}-rpm-progress-text", "style", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-progress-text", "children", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rpm-ai-btn", "n_clicks"),
+    State(f"{PAGE_ID}-rpm-grid", "rowData"),
+    State(f"{PAGE_ID}-rpm-grid", "selectedRows"),
+    prevent_initial_call=True,
+)
+def _rpm_start_ai_lookup(n, row_data, selected_rows):
+    """Start background Claude AI institution research. Uses selected rows if any, else unreviewed blanks."""
+    if not n or not row_data:
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+
+    with _rpm_lock:
+        if _rpm_progress["running"]:
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, "Already running..."
+
+    if not selected_rows:
+        return True, {"display": "none"}, "grape", {"display": "block"}, "Select rows first, then click to research."
+    blanks = [r for r in selected_rows if r.get("npi") and not r.get("institution")]
+    if not blanks:
+        return True, {"display": "none"}, "grape", {"display": "block"}, "Selected rows already have institutions."
+
+    # Each row is a unique NPI+address — pass all details for institution research
+    physicians = [
+        {
+            "npi": r["npi"],
+            "address_key": r.get("address_key", ""),
+            "row_key": r.get("row_key", ""),
+            "name": r.get("name", ""),
+            "city_state": f"{r.get('city', '')}, {r.get('state', '')}".strip(", "),
+            "department": r.get("department", ""),
+        }
+        for r in blanks
+    ]
+
+    with _rpm_lock:
+        _rpm_progress.update(done=0, total=len(physicians), running=True, message="Starting AI research...")
+
+    def _bg():
+        from utils.institution_inference import infer_institutions
+        from data.reviews_db import bulk_upsert_referring, get_referring_institutions, add_institution
+
+        existing = get_referring_institutions()
+
+        # Process in chunks of 15 and track progress
+        all_results = {}  # row_key -> institution
+        chunk_size = 15
+        for i in range(0, len(physicians), chunk_size):
+            chunk = physicians[i : i + chunk_size]
+            # infer_institutions keys results by NPI — map back to row_key
+            chunk_results = infer_institutions(chunk, existing)
+            # Map NPI results to each row that has that NPI
+            for p in chunk:
+                if p["npi"] in chunk_results:
+                    all_results[p["row_key"]] = chunk_results[p["npi"]]
+            existing = list(set(existing + list(chunk_results.values())))
+            with _rpm_lock:
+                _rpm_progress["done"] = min(i + chunk_size, len(physicians))
+                _rpm_progress["message"] = f"Researching institutions... {_rpm_progress['done']}/{len(physicians)}"
+
+        records = []
+        for p in physicians:
+            if p["row_key"] in all_results:
+                inst = all_results[p["row_key"]]
+                records.append({
+                    "npi": p["npi"], "address_key": p["address_key"],
+                    "institution": inst, "source": "claude_ai",
+                })
+                add_institution(inst)
+        if records:
+            bulk_upsert_referring(records)
+
+        with _rpm_lock:
+            _rpm_progress["running"] = False
+            _rpm_progress["message"] = f"Done. Updated {len(records)} of {len(physicians)} rows."
+
+    t = threading.Thread(target=_bg, daemon=True)
+    t.start()
+
+    return (
+        False,
+        {"display": "block"},
+        "grape",
+        {"display": "block"},
+        f"Starting AI research for {len(physicians)} physicians...",
     )
 
-    # Row 2: Volume Trend (half) + Institution Analysis (half)
-    fig_trend = _build_volume_trend(all_ref_consults)
-    fig_institution = _build_institution_chart(period_data)
-    charts.append(
-        dmc.Grid(
-            gutter=16,
-            children=[
-                dmc.GridCol(
-                    span={"base": 12, "md": 6},
-                    children=_chart_paper(
-                        "Referral Volume Trend", fig_trend
-                    ),
-                ),
-                dmc.GridCol(
-                    span={"base": 12, "md": 6},
-                    children=_chart_paper(
-                        "Institution Analysis", fig_institution
-                    ),
-                ),
-            ],
+
+@callback(
+    Output(f"{PAGE_ID}-rpm-download", "data"),
+    Input(f"{PAGE_ID}-rpm-export-btn", "n_clicks"),
+    State(f"{PAGE_ID}-rpm-grid", "rowData"),
+    prevent_initial_call=True,
+)
+def _rpm_export(n, row_data):
+    """Export grid data as CSV."""
+    if not n or not row_data:
+        return dash.no_update
+    df = pd.DataFrame(row_data)
+    return dcc.send_data_frame(df.to_csv, "referring_physicians.csv", index=False)
+
+
+# --- Badge X clear (cellRendererData from main grid) ---
+@callback(
+    Output(f"{PAGE_ID}-rpm-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-stats", "children", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-inst-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-inst-count", "children", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rpm-grid", "cellRendererData"),
+    State(f"{PAGE_ID}-rpm-grid", "rowData"),
+    prevent_initial_call=True,
+)
+def _rpm_badge_clear(renderer_data, row_data):
+    """Handle institution badge X clear."""
+    if not renderer_data or not row_data:
+        return (dash.no_update,) * 4
+
+    from data.reviews_db import upsert_referring
+
+    row = renderer_data
+    npi = row.get("npi", "")
+    addr_k = row.get("address_key", "")
+    row_key = row.get("row_key", "")
+    new_inst = row.get("institution", "")
+
+    if not npi:
+        return (dash.no_update,) * 4
+
+    # Save the cleared institution
+    upsert_referring(npi, address_key=addr_k, institution=new_inst or None, source="manual")
+
+    # Update grid data
+    for r in row_data:
+        if r.get("row_key") == row_key:
+            r["institution"] = new_inst
+            r["source"] = "manual"
+            break
+
+    total = len(row_data)
+    with_spec = sum(1 for r in row_data if r.get("specialty"))
+    with_inst = sum(1 for r in row_data if r.get("institution"))
+    stats = (
+        f"{total:,} referring physicians  |  "
+        f"{with_spec:,} with specialty  |  {with_inst:,} with institution  |  "
+        f"{total - with_spec:,} specialty blank  |  {total - with_inst:,} institution blank"
+    )
+    inst_rows, inst_count = _build_inst_grid_data(row_data)
+    return row_data, stats, inst_rows, inst_count
+
+
+# --- Institution rename (edit in institution management grid) ---
+@callback(
+    Output(f"{PAGE_ID}-rpm-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-stats", "children", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-inst-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-inst-count", "children", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rpm-inst-grid", "cellValueChanged"),
+    State(f"{PAGE_ID}-rpm-grid", "rowData"),
+    prevent_initial_call=True,
+)
+def _rpm_inst_rename(changed, row_data):
+    """Rename an institution — propagates to all physicians."""
+    if not changed or not row_data:
+        return (dash.no_update,) * 4
+
+    from data.reviews_db import rename_institution, add_institution
+
+    row = changed[0].get("data", {}) if isinstance(changed, list) else changed.get("data", {})
+    old_name = row.get("original_name", "")
+    new_name = (row.get("name", "") or "").strip()
+
+    if not old_name or not new_name or old_name == new_name:
+        return (dash.no_update,) * 4
+
+    rename_institution(old_name, new_name)
+    add_institution(new_name)
+
+    # Update all physician rows in grid
+    for r in row_data:
+        if r.get("institution") == old_name:
+            r["institution"] = new_name
+
+    total = len(row_data)
+    with_spec = sum(1 for r in row_data if r.get("specialty"))
+    with_inst = sum(1 for r in row_data if r.get("institution"))
+    stats = (
+        f"{total:,} referring physicians  |  "
+        f"{with_spec:,} with specialty  |  {with_inst:,} with institution  |  "
+        f"{total - with_spec:,} specialty blank  |  {total - with_inst:,} institution blank"
+    )
+    inst_rows, inst_count = _build_inst_grid_data(row_data)
+    return row_data, stats, inst_rows, inst_count
+
+
+# --- Institution delete (cellRendererData from inst grid) ---
+@callback(
+    Output(f"{PAGE_ID}-rpm-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-stats", "children", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-inst-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-inst-count", "children", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rpm-inst-grid", "cellRendererData"),
+    State(f"{PAGE_ID}-rpm-grid", "rowData"),
+    prevent_initial_call=True,
+)
+def _rpm_inst_delete(renderer_data, row_data):
+    """Delete an institution — clears from all physicians."""
+    if not renderer_data or not row_data:
+        return (dash.no_update,) * 4
+
+    action = renderer_data.get("_action", "")
+    name = renderer_data.get("name", "")
+
+    if action != "delete" or not name:
+        return (dash.no_update,) * 4
+
+    from data.reviews_db import delete_institution
+
+    delete_institution(name)
+
+    # Clear from physician rows
+    for r in row_data:
+        if r.get("institution") == name:
+            r["institution"] = ""
+
+    total = len(row_data)
+    with_spec = sum(1 for r in row_data if r.get("specialty"))
+    with_inst = sum(1 for r in row_data if r.get("institution"))
+    stats = (
+        f"{total:,} referring physicians  |  "
+        f"{with_spec:,} with specialty  |  {with_inst:,} with institution  |  "
+        f"{total - with_spec:,} specialty blank  |  {total - with_inst:,} institution blank"
+    )
+    inst_rows, inst_count = _build_inst_grid_data(row_data)
+    return row_data, stats, inst_rows, inst_count
+
+
+# --- Institution export ---
+@callback(
+    Output(f"{PAGE_ID}-rpm-inst-download", "data"),
+    Input(f"{PAGE_ID}-rpm-inst-export-btn", "n_clicks"),
+    State(f"{PAGE_ID}-rpm-inst-grid", "rowData"),
+    prevent_initial_call=True,
+)
+def _rpm_inst_export(n, inst_data):
+    if not n or not inst_data:
+        return dash.no_update
+    df = pd.DataFrame(inst_data)[["name", "physician_count"]]
+    df.columns = ["Institution", "Provider Count"]
+    return dcc.send_data_frame(df.to_csv, "institutions.csv", index=False)
+
+
+# --- Mark Reviewed (bulk) ---
+@callback(
+    Output(f"{PAGE_ID}-rpm-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-stats", "children", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rpm-reviewed-btn", "n_clicks"),
+    State(f"{PAGE_ID}-rpm-grid", "rowData"),
+    State(f"{PAGE_ID}-rpm-grid", "selectedRows"),
+    prevent_initial_call=True,
+)
+def _rpm_mark_reviewed(n, row_data, selected_rows):
+    """Mark selected rows as reviewed. If none selected, marks all unreviewed."""
+    if not n or not row_data:
+        return dash.no_update, dash.no_update
+    from data.reviews_db import set_reviewed_bulk, upsert_referring
+
+    if not selected_rows:
+        return dash.no_update, dash.no_update
+    targets = selected_rows
+
+    keys = []
+    for r in targets:
+        npi = r.get("npi", "")
+        addr_k = r.get("address_key", "")
+        if npi:
+            # Ensure row exists in SQLite before marking reviewed
+            upsert_referring(npi, address_key=addr_k, source=r.get("source", "manual"))
+            keys.append((npi, addr_k))
+
+    if keys:
+        set_reviewed_bulk(keys, reviewed=True)
+
+    # Update grid data
+    target_keys = {r.get("row_key") for r in targets}
+    for r in row_data:
+        if r.get("row_key") in target_keys:
+            r["reviewed"] = True
+
+    total = len(row_data)
+    with_spec = sum(1 for r in row_data if r.get("specialty"))
+    with_inst = sum(1 for r in row_data if r.get("institution"))
+    reviewed_n = sum(1 for r in row_data if r.get("reviewed"))
+    stats = (
+        f"{total:,} providers  |  "
+        f"{reviewed_n:,} reviewed  |  {total - reviewed_n:,} unreviewed  |  "
+        f"{with_spec:,} specialty  |  {with_inst:,} institution"
+    )
+
+    return row_data, stats
+
+
+
+
+# --- Show/hide provider action buttons based on active tab ---
+@callback(
+    Output(f"{PAGE_ID}-rpm-action-btns", "style"),
+    Input(f"{PAGE_ID}-rpm-tabs", "value"),
+    prevent_initial_call=True,
+)
+def _rpm_toggle_action_btns(tab):
+    if tab == "providers":
+        return {"display": "flex"}
+    return {"display": "none"}
+
+
+# --- NPI Review: Accept All (check all rows) ---
+@callback(
+    Output(f"{PAGE_ID}-rpm-npi-review-grid", "rowData", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rpm-npi-accept-all", "n_clicks"),
+    State(f"{PAGE_ID}-rpm-npi-review-grid", "rowData"),
+    prevent_initial_call=True,
+)
+def _rpm_npi_accept_all(n, data):
+    if not n or not data:
+        return dash.no_update
+    for r in data:
+        if r.get("status") == "found" and r.get("mapped_specialty"):
+            r["accept"] = True
+    return data
+
+
+# --- NPI Review: Reject All (uncheck all rows) ---
+@callback(
+    Output(f"{PAGE_ID}-rpm-npi-review-grid", "rowData", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rpm-npi-reject-all", "n_clicks"),
+    State(f"{PAGE_ID}-rpm-npi-review-grid", "rowData"),
+    prevent_initial_call=True,
+)
+def _rpm_npi_reject_all(n, data):
+    if not n or not data:
+        return dash.no_update
+    for r in data:
+        r["accept"] = False
+    return data
+
+
+# --- NPI Review: Apply accepted rows ---
+@callback(
+    Output(f"{PAGE_ID}-rpm-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-stats", "children", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-npi-review", "style", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-progress-text", "children", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rpm-npi-apply", "n_clicks"),
+    State(f"{PAGE_ID}-rpm-npi-review-grid", "rowData"),
+    State(f"{PAGE_ID}-rpm-grid", "rowData"),
+    prevent_initial_call=True,
+)
+def _rpm_npi_apply(n, review_data, row_data):
+    if not n or not review_data:
+        return (dash.no_update,) * 4
+    from data.reviews_db import bulk_upsert_referring
+
+    accepted = [r for r in review_data if r.get("accept") and r.get("mapped_specialty")]
+    if not accepted:
+        return dash.no_update, dash.no_update, {"display": "none"}, "No rows accepted."
+
+    # Save to SQLite
+    records = [
+        {"npi": r["npi"], "address_key": r.get("address_key", ""),
+         "specialty": r["mapped_specialty"], "source": "npi_registry"}
+        for r in accepted
+    ]
+    # Also apply to other rows with the same NPI (different addresses)
+    npi_spec = {r["npi"]: r["mapped_specialty"] for r in accepted}
+    if row_data:
+        for r in row_data:
+            if r["npi"] in npi_spec and not r.get("specialty"):
+                records.append({
+                    "npi": r["npi"], "address_key": r.get("address_key", ""),
+                    "specialty": npi_spec[r["npi"]], "source": "npi_registry",
+                })
+
+    bulk_upsert_referring(records)
+
+    # Refresh grid
+    rows, stats = _build_rpm_grid_data()
+    return rows, stats, {"display": "none"}, f"Applied {len(accepted)} specialty updates."
+
+
+# --- Referral detail panel: click provider row to see their referrals ---
+@callback(
+    Output(f"{PAGE_ID}-rpm-detail-panel", "style"),
+    Output(f"{PAGE_ID}-rpm-detail-title", "children"),
+    Output(f"{PAGE_ID}-rpm-detail-grid", "rowData"),
+    Input(f"{PAGE_ID}-rpm-grid", "selectedRows"),
+    Input(f"{PAGE_ID}-rpm-detail-close", "n_clicks"),
+    prevent_initial_call=True,
+)
+def _rpm_show_detail(selected, close_clicks):
+    from dash import ctx
+    if ctx.triggered_id == f"{PAGE_ID}-rpm-detail-close":
+        return {"display": "none"}, "", []
+
+    if not selected or len(selected) == 0:
+        return {"display": "none"}, "", []
+
+    row = selected[0]
+    npi = row.get("npi", "")
+    addr_key = row.get("address_key", "")
+    name = row.get("name", "")
+
+    if not npi:
+        return {"display": "none"}, "", []
+
+    from data.loader import load_referrals
+    ref = load_referrals()
+
+    # Filter to this NPI
+    mask = ref["Referred By Prov NPI"].notna()
+    ref_npi = ref[mask].copy()
+    ref_npi["_npi"] = ref_npi["Referred By Prov NPI"].astype(float).astype(int).astype(str)
+    ref_npi = ref_npi[ref_npi["_npi"] == npi]
+
+    # Further filter by address if we have one
+    if addr_key:
+        from data.reviews_db import _addr_key
+        ref_npi["_ak"] = ref_npi.apply(
+            lambda r: _addr_key(
+                str(r.get("Referring Provider City", "")),
+                str(r.get("Referring Provider State", "")),
+                str(r.get("Referring Provider Zip Code", "")),
+            ), axis=1,
         )
+        ref_npi = ref_npi[ref_npi["_ak"] == addr_key]
+
+    # Build detail rows
+    cols = ["Created", "Patient Name", "Rfl Prim Dx", "Diagnoses", "Status", "First Appt", "Days to First Appt"]
+    detail = ref_npi[[c for c in cols if c in ref_npi.columns]].copy()
+
+    # Format dates
+    for dc in ["Created", "First Appt"]:
+        if dc in detail.columns:
+            detail[dc] = detail[dc].dt.strftime("%m/%d/%Y").fillna("")
+
+    title = f"Referrals from {name} ({npi}) — {len(detail)} records"
+
+    return (
+        {"display": "block", "maxHeight": "280px", "marginTop": "6px"},
+        title,
+        detail.fillna("").to_dict("records"),
     )
-
-    # Row 3: New Referrer Trend (half)
-    fig_new = _build_new_referrer_trend(all_ref_consults)
-    charts.append(
-        dmc.Grid(
-            gutter=16,
-            children=[
-                dmc.GridCol(
-                    span={"base": 12, "md": 6},
-                    children=_chart_paper(
-                        "New Referrer Trend", fig_new
-                    ),
-                ),
-            ],
-        )
-    )
-
-    # -- Detail Table ------------------------------------------------------
-    table = _build_detail_table(period_data)
-
-    return kpis, charts, table

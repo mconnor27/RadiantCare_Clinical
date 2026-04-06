@@ -1139,11 +1139,17 @@ def _build_pluvicto_queue(status_filter="all"):
             consult_date = exam_row["StageDateTime"].min() if not exam_row.empty and "StageDateTime" in exam_row.columns else None
             latest_stage = pw.iloc[-1]["StageName"] if "StageName" in pw.columns and len(pw) > 0 else "Unknown"
             patient_name = pw.iloc[0].get("PatientName", pw.iloc[0].get("PatientFullName", "Unknown"))
+            # Consult MD from the Exam row
+            consult_md = ""
+            if not exam_row.empty and "AppointmentPhysician" in exam_row.columns:
+                md_val = exam_row["AppointmentPhysician"].dropna()
+                if not md_val.empty:
+                    consult_md = md_val.iloc[0].split(", ")[0]
             patients[pid] = {
                 "Patient": patient_name,
                 "Consult": consult_date.strftime("%m/%d/%y") if pd.notna(consult_date) else "",
                 "Stage": latest_stage,
-                "Physician": "",
+                "Physician": consult_md,
                 "tx_dates": [],
             }
 
@@ -1160,10 +1166,6 @@ def _build_pluvicto_queue(status_filter="all"):
                     "tx_dates": [],
                 }
             rec = patients[pid]
-            if "AppointmentPhysician" in pp.columns:
-                phys = pp["AppointmentPhysician"].dropna()
-                if not phys.empty:
-                    rec["Physician"] = phys.iloc[0].split(", ")[0]
             for _, row in pp.head(6).iterrows():
                 tx_date = row.get("ScheduledDateTime")
                 md_name = row.get("AppointmentPhysician", "")

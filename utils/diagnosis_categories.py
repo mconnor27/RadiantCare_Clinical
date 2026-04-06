@@ -77,6 +77,45 @@ _ICD_OVERRIDES: dict[str, str] = {
 
     # Uterine leiomyoma → Gynecologic (benign but treated by gyn rad onc)
     "D25.9":   "Gynecologic",
+
+    # --- Codes found unresolved in referral data ---
+    "C62.90":  "GU – Non-Prostate",       # testicular, unspecified
+    "C62.92":  "GU – Non-Prostate",       # testicular, left
+    "C62.91":  "GU – Non-Prostate",       # testicular, right
+    "C68.9":   "GU – Non-Prostate",       # urinary organ, unspecified
+    "C17.9":   "Gastrointestinal",        # small intestine, unspecified
+    "C18.5":   "Gastrointestinal",        # splenic flexure
+    "C24.9":   "Gastrointestinal",        # biliary tract
+    "C05.2":   "Head and Neck",           # uvula
+    "C72.30":  "Central Nervous System",  # optic nerve
+    "C69.90":  "Central Nervous System",  # eye, unspecified
+    "C74.91":  "GU – Non-Prostate",       # adrenal gland, right
+    "C74.92":  "GU – Non-Prostate",       # adrenal gland, left
+    "C76.50":  "Metastases & Palliative", # lower limb, ill-defined
+    "C44.221": "Skin",                    # SCC of ear
+    "C44.92":  "Skin",                    # skin, unspecified
+    "D49.89":  "Thoracic",               # neoplasm uncertain behaviour (thymoma in referral data)
+    "D49.9":   "Metastases & Palliative", # neoplasm NOS
+    "D3A.00":  "Thoracic",               # carcinoid tumour NOS
+    "C7A.00":  "Thoracic",               # malignant carcinoid NOS
+    "D09.9":   "Skin",                   # carcinoma in situ NOS (SCC in-situ in referral data)
+    "D44.7":   "Central Nervous System",  # paraganglioma
+    "D47.2":   "Hematologic",            # MGUS
+    "D75.1":   "Hematologic",            # polycythemia
+    "D36.10":  "Central Nervous System",  # schwannoma
+    "G93.89":  "Central Nervous System",  # brain mass / lesion
+    "G93.9":   "Central Nervous System",  # brain disorder NOS
+    "E23.6":   "Central Nervous System",  # pituitary disorder
+    "E23.7":   "Central Nervous System",  # pituitary lesion
+    "G50.0":   "Benign Diseases",         # trigeminal neuralgia
+    "J38.3":   "Head and Neck",           # vocal cord dysplasia
+    "K13.70":  "Head and Neck",           # mouth lesion
+    "J98.59":  "Thoracic",               # mediastinal mass
+    "M81.0":   "Benign Diseases",         # osteoporosis
+    "M84.550A": "Metastases & Palliative", # pathologic fracture pelvis
+    "M84.551D": "Metastases & Palliative", # pathologic fracture hip
+    "M84.48XA": "Metastases & Palliative", # pathologic rib fracture
+    "M89.9":   "Metastases & Palliative", # bone lesion NOS
 }
 
 # ---------------------------------------------------------------------------
@@ -350,7 +389,12 @@ def build_code_to_category(diag_lookup: pd.DataFrame | None) -> dict[str, str]:
     has_site = "SiteDesc" in diag_lookup.columns
     has_body = "BodySystemDesc" in diag_lookup.columns
 
+    # Seed with overrides and exact code mappings so codes not in the CSV
+    # still resolve (e.g. referral-only ICD codes absent from Lookup table).
     result: dict[str, str] = {}
+    result.update(_ICD_CODE_CATEGORY)
+    result.update(_ICD_OVERRIDES)
+
     for _, row in diag_lookup.iterrows():
         code = str(row["DiagnosisCode"]).strip()
         site = str(row["SiteDesc"]).strip() if has_site else ""

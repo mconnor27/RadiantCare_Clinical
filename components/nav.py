@@ -24,9 +24,10 @@ def _create_nav_link(page, active_path):
             "root": {
                 "borderRadius": "6px",
                 "marginBottom": "2px",
+                "padding": "6px 8px 6px 12px",
+                "minHeight": "unset",
                 "color": text_color,
                 "backgroundColor": "rgba(255,255,255,0.35)" if is_active else "transparent",
-                "paddingLeft": "12px",
             },
             "label": {"color": text_color, "fontWeight": "600" if is_active else "400", "fontSize": "13px"},
         },
@@ -41,8 +42,8 @@ def _create_section_header(section_name):
         fw=600,
         c="rgba(255,255,255,0.5)",
         pl=12,
-        pt=12,
-        pb=4,
+        pt=10,
+        pb=3,
         style={"letterSpacing": "0.5px"},
     )
 

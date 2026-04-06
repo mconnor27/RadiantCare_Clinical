@@ -19,6 +19,7 @@ from components.kpi_card import kpi_card
 from components.chart_card import chart_card, register_chart_callbacks
 from components.chart_settings import chart_settings_popover
 from components.detail_table import detail_table
+from components.outlier_panel import outlier_panel, register_outlier_callbacks
 from utils.charts import apply_default_layout, empty_figure, dept_color
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, DEFAULT_SLIDER, SLIDER_MARKS,
@@ -324,6 +325,11 @@ def _build_cv_filter_bar():
                         gap=6,
                         align="center",
                     ),
+                    # Outlier caps
+                    outlier_panel("cv", transitions=[
+                        ("Booking Lead Time", _LEAD_MAX),
+                        ("Consult \u2192 Sim", _DAYS_TO_SIM_MAX),
+                    ]),
                 ],
                 gap="md",
                 wrap="wrap",
@@ -1169,6 +1175,9 @@ _register_cv_filter_callbacks()
     Input("cv-billing-group", "value"),
     Input("cv-billing-slice", "value"),
     Input("cv-billing-mode", "value"),
+    Input("cv-outlier-enabled", "data"),
+    Input("cv-outlier-cap-0", "value"),
+    Input("cv-outlier-cap-1", "value"),
     running=[
         (Output("cv-chart-volume-loading", "visible"), True, False),
         (Output("cv-chart-lead-time-loading", "visible"), True, False),
@@ -1187,8 +1196,17 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
                           departments, physician, body_systems, visit_type,
                           classified_type, status, inpatient, weekend_only, date_preset,
                           diagnosis_slice, diagnosis_mode, diagnosis_compare,
-                          billing_group, billing_slice, billing_mode):
+                          billing_group, billing_slice, billing_mode,
+                          outlier_enabled, outlier_cap_0, outlier_cap_1):
     from data.loader import load_clinic_visits, load_diagnosis
+
+    # Dynamic outlier caps
+    if not outlier_enabled:
+        lead_max = 365
+        days_to_sim_max = 365
+    else:
+        lead_max = outlier_cap_0 or _LEAD_MAX
+        days_to_sim_max = outlier_cap_1 or _DAYS_TO_SIM_MAX
 
     na_kpi = kpi_card("--", "N/A")
     empty = empty_figure()
@@ -1384,7 +1402,7 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
     lead_vals = pd.Series(dtype=float)
     if "DaysFromCreatedToAppt" in dff.columns:
         _lv = pd.to_numeric(dff["DaysFromCreatedToAppt"], errors="coerce").dropna()
-        lead_vals = _lv[(_lv >= 0) & (_lv <= _LEAD_MAX)]
+        lead_vals = _lv[(_lv >= 0) & (_lv <= lead_max)]
         lead_time_str = f"{lead_vals.median():.0f}" if len(lead_vals) > 0 else "N/A"
     else:
         lead_time_str = "N/A"
@@ -1394,7 +1412,7 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
         lt = dff[["ScheduledDateTime", "DaysFromCreatedToAppt"]].copy()
         lt["val"] = pd.to_numeric(lt["DaysFromCreatedToAppt"], errors="coerce")
         lt = lt.dropna(subset=["val"])
-        lt = lt[(lt["val"] >= 0) & (lt["val"] <= _LEAD_MAX)]
+        lt = lt[(lt["val"] >= 0) & (lt["val"] <= lead_max)]
         if _spark_period == "D":
             lt["_sp"] = lt["ScheduledDateTime"].dt.normalize()
         else:
@@ -1412,7 +1430,7 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
     _t_lead = (None, None)
     if trend_label and not dff_prior.empty and "DaysFromCreatedToAppt" in dff_prior.columns:
         _plv = pd.to_numeric(dff_prior["DaysFromCreatedToAppt"], errors="coerce").dropna()
-        prior_lead = _plv[(_plv >= 0) & (_plv <= _LEAD_MAX)]
+        prior_lead = _plv[(_plv >= 0) & (_plv <= lead_max)]
         if len(prior_lead) > 0 and len(lead_vals) > 0:
             _t_lead = _trend(lead_vals.median(), prior_lead.median(), invert=True)
 
@@ -1420,7 +1438,7 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
         dmc.Group(gap=2, children=[
             DashIconify(icon="mdi:information-outline", width=16, color="#9CA3AF", style={"cursor": "help"}),
         ]),
-        label=f"Median booking lead time. Excludes values >{_LEAD_MAX} days to filter purposeful waits and delays.",
+        label=f"Median booking lead time. Excludes values >{lead_max} days to filter purposeful waits and delays.",
         position="top", withArrow=True, multiline=True, w=240,
     )
     kpi_lead = kpi_card(
@@ -1495,7 +1513,7 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
     days_sim = pd.Series(dtype=float)
     if "DaysToSimulation" in consults_df.columns and len(consults_df) > 0:
         _dsv = pd.to_numeric(consults_df["DaysToSimulation"], errors="coerce").dropna()
-        days_sim = _dsv[(_dsv >= 0) & (_dsv <= _DAYS_TO_SIM_MAX)]
+        days_sim = _dsv[(_dsv >= 0) & (_dsv <= days_to_sim_max)]
         days_sim_str = f"{days_sim.median():.0f}" if len(days_sim) > 0 else "N/A"
     else:
         days_sim_str = "N/A"
@@ -1505,7 +1523,7 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
         ds = consults_df[["ScheduledDateTime", "DaysToSimulation"]].copy()
         ds["val"] = pd.to_numeric(ds["DaysToSimulation"], errors="coerce")
         ds = ds.dropna(subset=["val"])
-        ds = ds[(ds["val"] >= 0) & (ds["val"] <= _DAYS_TO_SIM_MAX)]
+        ds = ds[(ds["val"] >= 0) & (ds["val"] <= days_to_sim_max)]
         if _spark_period == "D":
             ds["_sp"] = ds["ScheduledDateTime"].dt.normalize()
         else:
@@ -1525,13 +1543,13 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
         prior_consults_d = dff_prior[dff_prior["VisitType"] == "Consult"] if "VisitType" in dff_prior.columns else pd.DataFrame()
         if "DaysToSimulation" in prior_consults_d.columns and len(prior_consults_d) > 0:
             _pdsv = pd.to_numeric(prior_consults_d["DaysToSimulation"], errors="coerce").dropna()
-            p_days_sim = _pdsv[(_pdsv >= 0) & (_pdsv <= _DAYS_TO_SIM_MAX)]
+            p_days_sim = _pdsv[(_pdsv >= 0) & (_pdsv <= days_to_sim_max)]
             if len(p_days_sim) > 0 and days_sim_str != "N/A":
                 _t_days = _trend(days_sim.median(), p_days_sim.median(), invert=True)
 
     _days_sim_info = dmc.Tooltip(
         DashIconify(icon="mdi:information-outline", width=16, color="#9CA3AF", style={"cursor": "help"}),
-        label=f"Median consult-to-sim interval. Excludes values >{_DAYS_TO_SIM_MAX} days to filter purposeful waits and delays.",
+        label=f"Median consult-to-sim interval. Excludes values >{days_to_sim_max} days to filter purposeful waits and delays.",
         position="top", withArrow=True, multiline=True, w=240,
     )
     kpi_days_sim = kpi_card(
@@ -1731,6 +1749,8 @@ register_chart_callbacks([
     ("cv-diagnosis", "cv-chart-diagnosis"),
     ("cv-billing", "cv-chart-billing"),
 ])
+
+register_outlier_callbacks("cv", n_transitions=2, defaults=[_LEAD_MAX, _DAYS_TO_SIM_MAX])
 
 
 # --- Cumulative chart mode toggle: show/hide sub-controls ---
