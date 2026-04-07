@@ -29,6 +29,7 @@ def chart_card(
     show_settings=True,
     settings_id=None,
     sub_header=None,
+    show_grouping=True,
 ):
     """Build a chart card with standardized Paper, Graph, LoadingOverlay, and settings.
 
@@ -73,6 +74,7 @@ def chart_card(
                 show_smooth=show_smooth,
                 smooth_max=smooth_max,
                 smooth_default=smooth_default,
+                show_grouping=show_grouping,
             )
         )
 
@@ -161,19 +163,26 @@ def register_chart_callbacks(chart_ids):
     Call this once per page at module level with a list of IDs that were passed
     to chart_settings_popover (or as settings_id to chart_card).
 
-    Each entry can be either:
+    Each entry can be:
     - A string: used as both the settings prefix AND the graph ID for export.
-    - A tuple (settings_id, graph_id): settings prefix differs from graph ID.
+    - A 2-tuple (settings_id, graph_id): settings prefix differs from graph ID.
+    - A 3-tuple (settings_id, graph_id, store_id): also wire the Stacked/Grouped
+      toggle to the chart's dcc.Store so toggling grouping triggers a re-render.
 
     Examples:
         register_chart_callbacks(["ops-chart-volume", "ops-chart-efficiency"])
         register_chart_callbacks([("home-md", "home-chart-physician"), ("home-site", "home-chart-site")])
+        register_chart_callbacks([("home-md", "home-chart-physician", "home-store-md-census")])
     """
     for entry in chart_ids:
-        if isinstance(entry, tuple):
+        if isinstance(entry, tuple) and len(entry) == 3:
+            sid, gid, store_id = entry
+        elif isinstance(entry, tuple):
             sid, gid = entry
+            store_id = None
         else:
             sid = gid = entry
+            store_id = None
 
         clientside_callback(
             ClientsideFunction("chartSettings", "toggle"),
@@ -189,3 +198,17 @@ def register_chart_callbacks(chart_ids):
             State(gid, "id"),
             prevent_initial_call=True,
         )
+
+        # Stacked/Grouped toggle — show/hide based on chart type.
+        # The actual stacking logic is handled by passing the stack toggle
+        # value directly as an Input to the chart render callback (per-page).
+        if store_id:
+            clientside_callback(
+                """function(chartType) {
+                    return chartType === "line"
+                        ? {"display": "none"}
+                        : {"display": ""};
+                }""",
+                Output(f"{sid}-settings-stack-wrap", "style"),
+                Input(f"{sid}-settings-type", "value"),
+            )

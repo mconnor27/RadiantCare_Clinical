@@ -503,3 +503,158 @@ dagcomponentfuncs.DiagCountLink = function (props) {
         value.toLocaleString()
     );
 };
+
+
+/**
+ * Payor name link for Insurance Rate Manager — clickable to drill down.
+ * Writes to a hidden Store to trigger the detail panel callback.
+ */
+dagcomponentfuncs.PayorDrilldown = function (props) {
+    var value = props.value;
+    if (!value) {
+        return React.createElement("span", {style: {color: "#9CA3AF"}}, "\u2014");
+    }
+    function handleClick(e) {
+        e.stopPropagation();
+        var data = props.data || {};
+        var payload = {
+            payor: data.payor || value,
+            ts: Date.now(),
+        };
+        if (window.dash_clientside) {
+            window.dash_clientside.set_props("billing-irm-drill-store", {data: payload});
+        }
+    }
+    return React.createElement(
+        "span",
+        {
+            onClick: handleClick,
+            style: {
+                color: "#7C2A83",
+                cursor: "pointer",
+                fontWeight: 500,
+                fontSize: "13px",
+            },
+            title: "Click to view rate details",
+        },
+        value
+    );
+};
+
+
+/**
+ * Custom cell editor with autocomplete for institutions.
+ * Shows an input with a filtered dropdown list below it.
+ * Supports typing new values AND selecting from existing ones.
+ */
+dagcomponentfuncs.InstitutionEditor = function (props) {
+    var ref = React.useRef(null);
+    var _s = React.useState(props.value || "");
+    var value = _s[0], setValue = _s[1];
+    var _o = React.useState(true);
+    var open = _o[0], setOpen = _o[1];
+
+    // Gather all unique institutions from the grid
+    var allInstitutions = React.useMemo(function () {
+        var insts = [];
+        var seen = {};
+        if (props.api) {
+            props.api.forEachNode(function (node) {
+                if (node.data && node.data.institution && !seen[node.data.institution]) {
+                    seen[node.data.institution] = true;
+                    insts.push(node.data.institution);
+                }
+            });
+        }
+        return insts.sort();
+    }, []);
+
+    // Filter by typed value
+    var filtered = allInstitutions.filter(function (inst) {
+        return inst.toLowerCase().indexOf(value.toLowerCase()) !== -1;
+    });
+
+    React.useEffect(function () {
+        if (ref.current) { ref.current.focus(); ref.current.select(); }
+    }, []);
+
+    function commitValue(val) {
+        setValue(val);
+        setOpen(false);
+        if (props.onValueChange) {
+            props.onValueChange(val);
+        }
+        if (props.stopEditing) {
+            setTimeout(function () { props.stopEditing(); }, 50);
+        }
+    }
+
+    var containerStyle = {
+        position: "relative",
+        width: "100%",
+        minWidth: "250px",
+    };
+    var inputStyle = {
+        width: "100%",
+        height: "36px",
+        border: "2px solid #7C2A83",
+        borderRadius: "4px",
+        padding: "0 8px",
+        fontSize: "13px",
+        boxSizing: "border-box",
+        outline: "none",
+    };
+    var dropdownStyle = {
+        position: "absolute",
+        top: "100%",
+        left: 0,
+        right: 0,
+        maxHeight: "200px",
+        overflowY: "auto",
+        background: "#fff",
+        border: "1px solid #dee2e6",
+        borderRadius: "0 0 6px 6px",
+        boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+        zIndex: 9999,
+        display: open && filtered.length > 0 ? "block" : "none",
+    };
+    var itemStyle = {
+        padding: "6px 10px",
+        cursor: "pointer",
+        fontSize: "13px",
+    };
+
+    function handleChange(e) {
+        var v = e.target.value;
+        setValue(v);
+        setOpen(true);
+        if (props.onValueChange) {
+            props.onValueChange(v);
+        }
+    }
+
+    return React.createElement("div", {style: containerStyle},
+        React.createElement("input", {
+            ref: ref,
+            value: value,
+            onChange: handleChange,
+            onKeyDown: function (e) {
+                if (e.key === "Enter") { commitValue(value); }
+                else if (e.key === "Escape") { props.stopEditing(true); }
+                else if (e.key === "Tab") { commitValue(value); }
+            },
+            style: inputStyle,
+        }),
+        React.createElement("div", {style: dropdownStyle},
+            filtered.map(function (inst) {
+                return React.createElement("div", {
+                    key: inst,
+                    onMouseDown: function (e) { e.preventDefault(); commitValue(inst); },
+                    onMouseEnter: function (e) { e.target.style.background = "#f0e6f6"; },
+                    onMouseLeave: function (e) { e.target.style.background = "#fff"; },
+                    style: itemStyle,
+                }, inst);
+            })
+        )
+    );
+};

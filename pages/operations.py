@@ -186,7 +186,8 @@ layout = dmc.Stack(
                         ],
                         show_smooth=True,
                         smooth_max=30,
-                        smooth_default=7,
+                        smooth_default=15,
+                        show_grouping=False,
                         paper_style={"overflow": "visible"},
                         extra_controls_left=[
                             dmc.SegmentedControl(
@@ -196,7 +197,7 @@ layout = dmc.Stack(
                                     {"value": "minutes", "label": "Active Min"},
                                     {"value": "beam", "label": "Beam On"},
                                 ],
-                                value="utilization",
+                                value="beam",
                                 size="xs",
                             ),
                             dmc.Tooltip(
@@ -226,7 +227,7 @@ layout = dmc.Stack(
                                     {"value": "W", "label": "Weekly"},
                                     {"value": "M", "label": "Monthly"},
                                 ],
-                                value="D",
+                                value="W",
                                 size="xs",
                             ),
                             dmc.SegmentedControl(
@@ -237,7 +238,7 @@ layout = dmc.Stack(
                                     {"value": "365", "label": "1y"},
                                     {"value": "0", "label": "All"},
                                 ],
-                                value="90",
+                                value="365",
                                 size="xs",
                             ),
                         ],
@@ -1293,6 +1294,7 @@ clientside_callback(
     Input("ops-volume-settings-smooth", "value"),
     Input("ops-volume-settings-type", "value"),
     Input("ops-volume-range", "value"),
+    Input("ops-volume-settings-stack", "value"),
     State("ops-chart-volume", "figure"),
 )
 
@@ -1304,6 +1306,7 @@ clientside_callback(
     State("ops-chart-volume", "figure"),
     State("ops-store-volume", "data"),
     State("ops-volume-settings-type", "value"),
+    State("ops-volume-settings-stack", "value"),
     prevent_initial_call=True,
 )
 
@@ -1983,7 +1986,7 @@ def update_table(_n, range_days, departments, machines, include_future, view_by)
 # Chart Card Callbacks (settings toggle + PNG export)
 # ---------------------------------------------------------------------------
 
-register_chart_callbacks([("ops-volume", "ops-chart-volume"), ("ops-efficiency", "ops-chart-efficiency")])
+register_chart_callbacks([("ops-volume", "ops-chart-volume", "ops-store-volume"), ("ops-efficiency", "ops-chart-efficiency")])
 
 
 # ---------------------------------------------------------------------------

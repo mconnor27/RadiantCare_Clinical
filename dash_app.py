@@ -5,8 +5,11 @@ import dash_mantine_components as dmc
 from dash import Dash, html, dcc, page_container, callback, Input, Output, no_update
 from dash_iconify import DashIconify
 
+from dash import clientside_callback
+
 from config.settings import DMC_THEME, NEUTRAL, PRIMARY, MAPBOX_TOKEN
 from components.nav import create_sidebar
+from utils.diagnosis_categories import get_taxonomy
 
 # ---------------------------------------------------------------------------
 # App initialization
@@ -87,6 +90,8 @@ app.layout = dmc.MantineProvider(
         ),
         # Hidden div to trigger page reload via clientside callback
         html.Div(id="global-refresh-trigger", style={"display": "none"}),
+        # Diagnosis taxonomy store — populates window._diagTaxonomy for JS
+        dcc.Store(id="global-diag-taxonomy", data=get_taxonomy()),
         dmc.AppShell(
             children=[
                 create_sidebar(),
@@ -127,6 +132,16 @@ app.clientside_callback(
     Output("global-refresh-btn", "loading"),
     Input("global-refresh-trigger", "children"),
     prevent_initial_call=True,
+)
+
+# Populate window._diagTaxonomy from the Store so JS dropdown functions can read it
+app.clientside_callback(
+    """function(taxonomy) {
+        window._diagTaxonomy = taxonomy || {};
+        return window.dash_clientside.no_update;
+    }""",
+    Output("global-diag-taxonomy", "id"),
+    Input("global-diag-taxonomy", "data"),
 )
 
 # ---------------------------------------------------------------------------

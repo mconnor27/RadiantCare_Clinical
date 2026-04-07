@@ -11,6 +11,7 @@ def chart_settings_button(
     show_smooth: bool = True,
     smooth_max: int = 50,
     smooth_default: int = 15,
+    show_grouping: bool = True,
 ):
     """Create a settings gear icon with small dropdown panel.
 
@@ -41,6 +42,30 @@ def chart_settings_button(
                 ],
             )
         )
+        # Stacked/Grouped toggle — visible only for area and bar chart types
+        has_stackable = show_grouping and any(ct["value"] in ("bar", "area") for ct in chart_types)
+        if has_stackable:
+            panel_children.append(
+                html.Div(
+                    id=f"{chart_id}-settings-stack-wrap",
+                    children=dmc.Stack(
+                        gap=4,
+                        children=[
+                            dmc.Text("Grouping", size="xs", fw=500, c="#6B7280"),
+                            dmc.SegmentedControl(
+                                id=f"{chart_id}-settings-stack",
+                                data=[
+                                    {"value": "stacked", "label": "Stacked"},
+                                    {"value": "grouped", "label": "Grouped"},
+                                ],
+                                value="stacked",
+                                size="xs",
+                                fullWidth=True,
+                            ),
+                        ],
+                    ),
+                )
+            )
 
     # Smoothing slider
     if show_smooth:

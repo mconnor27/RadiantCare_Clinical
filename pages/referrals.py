@@ -744,6 +744,12 @@ layout = dmc.Stack(
                                             variant="light", color="violet", size="xs",
                                         ),
                                         dmc.Button(
+                                            "Delete Selected",
+                                            id=f"{PAGE_ID}-rpm-delete-btn",
+                                            leftSection=DashIconify(icon="tabler:trash", width=14),
+                                            variant="light", color="red", size="xs",
+                                        ),
+                                        dmc.Button(
                                             "Export CSV",
                                             id=f"{PAGE_ID}-rpm-export-btn",
                                             leftSection=DashIconify(icon="tabler:download", width=14),
@@ -872,15 +878,22 @@ layout = dmc.Stack(
                                         {"field": "institution", "headerName": "Institution", "flex": 1.3,
                                          "editable": True,
                                          "cellRenderer": "InstitutionBadge",
+                                         "cellEditor": "InstitutionEditor",
+                                         "cellEditorPopup": True,
+                                         "cellEditorPopupPosition": "under",
                                          "cellStyle": {"cursor": "pointer"},
                                          "filter": "agTextColumnFilter", "floatingFilter": True},
                                         {"field": "source", "headerName": "Source", "flex": 0.5,
                                          "filter": "agTextColumnFilter", "floatingFilter": True,
                                          "cellStyle": {"fontStyle": "italic", "color": NEUTRAL["text_muted"]}},
-                                        {"field": "patient_count", "headerName": "Referrals", "flex": 0.5,
+                                        {"field": "patient_count", "headerName": "Referrals", "flex": 0.4,
                                          "cellRenderer": "ReferralCountLink",
                                          "filter": "agNumberColumnFilter", "sort": "desc",
                                          "type": "numericColumn"},
+                                        {"field": "first_referral", "headerName": "First", "flex": 0.4,
+                                         "filter": "agTextColumnFilter"},
+                                        {"field": "last_referral", "headerName": "Last", "flex": 0.4,
+                                         "filter": "agTextColumnFilter"},
                                         {"field": "reviewed", "headerName": "Reviewed", "flex": 0.4,
                                          "cellDataType": "boolean",
                                          "editable": True,
@@ -896,11 +909,12 @@ layout = dmc.Stack(
                                         "rowHeight": 36,
                                         "headerHeight": 36,
                                         "floatingFiltersHeight": 32,
-                                        "rowSelection": {"mode": "multiRow"},
+                                        "rowSelection": {"mode": "multiRow", "selectAll": "filtered"},
                                     },
                                     style={"flex": 1, "minHeight": 0},
                                     className="ag-theme-alpine",
                                 ),
+                                # Institution rename confirmation (modal rendered outside grid)
                                 # Referral detail panel — shows when a provider row is clicked
                                 dmc.Paper(
                                     id=f"{PAGE_ID}-rpm-detail-panel",
@@ -1027,6 +1041,12 @@ layout = dmc.Stack(
                                                     checked=False,
                                                 ),
                                                 dmc.Button(
+                                                    "Classify (AI)",
+                                                    id=f"{PAGE_ID}-rpm-diag-ai-btn",
+                                                    leftSection=DashIconify(icon="tabler:brain", width=14),
+                                                    variant="light", color="grape", size="xs",
+                                                ),
+                                                dmc.Button(
                                                     "Mark Reviewed",
                                                     id=f"{PAGE_ID}-rpm-diag-reviewed-btn",
                                                     leftSection=DashIconify(icon="tabler:check", width=14),
@@ -1042,6 +1062,18 @@ layout = dmc.Stack(
                                         ),
                                     ],
                                 ),
+                                # AI progress
+                                dmc.Progress(
+                                    id=f"{PAGE_ID}-rpm-diag-ai-progress",
+                                    value=0, size="sm", color="grape",
+                                    style={"display": "none"}, mb=4,
+                                ),
+                                dmc.Text(
+                                    id=f"{PAGE_ID}-rpm-diag-ai-progress-text", size="xs",
+                                    c=NEUTRAL["text_muted"],
+                                    style={"display": "none"}, mb=4,
+                                ),
+                                # AI Review Panel placeholder (modal rendered outside)
                                 dag.AgGrid(
                                     id=f"{PAGE_ID}-rpm-diag-grid",
                                     columnDefs=[
@@ -1082,7 +1114,7 @@ layout = dmc.Stack(
                                         "rowHeight": 36,
                                         "headerHeight": 36,
                                         "floatingFiltersHeight": 32,
-                                        "rowSelection": {"mode": "multiRow"},
+                                        "rowSelection": {"mode": "multiRow", "selectAll": "filtered"},
                                     },
                                     style={"flex": 1, "minHeight": 0},
                                     className="ag-theme-alpine",
@@ -1138,7 +1170,125 @@ layout = dmc.Stack(
         ),
         # RPM stores and interval
         dcc.Store(id=f"{PAGE_ID}-rpm-grid-full-store", data=None),
+        dcc.Store(id=f"{PAGE_ID}-rpm-inst-pending", data=None),
+        dmc.Modal(
+            id=f"{PAGE_ID}-rpm-inst-confirm",
+            opened=False,
+            title=dmc.Group(
+                children=[
+                    DashIconify(icon="tabler:building-hospital", width=20, color=PRIMARY),
+                    dmc.Text("Rename Institution", fw=600, size="md"),
+                ],
+                gap="xs",
+            ),
+            centered=True,
+            zIndex=2000,
+            size="lg",
+            children=[
+                dmc.Text(id=f"{PAGE_ID}-rpm-inst-confirm-text", size="sm", mb="md"),
+                dmc.Group(
+                    justify="flex-end",
+                    gap="sm",
+                    children=[
+                        dmc.Button(
+                            "Cancel",
+                            id=f"{PAGE_ID}-rpm-inst-confirm-cancel",
+                            variant="subtle", color="gray", size="sm",
+                        ),
+                        dmc.Button(
+                            "Just this provider",
+                            id=f"{PAGE_ID}-rpm-inst-confirm-one",
+                            variant="light", color="blue", size="sm",
+                        ),
+                        dmc.Button(
+                            id=f"{PAGE_ID}-rpm-inst-confirm-all",
+                            variant="filled", color="violet", size="sm",
+                        ),
+                    ],
+                ),
+            ],
+        ),
         dcc.Store(id=f"{PAGE_ID}-rpm-diag-grid-full-store", data=None),
+        dcc.Store(id=f"{PAGE_ID}-rpm-diag-ai-running", data=False),
+        dmc.Modal(
+            id=f"{PAGE_ID}-rpm-diag-ai-review",
+            opened=False,
+            title=dmc.Group(
+                children=[
+                    DashIconify(icon="tabler:brain", width=22, color="grape"),
+                    dmc.Text("AI Classification Results — Review before applying", fw=600, size="lg"),
+                ],
+                gap="xs",
+            ),
+            size="90%",
+            centered=True,
+            zIndex=2000,
+            styles={
+                "content": {"height": "80vh", "display": "flex", "flexDirection": "column"},
+                "body": {"flex": 1, "overflow": "hidden", "display": "flex", "flexDirection": "column"},
+            },
+            children=[
+                dmc.Group(
+                    justify="flex-end", mb=8,
+                    children=[
+                        dmc.Button(
+                            "Accept All",
+                            id=f"{PAGE_ID}-rpm-diag-ai-accept-all",
+                            leftSection=DashIconify(icon="tabler:checks", width=14),
+                            variant="light", color="green", size="sm",
+                        ),
+                        dmc.Button(
+                            "Reject All",
+                            id=f"{PAGE_ID}-rpm-diag-ai-reject-all",
+                            leftSection=DashIconify(icon="tabler:x", width=14),
+                            variant="light", color="red", size="sm",
+                        ),
+                        dmc.Button(
+                            "Apply Selected",
+                            id=f"{PAGE_ID}-rpm-diag-ai-apply",
+                            leftSection=DashIconify(icon="tabler:check", width=14),
+                            variant="filled", color="green", size="sm",
+                        ),
+                    ],
+                ),
+                dag.AgGrid(
+                    id=f"{PAGE_ID}-rpm-diag-ai-review-grid",
+                    columnDefs=[
+                        {"field": "accept", "headerName": "Accept", "width": 80,
+                         "cellDataType": "boolean", "editable": True},
+                        {"field": "description", "headerName": "Description", "flex": 1.5},
+                        {"field": "current_category", "headerName": "Current Cat", "flex": 0.8,
+                         "cellStyle": {"color": NEUTRAL["text_muted"]}},
+                        {"field": "current_subcategory", "headerName": "Current Sub", "flex": 0.8,
+                         "cellStyle": {"color": NEUTRAL["text_muted"]}},
+                        {"field": "ai_category", "headerName": "AI Category", "flex": 1,
+                         "editable": True,
+                         "cellEditor": "agSelectCellEditor",
+                         "cellEditorParams": {"values": [""] + BODY_SYSTEMS + ["Unknown"]},
+                         "cellStyle": {"fontWeight": 600, "cursor": "pointer"}},
+                        {"field": "ai_subcategory", "headerName": "AI Subcategory", "flex": 1,
+                         "editable": True,
+                         "cellEditor": "agSelectCellEditor",
+                         "cellEditorParams": {"function": "getSubcategoryValues(params)"},
+                         "cellStyle": {"fontWeight": 600, "cursor": "pointer"}},
+                        {"field": "patients", "headerName": "Pts", "flex": 0.3,
+                         "type": "numericColumn"},
+                    ],
+                    defaultColDef={"sortable": True, "resizable": True},
+                    dashGridOptions={
+                        "rowHeight": 36,
+                        "headerHeight": 36,
+                        "pagination": True,
+                        "paginationPageSize": 25,
+                        "singleClickEdit": True,
+                    },
+                    style={"flex": 1, "minHeight": 0},
+                    className="ag-theme-alpine",
+                ),
+            ],
+        ),
+        dcc.Store(id=f"{PAGE_ID}-rpm-diag-ai-review-data", data=None),
+        dcc.Interval(id=f"{PAGE_ID}-rpm-diag-ai-poll", interval=2000, disabled=True),
         dcc.Store(id=f"{PAGE_ID}-rpm-running", data=False),
         dcc.Store(id=f"{PAGE_ID}-rpm-npi-pending", data=None),
         dcc.Store(id=f"{PAGE_ID}-rpm-detail-store", data=None),
@@ -2653,6 +2803,11 @@ _rpm_progress = {"done": 0, "total": 0, "running": False, "message": ""}
 _rpm_npi_results = []  # Pending NPI lookup results for review
 _rpm_lock = threading.Lock()
 
+# Diagnosis AI classification progress
+_diag_ai_progress = {"done": 0, "total": 0, "running": False, "message": ""}
+_diag_ai_results: list[dict] = []
+_diag_ai_lock = threading.Lock()
+
 
 def _build_rpm_grid_data() -> tuple[list[dict], str]:
     """Build the grid rowData from the Referrals Report + SQLite overrides.
@@ -2707,6 +2862,8 @@ def _build_rpm_grid_data() -> tuple[list[dict], str]:
         institution=("DoctorInstitution", _mode_or_first),
         name_raw=("Referred by Provider Raw", _mode_or_first),
         referral_count=("Referral ID", "count"),
+        first_referral=("Created", "min"),
+        last_referral=("Created", "max"),
     ).reset_index().rename(columns={"_npi": "npi", "_addr_key": "address_key"})
 
     # Seed SQLite from referrals data on first open
@@ -2730,7 +2887,8 @@ def _build_rpm_grid_data() -> tuple[list[dict], str]:
         npi = r["npi"]
         addr_k = r["address_key"]
         row_key = f"{npi}|{addr_k}"
-        spec = r["specialty"] or ""
+        from config.settings import normalize_specialty
+        spec = normalize_specialty(r["specialty"] or "")
         inst = r["institution"] or ""
         source = "lookup" if (spec or inst) else ""
 
@@ -2739,7 +2897,7 @@ def _build_rpm_grid_data() -> tuple[list[dict], str]:
         if row_key in overrides:
             ov = overrides[row_key]
             if ov.get("specialty"):
-                spec = ov["specialty"]
+                spec = normalize_specialty(ov["specialty"])
             if ov.get("institution"):
                 inst = ov["institution"]
             source = ov.get("source", source)
@@ -2782,6 +2940,8 @@ def _build_rpm_grid_data() -> tuple[list[dict], str]:
             "institution": inst,
             "source": source,
             "patient_count": int(r["referral_count"]),
+            "first_referral": r["first_referral"].strftime("%m/%d/%Y") if pd.notna(r.get("first_referral")) else "",
+            "last_referral": r["last_referral"].strftime("%m/%d/%Y") if pd.notna(r.get("last_referral")) else "",
             "reviewed": reviewed,
         })
 
@@ -2820,6 +2980,8 @@ def _build_rpm_grid_data() -> tuple[list[dict], str]:
             "institution": ov.get("institution", ""),
             "source": ov.get("source", "manual"),
             "patient_count": 0,
+            "first_referral": "",
+            "last_referral": "",
             "reviewed": ov.get("reviewed", False),
         })
 
@@ -2889,15 +3051,20 @@ def _rpm_diag_tab_load(tab):
     Output(f"{PAGE_ID}-rpm-grid", "rowData", allow_duplicate=True),
     Output(f"{PAGE_ID}-rpm-grid-full-store", "data", allow_duplicate=True),
     Output(f"{PAGE_ID}-rpm-stats", "children", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-inst-confirm", "opened"),
+    Output(f"{PAGE_ID}-rpm-inst-confirm-text", "children"),
+    Output(f"{PAGE_ID}-rpm-inst-confirm-all", "children"),
+    Output(f"{PAGE_ID}-rpm-inst-pending", "data"),
     Input(f"{PAGE_ID}-rpm-grid", "cellValueChanged"),
     State(f"{PAGE_ID}-rpm-grid-full-store", "data"),
     State(f"{PAGE_ID}-rpm-unreviewed-toggle", "checked"),
     prevent_initial_call=True,
 )
 def _rpm_save_edit(changed, full_data, unreviewed_only):
-    """Save a manual cell edit (specialty, institution, or reviewed) to SQLite."""
+    """Save a manual cell edit. For institution edits where the old value
+    is shared by multiple rows, show a confirmation instead of saving."""
     if not changed:
-        return dash.no_update, dash.no_update, dash.no_update
+        return (dash.no_update,) * 7
     from data.reviews_db import upsert_referring, add_institution, set_reviewed_bulk
 
     row_data = full_data or []
@@ -2907,26 +3074,52 @@ def _rpm_save_edit(changed, full_data, unreviewed_only):
     npi = row.get("npi", "")
     addr_k = row.get("address_key", "")
     if not npi:
-        return dash.no_update, dash.no_update
+        return (dash.no_update,) * 7
 
     col = changed[0].get("colId", "") if isinstance(changed, list) else changed.get("colId", "")
+    old_value = changed[0].get("oldValue", "") if isinstance(changed, list) else changed.get("oldValue", "")
+
+    if col == "institution" and old_value:
+        new_inst = row.get("institution", "")
+        # Count how many rows share the old institution name
+        shared_count = sum(1 for r in row_data if r.get("institution") == old_value and r.get("row_key") != row_key)
+        if shared_count > 0:
+            # Show confirmation — don't save yet
+            pending = {
+                "row_key": row_key, "npi": npi, "address_key": addr_k,
+                "old_institution": old_value, "new_institution": new_inst,
+            }
+            confirm_text = (
+                f'Rename "{old_value}" → "{new_inst}"?  '
+                f'{shared_count + 1} providers currently have "{old_value}".'
+            )
+            all_btn = f"Rename all {shared_count + 1} providers"
+            # Revert the cell value in row_data (will be applied after confirmation)
+            for r in row_data:
+                if r.get("row_key") == row_key:
+                    r["institution"] = old_value
+                    break
+            visible = [r for r in row_data if not r.get("reviewed")] if unreviewed_only else row_data
+            return visible, row_data, dash.no_update, True, confirm_text, all_btn, pending
 
     if col == "reviewed":
         reviewed = bool(row.get("reviewed", False))
         upsert_referring(npi, address_key=addr_k, source=row.get("source", "manual"))
         set_reviewed_bulk([(npi, addr_k)], reviewed=reviewed)
+        # Update the full store
+        for r in row_data:
+            if r.get("row_key") == row_key:
+                r["reviewed"] = reviewed
+                break
     elif col == "full_address":
-        # Parse the edited address string back into components
-        full = row.get("full_address", "")
-        parts = [p.strip() for p in full.split(",")]
-        # Best-effort parse: last part = zip, second-to-last = state, etc.
+        full = row.get("full_address") or ""
+        parts = [p.strip() for p in str(full).split(",")]
         addr_str, city_str, state_str, zip_str = "", "", "", ""
         if len(parts) >= 4:
             addr_str = ", ".join(parts[:-3])
             city_str, state_str, zip_str = parts[-3], parts[-2], parts[-1]
         elif len(parts) == 3:
             addr_str, city_str = parts[0], parts[1]
-            # Last part could be "WA 98503" or just "98503"
             last = parts[2].strip()
             sp = last.split()
             if len(sp) == 2 and len(sp[0]) == 2:
@@ -2953,21 +3146,27 @@ def _rpm_save_edit(changed, full_data, unreviewed_only):
                     r["state"] = state_str
                     r["zip"] = zip_str
                     break
-    else:
-        spec = row.get("specialty") if col == "specialty" else None
-        inst = row.get("institution") if col == "institution" else None
-        upsert_referring(npi, address_key=addr_k, specialty=spec, institution=inst, source="manual")
+    elif col == "institution":
+        # Single-row institution (old value was unique or empty)
+        inst = row.get("institution")
+        upsert_referring(npi, address_key=addr_k, institution=inst, source="manual")
         if inst:
             add_institution(inst)
-
+        if row_data:
+            for r in row_data:
+                if r.get("row_key") == row_key:
+                    r["institution"] = inst
+                    r["source"] = "manual"
+                    break
+    else:
+        spec = row.get("specialty") if col == "specialty" else None
+        upsert_referring(npi, address_key=addr_k, specialty=spec, source="manual")
         if row_data:
             for r in row_data:
                 if r.get("row_key") == row_key:
                     r["source"] = "manual"
                     if spec is not None:
                         r["specialty"] = spec
-                    if inst is not None:
-                        r["institution"] = inst
                     break
 
     total = len(row_data) if row_data else 0
@@ -2979,10 +3178,84 @@ def _rpm_save_edit(changed, full_data, unreviewed_only):
         f"{reviewed_n:,} reviewed  |  {total - reviewed_n:,} unreviewed  |  "
         f"{with_spec:,} specialty  |  {with_inst:,} institution"
     )
-
-    # Return filtered view if toggle is on, plus full store
     visible = [r for r in row_data if not r.get("reviewed")] if unreviewed_only else row_data
-    return visible, row_data, stats
+    return visible, row_data, stats, False, "", "", None
+
+
+# --- Institution rename confirmation actions ---
+@callback(
+    Output(f"{PAGE_ID}-rpm-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-grid-full-store", "data", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-stats", "children", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-inst-confirm", "opened", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-inst-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-inst-count", "children", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rpm-inst-confirm-one", "n_clicks"),
+    Input(f"{PAGE_ID}-rpm-inst-confirm-all", "n_clicks"),
+    Input(f"{PAGE_ID}-rpm-inst-confirm-cancel", "n_clicks"),
+    State(f"{PAGE_ID}-rpm-inst-pending", "data"),
+    State(f"{PAGE_ID}-rpm-grid-full-store", "data"),
+    State(f"{PAGE_ID}-rpm-unreviewed-toggle", "checked"),
+    prevent_initial_call=True,
+)
+def _rpm_inst_confirm_action(n_one, n_all, n_cancel, pending, full_data, unreviewed_only):
+    from dash import ctx
+    hide = False
+    if not pending or not full_data:
+        return (dash.no_update,) * 4 + (dash.no_update, dash.no_update)
+
+    row_data = full_data
+    old_inst = pending["old_institution"]
+    new_inst = pending["new_institution"]
+    row_key = pending["row_key"]
+    npi = pending["npi"]
+    addr_k = pending["address_key"]
+
+    triggered = ctx.triggered_id
+
+    if triggered == f"{PAGE_ID}-rpm-inst-confirm-cancel":
+        # Cancel — just hide, data already reverted
+        visible = [r for r in row_data if not r.get("reviewed")] if unreviewed_only else row_data
+        return visible, row_data, dash.no_update, hide, dash.no_update, dash.no_update
+
+    from data.reviews_db import upsert_referring, add_institution, rename_institution
+
+    if triggered == f"{PAGE_ID}-rpm-inst-confirm-one":
+        # Reassign just this one row
+        upsert_referring(npi, address_key=addr_k, institution=new_inst, source="manual")
+        if new_inst:
+            add_institution(new_inst)
+        for r in row_data:
+            if r.get("row_key") == row_key:
+                r["institution"] = new_inst
+                r["source"] = "manual"
+                break
+
+    elif triggered == f"{PAGE_ID}-rpm-inst-confirm-all":
+        # Rename institution globally
+        rename_institution(old_inst, new_inst)
+        if new_inst:
+            add_institution(new_inst)
+        for r in row_data:
+            if r.get("institution") == old_inst:
+                r["institution"] = new_inst
+
+    # Rebuild stats
+    total = len(row_data)
+    with_spec = sum(1 for r in row_data if r.get("specialty"))
+    with_inst = sum(1 for r in row_data if r.get("institution"))
+    reviewed_n = sum(1 for r in row_data if r.get("reviewed"))
+    stats = (
+        f"{total:,} providers  |  "
+        f"{reviewed_n:,} reviewed  |  {total - reviewed_n:,} unreviewed  |  "
+        f"{with_spec:,} specialty  |  {with_inst:,} institution"
+    )
+    visible = [r for r in row_data if not r.get("reviewed")] if unreviewed_only else row_data
+
+    # Rebuild institution grid
+    inst_rows, inst_count = _build_inst_grid_data(row_data)
+
+    return visible, row_data, stats, hide, inst_rows, inst_count
 
 
 @callback(
@@ -3044,6 +3317,48 @@ def _rpm_add_address(n, row_data, selected_rows):
         f"{with_spec:,} specialty  |  {with_inst:,} institution"
     )
     return row_data, row_data, stats, str(total)
+
+
+@callback(
+    Output(f"{PAGE_ID}-rpm-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-grid-full-store", "data", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-stats", "children", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-prov-count", "children", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rpm-delete-btn", "n_clicks"),
+    State(f"{PAGE_ID}-rpm-grid-full-store", "data"),
+    State(f"{PAGE_ID}-rpm-grid", "selectedRows"),
+    State(f"{PAGE_ID}-rpm-unreviewed-toggle", "checked"),
+    prevent_initial_call=True,
+)
+def _rpm_delete_rows(n, full_data, selected_rows, unreviewed_only):
+    """Delete selected rows from the grid and DB."""
+    if not n or not full_data or not selected_rows:
+        return (dash.no_update,) * 4
+    from data.reviews_db import delete_referring
+
+    # Delete from DB
+    delete_keys = set()
+    for r in selected_rows:
+        npi = r.get("npi", "")
+        addr_k = r.get("address_key", "")
+        if npi:
+            delete_referring(npi, addr_k)
+            delete_keys.add(r.get("row_key", ""))
+
+    # Remove from grid data
+    row_data = [r for r in full_data if r.get("row_key") not in delete_keys]
+
+    total = len(row_data)
+    with_spec = sum(1 for r in row_data if r.get("specialty"))
+    with_inst = sum(1 for r in row_data if r.get("institution"))
+    reviewed_n = sum(1 for r in row_data if r.get("reviewed"))
+    stats = (
+        f"{total:,} providers  |  "
+        f"{reviewed_n:,} reviewed  |  {total - reviewed_n:,} unreviewed  |  "
+        f"{with_spec:,} specialty  |  {with_inst:,} institution"
+    )
+    visible = [r for r in row_data if not r.get("reviewed")] if unreviewed_only else row_data
+    return visible, row_data, stats, str(total)
 
 
 @callback(
@@ -3430,36 +3745,36 @@ def _rpm_inst_export(n, inst_data):
 # --- Mark Reviewed (bulk) ---
 @callback(
     Output(f"{PAGE_ID}-rpm-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-grid-full-store", "data", allow_duplicate=True),
     Output(f"{PAGE_ID}-rpm-stats", "children", allow_duplicate=True),
     Input(f"{PAGE_ID}-rpm-reviewed-btn", "n_clicks"),
-    State(f"{PAGE_ID}-rpm-grid", "rowData"),
+    State(f"{PAGE_ID}-rpm-grid-full-store", "data"),
     State(f"{PAGE_ID}-rpm-grid", "selectedRows"),
+    State(f"{PAGE_ID}-rpm-unreviewed-toggle", "checked"),
     prevent_initial_call=True,
 )
-def _rpm_mark_reviewed(n, row_data, selected_rows):
-    """Mark selected rows as reviewed. If none selected, marks all unreviewed."""
-    if not n or not row_data:
-        return dash.no_update, dash.no_update
+def _rpm_mark_reviewed(n, full_data, selected_rows, unreviewed_only):
+    """Mark selected rows as reviewed."""
+    if not n or not full_data:
+        return dash.no_update, dash.no_update, dash.no_update
     from data.reviews_db import set_reviewed_bulk, upsert_referring
 
     if not selected_rows:
-        return dash.no_update, dash.no_update
-    targets = selected_rows
+        return dash.no_update, dash.no_update, dash.no_update
 
+    row_data = full_data
     keys = []
-    for r in targets:
+    for r in selected_rows:
         npi = r.get("npi", "")
         addr_k = r.get("address_key", "")
         if npi:
-            # Ensure row exists in SQLite before marking reviewed
             upsert_referring(npi, address_key=addr_k, source=r.get("source", "manual"))
             keys.append((npi, addr_k))
 
     if keys:
         set_reviewed_bulk(keys, reviewed=True)
 
-    # Update grid data
-    target_keys = {r.get("row_key") for r in targets}
+    target_keys = {r.get("row_key") for r in selected_rows}
     for r in row_data:
         if r.get("row_key") in target_keys:
             r["reviewed"] = True
@@ -3473,8 +3788,8 @@ def _rpm_mark_reviewed(n, row_data, selected_rows):
         f"{reviewed_n:,} reviewed  |  {total - reviewed_n:,} unreviewed  |  "
         f"{with_spec:,} specialty  |  {with_inst:,} institution"
     )
-
-    return row_data, stats
+    visible = [r for r in row_data if not r.get("reviewed")] if unreviewed_only else row_data
+    return visible, row_data, stats
 
 
 
@@ -3571,9 +3886,14 @@ def _rpm_npi_apply(n, review_data, row_data):
         return (dash.no_update,) * 4
     from data.reviews_db import bulk_upsert_referring
 
+    from config.settings import normalize_specialty
     accepted = [r for r in review_data if r.get("accept") and r.get("mapped_specialty")]
     if not accepted:
         return dash.no_update, dash.no_update, {"display": "none"}, "No rows accepted."
+
+    # Normalize before saving
+    for r in accepted:
+        r["mapped_specialty"] = normalize_specialty(r["mapped_specialty"])
 
     # Save to SQLite
     records = [
@@ -3608,16 +3928,15 @@ def _fetch_referral_detail(npi, addr_key, name):
     ref_npi["_npi"] = ref_npi["Referred By Prov NPI"].astype(float).astype(int).astype(str)
     ref_npi = ref_npi[ref_npi["_npi"] == npi]
 
-    if addr_key:
-        from data.reviews_db import _addr_key
-        ref_npi["_ak"] = ref_npi.apply(
-            lambda r: _addr_key(
-                str(r.get("Referring Provider City", "")),
-                str(r.get("Referring Provider State", "")),
-                str(r.get("Referring Provider Zip Code", "")),
-            ), axis=1,
-        )
-        ref_npi = ref_npi[ref_npi["_ak"] == addr_key]
+    from data.reviews_db import _addr_key
+    ref_npi["_ak"] = ref_npi.apply(
+        lambda r: _addr_key(
+            str(r.get("Referring Provider City", "")),
+            str(r.get("Referring Provider State", "")),
+            str(r.get("Referring Provider Zip Code", "")),
+        ), axis=1,
+    )
+    ref_npi = ref_npi[ref_npi["_ak"] == addr_key]
 
     cols = ["Created", "MRN", "Patient Name", "Rfl Prim Dx", "Diagnoses", "Status", "First Appt", "Days to First Appt"]
     detail = ref_npi[[c for c in cols if c in ref_npi.columns]].copy()
@@ -3811,20 +4130,25 @@ def _load_diag_descriptions() -> dict[str, str]:
 
 _DIAG_DESCRIPTIONS: dict[str, str] = _load_diag_descriptions()
 
+# Cached referral data + index mapping for diagnosis detail panel
+_diag_detail_ref: pd.DataFrame | None = None
+_diag_detail_indices: dict[str, list[int]] = {}
 
-def _resolve_referral_diagnosis(row, cv_mrn_dx, c2c, base_map):
+
+def _resolve_referral_diagnosis(row, cv_mrn_dx, course_mrn_dx, c2c, base_map):
     """Resolve a single referral row to (key, description, source_type).
 
     Priority cascade:
     1. CV DiagnosisCodes — what we actually treated them for
-    2. Rfl Prim Dx — what the referral is for (uses ICD from Diagnoses to match)
-    3. First ICD-10 code from Diagnoses (for multi-code, pick the one matching Rfl Prim Dx)
-    4. Free-text from Diagnoses column
+    2. Course DiagnosisCodes — temporally matched course (within -30 to +180 days)
+    3. Rfl Prim Dx — what the referral is for (uses ICD from Diagnoses to match)
+    4. First ICD-10 code from Diagnoses (for multi-code, pick the one matching Rfl Prim Dx)
+    5. Free-text from Diagnoses column
 
     Returns (key, description, source_type) where:
     - key: ICD code or lowercased free-text for aggregation
     - description: human-readable label
-    - source_type: "cv", "icd", or "free-text"
+    - source_type: "cv", "course", "icd", or "free-text"
     """
     mrn = row.get("MRN")
     diag_text = str(row.get("Diagnoses", "")) if pd.notna(row.get("Diagnoses")) else ""
@@ -3837,7 +4161,21 @@ def _resolve_referral_diagnosis(row, cv_mrn_dx, c2c, base_map):
             desc = _DIAG_DESCRIPTIONS.get(cv_code, cv_code)
             return cv_code, desc, "cv"
 
-    # --- Tier 2/3: ICD codes from Diagnoses column ---
+    # --- Tier 2: Course diagnosis (temporally matched) ---
+    if mrn is not None and pd.notna(mrn):
+        created = row.get("Created")
+        if created is not None and pd.notna(created):
+            mrn_int = int(mrn)
+            course_entries = course_mrn_dx.get(mrn_int, [])
+            for course_date, course_code in course_entries:
+                gap = (course_date - created).days
+                if -30 <= gap <= 180:
+                    if course_code in c2c:
+                        desc = _DIAG_DESCRIPTIONS.get(course_code, course_code)
+                        return course_code, desc, "course"
+                    break  # found a temporal match but code not in c2c, fall through
+
+    # --- Tier 3/4: ICD codes from Diagnoses column ---
     icd10_codes = _ICD10_RE.findall(diag_text)
     icd9_codes = _ICD9_RE.findall(diag_text)
 
@@ -3931,14 +4269,15 @@ def _build_diag_grid_data():
 
     Uses a priority cascade per referral to determine the primary diagnosis:
     1. CV DiagnosisCodes — what we actually treated them for
-    2. Rfl Prim Dx — what the referral is for (+ best-match ICD from Diagnoses)
-    3. ICD code from Diagnoses column
-    4. Free-text from Diagnoses column
+    2. Course DiagnosisCodes — temporally matched course (-30 to +180 days)
+    3. Rfl Prim Dx — what the referral is for (+ best-match ICD from Diagnoses)
+    4. ICD code from Diagnoses column
+    5. Free-text from Diagnoses column
 
     Shows entries NOT in the base ARIA lookup CSV. Aggregated by unique
     diagnosis key (ICD code or normalized free-text).
     """
-    from data.loader import load_referrals, load_clinic_visits
+    from data.loader import load_referrals, load_clinic_visits, load_courses
     from data.reviews_db import get_all_diagnosis_overrides
 
     ref = load_referrals()
@@ -3953,33 +4292,54 @@ def _build_diag_grid_data():
             cv_diag = cv[cv["DiagnosisCodes"].notna()][["PatientId", "DiagnosisCodes"]].copy()
             cv_diag = cv_diag.drop_duplicates("PatientId")
             for _, r in cv_diag.iterrows():
-                # Take first code from comma-separated list
                 first_code = str(r["DiagnosisCodes"]).split(",")[0].strip()
                 if first_code:
                     cv_mrn_dx[int(r["PatientId"])] = first_code
     except Exception:
         pass
 
-    # Aggregate: key → {count, description, source_type}
-    agg: dict[str, dict] = {}  # key → {"desc": str, "count": int, "type": str}
+    # Build MRN → [(course_start_date, dx_code), ...] sorted by date
+    # Used for temporal matching: find a course within -30 to +180 days of referral
+    course_mrn_dx: dict[int, list[tuple[pd.Timestamp, str]]] = {}
+    try:
+        courses = load_courses()
+        if not courses.empty and "DiagnosisCodes" in courses.columns:
+            c_dx = courses[courses["DiagnosisCodes"].notna() & courses["CourseStartDate"].notna()].copy()
+            c_dx = c_dx.sort_values("CourseStartDate")
+            for _, r in c_dx.iterrows():
+                mrn = int(r["PatientId"])
+                code = str(r["DiagnosisCodes"]).split(",")[0].strip()
+                if code:
+                    if mrn not in course_mrn_dx:
+                        course_mrn_dx[mrn] = []
+                    course_mrn_dx[mrn].append((r["CourseStartDate"], code))
+    except Exception:
+        pass
+
+    # Aggregate: key → {count, description, source_type, row_indices}
+    agg: dict[str, dict] = {}
 
     if not ref.empty:
-        for _, row in ref.iterrows():
-            key, desc, src_type = _resolve_referral_diagnosis(row, cv_mrn_dx, _DIAG_C2C, base_map)
+        for idx, row in ref.iterrows():
+            key, desc, src_type = _resolve_referral_diagnosis(row, cv_mrn_dx, course_mrn_dx, _DIAG_C2C, base_map)
             if key is None:
                 continue
             # Skip codes already in the ARIA base CSV (managed on Diagnosis page)
-            if src_type == "icd" and key in base_map:
-                continue
-            if src_type == "cv" and key in base_map:
+            if src_type in ("icd", "cv", "course") and key in base_map:
                 continue
 
             if key not in agg:
-                agg[key] = {"desc": desc, "count": 0, "type": src_type}
+                agg[key] = {"desc": desc, "count": 0, "type": src_type, "indices": []}
             agg[key]["count"] += 1
+            agg[key]["indices"].append(idx)
             # Keep the best description (longest non-empty)
             if desc and len(desc) > len(agg[key]["desc"]):
                 agg[key]["desc"] = desc
+
+    # Cache the referral dataframe + index mapping for the detail panel
+    global _diag_detail_ref, _diag_detail_indices
+    _diag_detail_ref = ref
+    _diag_detail_indices = {k: v["indices"] for k, v in agg.items()}
 
     # Build grid rows
     rows = []
@@ -4034,11 +4394,10 @@ def _build_diag_grid_data():
     total = len(rows)
     icd_count = sum(1 for r in rows if r["icd_code"])
     text_count = total - icd_count
-    cv_count = sum(1 for r in rows if r["source"] == "cv")
     categorized = sum(1 for r in rows if r["category"])
-    overridden = sum(1 for r in rows if r["source"] not in ("icd", "cv", "free-text"))
+    overridden = sum(1 for r in rows if r["source"] not in ("icd", "cv", "course", "free-text"))
     stats = (
-        f"{icd_count:,} ICD  |  {text_count:,} free-text  |  {cv_count:,} from CV  |  "
+        f"{icd_count:,} ICD  |  {text_count:,} free-text  |  "
         f"{categorized:,} categorized  |  {total - categorized:,} unmapped  |  "
         f"{overridden:,} overrides"
     )
@@ -4180,30 +4539,243 @@ def _rpm_diag_show_detail(store_data, close_clicks):
     icd_code = store_data.get("icd_code", "")
     description = store_data.get("description", "")
 
-    from data.loader import load_referrals
-    ref = load_referrals()
-    if ref.empty:
-        return {"display": "none"}, "", []
+    # Use the cached index mapping from _build_diag_grid_data
+    # This shows ONLY referrals that resolved to this entry via the cascade
+    lookup_key = icd_code if icd_code else description.lower()
+    indices = _diag_detail_indices.get(lookup_key, [])
+    ref = _diag_detail_ref
 
-    # Match referrals containing this ICD code or matching free-text
-    if icd_code:
-        mask = ref["Diagnoses"].fillna("").str.contains(re.escape(icd_code), case=False, na=False)
-        title = f"Referrals with ICD {icd_code} — {description[:40]}"
-    else:
-        # Free-text match
-        mask = (
-            ref["Rfl Prim Dx"].fillna("").str.lower().str.strip() == description.lower().strip()
-        ) | (
-            ref["Diagnoses"].fillna("").str.lower().str.strip() == description.lower().strip()
-        )
-        title = f"Referrals — \"{description[:50]}\""
+    if ref is None or not indices:
+        label = icd_code or description[:50]
+        return {"display": "block", "marginTop": "6px"}, f"{label} — 0 records", []
 
-    detail = ref[mask].copy()
+    detail = ref.loc[indices].copy()
     cols = ["Created", "MRN", "Patient Name", "Rfl Prim Dx", "Diagnoses", "Status"]
     detail = detail[[c for c in cols if c in detail.columns]]
     for dc in ["Created"]:
         if dc in detail.columns:
             detail[dc] = detail[dc].dt.strftime("%m/%d/%Y").fillna("")
 
-    title = f"{title} — {len(detail)} records"
+    label = f"ICD {icd_code}" if icd_code else f"\"{description[:50]}\""
+    title = f"Referrals — {label} — {len(detail)} records"
     return {"display": "block", "marginTop": "6px"}, title, detail.fillna("").to_dict("records")
+
+
+# ==========================================================================
+# Diagnosis AI Classification
+# ==========================================================================
+
+@callback(
+    Output(f"{PAGE_ID}-rpm-diag-ai-poll", "disabled"),
+    Output(f"{PAGE_ID}-rpm-diag-ai-progress", "style"),
+    Output(f"{PAGE_ID}-rpm-diag-ai-progress-text", "style"),
+    Output(f"{PAGE_ID}-rpm-diag-ai-progress-text", "children"),
+    Input(f"{PAGE_ID}-rpm-diag-ai-btn", "n_clicks"),
+    State(f"{PAGE_ID}-rpm-diag-grid", "rowData"),
+    State(f"{PAGE_ID}-rpm-diag-grid", "selectedRows"),
+    prevent_initial_call=True,
+)
+def _rpm_diag_start_ai(n, row_data, selected_rows):
+    """Start background AI classification for selected diagnosis entries."""
+    if not n or not row_data:
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+
+    with _diag_ai_lock:
+        if _diag_ai_progress["running"]:
+            return dash.no_update, dash.no_update, dash.no_update, "Already running..."
+
+    if not selected_rows:
+        return True, {"display": "none"}, {"display": "block"}, "Select rows first, then click to classify."
+
+    # Build entries for the API
+    entries = []
+    for r in selected_rows:
+        key = r.get("icd_code") or r.get("description", "")
+        if not key:
+            continue
+        entries.append({
+            "key": key,
+            "icd_code": r.get("icd_code", ""),
+            "description": r.get("description", ""),
+            "current_category": r.get("category", ""),
+            "current_subcategory": r.get("subcategory", ""),
+            "patients": r.get("patients", 0),
+        })
+
+    if not entries:
+        return True, {"display": "none"}, {"display": "block"}, "No valid entries to classify."
+
+    with _diag_ai_lock:
+        _diag_ai_progress.update(done=0, total=len(entries), running=True, message="Starting AI classification...")
+        _diag_ai_results.clear()
+
+    def _bg():
+        from utils.diagnosis_inference import infer_diagnosis_categories
+
+        # Process in chunks
+        chunk_size = 30
+        all_results = {}
+        for i in range(0, len(entries), chunk_size):
+            chunk = entries[i : i + chunk_size]
+            chunk_results = infer_diagnosis_categories(chunk)
+            all_results.update(chunk_results)
+            with _diag_ai_lock:
+                _diag_ai_progress["done"] = min(i + chunk_size, len(entries))
+                _diag_ai_progress["message"] = f"Classifying... {_diag_ai_progress['done']}/{len(entries)}"
+
+        # Build review rows
+        review = []
+        for e in entries:
+            key = e["key"]
+            ai = all_results.get(key)
+            review.append({
+                "key": key,
+                "icd_code": e["icd_code"],
+                "description": e["description"],
+                "current_category": e["current_category"],
+                "current_subcategory": e["current_subcategory"],
+                "ai_category": ai["category"] if ai else "",
+                "ai_subcategory": ai["subcategory"] if ai else "",
+                "category": ai["category"] if ai else "",  # for subcategory dropdown
+                "patients": e["patients"],
+                "accept": bool(ai),
+            })
+
+        with _diag_ai_lock:
+            _diag_ai_results.clear()
+            _diag_ai_results.extend(review)
+            _diag_ai_progress["running"] = False
+            _diag_ai_progress["message"] = f"Done. {sum(1 for r in review if r['ai_category']):,} classified of {len(review)}."
+
+    t = threading.Thread(target=_bg, daemon=True)
+    t.start()
+
+    return (
+        False,
+        {"display": "block"},
+        {"display": "block"},
+        f"Classifying {len(entries)} entries...",
+    )
+
+
+@callback(
+    Output(f"{PAGE_ID}-rpm-diag-ai-poll", "disabled", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-diag-ai-progress", "value"),
+    Output(f"{PAGE_ID}-rpm-diag-ai-progress", "style", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-diag-ai-progress-text", "children", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-diag-ai-progress-text", "style", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-diag-ai-review", "opened"),
+    Output(f"{PAGE_ID}-rpm-diag-ai-review-grid", "rowData"),
+    Input(f"{PAGE_ID}-rpm-diag-ai-poll", "n_intervals"),
+    prevent_initial_call=True,
+)
+def _rpm_diag_ai_poll(n):
+    """Poll background AI classification progress."""
+    no = dash.no_update
+    with _diag_ai_lock:
+        done = _diag_ai_progress["done"]
+        total = _diag_ai_progress["total"]
+        running = _diag_ai_progress["running"]
+        msg = _diag_ai_progress["message"]
+        review = list(_diag_ai_results) if not running and _diag_ai_results else None
+
+    pct = int(done * 100 / total) if total > 0 else 0
+
+    if running:
+        return False, pct, {"display": "block"}, msg, {"display": "block"}, no, no
+
+    if review:
+        return (
+            True, 100, {"display": "none"}, msg, {"display": "block"},
+            True, review,
+        )
+    return True, 100, {"display": "none"}, msg, {"display": "block"}, no, no
+
+
+# --- AI Review: Accept All ---
+@callback(
+    Output(f"{PAGE_ID}-rpm-diag-ai-review-grid", "rowData", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rpm-diag-ai-accept-all", "n_clicks"),
+    State(f"{PAGE_ID}-rpm-diag-ai-review-grid", "rowData"),
+    prevent_initial_call=True,
+)
+def _rpm_diag_ai_accept_all(n, data):
+    if not n or not data:
+        return dash.no_update
+    for r in data:
+        if r.get("ai_category"):
+            r["accept"] = True
+    return data
+
+
+# --- AI Review: Reject All (dismiss panel) ---
+@callback(
+    Output(f"{PAGE_ID}-rpm-diag-ai-review", "opened", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-diag-ai-progress-text", "children", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rpm-diag-ai-reject-all", "n_clicks"),
+    prevent_initial_call=True,
+)
+def _rpm_diag_ai_reject_all(n):
+    if not n:
+        return dash.no_update, dash.no_update
+    return False, "Rejected all — no changes applied."
+
+
+# --- AI Review: Apply Selected ---
+@callback(
+    Output(f"{PAGE_ID}-rpm-diag-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-diag-grid-full-store", "data", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-diag-stats", "children", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-diag-ai-review", "opened", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-diag-ai-progress-text", "children", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rpm-diag-ai-apply", "n_clicks"),
+    State(f"{PAGE_ID}-rpm-diag-ai-review-grid", "rowData"),
+    State(f"{PAGE_ID}-rpm-diag-grid-full-store", "data"),
+    State(f"{PAGE_ID}-rpm-diag-unreviewed-toggle", "checked"),
+    prevent_initial_call=True,
+)
+def _rpm_diag_ai_apply(n, review_data, full_data, unreviewed_only):
+    if not n or not review_data or not full_data:
+        return (dash.no_update,) * 5
+    from data.reviews_db import upsert_diagnosis_override
+
+    accepted = [r for r in review_data if r.get("accept") and r.get("ai_category")]
+
+    if not accepted:
+        return (dash.no_update, dash.no_update, dash.no_update,
+                False, "No rows accepted — no changes applied.")
+
+    # Save to DB
+    for r in accepted:
+        key = r.get("icd_code") or r.get("description", "")
+        if key:
+            upsert_diagnosis_override(
+                key, category=r["ai_category"],
+                subcategory=r.get("ai_subcategory", ""),
+                source="claude_ai",
+            )
+
+    # Update the grid's full store
+    ai_map = {}
+    for r in accepted:
+        key = r.get("icd_code") or r.get("description", "")
+        if key:
+            ai_map[key] = (r["ai_category"], r.get("ai_subcategory", ""))
+
+    for r in full_data:
+        rk = r.get("icd_code") or r.get("description", "")
+        if rk in ai_map:
+            r["category"] = ai_map[rk][0]
+            r["subcategory"] = ai_map[rk][1]
+            r["source"] = "claude_ai"
+
+    total = len(full_data)
+    categorized = sum(1 for r in full_data if r.get("category"))
+    reviewed_n = sum(1 for r in full_data if r.get("reviewed"))
+    stats = (
+        f"{total:,} entries  |  {categorized:,} categorized  |  "
+        f"{reviewed_n:,} reviewed  |  {total - reviewed_n:,} unreviewed"
+    )
+    visible = [r for r in full_data if not r.get("reviewed")] if unreviewed_only else full_data
+    msg = f"Applied {len(accepted)} AI classifications."
+    return visible, full_data, stats, False, msg

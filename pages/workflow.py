@@ -707,13 +707,14 @@ layout = dmc.Stack(
                                     chart_settings_popover(
                                         "wf-trend",
                                         chart_types=[
-                                            {"value": "line", "label": "Line"},
                                             {"value": "area", "label": "Area"},
+                                            {"value": "line", "label": "Line"},
                                             {"value": "bar", "label": "Bar"},
                                         ],
                                         show_smooth=True,
                                         smooth_max=50,
-                                        smooth_default=3,
+                                        smooth_default=5,
+                                        show_grouping=False,
                                     ),
                                 ]),
                             ],
@@ -734,7 +735,7 @@ layout = dmc.Stack(
                                         style={
                                             "fontSize": "11px",
                                             "color": "#6B7280",
-                                            "display": "none",
+                                            "visibility": "hidden",
                                             "cursor": "help",
                                         },
                                     ),

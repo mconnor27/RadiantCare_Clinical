@@ -103,28 +103,28 @@ D33.4,Benign neoplasm of spinal cord,Sarcomas,Peripheral Nerve Sheath
 237.0,Neoplasm of uncertain behavior of pituitary gland and craniopharyngeal duct,Central Nervous System,Craniopharyngioma
 D43.2,"Neoplasm of uncertain behavior of brain, unspecified",Central Nervous System,Hemangioblastoma
 D49.6,Neoplasm of unspecified behavior of brain,Central Nervous System,Glioma / Primary Brain
-191.0,"Malignant neoplasm of cerebrum, except lobes and ventricles",Central Nervous System,Primary Brain
-191.1,Malignant neoplasm of frontal lobe,Central Nervous System,Primary Brain
-191.2,Malignant neoplasm of temporal lobe,Central Nervous System,Primary Brain
-191.3,Malignant neoplasm of parietal lobe,Central Nervous System,Primary Brain
-191.4,Malignant neoplasm of occipital lobe,Central Nervous System,Primary Brain
-191.6,Malignant neoplasm of cerebellum nos,Central Nervous System,Primary Brain
-191.7,Malignant neoplasm of brain stem,Central Nervous System,Primary Brain
-191.8,Malignant neoplasm of other parts of brain,Central Nervous System,Primary Brain
-191.9,"Malignant neoplasm of brain, unspecified site",Central Nervous System,Primary Brain
-C71.0,"Malignant neoplasm of cerebrum, except lobes and ventricles",Central Nervous System,Primary Brain
-C71.1,Malignant neoplasm of frontal lobe,Central Nervous System,Primary Brain
-C71.2,Malignant neoplasm of temporal lobe,Central Nervous System,Primary Brain
-C71.3,Malignant neoplasm of parietal lobe,Central Nervous System,Primary Brain
-C71.4,Malignant neoplasm of occipital lobe,Central Nervous System,Primary Brain
-C71.5,Malignant neoplasm of cerebral ventricle,Central Nervous System,Primary Brain
-C71.6,Malignant neoplasm of cerebellum,Central Nervous System,Primary Brain
-C71.7,Malignant neoplasm of brain stem,Central Nervous System,Primary Brain
-C71.8,Malignant neoplasm of overlapping sites of brain,Central Nervous System,Primary Brain
-C71.9,"Malignant neoplasm of brain, unspecified",Central Nervous System,Primary Brain
-192.1,Malignant neoplasm of cerebral meninges,Central Nervous System,Primary Brain
-D32.0,Benign neoplasm of cerebral meninges,Central Nervous System,Primary Brain
-D32.9,"Benign neoplasm of meninges, unspecified",Central Nervous System,Primary Brain
+191.0,"Malignant neoplasm of cerebrum, except lobes and ventricles",Central Nervous System,Glioma / Primary Brain
+191.1,Malignant neoplasm of frontal lobe,Central Nervous System,Glioma / Primary Brain
+191.2,Malignant neoplasm of temporal lobe,Central Nervous System,Glioma / Primary Brain
+191.3,Malignant neoplasm of parietal lobe,Central Nervous System,Glioma / Primary Brain
+191.4,Malignant neoplasm of occipital lobe,Central Nervous System,Glioma / Primary Brain
+191.6,Malignant neoplasm of cerebellum nos,Central Nervous System,Glioma / Primary Brain
+191.7,Malignant neoplasm of brain stem,Central Nervous System,Glioma / Primary Brain
+191.8,Malignant neoplasm of other parts of brain,Central Nervous System,Glioma / Primary Brain
+191.9,"Malignant neoplasm of brain, unspecified site",Central Nervous System,Glioma / Primary Brain
+C71.0,"Malignant neoplasm of cerebrum, except lobes and ventricles",Central Nervous System,Glioma / Primary Brain
+C71.1,Malignant neoplasm of frontal lobe,Central Nervous System,Glioma / Primary Brain
+C71.2,Malignant neoplasm of temporal lobe,Central Nervous System,Glioma / Primary Brain
+C71.3,Malignant neoplasm of parietal lobe,Central Nervous System,Glioma / Primary Brain
+C71.4,Malignant neoplasm of occipital lobe,Central Nervous System,Glioma / Primary Brain
+C71.5,Malignant neoplasm of cerebral ventricle,Central Nervous System,Glioma / Primary Brain
+C71.6,Malignant neoplasm of cerebellum,Central Nervous System,Glioma / Primary Brain
+C71.7,Malignant neoplasm of brain stem,Central Nervous System,Glioma / Primary Brain
+C71.8,Malignant neoplasm of overlapping sites of brain,Central Nervous System,Glioma / Primary Brain
+C71.9,"Malignant neoplasm of brain, unspecified",Central Nervous System,Glioma / Primary Brain
+192.1,Malignant neoplasm of cerebral meninges,Central Nervous System,Glioma / Primary Brain
+D32.0,Benign neoplasm of cerebral meninges,Central Nervous System,Glioma / Primary Brain
+D32.9,"Benign neoplasm of meninges, unspecified",Central Nervous System,Glioma / Primary Brain
 190.0,"Malignant neoplasm of eyeball, except conjunctiva, cornea, retina, and choroid",Central Nervous System,Ocular / Orbit
 190.1,Malignant neoplasm of orbit,Central Nervous System,Ocular / Orbit
 C69.31,Malignant neoplasm of right choroid,Central Nervous System,Ocular / Orbit
@@ -354,16 +354,16 @@ C32.8,Malignant neoplasm of overlapping sites of larynx,Head and Neck,Larynx
 C32.9,"Malignant neoplasm of larynx, unspecified",Head and Neck,Larynx
 D02.0,Carcinoma in situ of larynx,Head and Neck,Larynx
 D38.0,Neoplasm of uncertain behavior of larynx,Head and Neck,Larynx
-140.1,"Malignant neoplasm of lower lip, vermilion border",Head and Neck,Lip
-140.8,Malignant neoplasm of other sites of lip,Head and Neck,Lip
-140.9,"Malignant neoplasm of lip, unspecified, vermilion border",Head and Neck,Lip
-C00.0,Malignant neoplasm of external upper lip,Head and Neck,Lip
-C00.1,Malignant neoplasm of external lower lip,Head and Neck,Lip
-C00.3,"Malignant neoplasm of upper lip, inner aspect",Head and Neck,Lip
-C00.4,"Malignant neoplasm of lower lip, inner aspect",Head and Neck,Lip
-C00.5,"Malignant neoplasm of lip, unspecified, inner aspect",Head and Neck,Lip
-C00.8,Malignant neoplasm of overlapping sites of lip,Head and Neck,Lip
-C00.9,"Malignant neoplasm of lip, unspecified",Head and Neck,Lip
+140.1,"Malignant neoplasm of lower lip, vermilion border",Head and Neck,Oral Cavity
+140.8,Malignant neoplasm of other sites of lip,Head and Neck,Oral Cavity
+140.9,"Malignant neoplasm of lip, unspecified, vermilion border",Head and Neck,Oral Cavity
+C00.0,Malignant neoplasm of external upper lip,Head and Neck,Oral Cavity
+C00.1,Malignant neoplasm of external lower lip,Head and Neck,Oral Cavity
+C00.3,"Malignant neoplasm of upper lip, inner aspect",Head and Neck,Oral Cavity
+C00.4,"Malignant neoplasm of lower lip, inner aspect",Head and Neck,Oral Cavity
+C00.5,"Malignant neoplasm of lip, unspecified, inner aspect",Head and Neck,Oral Cavity
+C00.8,Malignant neoplasm of overlapping sites of lip,Head and Neck,Oral Cavity
+C00.9,"Malignant neoplasm of lip, unspecified",Head and Neck,Oral Cavity
 160.0,Malignant neoplasm of nasal cavities,Head and Neck,Nasal Cavity / Sinus
 160.2,Malignant neoplasm of maxillary sinus,Head and Neck,Nasal Cavity / Sinus
 160.3,Malignant neoplasm of ethmoidal sinus,Head and Neck,Nasal Cavity / Sinus

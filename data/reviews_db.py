@@ -50,6 +50,13 @@ CREATE TABLE IF NOT EXISTS institutions (
     created_at    TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS diagnosis_taxonomy (
+    category      TEXT NOT NULL,
+    subcategory   TEXT NOT NULL,
+    sort_order    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (category, subcategory)
+);
+
 CREATE TABLE IF NOT EXISTS diagnosis_overrides (
     icd_code      TEXT PRIMARY KEY,
     category      TEXT NOT NULL,
@@ -330,6 +337,15 @@ def add_referring_address(
     return addr_key
 
 
+def delete_referring(npi: str, address_key: str = "") -> None:
+    """Delete a referring physician row."""
+    with _connect() as conn:
+        conn.execute(
+            "DELETE FROM referring_physicians WHERE npi = ? AND address_key = ?",
+            (str(npi), address_key),
+        )
+
+
 def referring_table_is_empty() -> bool:
     """Check if the referring_physicians table has any rows."""
     with _connect() as conn:
@@ -479,6 +495,88 @@ def delete_diagnosis_override(icd_code: str) -> None:
     """Remove a diagnosis override (revert to base mapping)."""
     with _connect() as conn:
         conn.execute("DELETE FROM diagnosis_overrides WHERE icd_code = ?", (icd_code.strip(),))
+
+
+# ---------------------------------------------------------------------------
+# Diagnosis taxonomy
+# ---------------------------------------------------------------------------
+
+def get_diagnosis_taxonomy() -> dict[str, list[str]]:
+    """Return {category: [subcategory, ...]} from the taxonomy table."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT category, subcategory FROM diagnosis_taxonomy ORDER BY category, sort_order, subcategory"
+        ).fetchall()
+    result: dict[str, list[str]] = {}
+    for r in rows:
+        cat = r["category"]
+        sub = r["subcategory"]
+        if cat not in result:
+            result[cat] = []
+        result[cat].append(sub)
+    return result
+
+
+def taxonomy_table_row_count() -> int:
+    """Return the number of rows in the diagnosis_taxonomy table."""
+    with _connect() as conn:
+        row = conn.execute("SELECT COUNT(*) AS cnt FROM diagnosis_taxonomy").fetchone()
+    return row["cnt"]
+
+
+def seed_taxonomy(taxonomy: dict[str, list[str]]) -> int:
+    """Populate the taxonomy table from a dict. Only inserts missing entries."""
+    now = datetime.now(timezone.utc).isoformat()
+    count = 0
+    with _connect() as conn:
+        for cat, subs in taxonomy.items():
+            for i, sub in enumerate(subs):
+                try:
+                    conn.execute(
+                        "INSERT INTO diagnosis_taxonomy (category, subcategory, sort_order) VALUES (?, ?, ?)",
+                        (cat, sub, i),
+                    )
+                    count += 1
+                except Exception:
+                    pass  # Already exists
+    return count
+
+
+def add_taxonomy_entry(category: str, subcategory: str) -> None:
+    """Add a new category/subcategory to the taxonomy."""
+    with _connect() as conn:
+        max_order = conn.execute(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM diagnosis_taxonomy WHERE category = ?",
+            (category,),
+        ).fetchone()["next_order"]
+        conn.execute(
+            "INSERT OR IGNORE INTO diagnosis_taxonomy (category, subcategory, sort_order) VALUES (?, ?, ?)",
+            (category, subcategory, max_order),
+        )
+
+
+def rename_taxonomy_subcategory(category: str, old_sub: str, new_sub: str) -> int:
+    """Rename a subcategory within a category. Also updates diagnosis_overrides."""
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE diagnosis_taxonomy SET subcategory = ? WHERE category = ? AND subcategory = ?",
+            (new_sub, category, old_sub),
+        )
+        cur = conn.execute(
+            "UPDATE diagnosis_overrides SET subcategory = ?, updated_at = ? WHERE category = ? AND subcategory = ?",
+            (new_sub, now, category, old_sub),
+        )
+        return cur.rowcount
+
+
+def delete_taxonomy_entry(category: str, subcategory: str) -> None:
+    """Remove a subcategory from the taxonomy."""
+    with _connect() as conn:
+        conn.execute(
+            "DELETE FROM diagnosis_taxonomy WHERE category = ? AND subcategory = ?",
+            (category, subcategory),
+        )
 
 
 def diagnosis_table_row_count() -> int:

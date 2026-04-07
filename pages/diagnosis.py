@@ -646,7 +646,7 @@ layout = dmc.Stack(
                         "rowHeight": 36,
                         "headerHeight": 36,
                         "floatingFiltersHeight": 32,
-                        "rowSelection": {"mode": "multiRow"},
+                        "rowSelection": {"mode": "multiRow", "selectAll": "filtered"},
                     },
                     style={"flex": 1, "minHeight": 0},
                     className="ag-theme-alpine",
@@ -693,6 +693,7 @@ layout = dmc.Stack(
                 ),
                 dcc.Download(id="diag-mgr-download"),
                 dcc.Store(id="diag-mgr-detail-store", data=None),
+                dcc.Store(id="diag-mgr-full-store", data=None),
             ],
         ),
 
@@ -916,14 +917,17 @@ def update_diagnosis(_n, slider_val, departments, physician, diag_filter, mode, 
 
 # --- Unreviewed-only toggle for Diagnosis manager grid ---
 clientside_callback(
-    """function(checked) {
+    """function(checked, fullData) {
+        if (!fullData) return window.dash_clientside.no_update;
         if (checked) {
-            return {"reviewed": {"filterType": "text", "type": "equals", "filter": "false"}};
+            return fullData.filter(function(r) { return !r.reviewed; });
         }
-        return {};
+        return fullData;
     }""",
-    Output("diag-mgr-grid", "filterModel"),
+    Output("diag-mgr-grid", "rowData", allow_duplicate=True),
     Input("diag-mgr-unreviewed-toggle", "checked"),
+    State("diag-mgr-full-store", "data"),
+    prevent_initial_call=True,
 )
 
 
@@ -1019,56 +1023,66 @@ def _build_diag_mgr_data():
 @callback(
     Output("diag-mgr-modal", "opened"),
     Output("diag-mgr-grid", "rowData"),
+    Output("diag-mgr-full-store", "data"),
     Output("diag-mgr-stats", "children"),
+    Output("diag-mgr-unreviewed-toggle", "checked"),
     Input("diag-mgr-btn", "n_clicks"),
     prevent_initial_call=True,
 )
 def _diag_mgr_open(n):
     if not n:
-        return dash.no_update, dash.no_update, dash.no_update
+        return (dash.no_update,) * 5
     rows, stats = _build_diag_mgr_data()
-    return True, rows, stats
+    return True, rows, rows, stats, False
 
 
 @callback(
     Output("diag-mgr-grid", "rowData", allow_duplicate=True),
+    Output("diag-mgr-full-store", "data", allow_duplicate=True),
     Output("diag-mgr-stats", "children", allow_duplicate=True),
     Input("diag-mgr-grid", "cellValueChanged"),
-    State("diag-mgr-grid", "rowData"),
+    State("diag-mgr-full-store", "data"),
+    State("diag-mgr-unreviewed-toggle", "checked"),
     prevent_initial_call=True,
 )
-def _diag_mgr_save_edit(changed, row_data):
-    """Save a category or subcategory edit to SQLite."""
+def _diag_mgr_save_edit(changed, full_data, unreviewed_only):
+    """Save a category, subcategory, or reviewed edit to SQLite."""
     if not changed:
-        return dash.no_update, dash.no_update
-    from data.reviews_db import upsert_diagnosis_override
+        return dash.no_update, dash.no_update, dash.no_update
+    from data.reviews_db import upsert_diagnosis_override, set_diagnosis_reviewed_bulk
 
+    row_data = full_data or []
     row = changed[0].get("data", {}) if isinstance(changed, list) else changed.get("data", {})
     code = row.get("icd_code", "")
     if not code:
-        return dash.no_update, dash.no_update
+        return dash.no_update, dash.no_update, dash.no_update
 
+    col = changed[0].get("colId", "") if isinstance(changed, list) else changed.get("colId", "")
     cat = row.get("category", "")
     sub = row.get("subcategory", "")
+    reviewed = row.get("reviewed", False)
+
     upsert_diagnosis_override(code, category=cat, subcategory=sub, source="manual")
+    if col == "reviewed":
+        set_diagnosis_reviewed_bulk([code], reviewed=bool(reviewed))
 
-    if row_data:
-        for r in row_data:
-            if r["icd_code"] == code:
-                r["category"] = cat
-                r["subcategory"] = sub
-                r["source"] = "manual"
-                break
+    for r in row_data:
+        if r["icd_code"] == code:
+            r["category"] = cat
+            r["subcategory"] = sub
+            r["reviewed"] = reviewed
+            r["source"] = "manual"
+            break
 
-    total = len(row_data) if row_data else 0
-    categorized = sum(1 for r in row_data if r.get("category")) if row_data else 0
-    with_sub = sum(1 for r in row_data if r.get("subcategory")) if row_data else 0
-    overridden = sum(1 for r in row_data if r.get("source") != "csv") if row_data else 0
+    total = len(row_data)
+    categorized = sum(1 for r in row_data if r.get("category"))
+    reviewed_n = sum(1 for r in row_data if r.get("reviewed"))
     stats = (
         f"{total:,} codes  |  {categorized:,} categorized  |  "
-        f"{with_sub:,} with subcategory  |  {overridden:,} overrides"
+        f"{reviewed_n:,} reviewed  |  {total - reviewed_n:,} unreviewed"
     )
-    return row_data, stats
+    visible = [r for r in row_data if not r.get("reviewed")] if unreviewed_only else row_data
+    return visible, row_data, stats
 
 
 @callback(
@@ -1089,17 +1103,20 @@ def _diag_mgr_export(n, diag_data):
 # --- Diagnosis Manager: Mark Reviewed ---
 @callback(
     Output("diag-mgr-grid", "rowData", allow_duplicate=True),
+    Output("diag-mgr-full-store", "data", allow_duplicate=True),
     Output("diag-mgr-stats", "children", allow_duplicate=True),
     Input("diag-mgr-reviewed-btn", "n_clicks"),
-    State("diag-mgr-grid", "rowData"),
+    State("diag-mgr-full-store", "data"),
     State("diag-mgr-grid", "selectedRows"),
+    State("diag-mgr-unreviewed-toggle", "checked"),
     prevent_initial_call=True,
 )
-def _diag_mgr_mark_reviewed(n, row_data, selected_rows):
-    if not n or not row_data or not selected_rows:
-        return dash.no_update, dash.no_update
+def _diag_mgr_mark_reviewed(n, full_data, selected_rows, unreviewed_only):
+    if not n or not full_data or not selected_rows:
+        return dash.no_update, dash.no_update, dash.no_update
     from data.reviews_db import set_diagnosis_reviewed_bulk
 
+    row_data = full_data
     codes = [r["icd_code"] for r in selected_rows if r.get("icd_code")]
     if codes:
         set_diagnosis_reviewed_bulk(codes, reviewed=True)
@@ -1116,7 +1133,8 @@ def _diag_mgr_mark_reviewed(n, row_data, selected_rows):
         f"{total:,} codes  |  {categorized:,} categorized  |  "
         f"{reviewed_n:,} reviewed  |  {total - reviewed_n:,} unreviewed"
     )
-    return row_data, stats
+    visible = [r for r in row_data if not r.get("reviewed")] if unreviewed_only else row_data
+    return visible, row_data, stats
 
 
 # --- Diagnosis Manager: Detail Panel ---

@@ -29,28 +29,9 @@ from pathlib import Path
 import pandas as pd
 
 # ---------------------------------------------------------------------------
-# Category display names (no roman-numeral prefixes)
+# Seed taxonomy — used only to populate the DB on first run
 # ---------------------------------------------------------------------------
-CATEGORIES: list[str] = [
-    "Benign Diseases",
-    "Breast",
-    "Central Nervous System",
-    "Gastrointestinal",
-    "GU – Non-Prostate",
-    "GU – Prostate",
-    "Gynecologic",
-    "Head and Neck",
-    "Hematologic",
-    "Metastases & Palliative",
-    "Sarcomas",
-    "Skin",
-    "Thoracic",
-]
-
-# ---------------------------------------------------------------------------
-# Subcategory taxonomy — category → sorted list of subcategory names
-# ---------------------------------------------------------------------------
-SUBCATEGORIES: dict[str, list[str]] = {
+_SEED_SUBCATEGORIES: dict[str, list[str]] = {
     "Benign Diseases": [
         "Dupuytren / Plantar", "Gynecomastia", "Hemangioma",
         "Heterotopic Ossification", "Keloid / Scar", "Neurofibromatosis",
@@ -60,7 +41,7 @@ SUBCATEGORIES: dict[str, list[str]] = {
     "Central Nervous System": [
         "AVM", "Craniopharyngioma", "Glioma / Primary Brain",
         "Hemangioblastoma", "Meningioma", "Ocular / Orbit", "Paraganglioma",
-        "Pituitary / Pineal", "Primary Brain", "Schwannoma", "Spinal Cord",
+        "Pituitary / Pineal", "Schwannoma", "Spinal Cord",
     ],
     "GU – Non-Prostate": [
         "Adrenal", "Bladder", "Kidney / RCC", "Penile", "Testicular", "Urethra",
@@ -76,7 +57,7 @@ SUBCATEGORIES: dict[str, list[str]] = {
         "Uterine / Endometrial", "Vaginal", "Vulvar",
     ],
     "Head and Neck": [
-        "Hypopharynx", "Larynx", "Lip", "Nasal Cavity / Sinus", "Nasopharynx",
+        "Hypopharynx", "Larynx", "Nasal Cavity / Sinus", "Nasopharynx",
         "Oral Cavity", "Oropharynx", "Salivary Gland", "Thyroid", "Trachea",
         "Unknown Primary/Other",
     ],
@@ -106,6 +87,30 @@ SUBCATEGORIES: dict[str, list[str]] = {
     ],
 }
 
+
+# ---------------------------------------------------------------------------
+# Live taxonomy — reads from DB, auto-seeds on first use
+# ---------------------------------------------------------------------------
+def _load_taxonomy() -> dict[str, list[str]]:
+    """Load taxonomy from DB. Seeds from _SEED_SUBCATEGORIES on first run."""
+    try:
+        from data.reviews_db import get_diagnosis_taxonomy, taxonomy_table_row_count, seed_taxonomy
+        if taxonomy_table_row_count() == 0:
+            seed_taxonomy(_SEED_SUBCATEGORIES)
+        return get_diagnosis_taxonomy()
+    except Exception:
+        return dict(_SEED_SUBCATEGORIES)
+
+
+def get_taxonomy() -> dict[str, list[str]]:
+    """Return the current {category: [subcategories]} from the DB."""
+    return _load_taxonomy()
+
+
+# Module-level references — refreshed via get_taxonomy() for live reads,
+# but these provide stable import-time values for page layouts.
+SUBCATEGORIES: dict[str, list[str]] = _load_taxonomy()
+CATEGORIES: list[str] = sorted(SUBCATEGORIES.keys())
 ALL_SUBCATEGORIES: list[str] = sorted(
     {sc for subs in SUBCATEGORIES.values() for sc in subs}
 )

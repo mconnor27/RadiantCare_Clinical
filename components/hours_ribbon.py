@@ -44,7 +44,7 @@ def hours_ribbon_card(prefix, *, card_height="100%", chart_height=None):
                             value="all", size="xs",
                         ),
                     ]),
-                    dmc.Group(gap="xs", align="center", children=[
+                    dmc.Group(gap="xs", align="center", wrap="nowrap", children=[
                         html.Div(
                             id=f"{prefix}-hours-week-nav",
                             children=dmc.Group(gap=4, align="center", children=[
@@ -87,6 +87,7 @@ def hours_ribbon_card(prefix, *, card_height="100%", chart_height=None):
                             show_smooth=True,
                             smooth_max=7,
                             smooth_default=3,
+                            show_grouping=False,
                         ),
                     ]),
                 ],
@@ -149,8 +150,12 @@ def register_hours_ribbon_callbacks(prefix):
     # Show/hide week nav buttons
     clientside_callback(
         """function(range) {
+            // Keep layout width stable across modes to avoid graph area jumping.
+            // Hide with visibility instead of display:none so header height/width
+            // does not reflow when toggling Week mode on/off.
             return range === "thisweek"
-                ? {display: "inline-flex"} : {display: "none"};
+                ? {visibility: "visible", pointerEvents: "auto"}
+                : {visibility: "hidden", pointerEvents: "none"};
         }""",
         Output(f"{prefix}-hours-week-nav", "style"),
         Input(f"{prefix}-hours-range", "value"),
@@ -196,6 +201,7 @@ def register_hours_ribbon_callbacks(prefix):
         Input(f"{prefix}-chart-hours", "relayoutData"),
         State(f"{prefix}-chart-hours", "figure"),
         State(f"{prefix}-store-hours", "data"),
+        State(f"{prefix}-hours-range", "value"),
         prevent_initial_call=True,
     )
 

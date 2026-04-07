@@ -15,11 +15,16 @@ from config.settings import (
     DEFAULT_LAYOUT, FONT_FAMILY, SEMANTIC_COLORS,
 )
 from components.filter_bar import department_chips
+from components.outlier_panel import outlier_panel, register_outlier_callbacks
 from components.kpi_card import kpi_card
 from components.chart_card import chart_card, register_chart_callbacks
 from components.hours_ribbon import hours_ribbon_card, register_hours_ribbon_callbacks
 from utils.charts import apply_default_layout, empty_figure, dept_color, smooth_limits
 from statsmodels.nonparametric.smoothers_lowess import lowess as _lowess
+
+PAGE_ID = "home"
+_CAP_CONSULT_LEAD = 30   # > 30 days booking-to-consult = outlier
+_CAP_SIM_LEAD = 21       # > 21 days booking-to-sim = outlier
 
 
 def _apply_loess(series, frac):
@@ -373,8 +378,8 @@ def _build_availability_calendar(departments, consults_only=True):
         sim_total = sim_scheduled + sim_open
         exam_pct = (exam_scheduled / exam_total.replace(0, 1) * 100).clip(0, 100)
         sim_pct = (sim_scheduled / sim_total.replace(0, 1) * 100).clip(0, 100)
-        exam_pct = exam_pct.where(exam_total > 0, 50)
-        sim_pct = sim_pct.where(sim_total > 0, 50)
+        exam_pct = exam_pct.where(exam_total > 0, 100)
+        sim_pct = sim_pct.where(sim_total > 0, 100)
 
         # Group dates by week (for row labels)
         weeks = []
@@ -526,9 +531,7 @@ def _build_availability_calendar(departments, consults_only=True):
                         total = int(total_series.get(target_date, 0))
                         sched = int(sched_series.get(target_date, 0))
                         remaining = max(0, total - sched)
-                        if total == 0:
-                            row.append("")
-                        elif remaining == 0:
+                        if total == 0 or remaining == 0:
                             row.append("Full")
                         else:
                             row.append(str(remaining))
@@ -609,7 +612,7 @@ def _build_availability_calendar(departments, consults_only=True):
                     xref=xref, yref=yref,
                     x=0.5, y=-0.06,
                     showarrow=False,
-                    font=dict(size=10, color="#6B7280"),
+                    font=dict(size=13, color="#6B7280"),
                     xanchor="center",
                 ))
 
@@ -670,6 +673,10 @@ layout = dmc.Stack(
                                     value="ytd", size="sm",
                                 ),
                                 department_chips("home"),
+                                outlier_panel(PAGE_ID, transitions=[
+                                    ("Consult Lead Time", _CAP_CONSULT_LEAD),
+                                    ("Sim Lead Time", _CAP_SIM_LEAD),
+                                ]),
                                 dmc.Group(gap=8, align="center", children=[
                                     dmc.Text("Smoothing", size="sm", c="#9CA3AF", fw=500),
                                     dmc.Slider(
@@ -880,12 +887,24 @@ clientside_callback(
     Input("home-filter-date-preset", "value"),
     Input("home-filter-department", "value"),
     Input("home-store-sims-scope", "data"),
+    Input(f"{PAGE_ID}-outlier-enabled", "data"),
+    Input(f"{PAGE_ID}-outlier-cap-0", "value"),
+    Input(f"{PAGE_ID}-outlier-cap-1", "value"),
     running=[(Output("home-kpi-loading", "visible"), True, False)],
 )
-def update_kpis(_n, date_preset, departments, sims_scope):
+def update_kpis(_n, date_preset, departments, sims_scope,
+                outlier_enabled, cap_consult, cap_sim):
     """Compute all 5 KPI cards with sparkline IDs (data computed separately)."""
     from data.loader import load_treatment_detail, load_simulations, load_clinic_visits
     sims_scope = sims_scope or "initial"
+
+    # Resolve outlier caps
+    if not outlier_enabled:
+        cap_consult = 365
+        cap_sim = 365
+    else:
+        cap_consult = cap_consult or _CAP_CONSULT_LEAD
+        cap_sim = cap_sim or _CAP_SIM_LEAD
 
     PERIOD_LABELS = {
         "today": "Today", "week": "7 Days",
@@ -1126,7 +1145,7 @@ def update_kpis(_n, date_preset, departments, sims_scope):
     if not consults.empty and "AppointmentCreatedDate" in consults.columns:
         cl = consults[consults["AppointmentCreatedDate"].notna()].copy()
         cl["lead_days"] = (cl["ScheduledDateTime"] - cl["AppointmentCreatedDate"]).dt.days
-        cl = cl[cl["lead_days"] >= 0]
+        cl = cl[(cl["lead_days"] >= 0) & (cl["lead_days"] <= cap_consult)]
         if not cl.empty:
             last_booked = cl["AppointmentCreatedDate"].dt.normalize().max()
             start = _preset_start(last_booked, date_preset)
@@ -1159,7 +1178,7 @@ def update_kpis(_n, date_preset, departments, sims_scope):
     if not sims.empty and "AppointmentCreatedDate" in sims.columns:
         sl = sims[sims["AppointmentCreatedDate"].notna()].copy()
         sl["lead_days"] = (sl["ScheduledDateTime"] - sl["AppointmentCreatedDate"]).dt.days
-        sl = sl[sl["lead_days"] >= 0]
+        sl = sl[(sl["lead_days"] >= 0) & (sl["lead_days"] <= cap_sim)]
         if not sl.empty:
             last_booked = sl["AppointmentCreatedDate"].dt.normalize().max()
             start = _preset_start(last_booked, date_preset)
@@ -1287,6 +1306,7 @@ clientside_callback(
     Input("home-md-settings-smooth", "value"),
     Input("home-md-settings-type", "value"),
     Input("home-md-range", "value"),
+    Input("home-md-settings-stack", "value"),
     State("home-chart-physician", "figure"),
 )
 
@@ -1298,6 +1318,7 @@ clientside_callback(
     State("home-chart-physician", "figure"),
     State("home-store-md-census", "data"),
     State("home-md-settings-type", "value"),
+    State("home-md-settings-stack", "value"),
     prevent_initial_call=True,
 )
 
@@ -1366,6 +1387,7 @@ clientside_callback(
     Input("home-site-settings-smooth", "value"),
     Input("home-site-settings-type", "value"),
     Input("home-site-range", "value"),
+    Input("home-site-settings-stack", "value"),
     State("home-chart-site", "figure"),
 )
 
@@ -1377,6 +1399,7 @@ clientside_callback(
     State("home-chart-site", "figure"),
     State("home-store-site-census", "data"),
     State("home-site-settings-type", "value"),
+    State("home-site-settings-stack", "value"),
     prevent_initial_call=True,
 )
 
@@ -1585,6 +1608,7 @@ def _build_treatment_census_data(df_past, df_future, groups, colors, height=380,
 # ---------------------------------------------------------------------------
 
 register_hours_ribbon_callbacks("home")
+register_outlier_callbacks(PAGE_ID, n_transitions=2, defaults=[_CAP_CONSULT_LEAD, _CAP_SIM_LEAD])
 
 @callback(
     Output("home-store-hours", "data"),
@@ -1635,7 +1659,7 @@ clientside_callback(
 # Settings toggle + PNG export (clientside via shared helpers)
 # ---------------------------------------------------------------------------
 register_chart_callbacks([
-    ("home-md", "home-chart-physician"),
-    ("home-site", "home-chart-site"),
+    ("home-md", "home-chart-physician", "home-store-md-census"),
+    ("home-site", "home-chart-site", "home-store-site-census"),
     ("home-avail", "home-chart-availability"),
 ])

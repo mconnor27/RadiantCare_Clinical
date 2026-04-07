@@ -22,7 +22,7 @@ window.dash_clientside.census = {
      * @param {Object} currentFig - Current figure (to preserve trace visibility)
      * @returns {Object} Plotly figure
      */
-    smoothChartWithType: function(rawData, smoothPct, chartType, currentFig) {
+    smoothChartWithType: function(rawData, smoothPct, chartType, currentFig, stackOverride) {
         if (!rawData || !rawData.series) {
             return window.dash_clientside.no_update;
         }
@@ -32,7 +32,15 @@ window.dash_clientside.census = {
         var futureDates = rawData.futureDates || [];
         var yTitle = rawData.yTitle || "Unique Patients";
         var hasFuture = futureDates.length > 0;
-        var stacked = rawData.stacked !== false;  // default true, opt-out with stacked:false
+        // stackOverride: "stacked" | "grouped" | undefined
+        var stacked;
+        if (stackOverride === "grouped") {
+            stacked = false;
+        } else if (stackOverride === "stacked") {
+            stacked = true;
+        } else {
+            stacked = rawData.stacked !== false;  // default true
+        }
 
         // TEMPORARILY DISABLED: Downsampling was causing last data points to be dropped
         // TODO: Fix downsampling to ensure dates and values arrays have matching lengths
@@ -182,6 +190,20 @@ window.dash_clientside.census = {
                     traceObj.stackgroup = "one";
                 } else {
                     traceObj.fill = "tozeroy";
+                }
+            }
+
+            // Hide series with no data (all zero/null).
+            // For grouped bars, set visible:false so Plotly doesn't allocate
+            // bar width to invisible series.
+            var hasData = false;
+            for (var hd = 0; hd < s.values.length; hd++) {
+                if (s.values[hd] > 0) { hasData = true; break; }
+            }
+            if (!hasData) {
+                traceObj.showlegend = false;
+                if (chartType === "bar" && !stacked) {
+                    traceObj.visible = false;
                 }
             }
 
@@ -402,14 +424,22 @@ window.dash_clientside.census = {
             layout.barmode = stacked ? "stack" : "group";
             // Tighten gaps as bar count increases to keep bars visible
             var nBars = barData.labels.length + (futureDates ? formatDatesForBars(futureDates).labels.length : 0);
-            if (nBars > 80) {
-                layout.bargap = 0;
-            } else if (nBars > 40) {
-                layout.bargap = 0.08;
+            if (stacked) {
+                if (nBars > 80) {
+                    layout.bargap = 0;
+                } else if (nBars > 40) {
+                    layout.bargap = 0.08;
+                } else {
+                    layout.bargap = 0.15;
+                }
+                layout.bargroupgap = 0;
             } else {
-                layout.bargap = 0.15;
+                // Grouped: minimize gaps so bars fill available space.
+                // Also hide (visible:false) empty-data traces so Plotly
+                // doesn't allocate bar width to invisible series.
+                layout.bargap = 0;
+                layout.bargroupgap = 0;
             }
-            layout.bargroupgap = stacked ? 0 : 0.05;
             layout.xaxis.type = "category";
             layout.xaxis.tickangle = 0;
             // Scale tick count to bar density — labels are already abbreviated
@@ -502,15 +532,15 @@ window.dash_clientside.census = {
      * @param {Object} currentFig - Current figure (to preserve trace visibility)
      * @returns {Object} Plotly figure with x-axis range set to show selected time window
      */
-    _buildWithRange: function(rawData, smoothPct, chartType, rangeDays, currentFig) {
-        var fig = window.dash_clientside.census.smoothChartWithType(rawData, smoothPct, chartType, currentFig);
+    _buildWithRange: function(rawData, smoothPct, chartType, rangeDays, currentFig, stackOverride) {
+        var fig = window.dash_clientside.census.smoothChartWithType(rawData, smoothPct, chartType, currentFig, stackOverride);
 
         if (fig === window.dash_clientside.no_update || !rawData || !rawData.dates || rawData.dates.length === 0) {
             return fig;
         }
 
         var days = parseInt(rangeDays) || 0;
-        var stacked = rawData.stacked !== false;
+        var stacked = stackOverride === "grouped" ? false : stackOverride === "stacked" ? true : rawData.stacked !== false;
         var hasFuture = (rawData.futureDates || []).length > 0;
 
         // Determine the visible x-range
@@ -593,12 +623,42 @@ window.dash_clientside.census = {
             fig.layout.yaxis.autorange = false;
         }
 
+        // Hide legend entries for series with no data in the visible range
+        var seriesHasData = {};
+        for (var si = 0; si < rawData.series.length; si++) {
+            var sName = rawData.series[si].name;
+            var hasAny = false;
+            for (var di = 0; di < allDates.length; di++) {
+                var d = allDates[di].split('T')[0];
+                if (days > 0 && d < startDate) continue;
+                if (days > 0 && d > lastDate) continue;
+                if (allValues[si][di] > 0) { hasAny = true; break; }
+            }
+            seriesHasData[sName] = hasAny;
+        }
+        for (var ti = 0; ti < fig.data.length; ti++) {
+            var tName = fig.data[ti].name;
+            if (tName && seriesHasData.hasOwnProperty(tName)) {
+                if (!seriesHasData[tName]) {
+                    fig.data[ti].showlegend = false;
+                    // For grouped bars, fully hide so Plotly doesn't allocate width
+                    if (chartType === "bar" && !stacked) {
+                        fig.data[ti].visible = false;
+                    }
+                } else if (fig.data[ti].visible === false) {
+                    // Re-show if it was previously hidden but now has data
+                    fig.data[ti].visible = true;
+                    fig.data[ti].showlegend = true;
+                }
+            }
+        }
+
         return fig;
     },
 
-    smoothChartWithTypeAndRange: function(rawData, smoothPct, chartType, rangeDays, currentFig) {
+    smoothChartWithTypeAndRange: function(rawData, smoothPct, chartType, rangeDays, stackOverride, currentFig) {
         if (!rawData || !rawData.dates || rawData.dates.length === 0) {
-            return window.dash_clientside.census._buildWithRange(rawData, smoothPct, chartType, rangeDays, currentFig);
+            return window.dash_clientside.census._buildWithRange(rawData, smoothPct, chartType, rangeDays, currentFig, stackOverride);
         }
 
         // Chart element ID: use rawData.chartId if provided, fallback to ops-chart-volume
@@ -610,7 +670,7 @@ window.dash_clientside.census = {
         window[debounceKey] = setTimeout(function() {
             // rAF queues after pending input/paint, setTimeout(0) yields one more frame
             requestAnimationFrame(function() { setTimeout(function() {
-                var fig = window.dash_clientside.census._buildWithRange(rawData, smoothPct, chartType, rangeDays, currentFig);
+                var fig = window.dash_clientside.census._buildWithRange(rawData, smoothPct, chartType, rangeDays, currentFig, stackOverride);
                 if (fig && fig !== window.dash_clientside.no_update) {
                     var el = document.getElementById(chartElId);
                     var plotEl = el && el.querySelector('.js-plotly-plot');
@@ -623,7 +683,7 @@ window.dash_clientside.census = {
         var el = document.getElementById(chartElId);
         var plotEl = el && el.querySelector('.js-plotly-plot');
         if (!plotEl || !plotEl.data || !plotEl.data.length) {
-            return window.dash_clientside.census._buildWithRange(rawData, smoothPct, chartType, rangeDays, currentFig);
+            return window.dash_clientside.census._buildWithRange(rawData, smoothPct, chartType, rangeDays, currentFig, stackOverride);
         }
         return window.dash_clientside.no_update;
     }
@@ -642,7 +702,7 @@ window.dash_clientside.censusYAxis = {
      * @param {Object} currentFigure - Current figure state
      * @param {Object} rawData - Raw census data from dcc.Store
      */
-    updateOnPan: function(relayoutData, currentFigure, rawData, chartType) {
+    updateOnPan: function(relayoutData, currentFigure, rawData, chartType, stackOverride) {
         if (!relayoutData || !currentFigure || !rawData ||
             !rawData.dates || rawData.dates.length === 0) {
             return window.dash_clientside.no_update;
@@ -664,10 +724,13 @@ window.dash_clientside.censusYAxis = {
             return window.dash_clientside.no_update;
         }
 
-        var stacked = rawData.stacked !== false;
+        var stacked = stackOverride === "grouped" ? false : stackOverride === "stacked" ? true : rawData.stacked !== false;
         // Stacked sum only for stacked area/bar — line is always non-stacked
         var useStackedSum = stacked && chartType !== "line";
         var yMax = 0;
+
+        // Track which series have data in the visible range
+        var seriesHasData = new Array(rawData.series.length).fill(false);
 
         // Detect bar chart by checking if range values are numeric (category indices)
         var isBarChart = typeof startRange === 'number' ||
@@ -684,13 +747,16 @@ window.dash_clientside.censusYAxis = {
                 if (useStackedSum) {
                     var stackTotal = 0;
                     for (var si = 0; si < rawData.series.length; si++) {
-                        stackTotal += (rawData.series[si].values[di] || 0);
+                        var val = rawData.series[si].values[di] || 0;
+                        stackTotal += val;
+                        if (val > 0) seriesHasData[si] = true;
                     }
                     if (stackTotal > yMax) yMax = stackTotal;
                 } else {
                     for (var si = 0; si < rawData.series.length; si++) {
                         var val = rawData.series[si].values[di] || 0;
                         if (val > yMax) yMax = val;
+                        if (val > 0) seriesHasData[si] = true;
                     }
                 }
             }
@@ -713,13 +779,16 @@ window.dash_clientside.censusYAxis = {
                 if (useStackedSum) {
                     var stackTotal = 0;
                     for (var si = 0; si < allValues.length; si++) {
-                        stackTotal += (allValues[si][di] || 0);
+                        var val = allValues[si][di] || 0;
+                        stackTotal += val;
+                        if (val > 0) seriesHasData[si] = true;
                     }
                     if (stackTotal > yMax) yMax = stackTotal;
                 } else {
                     for (var si = 0; si < allValues.length; si++) {
                         var val = allValues[si][di] || 0;
                         if (val > yMax) yMax = val;
+                        if (val > 0) seriesHasData[si] = true;
                     }
                 }
             }
@@ -729,10 +798,29 @@ window.dash_clientside.censusYAxis = {
 
         var newYMax = Math.ceil(yMax * 1.1);
 
-        // Skip if y-axis range hasn't changed (prevent relayout loop)
-        if (currentFigure.layout && currentFigure.layout.yaxis &&
+        // Build a name→hasData map from rawData series
+        var seriesDataMap = {};
+        for (var si = 0; si < rawData.series.length; si++) {
+            seriesDataMap[rawData.series[si].name] = seriesHasData[si];
+        }
+
+        // Check if anything actually changed (y-axis + legend visibility)
+        var yChanged = !(currentFigure.layout && currentFigure.layout.yaxis &&
             currentFigure.layout.yaxis.range &&
-            currentFigure.layout.yaxis.range[1] === newYMax) {
+            currentFigure.layout.yaxis.range[1] === newYMax);
+        var legendChanged = false;
+        if (currentFigure.data) {
+            for (var ti = 0; ti < currentFigure.data.length; ti++) {
+                var tName = currentFigure.data[ti].name;
+                if (tName && seriesDataMap.hasOwnProperty(tName)) {
+                    var shouldShow = seriesDataMap[tName];
+                    var currentlyShown = currentFigure.data[ti].showlegend !== false;
+                    if (shouldShow !== currentlyShown) { legendChanged = true; break; }
+                }
+            }
+        }
+
+        if (!yChanged && !legendChanged) {
             return window.dash_clientside.no_update;
         }
 
@@ -740,6 +828,14 @@ window.dash_clientside.censusYAxis = {
         newFigure.layout.yaxis = newFigure.layout.yaxis || {};
         newFigure.layout.yaxis.range = [0, newYMax];
         newFigure.layout.yaxis.autorange = false;
+
+        // Update legend visibility based on visible data
+        for (var ti = 0; ti < newFigure.data.length; ti++) {
+            var tName = newFigure.data[ti].name;
+            if (tName && seriesDataMap.hasOwnProperty(tName)) {
+                newFigure.data[ti].showlegend = seriesDataMap[tName];
+            }
+        }
 
         return newFigure;
     }
@@ -828,7 +924,8 @@ window.dash_clientside.efficiency = {
                 }
             }
         }
-        if (firstDataIdx > 0 && firstDataIdx < filtered.dates.length) {
+        if (firstDataIdx > 0 && firstDataIdx < filtered.dates.length && chartType !== "bar") {
+            // Skip for bar charts — they use category indices, not date ranges
             var clampDate = filtered.dates[firstDataIdx].split('T')[0];
             if (fig.layout.xaxis && fig.layout.xaxis.range) {
                 var currentStart = String(fig.layout.xaxis.range[0]).split('T')[0];

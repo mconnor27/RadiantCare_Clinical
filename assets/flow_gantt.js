@@ -219,8 +219,10 @@ window.dash_clientside.flowGantt = {
         // x: 0-1 fills full width.
         // y: trim the visible range so the pipeline uses more of the card.
         // Loopbacks need a little extra headroom for the return arcs.
-        var yHi = showLoopbacks ? 0.92 : 0.88;
-        var yLo = showLoopbacks ? 0.08 : 0.10;
+        // yHi / yLo are set dynamically after bar/exit geometry is computed
+        // so the chart fits tightly to actual content.
+        var yHi;  // assigned below
+        var yLo;  // assigned below
         var yPad = 4;                       // px padding top & bottom
         var drawH = VB_H - 2 * yPad;
 
@@ -328,6 +330,8 @@ window.dash_clientside.flowGantt = {
         var yCenter = 0.52;
         var maxBarH = 0.54;
         var barW = 0.028;
+        var collGap = 0.042;   // gap between last bar and first collector
+        var collSpc = 0.03;    // gap between pending and cancelled collectors
         var pendingColor   = "#64748B";
         var cancelledColor = "#EF4444";
 
@@ -440,6 +444,38 @@ window.dash_clientside.flowGantt = {
             leftEdge.push(bars[i].top);
             exitEdge.push(bars[i].bot);
         }
+
+        // ─── Compute dynamic yHi/yLo from actual content bounds ──────
+        // Fit the viewBox tightly to rendered content (no large margins).
+
+        // Top: highest element is "Total: Xd" label above bar[0]
+        var contentTop = bars[0].top + (showLoopbacks ? 0.09 : 0.035);
+        yHi = contentTop + 0.018;
+        var yHiCeil = showLoopbacks ? 0.92 : 0.90;
+        if (yHi > yHiCeil) yHi = yHiCeil;
+
+        // Bottom: pre-compute where exit collectors end up
+        var contentBot = bars[nStages - 1].bot;
+        if (pending || cancelled) {
+            var _tmpCursor = bars[nStages - 1].bot - collGap;
+            var _tmpTotalP = 0, _tmpTotalC = 0;
+            for (var _i = 0; _i < nStages - 1; _i++) {
+                _tmpTotalP += (pending && pending[_i]) || 0;
+                _tmpTotalC += (cancelled && cancelled[_i]) || 0;
+            }
+            if (_tmpTotalP > 0) {
+                var _pH = Math.min(0.06, Math.max(0.025, maxBarH * _tmpTotalP / maxCount));
+                _tmpCursor = _tmpCursor - _pH - collSpc;
+            }
+            if (_tmpTotalC > 0) {
+                var _cH = Math.min(0.06, Math.max(0.025, maxBarH * _tmpTotalC / maxCount));
+                _tmpCursor = _tmpCursor - _cH;
+            }
+            contentBot = Math.min(contentBot, _tmpCursor);
+        }
+        yLo = contentBot - 0.04;  // small padding below
+        var yLoFloor = showLoopbacks ? 0.08 : 0.10;
+        if (yLo < yLoFloor) yLo = yLoFloor;
 
         // ─── Create SVG ────────────────────────────────────────────────
         var svg = svgEl("svg", {
@@ -573,8 +609,7 @@ window.dash_clientside.flowGantt = {
         var collBW     = barW;
         var collL      = collX - collBW / 2;
         var collR      = collX + collBW / 2;
-        var collGap    = 0.062;
-        var collSpc    = 0.05;
+        // collGap / collSpc moved to geometry constants (line ~330)
         var collCursor = lastBar.bot - collGap;
 
         // ── Pending collector ──
@@ -673,7 +708,7 @@ window.dash_clientside.flowGantt = {
 
             // Name above bar
             var pNameLbl = svgEl("text", {
-                x: sx(collX).toFixed(1), y: sy(pCollTop + 0.02).toFixed(1),
+                x: sx(collX).toFixed(1), y: (sy(pCollTop) - 6).toFixed(1),
                 "text-anchor": "middle", "dominant-baseline": "auto",
                 "font-size": "14", "font-weight": "bold", fill: pendingColor,
                 "pointer-events": "none",
@@ -816,7 +851,7 @@ window.dash_clientside.flowGantt = {
 
             // Name above bar
             var cNameLbl = svgEl("text", {
-                x: sx(collX).toFixed(1), y: sy(cCollTop + 0.02).toFixed(1),
+                x: sx(collX).toFixed(1), y: (sy(cCollTop) - 6).toFixed(1),
                 "text-anchor": "middle", "dominant-baseline": "auto",
                 "font-size": "14", "font-weight": "bold", fill: cancelledColor,
                 "pointer-events": "none",
@@ -920,7 +955,7 @@ window.dash_clientside.flowGantt = {
             // Stage name above bar
             var stageName = svgEl("text", {
                 x: sx(bars[i].cx).toFixed(1),
-                y: sy(bars[i].top + 0.022).toFixed(1),
+                y: (sy(bars[i].top) - 6).toFixed(1),
                 "text-anchor": "middle",
                 "dominant-baseline": "auto",
                 "font-size": "14",
@@ -1050,7 +1085,7 @@ window.dash_clientside.flowGantt = {
             for (var i = 0; i < mDays.length; i++) totalDays += mDays[i];
         }
         totalDays = Math.round(totalDays * 10) / 10;
-        var totalRowY = bars[0].top + (showLoopbacks ? 0.09 : 0.055);
+        var totalRowY = bars[0].top + (showLoopbacks ? 0.09 : 0.035);
         var totalMidX = (bars[0].cx + bars[nStages - 1].cx) / 2;
 
         var totalLabel = svgEl("text", {
@@ -1278,7 +1313,7 @@ window.dash_clientside.flowGantt = {
                 data: [],
                 layout: {
                     font: {family: font, size: 12},
-                    margin: {l: 48, r: 16, t: 16, b: 48},
+                    margin: {l: 48, r: 16, t: 16, b: 20},
                     plot_bgcolor: "#FFFFFF", paper_bgcolor: "#FFFFFF",
                     xaxis: {visible: false}, yaxis: {visible: false},
                     autosize: true,
@@ -1462,7 +1497,7 @@ window.dash_clientside.flowGantt = {
             ];
             var tLay = {
                 font: {family: font, size: 12},
-                margin: {l: 48, r: 16, t: 32, b: 48},
+                margin: {l: 48, r: 16, t: 32, b: 20},
                 plot_bgcolor: "#FFFFFF", paper_bgcolor: "#FFFFFF",
                 xaxis: {showgrid: false, title: tu.axisTitle, autorange: true},
                 yaxis: {gridcolor: "#F0F0F0", gridwidth: 1},
@@ -1541,7 +1576,7 @@ window.dash_clientside.flowGantt = {
 
         var baseLay = {
             font: {family: font, size: 12},
-            margin: {l: 48, r: 16, t: 32, b: 48},
+            margin: {l: 48, r: 16, t: 32, b: 20},
             plot_bgcolor: "#FFFFFF", paper_bgcolor: "#FFFFFF",
             xaxis: {showgrid: false, title: u.axisTitle, autorange: true},
             yaxis: {gridcolor: "#F0F0F0", gridwidth: 1},
@@ -1614,7 +1649,7 @@ window.dash_clientside.flowGantt = {
                 data: [],
                 layout: {
                     font: {family: font, size: 12},
-                    margin: {l: 48, r: 16, t: 16, b: 48},
+                    margin: {l: 48, r: 16, t: 16, b: 20},
                     plot_bgcolor: "#FFFFFF", paper_bgcolor: "#FFFFFF",
                     xaxis: {visible: false}, yaxis: {visible: false},
                     autosize: true,
@@ -1662,15 +1697,18 @@ window.dash_clientside.flowGantt = {
             var rates = tData.completionRates || [];
             var counts = tData.counts || [];
 
-            // Build customdata [count, completionPct] for hover
+            // Build customdata [rawValue, count, completionPct] for hover
+            // Hover always shows the raw (unsmoothed) value so the user
+            // sees actual data; the smoothed line is just a visual aid.
             var customdata = [];
             for (var i = 0; i < vals.length; i++) {
                 customdata.push([
+                    slicedVals[i] != null ? slicedVals[i] : vals[i],
                     counts[i] || 0,
                     rates[i] != null ? Math.round(rates[i] * 100) : 100
                 ]);
             }
-            var hoverTpl = "%{y:.1f} days  · n=%{customdata[0]}  · %{customdata[1]}% complete<extra>" + name + "</extra>";
+            var hoverTpl = "%{customdata[0]:.1f} days  · n=%{customdata[1]}  · %{customdata[2]}% complete<extra>" + name + "</extra>";
 
             // Find maturity cutoff: last index with completion >= 50%
             // Skip when KM is on — KM already corrects for censoring
@@ -1753,7 +1791,7 @@ window.dash_clientside.flowGantt = {
 
         var baseLay = {
             font: {family: font, size: 12},
-            margin: {l: 48, r: 16, t: 32, b: 48},
+            margin: {l: 48, r: 16, t: 32, b: 20},
             plot_bgcolor: "#FFFFFF", paper_bgcolor: "#FFFFFF",
             xaxis: {showgrid: false},
             yaxis: {gridcolor: "#F0F0F0", gridwidth: 1, title: statLabel + " Days"},
@@ -1764,10 +1802,10 @@ window.dash_clientside.flowGantt = {
         if (chartType === "bar") {
             baseLay.bargap = 0.15;
         }
-        var legendHidden = {fontSize: "11px", color: "#6B7280", display: "none", cursor: "help"};
+        var legendHidden = {fontSize: "11px", color: "#6B7280", visibility: "hidden", cursor: "help"};
         function legendStyle(show, c) {
             if (!show) return legendHidden;
-            return {fontSize: "11px", color: c || "#6B7280", display: "block", cursor: "help"};
+            return {fontSize: "11px", color: c || "#6B7280", visibility: "visible", cursor: "help"};
         }
 
         // ── Compare mode: overlay B dataset trend traces ──

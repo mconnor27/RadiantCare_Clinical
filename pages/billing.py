@@ -1228,9 +1228,8 @@ layout = dmc.Stack(
                     rowData=[],
                     columnDefs=[
                         {"field": "payor", "headerName": "Payor",
-                         "editable": True, "flex": 2, "minWidth": 180,
-                         "cellStyle": {"fontWeight": 500, "cursor": "pointer",
-                                       "color": "#7C2A83"},
+                         "editable": False, "flex": 2, "minWidth": 180,
+                         "cellRenderer": "PayorDrilldown",
                          "floatingFilter": True},
                         {"field": "rate_method", "headerName": "Method",
                          "editable": True, "flex": 0.8, "minWidth": 110,
@@ -1450,6 +1449,7 @@ layout = dmc.Stack(
                         ),
                         # Store for the current detail payor name
                         dcc.Store(id=f"{PAGE_ID}-irm-detail-payor", data=""),
+                        dcc.Store(id=f"{PAGE_ID}-irm-drill-store", data=None),
                     ],
                 ),
                 # Add-payor input row (hidden until needed)
@@ -2368,6 +2368,25 @@ def _irm_save_edit(changed, row_data):
 @callback(
     Output(f"{PAGE_ID}-irm-grid", "rowData", allow_duplicate=True),
     Output(f"{PAGE_ID}-irm-count", "children", allow_duplicate=True),
+    Input(f"{PAGE_ID}-irm-grid", "cellClicked"),
+    State(f"{PAGE_ID}-irm-grid", "rowData"),
+    prevent_initial_call=True,
+)
+def _irm_cell_delete(cell, row_data):
+    """Handle delete clicks on the ✖ column."""
+    if not cell:
+        return dash.no_update, dash.no_update
+    col = cell.get("colId", "")
+    row = cell.get("data", {})
+    payor = row.get("payor", "")
+    if col == "_delete" and payor:
+        delete_insurance_rate(payor)
+        row_data = [r for r in row_data if r.get("payor") != payor]
+        return row_data, f"{len(row_data)} payors"
+    return dash.no_update, dash.no_update
+
+
+@callback(
     Output(f"{PAGE_ID}-irm-detail-panel", "style", allow_duplicate=True),
     Output(f"{PAGE_ID}-irm-detail-title", "children", allow_duplicate=True),
     Output(f"{PAGE_ID}-irm-detail-payor", "data"),
@@ -2375,28 +2394,18 @@ def _irm_save_edit(changed, row_data):
     Output(f"{PAGE_ID}-irm-detail-grid", "rowData", allow_duplicate=True),
     Output(f"{PAGE_ID}-irm-detail-mode", "value", allow_duplicate=True),
     Output(f"{PAGE_ID}-irm-detail-mode", "data", allow_duplicate=True),
-    Input(f"{PAGE_ID}-irm-grid", "cellClicked"),
-    State(f"{PAGE_ID}-irm-grid", "rowData"),
+    Input(f"{PAGE_ID}-irm-drill-store", "data"),
     prevent_initial_call=True,
 )
-def _irm_cell_click(cell, row_data):
-    """Handle cell clicks: delete on ✖ column, detail drill-down on any other."""
+def _irm_drilldown(drill_data):
+    """Open detail panel when a payor name is clicked via PayorDrilldown renderer."""
     no = dash.no_update
-    if not cell:
-        return (no,) * 9
+    if not drill_data:
+        return (no,) * 7
 
-    col = cell.get("colId", "")
-    row = cell.get("data", {})
-    payor = row.get("payor", "")
-
-    # Delete
-    if col == "_delete" and payor:
-        delete_insurance_rate(payor)
-        row_data = [r for r in row_data if r.get("payor") != payor]
-        return row_data, f"{len(row_data)} payors", no, no, no, no, no, no, no
-
+    payor = drill_data.get("payor", "")
     if not payor:
-        return (no,) * 9
+        return (no,) * 7
 
     # Load history for this payor
     history = get_rate_history(payor)
@@ -2423,7 +2432,6 @@ def _irm_cell_click(cell, row_data):
     default_mode = "history" if history else ("codes" if codes_data else "history")
 
     return (
-        no, no,  # rowData, count unchanged
         {"display": "block"},  # show panel
         title,
         payor,  # store payor name for add-history callback

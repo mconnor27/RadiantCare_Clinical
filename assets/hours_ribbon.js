@@ -25,7 +25,6 @@ window.dash_clientside.hoursRibbon = {
             return {
                 data: [],
                 layout: {
-                    height: 380,
                     annotations: [{
                         text: "No operating hours data available",
                         xref: "paper", yref: "paper",
@@ -340,19 +339,34 @@ window.dash_clientside.hoursRibbon = {
         }];
 
         var layout = {
-            height: 380,
+            uirevision: "hours-timeseries",
             font: {family: "Inter, system-ui, sans-serif", size: 11},
             plot_bgcolor: "#FFFFFF",
             paper_bgcolor: "#FFFFFF",
-            margin: {l: 36, r: 8, t: 8, b: 32},
+            margin: {l: 36, r: 8, t: 8, b: 32, pad: 0, autoexpand: false},
             showlegend: false,
             hovermode: "x unified",
-            xaxis: {showgrid: false},
+            transition: {duration: 0},
+            xaxis: {
+                type: "date",
+                side: "bottom",
+                showgrid: false,
+                automargin: false,
+                ticklabelposition: "outside bottom",
+                tickmode: "auto",
+                tickvals: null,
+                ticktext: null,
+                nticks: null,
+                dtick: null,
+                categoryorder: null,
+                categoryarray: null
+            },
             yaxis: {
                 range: [yAxis.min, yAxis.max],
                 tickvals: yAxis.tickvals,
                 ticktext: yAxis.ticktext,
-                gridcolor: "#E5E7EB"
+                gridcolor: "#E5E7EB",
+                automargin: false
             },
             shapes: shapes
         };
@@ -363,6 +377,8 @@ window.dash_clientside.hoursRibbon = {
             layout.bargap = 0.15;  // Small gap to distinguish from ribbon chart
             layout.bargroupgap = 0;
             layout.xaxis.type = "category";
+            layout.xaxis.side = "bottom";
+            layout.xaxis.ticklabelposition = "outside bottom";
             layout.xaxis.tickangle = 0;  // Horizontal labels
             layout.xaxis.nticks = 8;  // Sparse labels
         }
@@ -467,6 +483,21 @@ window.dash_clientside.hoursRibbon = {
     },
 
     smoothChartWithTypeAndRange: function(rawData, smoothVal, chartType, rangeDays, weekOffset) {
+        // Force a clean Plotly instance when switching between calendar/week
+        // and timeseries modes to prevent cross-mode layout carryover.
+        var chartEl = document.getElementById('home-chart-hours')
+                   || document.getElementById('ops-chart-hours');
+        var modeKey = (rangeDays === "thisweek") ? "week" : "timeseries";
+        var modeStateKey = "_hoursLastMode_" + (chartEl ? chartEl.id : "default");
+        var prevMode = window[modeStateKey];
+        if (chartEl && prevMode && prevMode !== modeKey) {
+            var plotEl = chartEl.querySelector('.js-plotly-plot');
+            if (plotEl && typeof Plotly !== "undefined" && Plotly.purge) {
+                Plotly.purge(plotEl);
+            }
+        }
+        window[modeStateKey] = modeKey;
+
         // Calendar mode: no debounce needed
         if (rangeDays === "thisweek") {
             window._ribbonChartData = rawData;
@@ -478,30 +509,9 @@ window.dash_clientside.hoursRibbon = {
         if (!rawData || !rawData.pastSeries || rawData.pastSeries.length === 0) {
             return window.dash_clientside.hoursRibbon.smoothChartWithType(rawData, smoothVal, chartType);
         }
-
-        // Find the active chart element (home or ops page)
-        var chartEl = document.getElementById('home-chart-hours')
-                   || document.getElementById('ops-chart-hours');
-
-        // Debounce: skip intermediate slider ticks, yield to browser for paint before render
-        if (window._ribbonDebounce) clearTimeout(window._ribbonDebounce);
-        window._ribbonDebounce = setTimeout(function() {
-            requestAnimationFrame(function() { setTimeout(function() {
-                var fig = window.dash_clientside.hoursRibbon._buildWithRange(rawData, smoothVal, chartType, rangeDays);
-                if (fig && fig !== window.dash_clientside.no_update) {
-                    var el = chartEl;
-                    var plotEl = el && el.querySelector('.js-plotly-plot');
-                    if (plotEl) Plotly.react(plotEl, fig.data, fig.layout);
-                }
-            }, 0); });
-        }, 150);
-
-        // First render (no existing plot) — render immediately
-        var plotEl = chartEl && chartEl.querySelector('.js-plotly-plot');
-        if (!plotEl || !plotEl.data || !plotEl.data.length) {
-            return window.dash_clientside.hoursRibbon._buildWithRange(rawData, smoothVal, chartType, rangeDays);
-        }
-        return window.dash_clientside.no_update;
+        // Always return the next figure through Dash so the component state
+        // stays consistent when switching between week and non-week modes.
+        return window.dash_clientside.hoursRibbon._buildWithRange(rawData, smoothVal, chartType, rangeDays);
     },
 
     /**
@@ -513,12 +523,10 @@ window.dash_clientside.hoursRibbon = {
      * @returns {Object} Plotly figure
      */
     renderCalendarWeek: function(rawData, weekOffset) {
-        var calHeight = (rawData && rawData.height) || 570;
         if (!rawData || (!rawData.pastSeries && !rawData.futureSeries)) {
             return {
                 data: [],
                 layout: {
-                    height: calHeight,
                     annotations: [{
                         text: "No operating hours data available",
                         xref: "paper", yref: "paper",
@@ -764,30 +772,41 @@ window.dash_clientside.hoursRibbon = {
         }
 
         var layout = {
-            height: calHeight,
+            uirevision: "hours-calendar",
             font: {family: "Inter, system-ui, sans-serif", size: 11},
             plot_bgcolor: "#FFFFFF",
             paper_bgcolor: "#FFFFFF",
-            margin: {l: 44, r: 8, t: 32, b: 8},
+            margin: {l: 44, r: 8, t: 32, b: 8, pad: 0, autoexpand: false},
             showlegend: false,
             hovermode: "closest",
             hoverdistance: -1,
             dragmode: false,
+            transition: {duration: 0},
             xaxis: {
+                type: "linear",
+                tickmode: "array",
                 tickvals: [0, 1, 2, 3, 4],
                 ticktext: dayLabels,
                 range: [-0.5, 4.5],
                 showgrid: false,
                 fixedrange: true,
                 side: "top",
+                ticklabelposition: "outside top",
+                automargin: false,
+                dtick: null,
+                nticks: null,
+                categoryorder: null,
+                categoryarray: null,
                 zeroline: false
             },
             yaxis: {
-                range: [yMax, yMin], // Reversed: morning at top
+                range: [yMax, yMin],
+                tickmode: "array",
                 tickvals: tickvals,
                 ticktext: ticktext,
                 showgrid: false,
                 fixedrange: true,
+                automargin: false,
                 zeroline: false
             },
             shapes: shapes,
@@ -1020,9 +1039,18 @@ window.dash_clientside.hoursYAxis = {
      * Recalculate y-axis range when user pans the hours ribbon chart.
      * Hours data uses startHours/endHours arrays (decimal hours, e.g. 8.5 = 8:30am).
      */
-    updateOnPan: function(relayoutData, currentFigure, rawData) {
+    updateOnPan: function(relayoutData, currentFigure, rawData, rangeMode) {
         if (!relayoutData || !currentFigure || !rawData ||
             (!rawData.pastSeries && !rawData.futureSeries)) {
+            return window.dash_clientside.no_update;
+        }
+
+        // Never rescale the calendar/week view from stale relayout data that
+        // may persist from a prior non-week mode.
+        if (rangeMode === "thisweek" ||
+            currentFigure.layout?.dragmode === false ||
+            (currentFigure.layout?.xaxis?.range &&
+             typeof currentFigure.layout.xaxis.range[0] === "number")) {
             return window.dash_clientside.no_update;
         }
 
