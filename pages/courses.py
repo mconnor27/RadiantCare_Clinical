@@ -18,7 +18,7 @@ from config.settings import (
     PRIOR_PERIOD_COLORS,
 )
 from components.filter_bar import department_chips
-from components.kpi_card import kpi_card
+from components.kpi_card import kpi_card, kpi_placeholder
 from components.chart_card import chart_card, register_chart_callbacks
 from components.chart_settings import chart_settings_popover
 from components.detail_table import detail_table
@@ -367,12 +367,12 @@ layout = dmc.Stack(
 
         # KPI row — 6 cards
         dmc.Grid(id="courses-kpi-row", gutter="md", children=[
-            dmc.GridCol(id="courses-kpi-active", span={"base": 12, "sm": 6, "md": 2}),
-            dmc.GridCol(id="courses-kpi-started", span={"base": 12, "sm": 6, "md": 2}),
-            dmc.GridCol(id="courses-kpi-completed", span={"base": 12, "sm": 6, "md": 2}),
-            dmc.GridCol(id="courses-kpi-median-fractions", span={"base": 12, "sm": 6, "md": 2}),
-            dmc.GridCol(id="courses-kpi-median-duration", span={"base": 12, "sm": 6, "md": 2}),
-            dmc.GridCol(id="courses-kpi-multiplan", span={"base": 12, "sm": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id="courses-kpi-active", span={"base": 12, "sm": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id="courses-kpi-started", span={"base": 12, "sm": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id="courses-kpi-completed", span={"base": 12, "sm": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id="courses-kpi-median-fractions", span={"base": 12, "sm": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id="courses-kpi-median-duration", span={"base": 12, "sm": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id="courses-kpi-multiplan", span={"base": 12, "sm": 6, "md": 2}),
         ]),
 
         # Row 1: Course Volume Trend + Cumulative (half-width each)

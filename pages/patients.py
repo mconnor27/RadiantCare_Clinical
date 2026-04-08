@@ -16,7 +16,7 @@ from config.settings import (
 )
 from components.filter_bar import department_chips
 from components.chart_card import chart_card, register_chart_callbacks
-from components.kpi_card import kpi_card
+from components.kpi_card import kpi_card, kpi_placeholder
 from utils.charts import apply_default_layout, empty_figure, dept_color
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, SLIDER_MARKS,
@@ -207,7 +207,9 @@ layout = dmc.Stack(
         ),
 
         # KPI row
-        dmc.Grid(id="patients-kpi-row", gutter=16, children=[]),
+        dmc.Grid(id="patients-kpi-row", gutter=16, children=[
+            dmc.GridCol(kpi_placeholder(), span={"base": 12, "sm": 6, "md": 2.4}) for _ in range(5)
+        ]),
 
         # Map card with inline controls
         dmc.Paper(

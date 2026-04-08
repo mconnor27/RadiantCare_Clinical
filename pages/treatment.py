@@ -17,7 +17,7 @@ from config.settings import (
     MACHINE_DEPT,
 )
 from components.filter_bar import department_chips
-from components.kpi_card import kpi_card
+from components.kpi_card import kpi_card, kpi_placeholder
 from components.chart_card import chart_card, register_chart_callbacks
 from components.detail_table import detail_table
 from utils.charts import apply_default_layout, empty_figure, dept_color
@@ -246,12 +246,12 @@ layout = dmc.Stack(
 
         # KPI row — 6 cards with clientside sparklines
         dmc.Grid(id="tx-kpi-row", gutter="md", children=[
-            dmc.GridCol(id="tx-kpi-volume", span={"base": 12, "sm": 6, "md": 2}),
-            dmc.GridCol(id="tx-kpi-newstarts", span={"base": 12, "sm": 6, "md": 2}),
-            dmc.GridCol(id="tx-kpi-patients", span={"base": 12, "sm": 6, "md": 2}),
-            dmc.GridCol(id="tx-kpi-elapsed", span={"base": 12, "sm": 6, "md": 2}),
-            dmc.GridCol(id="tx-kpi-fields", span={"base": 12, "sm": 6, "md": 2}),
-            dmc.GridCol(id="tx-kpi-gating", span={"base": 12, "sm": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id="tx-kpi-volume", span={"base": 12, "sm": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id="tx-kpi-newstarts", span={"base": 12, "sm": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id="tx-kpi-patients", span={"base": 12, "sm": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id="tx-kpi-elapsed", span={"base": 12, "sm": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id="tx-kpi-fields", span={"base": 12, "sm": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id="tx-kpi-gating", span={"base": 12, "sm": 6, "md": 2}),
         ]),
 
         # Row 1: Treatment Volume + Technique Mix

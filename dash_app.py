@@ -23,6 +23,18 @@ app = Dash(
 )
 server = app.server  # for gunicorn
 
+
+# Disable browser caching for JS/CSS assets during development
+from flask import request as _flask_request
+
+
+@server.after_request
+def _no_cache(response):
+    if _flask_request.path.startswith("/assets/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 # Set Mapbox token globally
 if MAPBOX_TOKEN:
     import plotly.express
@@ -111,6 +123,10 @@ app.layout = dmc.MantineProvider(
             layout="default",
             padding="md",
         ),
+        # Preload status bar (bottom of page, auto-hides when done)
+        html.Div(id="preload-status-bar", style={"display": "none"}),
+        dcc.Interval(id="preload-interval", interval=500, n_intervals=0),
+        dcc.Store(id="preload-priority-trigger"),
     ],
 )
 
@@ -145,19 +161,197 @@ app.clientside_callback(
 )
 
 # ---------------------------------------------------------------------------
-# Pre-load heavy datasets in background so the cache is warm before the
-# first page visit.  Treatment Detail is by far the largest (~3 s cold).
+# Page-aware preload with progress tracking
 # ---------------------------------------------------------------------------
 import threading
 
+# Map page paths to dataset loader names they need
+_PAGE_DATASETS = {
+    "/":                ["daily_volume", "treatment_detail", "clinic_visits", "simulations", "availability"],
+    "/operations":      ["daily_volume", "daily_volume_future", "treatment", "clinic_visits", "simulations"],
+    "/workflow":        ["workflow"],
+    "/clinic-visits":   ["clinic_visits", "diagnosis"],
+    "/simulations":     ["simulations", "diagnosis"],
+    "/tasks":           ["tasks", "diagnosis"],
+    "/otvs":            ["weekly_visits"],
+    "/billing":         ["billing", "rvu_lookup", "patients"],
+    "/treatment":       ["treatment_detail"],
+    "/courses":         ["courses", "diagnosis"],
+    "/plans":           ["plans", "diagnosis"],
+    "/procedures":      ["procedures", "workflow"],
+    "/machines":        ["machines"],
+    "/machine-statistics": ["machine_statistics"],
+    "/patients":        ["treatment_detail", "referrals"],
+    "/referrals":       ["referrals", "referring"],
+    "/diagnosis":       ["clinic_visits", "diagnosis"],
+    "/physicians":      ["physician_schedule"],
+    "/cpt-audit":       ["cpt_audit"],
+    "/otv-audit":       ["weekly_visits"],
+}
+
+# All loaders keyed by name
+def _get_all_loaders():
+    from data.loader import (
+        load_treatment_detail, load_billing, load_workflow,
+        load_referrals, load_daily_volume, load_daily_volume_future,
+        load_clinic_visits, load_simulations, load_tasks, load_courses,
+        load_plans, load_weekly_visits, load_rvu_lookup,
+        load_treatment, load_availability, load_machines,
+        load_machine_statistics, load_procedures, load_patients,
+        load_referring, load_diagnosis, load_physician_schedule,
+        load_cpt_audit, load_otvs,
+    )
+    return {
+        "treatment_detail": load_treatment_detail,
+        "billing": load_billing,
+        "workflow": load_workflow,
+        "referrals": load_referrals,
+        "daily_volume": load_daily_volume,
+        "daily_volume_future": load_daily_volume_future,
+        "clinic_visits": load_clinic_visits,
+        "simulations": load_simulations,
+        "tasks": load_tasks,
+        "courses": load_courses,
+        "plans": load_plans,
+        "weekly_visits": load_weekly_visits,
+        "rvu_lookup": load_rvu_lookup,
+        "treatment": load_treatment,
+        "availability": load_availability,
+        "machines": load_machines,
+        "machine_statistics": load_machine_statistics,
+        "procedures": load_procedures,
+        "patients": load_patients,
+        "referring": load_referring,
+        "diagnosis": load_diagnosis,
+        "physician_schedule": load_physician_schedule,
+        "cpt_audit": load_cpt_audit,
+        "otvs": load_otvs,
+    }
+
+
+# Preload state: tracks loaded datasets, current activity, and priority queue
+_preload_state = {
+    "loaded": set(),
+    "total": 12,  # heavy datasets count
+    "current": None,
+    "done": False,
+}
+_preload_lock = threading.Lock()
+_priority_queue = []  # datasets to load next (set by page navigation)
+
+# Heavy datasets to preload (ordered by load time, heaviest first)
+_PRELOAD_ORDER = [
+    "treatment_detail", "billing", "referrals", "workflow",
+    "daily_volume", "clinic_visits", "simulations", "tasks",
+    "courses", "plans", "weekly_visits", "rvu_lookup",
+]
+
+
+def _load_dataset(name, loaders):
+    """Load a single dataset and update state."""
+    if name in _preload_state["loaded"]:
+        return
+    with _preload_lock:
+        _preload_state["current"] = name
+    try:
+        loaders[name]()
+    except Exception:
+        pass
+    with _preload_lock:
+        _preload_state["loaded"].add(name)
+        _preload_state["current"] = None
+
+
 def _preload():
-    from data.loader import load_treatment_detail
-    load_treatment_detail()
+    """Background preload: respects priority queue, then loads remaining."""
+    loaders = _get_all_loaders()
+    remaining = list(_PRELOAD_ORDER)
+
+    while remaining:
+        # Check priority queue first
+        with _preload_lock:
+            if _priority_queue:
+                name = _priority_queue.pop(0)
+            else:
+                name = None
+
+        if name and name in remaining:
+            _load_dataset(name, loaders)
+            remaining = [r for r in remaining if r not in _preload_state["loaded"]]
+            continue
+
+        if name is None and remaining:
+            _load_dataset(remaining[0], loaders)
+            remaining = [r for r in remaining if r not in _preload_state["loaded"]]
+
+    with _preload_lock:
+        _preload_state["done"] = True
+        _preload_state["current"] = None
+
 
 threading.Thread(target=_preload, daemon=True).start()
+
+
+# --- Status bar polling callback ---
+
+@callback(
+    Output("preload-status-bar", "children"),
+    Output("preload-status-bar", "style"),
+    Output("preload-interval", "disabled"),
+    Input("preload-interval", "n_intervals"),
+)
+def _update_preload_status(_n):
+    with _preload_lock:
+        done = _preload_state["done"]
+        loaded = len(_preload_state["loaded"])
+        total = _preload_state["total"]
+        current = _preload_state["current"]
+
+    if done:
+        return "", {"display": "none"}, True
+
+    label = current.replace("_", " ").title() if current else "..."
+    text = f"Loading data: {label} ({loaded}/{total})"
+    bar_style = {
+        "position": "fixed",
+        "bottom": 0,
+        "left": 220,
+        "right": 0,
+        "height": "28px",
+        "backgroundColor": "#F3E8F5",
+        "borderTop": "1px solid #E8D5EB",
+        "display": "flex",
+        "alignItems": "center",
+        "justifyContent": "center",
+        "zIndex": 1000,
+        "fontSize": "12px",
+        "color": "#7C2A83",
+        "fontFamily": "Inter, system-ui, sans-serif",
+        "fontWeight": 500,
+    }
+    return text, bar_style, False
+
+
+# --- Page navigation triggers priority loading ---
+
+@callback(
+    Output("preload-priority-trigger", "data"),
+    Input("_pages_location", "pathname"),
+)
+def _prioritize_page_datasets(pathname):
+    if _preload_state["done"]:
+        return no_update
+    datasets = _PAGE_DATASETS.get(pathname, [])
+    with _preload_lock:
+        for ds in datasets:
+            if ds not in _preload_state["loaded"] and ds not in _priority_queue:
+                _priority_queue.insert(0, ds)
+    return ""
 
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    app.run(debug=True, port=8050, host="localhost")
+    app.run(debug=True, port=8050, host="localhost",
+            dev_tools_hot_reload=True,
+            dev_tools_hot_reload_interval=1.0)

@@ -16,7 +16,7 @@ from config.settings import (
     DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, CHART_PAPER_HEIGHT, PRIOR_PERIOD_COLORS,
 )
 from components.filter_bar import department_chips
-from components.kpi_card import kpi_card
+from components.kpi_card import kpi_card, kpi_placeholder
 from components.chart_card import chart_card, register_chart_callbacks
 from components.detail_table import detail_table
 from utils.charts import apply_default_layout, empty_figure, dept_color
@@ -301,11 +301,11 @@ layout = dmc.Stack(
 
         # KPI row — 5 cards
         dmc.Grid(id=f"{PAGE_ID}-kpi-row", gutter="md", children=[
-            dmc.GridCol(id=f"{PAGE_ID}-kpi-pluvicto", span={"base": 12, "sm": 6, "md": 2.4}),
-            dmc.GridCol(id=f"{PAGE_ID}-kpi-upcoming-pluv", span={"base": 12, "sm": 6, "md": 2.4}),
-            dmc.GridCol(id=f"{PAGE_ID}-kpi-spacer", span={"base": 12, "sm": 6, "md": 2.4}),
-            dmc.GridCol(id=f"{PAGE_ID}-kpi-upcoming-spacer", span={"base": 12, "sm": 6, "md": 2.4}),
-            dmc.GridCol(id=f"{PAGE_ID}-kpi-lead-time", span={"base": 12, "sm": 6, "md": 2.4}),
+            dmc.GridCol(kpi_placeholder(), id=f"{PAGE_ID}-kpi-pluvicto", span={"base": 12, "sm": 6, "md": 2.4}),
+            dmc.GridCol(kpi_placeholder(), id=f"{PAGE_ID}-kpi-upcoming-pluv", span={"base": 12, "sm": 6, "md": 2.4}),
+            dmc.GridCol(kpi_placeholder(), id=f"{PAGE_ID}-kpi-spacer", span={"base": 12, "sm": 6, "md": 2.4}),
+            dmc.GridCol(kpi_placeholder(), id=f"{PAGE_ID}-kpi-upcoming-spacer", span={"base": 12, "sm": 6, "md": 2.4}),
+            dmc.GridCol(kpi_placeholder(), id=f"{PAGE_ID}-kpi-lead-time", span={"base": 12, "sm": 6, "md": 2.4}),
         ]),
 
         # Category tabs (tab list only — charts sit between tabs and content)

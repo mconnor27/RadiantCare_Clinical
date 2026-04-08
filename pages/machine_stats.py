@@ -13,7 +13,7 @@ from config.settings import (
     DEFAULT_LAYOUT, FONT_FAMILY, NEUTRAL,
 )
 from data.loader import load_machine_statistics
-from components.kpi_card import kpi_card
+from components.kpi_card import kpi_card, kpi_placeholder
 from components.chart_card import chart_card, register_chart_callbacks
 from utils.charts import apply_default_layout, empty_figure
 
@@ -132,7 +132,9 @@ layout = dmc.Stack(
         ),
 
         # --- Aggregate KPI row ---
-        dmc.Grid(id=f"{PAGE_ID}-kpi-row", gutter=16, children=[]),
+        dmc.Grid(id=f"{PAGE_ID}-kpi-row", gutter=16, children=[
+            dmc.GridCol(kpi_placeholder(), span={"base": 12, "sm": 6, "md": 3}) for _ in range(4)
+        ]),
 
         # --- Machine cards ---
         dmc.Grid(id=f"{PAGE_ID}-machine-cards", gutter=16, children=[]),

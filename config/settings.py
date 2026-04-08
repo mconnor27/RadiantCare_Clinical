@@ -31,6 +31,7 @@ DATA_DIR = Path(
 DATA_COMPLETE = DATA_DIR / "Complete"
 DATA_INCREMENTAL = DATA_DIR / "Incremental"
 DATA_LOOKUP = DATA_DIR / "Lookup"
+DATA_CACHE = PROJECT_ROOT / ".data_cache"
 
 MAPBOX_TOKEN = os.environ.get("MAPBOX_TOKEN", "")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")

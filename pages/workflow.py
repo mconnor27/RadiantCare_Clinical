@@ -286,13 +286,13 @@ def _build_filter_bar(prefix, label=None):
                         ],
                         style={"position": "relative", "display": "inline-block"},
                     ),
-                    # Body System
+                    # Diagnosis
                     html.Div(
                         children=[
                             html.Div(
                                 children=[
                                     dmc.Button(
-                                        "Body System",
+                                        "Diagnosis",
                                         id=_id(prefix, "body-system-trigger"),
                                         variant="default",
                                         size="sm",
@@ -1288,7 +1288,7 @@ def _register_filter_callbacks(prefix):
     )
     clientside_callback(
         """function(vals) {
-            if (!vals || vals.length === 0) return "Body System";
+            if (!vals || vals.length === 0) return "Diagnosis";
             if (vals.length === 1) return vals[0];
             return vals.length + " selected";
         }""",

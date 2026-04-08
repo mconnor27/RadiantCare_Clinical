@@ -16,7 +16,7 @@ from config.settings import (
     DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, PRIOR_PERIOD_COLORS,
 )
 from components.filter_bar import department_chips
-from components.kpi_card import kpi_card
+from components.kpi_card import kpi_card, kpi_placeholder
 from components.chart_card import chart_card, register_chart_callbacks
 from utils.charts import apply_default_layout, empty_figure, dept_color, color_for_index
 from utils.date_slider import (
@@ -746,9 +746,15 @@ def _get_enriched_billing():
     if "Waived" in df.columns:
         df = df[df["Waived"] != "Yes"]
 
-    df["_base_code"] = df["ProcedureCode"].apply(_strip_modifier)
-    df["Category"] = df["_base_code"].apply(_assign_category)
-    df["ChargeStatus"] = df["ProcedureCode"].apply(_derive_charge_status)
+    # Vectorized: build lookup dicts from unique codes, then map
+    unique_codes = df["ProcedureCode"].dropna().unique()
+    strip_map = {c: _strip_modifier(c) for c in unique_codes}
+    df["_base_code"] = df["ProcedureCode"].map(strip_map).fillna("")
+    unique_base = df["_base_code"].unique()
+    cat_map = {b: _assign_category(b) for b in unique_base}
+    df["Category"] = df["_base_code"].map(cat_map)
+    status_map = {c: _derive_charge_status(c) for c in unique_codes}
+    df["ChargeStatus"] = df["ProcedureCode"].map(status_map)
     if not rvu.empty:
         df = _merge_rvu(df, rvu)
     else:
@@ -756,6 +762,23 @@ def _get_enriched_billing():
         df["MP_RVU"] = 0.0
         df["Fac_PE_RVU"] = 0.0
         df["Fac_Total_RVU"] = 0.0
+
+    # Merge payor info once during enrichment (avoids 50ms merge per callback)
+    from data.loader import load_patients
+    try:
+        patients = load_patients()
+    except Exception:
+        patients = pd.DataFrame()
+    if not patients.empty and "PatientId" in df.columns and "PatientId" in patients.columns:
+        ins_cols = [c for c in ["PatientId", "PrimaryInsurance"] if c in patients.columns]
+        if "PrimaryInsurance" in patients.columns:
+            df = df.merge(
+                patients[ins_cols].drop_duplicates("PatientId"),
+                on="PatientId", how="left",
+            )
+    if "PrimaryInsurance" not in df.columns:
+        df["PrimaryInsurance"] = "Unknown"
+    df["PrimaryInsurance"] = df["PrimaryInsurance"].fillna("Unknown")
 
     _enriched_cache["key"] = key
     _enriched_cache["df"] = df
@@ -1023,6 +1046,7 @@ layout = dmc.Stack(
             grow=True,
             wrap="nowrap",
             style={"overflow": "hidden"},
+            children=[kpi_placeholder() for _ in range(5)],
         ),
 
         # Dollar estimate row — thin summary bar

@@ -14,7 +14,7 @@ from config.settings import (
     DEPARTMENTS, DEPARTMENT_COLORS, MACHINE_MAP, RETIRED_MACHINES,
     CHART_COLORWAY, PRIMARY, DEFAULT_LAYOUT, FONT_FAMILY,
 )
-from components.kpi_card import kpi_card
+from components.kpi_card import kpi_card, kpi_placeholder
 from components.chart_card import chart_card, register_chart_callbacks
 from components.hours_ribbon import hours_ribbon_card, register_hours_ribbon_callbacks
 from components.detail_table import detail_table
@@ -83,13 +83,13 @@ layout = dmc.Stack(
             columns=7,
             mt=-8,
             children=[
-                dmc.GridCol(id="ops-kpi-today", span={"base": 7, "sm": 2, "md": 1}),
-                dmc.GridCol(id="ops-kpi-hours-lacey", span={"base": 7, "sm": 2, "md": 1}),
-                dmc.GridCol(id="ops-kpi-hours-centralia", span={"base": 7, "sm": 2, "md": 1}),
-                dmc.GridCol(id="ops-kpi-hours-aberdeen", span={"base": 7, "sm": 2, "md": 1}),
-                dmc.GridCol(id="ops-kpi-consult-lead", span={"base": 7, "sm": 2, "md": 1}),
-                dmc.GridCol(id="ops-kpi-sim-lead", span={"base": 7, "sm": 2, "md": 1}),
-                dmc.GridCol(id="ops-kpi-new-starts", span={"base": 7, "sm": 2, "md": 1}),
+                dmc.GridCol(kpi_placeholder(), id="ops-kpi-today", span={"base": 7, "sm": 2, "md": 1}),
+                dmc.GridCol(kpi_placeholder(), id="ops-kpi-hours-lacey", span={"base": 7, "sm": 2, "md": 1}),
+                dmc.GridCol(kpi_placeholder(), id="ops-kpi-hours-centralia", span={"base": 7, "sm": 2, "md": 1}),
+                dmc.GridCol(kpi_placeholder(), id="ops-kpi-hours-aberdeen", span={"base": 7, "sm": 2, "md": 1}),
+                dmc.GridCol(kpi_placeholder(), id="ops-kpi-consult-lead", span={"base": 7, "sm": 2, "md": 1}),
+                dmc.GridCol(kpi_placeholder(), id="ops-kpi-sim-lead", span={"base": 7, "sm": 2, "md": 1}),
+                dmc.GridCol(kpi_placeholder(), id="ops-kpi-new-starts", span={"base": 7, "sm": 2, "md": 1}),
             ],
         ),
 
@@ -105,8 +105,8 @@ layout = dmc.Stack(
                         "Treatments",
                         settings_id="ops-volume",
                         chart_types=[
-                            {"value": "line", "label": "Line"},
                             {"value": "area", "label": "Area"},
+                            {"value": "line", "label": "Line"},
                             {"value": "bar", "label": "Bar"},
                         ],
                         show_smooth=True,

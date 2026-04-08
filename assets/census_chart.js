@@ -72,6 +72,7 @@ window.dash_clientside.census = {
         var windowSize = Math.max(1, Math.floor(smoothPct) + 1);
 
         var traces = [];
+        var COLORWAY = ["#7C2A83", "#2196F3", "#F44336", "#4CAF50", "#FF9800", "#00BCD4", "#9C27B0", "#795548"];
         var renderSeries = rawData.series.slice();
         var rawValsByName = {};
         if (stacked && rawData.renderOrder && rawData.renderOrder.length) {
@@ -90,7 +91,10 @@ window.dash_clientside.census = {
         var futureTotals = hasFuture ? new Array(futureDates.length).fill(0) : [];
         var futureRawValsByName = {};
 
-        // Past data traces (hoverinfo:"skip" — hover handled by summary trace)
+        // Pre-compute individual smoothed values for each series (needed for
+        // manual cumulative stacking and totals).
+        var seriesSmoothed = [];
+        var seriesDisplay = [];
         for (var i = 0; i < renderSeries.length; i++) {
             var s = renderSeries[i];
             var displayVals = step > 1 ? downsampleAvg(s.values, step) : s.values.slice();
@@ -104,6 +108,15 @@ window.dash_clientside.census = {
             }
             // Bar charts use raw values — smoothing creates fractional-height spikes
             var yVals = (smoothPct > 0 && chartType !== "bar") ? rollingAvg(displayVals, windowSize) : displayVals;
+            seriesSmoothed.push(yVals);
+            seriesDisplay.push(displayVals);
+        }
+
+        // Past data traces (hoverinfo:"skip" — hover handled by summary trace)
+        for (var i = 0; i < renderSeries.length; i++) {
+            var s = renderSeries[i];
+            var displayVals = seriesDisplay[i];
+            var yVals = seriesSmoothed[i];
             var isVisible = !visibilityMap.hasOwnProperty(s.name) || visibilityMap[s.name] === true;
 
             rawValsByName[s.name] = displayVals;
@@ -172,26 +185,41 @@ window.dash_clientside.census = {
                     hoverinfo: "skip"
                 };
                 if (traceDates.length <= 3) traceObj.marker = {size: 8};
+            } else if (stacked) {
+                // Stacked area — use stackgroup for proper legend toggling.
+                // Colors are reassigned in _buildWithRange after visibility
+                // filtering, with template:{} to prevent Plotly auto-coloring.
+                traceObj = {
+                    x: traceDates,
+                    y: traceY,
+                    customdata: traceRaw,
+                    name: s.name,
+                    mode: "lines",
+                    line: {color: s.color, width: 1.5},
+                    fillcolor: hexToRgba(s.color, 0.5),
+                    stackgroup: "one",
+                    connectgaps: true,
+                    hoverinfo: "skip"
+                };
             } else {
-                // Area chart (stacked by default, overlay when stacked:false)
+                // Overlay area (non-stacked)
                 traceObj = {
                     x: traceDates,
                     y: traceY,
                     customdata: traceRaw,
                     name: s.name,
                     mode: traceDates.length <= 3 ? "lines+markers" : "lines",
-                    line: {color: s.color, width: stacked ? 1.5 : 2},
-                    fillcolor: hexToRgba(s.color, stacked ? 0.5 : 0.15),
+                    line: {color: s.color, width: 2},
+                    fillcolor: hexToRgba(s.color, 0.15),
+                    fill: "tozeroy",
                     connectgaps: true,
                     hoverinfo: "skip"
                 };
                 if (traceDates.length <= 3) traceObj.marker = {size: 8};
-                if (stacked) {
-                    traceObj.stackgroup = "one";
-                } else {
-                    traceObj.fill = "tozeroy";
-                }
             }
+
+            // Link main trace with its future projection via legendgroup
+            traceObj.legendgroup = s.name;
 
             // Hide series with no data (all zero/null).
             // For grouped bars, set visible:false so Plotly doesn't allocate
@@ -214,6 +242,7 @@ window.dash_clientside.census = {
 
             traces.push(traceObj);
         }
+
 
         // Future projection traces (lighter fill, dotted line, no smoothing)
         if (hasFuture) {
@@ -264,16 +293,16 @@ window.dash_clientside.census = {
                         connectgaps: true,
                         line: {color: s.color, width: 1, dash: "dot"},
                         fillcolor: chartType === "line" ? "transparent" : hexToRgba(s.color, 0.2),
-                        stackgroup: chartType === "line" ? undefined : "future",
                         showlegend: false,
                         hoverinfo: "skip"
                     };
+                    if (chartType !== "line") {
+                        futureTraceObj.stackgroup = "future";
+                    }
                 }
 
-                // Preserve visibility (use base name)
-                if (visibilityMap.hasOwnProperty(s.name)) {
-                    futureTraceObj.visible = visibilityMap[s.name];
-                }
+                // Link to main trace so legend toggle hides both
+                futureTraceObj.legendgroup = s.name;
 
                 traces.push(futureTraceObj);
             }
@@ -391,6 +420,7 @@ window.dash_clientside.census = {
         var smoothed = smoothPct > 0;
 
         var layout = {
+            template: {},
             xaxis: {showgrid: false, showspikes: false, nticks: 12},
             yaxis: {gridcolor: "#E5E7EB"},
             showlegend: rawData.hideLegend ? false : true,
@@ -649,6 +679,58 @@ window.dash_clientside.census = {
                     // Re-show if it was previously hidden but now has data
                     fig.data[ti].visible = true;
                     fig.data[ti].showlegend = true;
+                }
+            }
+        }
+
+        // Dynamic color reassignment: after time-range visibility filtering,
+        // assign distinct COLORWAY colors to only the visible traces.
+        // Hidden traces get transparent lines so they don't bleed through.
+        if (rawData.dynamicColors) {
+            var COLORWAY = ["#7C2A83", "#2196F3", "#F44336", "#4CAF50", "#FF9800", "#00BCD4", "#9C27B0", "#795548"];
+            var colorMap = {};  // name → reassigned color (for tooltip fix)
+            var visIdx = 0;
+            for (var ci = 0; ci < fig.data.length; ci++) {
+                var tr = fig.data[ci];
+                if (!tr.name) continue;
+                if (tr.showlegend === false) {
+                    tr.line = tr.line || {};
+                    tr.line.color = "rgba(0,0,0,0)";
+                    tr.line.width = 0;
+                    if (tr.fillcolor) tr.fillcolor = "rgba(0,0,0,0)";
+                    continue;
+                }
+                var c = COLORWAY[visIdx % COLORWAY.length];
+                visIdx++;
+                colorMap[tr.name] = c;
+                tr.line = tr.line || {};
+                tr.line.color = c;
+                if (tr.marker) tr.marker.color = c;
+                if (tr.fillcolor) {
+                    tr.fillcolor = hexToRgba(c, chartType === "area" && stacked ? 0.5 : 0.15);
+                }
+                if (tr.type === "bar" && tr.marker) {
+                    tr.marker.color = c;
+                }
+            }
+            // Fix tooltip colors in the summary trace (first trace with hovertemplate)
+            for (var ti = 0; ti < fig.data.length; ti++) {
+                var tr = fig.data[ti];
+                if (tr.hovertemplate && tr.customdata) {
+                    for (var hi = 0; hi < tr.customdata.length; hi++) {
+                        var html = tr.customdata[hi];
+                        if (typeof html === "string") {
+                            for (var name in colorMap) {
+                                if (colorMap.hasOwnProperty(name)) {
+                                    // Replace color in: <span style='color:#OLD'>■</span> Name
+                                    var re = new RegExp("color:#[0-9a-fA-F]{6}('>\\u25A0</span> " + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ")");
+                                    html = html.replace(re, "color:" + colorMap[name] + "$1");
+                                }
+                            }
+                            tr.customdata[hi] = html;
+                        }
+                    }
+                    break;  // only one summary trace
                 }
             }
         }

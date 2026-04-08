@@ -16,7 +16,7 @@ from config.settings import (
 )
 from components.filter_bar import department_chips
 from components.outlier_panel import outlier_panel, register_outlier_callbacks
-from components.kpi_card import kpi_card
+from components.kpi_card import kpi_card, kpi_placeholder
 from components.chart_card import chart_card, register_chart_callbacks
 from components.hours_ribbon import hours_ribbon_card, register_hours_ribbon_callbacks
 from utils.charts import apply_default_layout, empty_figure, dept_color, smooth_limits
@@ -697,26 +697,15 @@ layout = dmc.Stack(
         ),
 
         # KPI row — 5 cards with sparklines
-        dmc.Box(
-            pos="relative",
+        dmc.Grid(
+            id="home-kpi-row",
+            gutter=16,
             children=[
-                dmc.LoadingOverlay(
-                    id="home-kpi-loading",
-                    visible=False,
-                    loaderProps={"type": "dots", "color": PRIMARY},
-                    overlayProps={"radius": "sm", "blur": 2},
-                ),
-                dmc.Grid(
-                    id="home-kpi-row",
-                    gutter=16,
-                    children=[
-                        dmc.GridCol(id="home-kpi-consults-week", span={"base": 12, "sm": 6, "md": 2.4}),
-                        dmc.GridCol(id="home-kpi-sims-week", span={"base": 12, "sm": 6, "md": 2.4}),
-                        dmc.GridCol(id="home-kpi-tx-today", span={"base": 12, "sm": 6, "md": 2.4}),
-                        dmc.GridCol(id="home-kpi-consult-lead", span={"base": 12, "sm": 6, "md": 2.4}),
-                        dmc.GridCol(id="home-kpi-sim-lead", span={"base": 12, "sm": 6, "md": 2.4}),
-                    ],
-                ),
+                dmc.GridCol(kpi_placeholder(), id="home-kpi-consults-week", span={"base": 12, "sm": 6, "md": 2.4}),
+                dmc.GridCol(kpi_placeholder(), id="home-kpi-sims-week", span={"base": 12, "sm": 6, "md": 2.4}),
+                dmc.GridCol(kpi_placeholder(), id="home-kpi-tx-today", span={"base": 12, "sm": 6, "md": 2.4}),
+                dmc.GridCol(kpi_placeholder(), id="home-kpi-consult-lead", span={"base": 12, "sm": 6, "md": 2.4}),
+                dmc.GridCol(kpi_placeholder(), id="home-kpi-sim-lead", span={"base": 12, "sm": 6, "md": 2.4}),
             ],
         ),
 
@@ -731,8 +720,8 @@ layout = dmc.Stack(
                         "Active Patients by Physician",
                         settings_id="home-md",
                         chart_types=[
-                            {"value": "line", "label": "Line"},
                             {"value": "area", "label": "Area"},
+                            {"value": "line", "label": "Line"},
                             {"value": "bar", "label": "Bar"},
                         ],
                         smooth_max=50, smooth_default=15,
@@ -768,8 +757,8 @@ layout = dmc.Stack(
                         "Treatments by Site",
                         settings_id="home-site",
                         chart_types=[
-                            {"value": "line", "label": "Line"},
                             {"value": "area", "label": "Area"},
+                            {"value": "line", "label": "Line"},
                             {"value": "bar", "label": "Bar"},
                         ],
                         smooth_max=50, smooth_default=15,
@@ -890,7 +879,6 @@ clientside_callback(
     Input(f"{PAGE_ID}-outlier-enabled", "data"),
     Input(f"{PAGE_ID}-outlier-cap-0", "value"),
     Input(f"{PAGE_ID}-outlier-cap-1", "value"),
-    running=[(Output("home-kpi-loading", "visible"), True, False)],
 )
 def update_kpis(_n, date_preset, departments, sims_scope,
                 outlier_enabled, cap_consult, cap_sim):
@@ -1290,6 +1278,7 @@ def update_physician_data(_n, departments, agg):
             colors,
             render_groups=render_physicians,
             agg=agg or "D",
+            dynamic_colors=True,
         )
     except Exception:
         return None
@@ -1428,7 +1417,7 @@ def update_site_smooth_slider(range_days, current_value):
 # Census data builder (for clientside smoothing)
 # ---------------------------------------------------------------------------
 
-def _build_census_data(df, group_col, groups, colors, height=380, render_groups=None, agg="D"):
+def _build_census_data(df, group_col, groups, colors, height=380, render_groups=None, agg="D", dynamic_colors=False):
     """Build raw census data dict for clientside smoothing.
 
     Returns dict with dates, series (name, values, color), optional renderOrder,
@@ -1462,42 +1451,58 @@ def _build_census_data(df, group_col, groups, colors, height=380, render_groups=
 
     date_col = "period" if agg in ("W", "M") else "Date"
 
-    series = []
-    for i, grp in enumerate(groups):
+    # First pass: identify groups that have actual data so empty groups
+    # don't consume color indices or create phantom stacked-area traces.
+    group_data = {}
+    for grp in groups:
         grp_raw = daily[daily[group_col] == grp].set_index(date_col)["count"]
+        if grp_raw.empty or (grp_raw <= 0).all():
+            continue  # skip groups with no positive values anywhere
+        group_data[grp] = grp_raw
+
+    # Second pass: build series with sequential color assignment (no gaps).
+    series = []
+    color_idx = 0
+    active_groups = []
+    for grp in groups:
+        if grp not in group_data:
+            continue
+        grp_raw = group_data[grp]
         display_name = grp.split(",")[0] if "," in grp else grp
-        c = colors[i % len(colors)]
+        c = colors[color_idx % len(colors)]
+        color_idx += 1
 
         # None outside active range so traces don't extend before/after data exists
-        if not grp_raw.empty:
-            positive = grp_raw[grp_raw > 0]
-            first_active = positive.index.min() if not positive.empty else grp_raw.index.min()
-            last_active = positive.index.max() if not positive.empty else grp_raw.index.max()
-            grp_full = grp_raw.reindex(date_range)
-            values = [
-                None if (p < first_active or p > last_active)
-                else (int(v) if pd.notna(v) else 0)
-                for p, v in zip(date_range, grp_full)
-            ]
-        else:
-            values = [None] * len(date_range)
+        positive = grp_raw[grp_raw > 0]
+        first_active = positive.index.min() if not positive.empty else grp_raw.index.min()
+        last_active = positive.index.max() if not positive.empty else grp_raw.index.max()
+        grp_full = grp_raw.reindex(date_range)
+        values = [
+            None if (p < first_active or p > last_active)
+            else (int(v) if pd.notna(v) else 0)
+            for p, v in zip(date_range, grp_full)
+        ]
 
         series.append({
             "name": display_name,
             "values": values,
             "color": c,
         })
+        active_groups.append(grp)
 
-    return {
+    result = {
         "dates": [d.isoformat() for d in date_range],
         "series": series,
         "renderOrder": [
             grp.split(",")[0] if "," in grp else grp
-            for grp in (render_groups or groups)
+            for grp in active_groups
         ],
         "height": height,
         "yTitle": "Unique Patients",
     }
+    if dynamic_colors:
+        result["dynamicColors"] = True
+    return result
 
 
 def _build_treatment_census_data(df_past, df_future, groups, colors, height=380, agg="D"):

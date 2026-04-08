@@ -15,7 +15,7 @@ from config.settings import (
     DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, DEFAULT_GRID_STYLE, DEFAULT_GRID_CLASS,
 )
 from components.filter_bar import department_chips
-from components.kpi_card import kpi_card
+from components.kpi_card import kpi_card, kpi_placeholder
 from components.chart_card import chart_card, register_chart_callbacks
 from utils.charts import apply_default_layout, empty_figure
 from utils.date_slider import (
@@ -149,12 +149,12 @@ layout = dmc.Stack(
 
         # KPI row
         dmc.Grid(id="otv-kpi-row", gutter="md", children=[
-            dmc.GridCol(id="otv-kpi-total", span={"base": 6, "md": 2}),
-            dmc.GridCol(id="otv-kpi-compliance", span={"base": 6, "md": 2}),
-            dmc.GridCol(id="otv-kpi-extra", span={"base": 6, "md": 2}),
-            dmc.GridCol(id="otv-kpi-toofew", span={"base": 6, "md": 2}),
-            dmc.GridCol(id="otv-kpi-discrepancy", span={"base": 6, "md": 2}),
-            dmc.GridCol(id="otv-kpi-missed-rvu", span={"base": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id="otv-kpi-total", span={"base": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id="otv-kpi-compliance", span={"base": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id="otv-kpi-extra", span={"base": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id="otv-kpi-toofew", span={"base": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id="otv-kpi-discrepancy", span={"base": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id="otv-kpi-missed-rvu", span={"base": 6, "md": 2}),
         ]),
 
         # Charts row 1: By department + Trend

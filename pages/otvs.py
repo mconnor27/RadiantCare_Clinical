@@ -16,7 +16,7 @@ from config.settings import (
     CHART_PAPER_HEIGHT_SM, PRIOR_PERIOD_COLORS,
 )
 from components.filter_bar import department_chips
-from components.kpi_card import kpi_card
+from components.kpi_card import kpi_card, kpi_placeholder
 from components.chart_card import chart_card, register_chart_callbacks
 from components.detail_table import detail_table
 from components.chart_settings import chart_settings_popover
@@ -297,12 +297,12 @@ layout = dmc.Stack(
 
         # KPI row — 6 cards with sparklines
         dmc.Grid(id=f"{PAGE_ID}-kpi-row", gutter="md", children=[
-            dmc.GridCol(id=f"{PAGE_ID}-kpi-total", span={"base": 6, "md": 2}),
-            dmc.GridCol(id=f"{PAGE_ID}-kpi-lacey", span={"base": 6, "md": 2}),
-            dmc.GridCol(id=f"{PAGE_ID}-kpi-centralia", span={"base": 6, "md": 2}),
-            dmc.GridCol(id=f"{PAGE_ID}-kpi-aberdeen", span={"base": 6, "md": 2}),
-            dmc.GridCol(id=f"{PAGE_ID}-kpi-avg", span={"base": 6, "md": 2}),
-            dmc.GridCol(id=f"{PAGE_ID}-kpi-self-rate", span={"base": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id=f"{PAGE_ID}-kpi-total", span={"base": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id=f"{PAGE_ID}-kpi-lacey", span={"base": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id=f"{PAGE_ID}-kpi-centralia", span={"base": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id=f"{PAGE_ID}-kpi-aberdeen", span={"base": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id=f"{PAGE_ID}-kpi-avg", span={"base": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id=f"{PAGE_ID}-kpi-self-rate", span={"base": 6, "md": 2}),
         ]),
 
         # Row 1: Volume Trend + Cumulative Volume

@@ -15,7 +15,7 @@ from config.settings import (
     DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, DEFAULT_GRID_STYLE, DEFAULT_GRID_CLASS,
 )
 from components.chart_settings import chart_settings_popover
-from components.kpi_card import kpi_card
+from components.kpi_card import kpi_card, kpi_placeholder
 from utils.charts import apply_default_layout, empty_figure, color_for_index
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, DEFAULT_SLIDER, SLIDER_MARKS,
@@ -145,11 +145,11 @@ layout = dmc.Stack(
 
         # KPI row
         dmc.Grid(id=f"{PAGE_ID}-kpi-row", gutter="md", children=[
-            dmc.GridCol(id=f"{PAGE_ID}-kpi-coverage", span={"base": 6, "md": 2.4}),
-            dmc.GridCol(id=f"{PAGE_ID}-kpi-afterhours", span={"base": 6, "md": 2.4}),
-            dmc.GridCol(id=f"{PAGE_ID}-kpi-crosscoverage", span={"base": 6, "md": 2.4}),
-            dmc.GridCol(id=f"{PAGE_ID}-kpi-vacation", span={"base": 6, "md": 2.4}),
-            dmc.GridCol(id=f"{PAGE_ID}-kpi-weekend", span={"base": 6, "md": 2.4}),
+            dmc.GridCol(kpi_placeholder(), id=f"{PAGE_ID}-kpi-coverage", span={"base": 6, "md": 2.4}),
+            dmc.GridCol(kpi_placeholder(), id=f"{PAGE_ID}-kpi-afterhours", span={"base": 6, "md": 2.4}),
+            dmc.GridCol(kpi_placeholder(), id=f"{PAGE_ID}-kpi-crosscoverage", span={"base": 6, "md": 2.4}),
+            dmc.GridCol(kpi_placeholder(), id=f"{PAGE_ID}-kpi-vacation", span={"base": 6, "md": 2.4}),
+            dmc.GridCol(kpi_placeholder(), id=f"{PAGE_ID}-kpi-weekend", span={"base": 6, "md": 2.4}),
         ]),
 
         # Charts row 1: Manpower over time + Site assignments

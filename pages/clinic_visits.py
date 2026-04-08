@@ -15,7 +15,7 @@ from config.settings import (
     CHART_PAPER_HEIGHT_SM, PRIOR_PERIOD_COLORS,
 )
 from components.filter_bar import department_chips
-from components.kpi_card import kpi_card
+from components.kpi_card import kpi_card, kpi_placeholder
 from components.chart_card import chart_card, register_chart_callbacks
 from components.chart_settings import chart_settings_popover
 from components.detail_table import detail_table
@@ -493,12 +493,12 @@ layout = dmc.Stack(
 
         # KPI row — 6 cards with sparklines
         dmc.Grid(id="cv-kpi-row", gutter="md", children=[
-            dmc.GridCol(id="cv-kpi-total", span={"base": 12, "sm": 6, "md": 2}),
-            dmc.GridCol(id="cv-kpi-consults", span={"base": 12, "sm": 6, "md": 2}),
-            dmc.GridCol(id="cv-kpi-followups", span={"base": 12, "sm": 6, "md": 2}),
-            dmc.GridCol(id="cv-kpi-lead-time", span={"base": 12, "sm": 6, "md": 2}),
-            dmc.GridCol(id="cv-kpi-sim-conversion", span={"base": 12, "sm": 6, "md": 2}),
-            dmc.GridCol(id="cv-kpi-days-to-sim", span={"base": 12, "sm": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id="cv-kpi-total", span={"base": 12, "sm": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id="cv-kpi-consults", span={"base": 12, "sm": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id="cv-kpi-followups", span={"base": 12, "sm": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id="cv-kpi-lead-time", span={"base": 12, "sm": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id="cv-kpi-sim-conversion", span={"base": 12, "sm": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id="cv-kpi-days-to-sim", span={"base": 12, "sm": 6, "md": 2}),
         ]),
 
         # Row 1: Visit Volume Trend + Cumulative (half-width each)

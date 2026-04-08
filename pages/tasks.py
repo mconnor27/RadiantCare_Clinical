@@ -15,7 +15,7 @@ from config.settings import (
     DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, DEFAULT_GRID_STYLE, DEFAULT_GRID_CLASS,
 )
 from components.chart_card import chart_card, register_chart_callbacks
-from components.kpi_card import kpi_card
+from components.kpi_card import kpi_card, kpi_placeholder
 from utils.charts import apply_default_layout, empty_figure, color_for_index
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, SLIDER_MARKS,
@@ -691,19 +691,19 @@ layout = dmc.Stack(
         dmc.Grid(id="tasks-kpi-row", gutter="md", children=[
             dmc.GridCol(html.Div(id="tasks-kpi-click-draw", n_clicks=0,
                                  style={"cursor": "pointer"},
-                                 children=[html.Div(id="tasks-kpi-draw")]),
+                                 children=[html.Div(kpi_placeholder(), id="tasks-kpi-draw")]),
                         span={"base": 12, "md": 3}),
             dmc.GridCol(html.Div(id="tasks-kpi-click-srs", n_clicks=0,
                                  style={"cursor": "pointer"},
-                                 children=[html.Div(id="tasks-kpi-srs")]),
+                                 children=[html.Div(kpi_placeholder(), id="tasks-kpi-srs")]),
                         span={"base": 12, "md": 3}),
             dmc.GridCol(html.Div(id="tasks-kpi-click-contour", n_clicks=0,
                                  style={"cursor": "pointer"},
-                                 children=[html.Div(id="tasks-kpi-contour")]),
+                                 children=[html.Div(kpi_placeholder(), id="tasks-kpi-contour")]),
                         span={"base": 12, "md": 3}),
             dmc.GridCol(html.Div(id="tasks-kpi-click-review", n_clicks=0,
                                  style={"cursor": "pointer"},
-                                 children=[html.Div(id="tasks-kpi-review")]),
+                                 children=[html.Div(kpi_placeholder(), id="tasks-kpi-review")]),
                         span={"base": 12, "md": 3}),
         ]),
 

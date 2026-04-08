@@ -18,7 +18,7 @@ from config.settings import (
     DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, DEFAULT_GRID_STYLE, DEFAULT_GRID_CLASS, ABMS_SPECIALTIES,
 )
 from components.filter_bar import department_chips
-from components.kpi_card import kpi_card, create_sparkline
+from components.kpi_card import kpi_card, kpi_placeholder, create_sparkline
 from components.chart_card import chart_card, register_chart_callbacks
 from components.outlier_panel import outlier_panel, register_outlier_callbacks
 from utils.charts import apply_default_layout, empty_figure, dept_color, color_for_index
@@ -386,6 +386,7 @@ layout = dmc.Stack(
             grow=True,
             wrap="nowrap",
             style={"overflow": "hidden"},
+            children=[kpi_placeholder() for _ in range(6)],
         ),
 
         # Flow Gantt — referral pathway

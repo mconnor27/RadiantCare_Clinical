@@ -10,3 +10,4 @@ __pycache__/
 data/rvu_files/*.zip
 data/rvu_files/extracted/
 data/rvu_files/download_rvu.sh
+.data_cache/

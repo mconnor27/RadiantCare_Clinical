@@ -98,18 +98,31 @@
         }, POLL_MS);
     }
 
-    // Intercept history.pushState so we detect Dash page navigation
+    // Intercept history.pushState so we detect Dash page navigation.
+    // Skip the full-screen overlay after first page load — per-chart
+    // loading spinners handle subsequent navigations.
+    var firstLoadDone = false;
+
     var origPush = history.pushState;
     history.pushState = function () {
         origPush.apply(this, arguments);
-        show();
-        startPolling();
+        if (!firstLoadDone) {
+            show();
+            startPolling();
+        }
     };
     window.addEventListener("popstate", function () {
-        show();
-        startPolling();
+        if (!firstLoadDone) {
+            show();
+            startPolling();
+        }
     });
 
     // Start polling on initial page load
+    var origHide = hide;
+    hide = function () {
+        origHide();
+        firstLoadDone = true;
+    };
     startPolling();
 })();

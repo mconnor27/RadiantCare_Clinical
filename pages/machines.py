@@ -16,7 +16,7 @@ from config.settings import (
     DEFAULT_LAYOUT, FONT_FAMILY, NEUTRAL, SEMANTIC_COLORS,
     DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, DEFAULT_GRID_STYLE, DEFAULT_GRID_CLASS,
 )
-from components.kpi_card import kpi_card
+from components.kpi_card import kpi_card, kpi_placeholder
 from components.chart_card import chart_card, register_chart_callbacks
 from utils.charts import apply_default_layout, empty_figure
 from utils.date_slider import (
@@ -239,7 +239,9 @@ layout = dmc.Stack(
         ),
 
         # --- KPI row ---
-        dmc.Grid(id=f"{PAGE_ID}-kpi-row", gutter=16, children=[]),
+        dmc.Grid(id=f"{PAGE_ID}-kpi-row", gutter=16, children=[
+            dmc.GridCol(kpi_placeholder(), span={"base": 12, "sm": 6, "md": 2.4}) for _ in range(5)
+        ]),
 
         # --- Narrative summary ---
         dmc.Paper(

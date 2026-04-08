@@ -15,7 +15,7 @@ from config.settings import (
     CHART_PAPER_HEIGHT_SM, PRIMARY, FONT_FAMILY, PRIOR_PERIOD_COLORS,
 )
 from components.filter_bar import department_chips
-from components.kpi_card import kpi_card
+from components.kpi_card import kpi_card, kpi_placeholder
 from components.chart_card import chart_card, register_chart_callbacks
 from components.detail_table import detail_table
 from components.chart_settings import chart_settings_popover
@@ -480,11 +480,11 @@ layout = dmc.Stack(
 
         # KPI row — 5 cards with sparklines
         dmc.Grid(id="sim-kpi-row", gutter="md", children=[
-            dmc.GridCol(id="sim-kpi-total", span={"base": 6, "md": 2.4}),
-            dmc.GridCol(id="sim-kpi-initial", span={"base": 6, "md": 2.4}),
-            dmc.GridCol(id="sim-kpi-lead", span={"base": 6, "md": 2.4}),
-            dmc.GridCol(id="sim-kpi-time-to-tx", span={"base": 6, "md": 2.4}),
-            dmc.GridCol(id="sim-kpi-resim", span={"base": 6, "md": 2.4}),
+            dmc.GridCol(kpi_placeholder(), id="sim-kpi-total", span={"base": 6, "md": 2.4}),
+            dmc.GridCol(kpi_placeholder(), id="sim-kpi-initial", span={"base": 6, "md": 2.4}),
+            dmc.GridCol(kpi_placeholder(), id="sim-kpi-lead", span={"base": 6, "md": 2.4}),
+            dmc.GridCol(kpi_placeholder(), id="sim-kpi-time-to-tx", span={"base": 6, "md": 2.4}),
+            dmc.GridCol(kpi_placeholder(), id="sim-kpi-resim", span={"base": 6, "md": 2.4}),
         ]),
 
         # Row 1: Volume Trend + Cumulative Volume (CV-style)

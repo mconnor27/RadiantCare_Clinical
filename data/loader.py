@@ -4,7 +4,60 @@ import pandas as pd
 from functools import lru_cache
 from pathlib import Path
 
-from config.settings import DATA_DIR, DATA_COMPLETE, DATA_INCREMENTAL, DATA_LOOKUP
+from config.settings import DATA_DIR, DATA_COMPLETE, DATA_INCREMENTAL, DATA_LOOKUP, DATA_CACHE
+
+
+# ---------------------------------------------------------------------------
+# Parquet cache — avoids re-parsing CSVs on every app restart.
+# The cache dir is created lazily; each dataset gets a .parquet file that is
+# invalidated when any source CSV is newer.
+# ---------------------------------------------------------------------------
+
+def _parquet_cache_path(name):
+    """Return the parquet cache file path for a dataset name."""
+    DATA_CACHE.mkdir(exist_ok=True)
+    return DATA_CACHE / f"{name}.parquet"
+
+
+def _source_mtime(paths):
+    """Return the newest mtime across a list of Paths."""
+    if not paths:
+        return 0
+    return max(p.stat().st_mtime for p in paths if p.exists())
+
+
+def _read_parquet_cache(name, source_paths):
+    """Read from parquet cache if it's newer than all source files.
+
+    Returns the cached DataFrame or None if cache is stale/missing.
+    """
+    pq = _parquet_cache_path(name)
+    if not pq.exists():
+        return None
+    try:
+        pq_mtime = pq.stat().st_mtime
+        if pq_mtime > _source_mtime(source_paths):
+            return pd.read_parquet(pq, engine="pyarrow")
+    except Exception:
+        pass
+    return None
+
+
+def _write_parquet_cache(name, df):
+    """Write a DataFrame to the parquet cache."""
+    if df.empty:
+        return
+    try:
+        pq = _parquet_cache_path(name)
+        df.to_parquet(pq, engine="pyarrow", compression="zstd")
+    except Exception:
+        pass  # Cache write failure is non-fatal
+
+
+def _source_files_for_incremental(folder, base_name):
+    """List source CSV paths for an incremental dataset."""
+    folder = Path(folder)
+    return sorted(folder.glob(f"{base_name}_*.csv"))
 
 
 def _read_csv_safe(path, **kwargs):
@@ -270,6 +323,10 @@ def load_treatment_detail():
     Columns: TreatmentDate→ScheduledDateTime, PatientMRN→PatientId,
     PatientName→PatientFullName, Machine, Department, TreatingPhysician, etc.
     """
+    _src = _source_files_for_incremental(DATA_INCREMENTAL / "TreatmentDetail", "Treatment - Detail")
+    cached = _read_parquet_cache("TreatmentDetail", _src)
+    if cached is not None:
+        return cached
     df = _load_incremental(DATA_INCREMENTAL / "TreatmentDetail", "Treatment - Detail", "SessionUniqueID")
     df = _normalize_columns(df, {
         "TreatmentDate": "ScheduledDateTime",
@@ -279,15 +336,12 @@ def load_treatment_detail():
     df = _clean_department(df)
     df = _parse_dates(df, ["ScheduledDateTime", "AppointmentDateTime",
                            "TreatmentStartTime", "TreatmentEndTime"])
-    # Secondary dedup: ARIA incremental exports can regenerate different
-    # SessionUniqueIDs for the same treatment session, so fall back to a
-    # stable composite key.  Safe to keep after the extraction is fixed
-    # (will be a no-op once SessionUniqueIDs are stable).
     _composite = ["PatientId", "ScheduledDateTime", "Machine", "FractionNumber", "CourseName"]
     _usable = [c for c in _composite if c in df.columns]
     if _usable:
         df = df.drop_duplicates(subset=_usable, keep="last")
     df = _rename_generic_physicians(df)
+    _write_parquet_cache("TreatmentDetail", df)
     return df
 
 
@@ -299,11 +353,16 @@ def load_daily_volume():
     FirstScheduledStart, LastScheduledEnd, AppointmentCount,
     FirstActualStart, LastActualEnd
     """
-    df = _read_csv_safe(DATA_COMPLETE / "Daily Volume - Past.csv")
+    src = DATA_COMPLETE / "Daily Volume - Past.csv"
+    cached = _read_parquet_cache("DailyVolumePast", [src])
+    if cached is not None:
+        return cached
+    df = _read_csv_safe(src)
     df = _normalize_columns(df, {"Location": "Department", "Site": "Department", "Date": "ScheduledDate"})
     df = _clean_department(df)
     df = _reshape_daily_volume(df)
     df = _parse_dates(df, ["ScheduledDate"])
+    _write_parquet_cache("DailyVolumePast", df)
     return df
 
 
@@ -374,6 +433,10 @@ def load_clinic_visits():
     Columns: DepartmentName→Department, ActivityStatus→Status.
     Includes SimulationStatus, SimActivityName, ModalityType for pipeline tracking.
     """
+    _src = _source_files_for_incremental(DATA_INCREMENTAL / "ClinicVisits", "Clinic Visits")
+    cached = _read_parquet_cache("ClinicVisits", _src)
+    if cached is not None:
+        return cached
     df = _load_incremental(DATA_INCREMENTAL / "ClinicVisits", "Clinic Visits", "UniqueRowID")
     df = _normalize_columns(df, {
         "DepartmentName": "Department",
@@ -383,6 +446,7 @@ def load_clinic_visits():
     df = _parse_dates(df, ["ScheduledDateTime", "AppointmentCreatedDate",
                            "SimulationDateTime"])
     df = _rename_generic_physicians(df)
+    _write_parquet_cache("ClinicVisits", df)
     return df
 
 
@@ -392,6 +456,10 @@ def load_simulations():
 
     Department now included in source. ActivityStatus→Status for filtering.
     """
+    _src = _source_files_for_incremental(DATA_INCREMENTAL / "Simulations", "Simulations")
+    cached = _read_parquet_cache("Simulations", _src)
+    if cached is not None:
+        return cached
     df = _load_incremental(DATA_INCREMENTAL / "Simulations", "Simulations", "UniqueRowID")
     df = _normalize_columns(df, {"ActivityStatus": "Status"})
     df = _parse_dates(df, ["ScheduledDateTime", "AppointmentCreatedDate",
@@ -404,6 +472,7 @@ def load_simulations():
             df = df.merge(dept_map, on="PatientId", how="left")
     df = _clean_department(df)
     df = _rename_generic_physicians(df)
+    _write_parquet_cache("Simulations", df)
     return df
 
 
@@ -414,6 +483,10 @@ def load_workflow():
     Each row is one workflow stage (Exam, Simulation, Draw, ContourReview,
     Isodose, ReviewPlan, Treatment). Department now included in source.
     """
+    _src = _source_files_for_incremental(DATA_INCREMENTAL / "Workflow", "Workflow")
+    cached = _read_parquet_cache("Workflow", _src)
+    if cached is not None:
+        return cached
     df = _load_incremental(
         DATA_INCREMENTAL / "Workflow", "Workflow",
         ["UniqueRowID", "StageName", "StageOccurrence"],
@@ -422,13 +495,13 @@ def load_workflow():
         "StageDateTime", "StageEndDateTime", "StageDueDateTime",
         "StageCreationDateTime", "BaselineDateTime", "ExamDateTime",
     ])
-    # Department is now in source; fall back to Treatment Detail map if missing
     if "Department" not in df.columns and "PatientId" in df.columns:
         dept_map = _patient_department_map()
         if not dept_map.empty:
             df = df.merge(dept_map, on="PatientId", how="left")
     df = _clean_department(df)
     df = _rename_generic_physicians(df)
+    _write_parquet_cache("Workflow", df)
     return df
 
 
@@ -439,7 +512,11 @@ def load_tasks():
     Columns: PatientName→PatientFullName.
     Includes simulation linkage columns for draw/review turnaround analysis.
     """
-    df = _read_csv_safe(DATA_COMPLETE / "Tasks.csv")
+    _src = DATA_COMPLETE / "Tasks.csv"
+    cached = _read_parquet_cache("Tasks", [_src])
+    if cached is not None:
+        return cached
+    df = _read_csv_safe(_src)
     df = _normalize_columns(df, {"PatientName": "PatientFullName"})
     df = _parse_dates(df, [
         "StartDateTime", "DueDateTime", "CompletedDateTime",
@@ -449,6 +526,7 @@ def load_tasks():
     if "UniqueRowID" in df.columns:
         df = df.drop_duplicates(subset=["UniqueRowID"], keep="last")
     df = _rename_generic_physicians(df)
+    _write_parquet_cache("Tasks", df)
     return df
 
 
@@ -466,10 +544,15 @@ def load_otvs():
 @lru_cache(maxsize=1)
 def load_weekly_visits():
     """Load Weekly Visits.csv."""
+    _src = _source_files_for_incremental(DATA_INCREMENTAL / "WeeklyVisits", "Weekly Visits")
+    cached = _read_parquet_cache("WeeklyVisits", _src)
+    if cached is not None:
+        return cached
     df = _load_incremental(DATA_INCREMENTAL / "WeeklyVisits", "Weekly Visits", "UniqueRowID")
     df = _normalize_columns(df, {"DepartmentName": "Department"})
     df = _clean_department(df)
     df = _parse_dates(df, ["AppointmentDateTime"])
+    _write_parquet_cache("WeeklyVisits", df)
     return df
 
 
@@ -480,6 +563,10 @@ def load_courses():
     Columns: CourseStartDateTime→CourseStartDate, Departments→Department
     (takes first department if comma-separated), PatientName→PatientFullName
     """
+    _src = _source_files_for_incremental(DATA_INCREMENTAL / "Courses", "Courses")
+    cached = _read_parquet_cache("Courses", _src)
+    if cached is not None:
+        return cached
     df = _load_incremental(DATA_INCREMENTAL / "Courses", "Courses", "UniqueRowID")
     df = _normalize_columns(df, {
         "CourseStartDateTime": "CourseStartDate",
@@ -491,6 +578,7 @@ def load_courses():
     df = _clean_department(df)
     df = _parse_dates(df, ["CourseStartDate", "FirstTreatmentDate", "LastTreatmentDate"])
     df = _rename_generic_physicians(df)
+    _write_parquet_cache("Courses", df)
     return df
 
 
@@ -501,6 +589,10 @@ def load_plans():
     Columns: Departments→Department (comma-separated, take first),
     PatientName→PatientFullName
     """
+    _src = _source_files_for_incremental(DATA_INCREMENTAL / "Plans", "Plans")
+    cached = _read_parquet_cache("Plans", _src)
+    if cached is not None:
+        return cached
     df = _load_incremental(DATA_INCREMENTAL / "Plans", "Plans", "UniqueRowID")
     df = _normalize_columns(df, {"PatientName": "PatientFullName"})
     # Departments is sometimes comma-separated; take the first one
@@ -510,6 +602,7 @@ def load_plans():
     df = _parse_dates(df, ["PlanCreationDate", "CourseStartDateTime",
                            "FirstTreatmentDate", "LastTreatmentDate"])
     df = _rename_generic_physicians(df)
+    _write_parquet_cache("Plans", df)
     return df
 
 
@@ -624,11 +717,16 @@ def load_billing():
     Columns: DepartmentName→Department.
     Includes ActivityCategory, billing workflow status columns, etc.
     """
+    _src = _source_files_for_incremental(DATA_INCREMENTAL / "Billing", "Billing")
+    cached = _read_parquet_cache("Billing", _src)
+    if cached is not None:
+        return cached
     df = _load_incremental(DATA_INCREMENTAL / "Billing", "Billing", "UniqueRowID")
     df = _normalize_columns(df, {"DepartmentName": "Department"})
     df = _clean_department(df)
     df = _parse_dates(df, ["DateOfService", "ActivityDateTime"])
     df = _rename_generic_physicians(df)
+    _write_parquet_cache("Billing", df)
     return df
 
 
@@ -693,6 +791,12 @@ def load_referrals():
     matches = sorted(_glob.glob(pattern))
     if not matches:
         return pd.DataFrame()
+
+    # Try parquet cache (Excel parsing is slow — 2+ seconds)
+    src_path = Path(matches[-1])
+    cached = _read_parquet_cache("Referrals", [src_path])
+    if cached is not None:
+        return cached
 
     # Use the latest file if multiple exist
     df = pd.read_excel(matches[-1])
@@ -1137,6 +1241,7 @@ def load_referrals():
             .str.strip()
         )
 
+    _write_parquet_cache("Referrals", df)
     return df
 
 
@@ -1195,6 +1300,7 @@ def clear_cache():
     """Clear all cached data (call after data refresh)."""
     from utils.geocoding import load_geocode_cache
     from utils.holidays import clear_holidays_cache
+    import shutil
 
     for fn in [
         _patient_department_map,
@@ -1212,3 +1318,6 @@ def clear_cache():
     ]:
         fn.cache_clear()
     clear_holidays_cache()
+    # Clear parquet cache so next load rebuilds from source CSVs
+    if DATA_CACHE.exists():
+        shutil.rmtree(DATA_CACHE, ignore_errors=True)

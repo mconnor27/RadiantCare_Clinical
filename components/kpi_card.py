@@ -7,6 +7,25 @@ import plotly.graph_objects as go
 from config.settings import PRIMARY, NEUTRAL, SEMANTIC_COLORS
 
 
+def kpi_placeholder(accent_color=None):
+    """Skeleton placeholder for a KPI card — shown before data loads."""
+    return dmc.Paper(
+        children=[
+            dmc.Stack(gap=8, children=[
+                dmc.Skeleton(height=12, width="60%", radius="sm"),
+                dmc.Skeleton(height=24, width="40%", radius="sm"),
+                dmc.Skeleton(height=10, width="50%", radius="sm"),
+                dmc.Skeleton(height=44, radius="sm"),
+            ]),
+        ],
+        pt="sm", px="md", pb=4,
+        radius="md", shadow="xs", withBorder=True,
+        style={
+            "borderLeft": f"4px solid {accent_color}" if accent_color else "none",
+        },
+    )
+
+
 def _hex_to_rgba(hex_color, alpha):
     """Convert hex color to rgba string."""
     r = int(hex_color[1:3], 16)
