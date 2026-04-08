@@ -1137,6 +1137,10 @@ def _build_strip_data(gaps_df, machines, start_date, end_date):
     Input(f"{PAGE_ID}-filter-min-cancellations", "value"),
     Input(f"{PAGE_ID}-filter-require-note", "checked"),
     Input(f"{PAGE_ID}-filter-require-termination", "checked"),
+    running=[
+        (Output(f"{PAGE_ID}-chart-trend-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-chart-patient-impact-loading", "visible"), True, False),
+    ],
 )
 def update_main_data(_n, machines, row_types, gap_threshold, slider_val, date_preset,
                      min_cancel, req_note, req_term):

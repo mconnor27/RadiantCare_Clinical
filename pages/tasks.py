@@ -11,7 +11,7 @@ import numpy as np
 from config.settings import (
     CHART_COLORWAY, PRIMARY,
     SEMANTIC_COLORS, NEUTRAL,
-    CHART_PAPER_HEIGHT_SM,
+    CHART_PAPER_HEIGHT_SM, PRIOR_PERIOD_COLORS,
     DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, DEFAULT_GRID_STYLE, DEFAULT_GRID_CLASS,
 )
 from components.chart_card import chart_card, register_chart_callbacks
@@ -762,6 +762,7 @@ layout = dmc.Stack(
                         {"value": "bar", "label": "Bar"},
                     ],
                     show_smooth=True,
+                    show_prior_periods=True,
                     smooth_max=50,
                     smooth_default=0,
                     paper_padding="md",
@@ -787,11 +788,12 @@ layout = dmc.Stack(
                         dmc.SegmentedControl(
                             id="tasks-cumulative-slice",
                             data=[
+                                {"value": "total", "label": "Total"},
                                 {"value": "task", "label": "Task"},
                                 {"value": "physician", "label": "MD"},
                                 {"value": "bodysite", "label": "Dx"},
                             ],
-                            value="task",
+                            value="total",
                             size="xs",
                             style={"display": "none"},
                         ),
@@ -1238,66 +1240,23 @@ def _populate_physician_chips(_n, slider_val, task_types, diagnosis_cats, status
 
 
 # ---------------------------------------------------------------------------
-# Server-side callback: compute data and output to stores
+# Shared filter helper — load data, apply filters, return dict or None
 # ---------------------------------------------------------------------------
-@callback(
-    Output("tasks-kpi-draw", "children"),
-    Output("tasks-kpi-srs", "children"),
-    Output("tasks-kpi-contour", "children"),
-    Output("tasks-kpi-review", "children"),
-    Output("tasks-chart-histogram", "figure"),
-    Output("tasks-table-container", "children"),
-    Output("tasks-store-volume", "data"),
-    Output("tasks-store-cumulative", "data"),
-    Output("tasks-store-time-trend", "data"),
-    Output("tasks-store-sla", "data"),
-    Output("tasks-store-kpi-sparklines", "data"),
-    Input("tasks-interval", "n_intervals"),
-    Input("tasks-filter-date-preset", "value"),
-    Input("tasks-filter-physician", "value"),
-    Input("tasks-filter-type", "value"),
-    Input("tasks-filter-diagnosis", "value"),
-    Input("tasks-filter-status", "value"),
-    Input("tasks-date-slider", "value"),
-    Input("tasks-volume-agg", "value"),
-    Input("tasks-volume-slice", "value"),
-    Input("tasks-cumulative-mode", "value"),
-    Input("tasks-cumulative-period-type", "value"),
-    Input("tasks-cumulative-slice", "value"),
-    Input("tasks-hist-slice", "value"),
-    Input("tasks-histogram-settings-type", "value"),
-    Input("tasks-time-agg", "value"),
-    Input("tasks-time-slice", "value"),
-    Input("tasks-sla-agg", "value"),
-    Input("tasks-sla-slice", "value"),
-    Input("tasks-business-hours-switch", "checked"),
-    Input("tasks-max-days-slider", "value"),
-    running=[
-        (Output("tasks-chart-volume-loading", "visible"), True, False),
-        (Output("tasks-chart-cumulative-loading", "visible"), True, False),
-        (Output("tasks-chart-histogram-loading", "visible"), True, False),
-        (Output("tasks-chart-time-trend-loading", "visible"), True, False),
-        (Output("tasks-chart-sla-loading", "visible"), True, False),
-    ],
-)
-def update_tasks(_n, date_preset, physician, task_types,
-                 diagnosis_cats, status, slider_val,
-                 volume_agg, volume_slice,
-                 cumul_mode, cumul_period_type, cumul_slice,
-                 hist_slice, hist_type,
-                 time_agg, time_slice,
-                 sla_agg, sla_slice,
-                 use_business_hours, max_days_cap):
+
+def _load_and_filter_tasks(slider_val, physician, task_types, diagnosis_cats,
+                           status, use_business_hours, max_days_cap, date_preset):
+    """Load tasks data, apply all dimension/date/status filters.
+
+    Returns a dict with shared dataframes and metadata, or None if empty.
+    """
     from data.loader import load_tasks, load_diagnosis
 
-    _empty_store = {"dates": [], "series": []}
     try:
-        tasks = load_tasks()
+        tasks = load_tasks().copy()
     except Exception:
-        empty = empty_figure("Tasks data unavailable")
-        na_card = dmc.Text("\u2014", ta="center")
-        return (na_card, na_card, na_card, na_card, empty, [],
-                _empty_store, None, _empty_store, _empty_store, {})
+        return None
+    if tasks.empty:
+        return None
 
     # --- Clean MinutesToComplete: exclude negatives always ---
     if "MinutesToComplete" in tasks.columns:
@@ -1323,8 +1282,6 @@ def update_tasks(_n, date_preset, physician, task_types,
     _spark_period = "D" if range_months <= 3 else "W"
 
     # --- Base filtering (everything except task type) ---
-    # Include tasks in the selected date range PLUS any open tasks (NaT or
-    # started before end) so the KPI open-count reflects the true backlog.
     df_base = tasks.copy()
     if "StartDateTime" in df_base.columns:
         in_range = (df_base["StartDateTime"] >= start) & (df_base["StartDateTime"] <= end)
@@ -1350,7 +1307,6 @@ def update_tasks(_n, date_preset, physician, task_types,
     # Status filter — use TaskStatus column
     is_completed_base = _task_is_completed(df_base)
     if status == "open":
-        # "Open" = not completed AND prior step is done (actionable)
         df_base = df_base[(~is_completed_base) & _prior_step_complete(df_base)]
     elif status == "done":
         df_base = df_base[is_completed_base]
@@ -1371,7 +1327,121 @@ def update_tasks(_n, date_preset, physician, task_types,
         )
         df_prior_base = df_prior_base[row_bs_prior.apply(lambda cats: bool(cats & bs_set))]
 
-    # --- Build KPI group cards + sparkline store data ---
+    # --- Apply task-type filter for chart/table frames ---
+    df = df_base.copy()
+    if task_types and "ActivityName" in df.columns:
+        raw_types = []
+        for g in task_types:
+            raw_types.extend(_TASK_TYPE_GROUPS.get(g, [g]))
+        df = df[df["ActivityName"].isin(raw_types)]
+
+    is_completed = _task_is_completed(df)
+
+    # Time-valid mask: completed + non-zero + within cap
+    _mtc = (pd.to_numeric(df["MinutesToComplete"], errors="coerce")
+            if "MinutesToComplete" in df.columns else pd.Series(dtype=float))
+    is_time_valid = is_completed & (_mtc > 0) & (_mtc <= _max_minutes)
+
+    # Pre-date-filtered copy for cumulative prior periods
+    df_all_dates = tasks.copy()
+    if physician and "ResolvedMD" in df_all_dates.columns:
+        df_all_dates = df_all_dates[df_all_dates["ResolvedMD"] == physician]
+    if diagnosis_cats and "DiagnosisCodes" in df_all_dates.columns and c2b:
+        bs_set = set(diagnosis_cats)
+        row_bs_all = df_all_dates["DiagnosisCodes"].apply(
+            lambda s: get_categories_for_codes(s, c2b) if pd.notna(s) else set()
+        )
+        df_all_dates = df_all_dates[row_bs_all.apply(lambda cats: bool(cats & bs_set))]
+    if task_types and "ActivityName" in df_all_dates.columns:
+        raw_types = []
+        for g in task_types:
+            raw_types.extend(_TASK_TYPE_GROUPS.get(g, [g]))
+        df_all_dates = df_all_dates[df_all_dates["ActivityName"].isin(raw_types)]
+    # Apply status filter to cumulative data too
+    is_comp_all = _task_is_completed(df_all_dates)
+    if status == "open":
+        df_all_dates = df_all_dates[(~is_comp_all) & _prior_step_complete(df_all_dates)]
+    elif status == "done":
+        df_all_dates = df_all_dates[is_comp_all]
+
+    # Accent color: use KPI card color when exactly one task type selected
+    _kpi_color_map = {kg["name"]: kg["color"] for kg in _KPI_GROUPS}
+    _accent = (_kpi_color_map.get(task_types[0])
+               if task_types and len(task_types) == 1 else None)
+
+    return {
+        "tasks": tasks,
+        "df_base": df_base,
+        "df_prior_base": df_prior_base,
+        "df": df,
+        "df_all_dates": df_all_dates,
+        "is_completed": is_completed,
+        "is_time_valid": is_time_valid,
+        "c2b": c2b,
+        "start": start,
+        "end": end,
+        "date_preset": date_preset,
+        "accent": _accent,
+        "max_minutes": _max_minutes,
+        "spark_period": _spark_period,
+    }
+
+
+# Common filter inputs shared by all split callbacks
+_TASKS_FILTER_INPUTS = [
+    Input("tasks-interval", "n_intervals"),
+    Input("tasks-filter-date-preset", "value"),
+    Input("tasks-filter-physician", "value"),
+    Input("tasks-filter-type", "value"),
+    Input("tasks-filter-diagnosis", "value"),
+    Input("tasks-filter-status", "value"),
+    Input("tasks-date-slider", "value"),
+    Input("tasks-business-hours-switch", "checked"),
+    Input("tasks-max-days-slider", "value"),
+]
+
+
+def _unpack_tasks_filter_args(args):
+    """Unpack the 9 common filter args into kwargs for _load_and_filter_tasks."""
+    (_n, date_preset, physician, task_types, diagnosis_cats,
+     status, slider_val, use_business_hours, max_days_cap) = args[:9]
+    return dict(
+        slider_val=slider_val, physician=physician, task_types=task_types,
+        diagnosis_cats=diagnosis_cats, status=status,
+        use_business_hours=use_business_hours, max_days_cap=max_days_cap,
+        date_preset=date_preset,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Callback 1: KPIs + Sparklines + Detail Table
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("tasks-kpi-draw", "children"),
+    Output("tasks-kpi-srs", "children"),
+    Output("tasks-kpi-contour", "children"),
+    Output("tasks-kpi-review", "children"),
+    Output("tasks-table-container", "children"),
+    Output("tasks-store-kpi-sparklines", "data"),
+    *_TASKS_FILTER_INPUTS,
+)
+def _update_tasks_kpis(*args):
+    ctx = _unpack_tasks_filter_args(args)
+    data = _load_and_filter_tasks(**ctx)
+
+    na_card = dmc.Text("\u2014", ta="center")
+    if data is None:
+        return na_card, na_card, na_card, na_card, [], {}
+
+    df_base = data["df_base"]
+    df_prior_base = data["df_prior_base"]
+    df = data["df"]
+    is_completed = data["is_completed"]
+    _max_minutes = data["max_minutes"]
+    _spark_period = data["spark_period"]
+
+    # Build KPI group cards + sparkline store data
     group_cards = []
     sparkline_data = {}
     for kg in _KPI_GROUPS:
@@ -1398,67 +1468,132 @@ def update_tasks(_n, date_preset, physician, task_types,
                 "hover_fmt": "%{x|%b %d}: %{customdata:,.0f} min<extra></extra>",
             }
 
-    # --- Apply task-type filter for charts / table ---
-    df = df_base.copy()
-    if task_types and "ActivityName" in df.columns:
-        raw_types = []
-        for g in task_types:
-            raw_types.extend(_TASK_TYPE_GROUPS.get(g, [g]))
-        df = df[df["ActivityName"].isin(raw_types)]
+    table = _build_table(df, is_completed)
 
-    is_completed = _task_is_completed(df)
+    return (*group_cards, table, sparkline_data)
 
-    # --- Time-valid mask: completed + non-zero + within cap ---
-    # Used for histogram, time trend, KPI median time (not volume/SLA)
-    _mtc = pd.to_numeric(df["MinutesToComplete"], errors="coerce") if "MinutesToComplete" in df.columns else pd.Series(dtype=float)
-    is_time_valid = is_completed & (_mtc > 0) & (_mtc <= _max_minutes)
 
-    # Pre-date-filtered copy for cumulative prior periods
-    df_all_dates = tasks.copy()
-    if physician and "ResolvedMD" in df_all_dates.columns:
-        df_all_dates = df_all_dates[df_all_dates["ResolvedMD"] == physician]
-    if diagnosis_cats and "DiagnosisCodes" in df_all_dates.columns and c2b:
-        bs_set = set(diagnosis_cats)
-        row_bs_all = df_all_dates["DiagnosisCodes"].apply(
-            lambda s: get_categories_for_codes(s, c2b) if pd.notna(s) else set()
-        )
-        df_all_dates = df_all_dates[row_bs_all.apply(lambda cats: bool(cats & bs_set))]
-    if task_types and "ActivityName" in df_all_dates.columns:
-        raw_types = []
-        for g in task_types:
-            raw_types.extend(_TASK_TYPE_GROUPS.get(g, [g]))
-        df_all_dates = df_all_dates[df_all_dates["ActivityName"].isin(raw_types)]
-    # Apply status filter to cumulative data too
-    is_comp_all = _task_is_completed(df_all_dates)
-    if status == "open":
-        df_all_dates = df_all_dates[(~is_comp_all) & _prior_step_complete(df_all_dates)]
-    elif status == "done":
-        df_all_dates = df_all_dates[is_comp_all]
+# ---------------------------------------------------------------------------
+# Callback 2: Volume Store
+# ---------------------------------------------------------------------------
 
-    # --- Accent color: use the KPI card color when exactly one task type is selected ---
-    _kpi_color_map = {kg["name"]: kg["color"] for kg in _KPI_GROUPS}
-    _accent = (_kpi_color_map.get(task_types[0])
-               if task_types and len(task_types) == 1 else None)
+@callback(
+    Output("tasks-store-volume", "data"),
+    *_TASKS_FILTER_INPUTS,
+    Input("tasks-volume-agg", "value"),
+    Input("tasks-volume-slice", "value"),
+    running=[(Output("tasks-chart-volume-loading", "visible"), True, False)],
+)
+def _update_tasks_volume(*args):
+    ctx = _unpack_tasks_filter_args(args)
+    agg, volume_slice = args[9], args[10]
+    data = _load_and_filter_tasks(**ctx)
+    if data is None:
+        return None
+    return _prepare_volume_data(
+        data["df"], agg or "W", volume_slice or "",
+        data["c2b"], accent_color=data["accent"],
+    )
 
-    # --- Build chart data ---
-    volume_store = _prepare_volume_data(df, volume_agg or "W", volume_slice or "", c2b, accent_color=_accent)
-    cumulative_store = _prepare_cumulative_data(
-        df_all_dates, start, end, date_preset,
+
+# ---------------------------------------------------------------------------
+# Callback 3: Cumulative Store
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("tasks-store-cumulative", "data"),
+    *_TASKS_FILTER_INPUTS,
+    Input("tasks-cumulative-mode", "value"),
+    Input("tasks-cumulative-period-type", "value"),
+    Input("tasks-cumulative-slice", "value"),
+    running=[(Output("tasks-chart-cumulative-loading", "visible"), True, False)],
+)
+def _update_tasks_cumulative(*args):
+    ctx = _unpack_tasks_filter_args(args)
+    cumul_mode, cumul_period_type, cumul_slice = args[9], args[10], args[11]
+    data = _load_and_filter_tasks(**ctx)
+    if data is None:
+        return None
+    return _prepare_cumulative_data(
+        data["df_all_dates"], data["start"], data["end"], data["date_preset"],
         mode=cumul_mode or "prior",
         period_type=cumul_period_type or "calendar",
         slice_by=cumul_slice or "task",
-        c2b=c2b,
-        accent_color=_accent,
+        c2b=data["c2b"],
+        accent_color=data["accent"],
+        max_prior=5,
     )
-    time_trend_store = _prepare_time_trend_data(df, is_time_valid, time_agg or "M", time_slice or "", c2b, accent_color=_accent)
-    sla_store = _prepare_sla_data(df, is_completed, sla_agg or "W", sla_slice or "", c2b, accent_color=_accent)
-    fig_hist = _build_histogram(df, is_time_valid, hist_slice or "", hist_type or "histogram", c2b, accent_color=_accent)
-    table = _build_table(df, is_completed)
 
-    return (
-        *group_cards,
-        fig_hist, table,
-        volume_store, cumulative_store, time_trend_store, sla_store, sparkline_data,
+
+# ---------------------------------------------------------------------------
+# Callback 4: Time Trend Store
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("tasks-store-time-trend", "data"),
+    *_TASKS_FILTER_INPUTS,
+    Input("tasks-time-agg", "value"),
+    Input("tasks-time-slice", "value"),
+    running=[(Output("tasks-chart-time-trend-loading", "visible"), True, False)],
+)
+def _update_tasks_time_trend(*args):
+    ctx = _unpack_tasks_filter_args(args)
+    time_agg, time_slice = args[9], args[10]
+    data = _load_and_filter_tasks(**ctx)
+    if data is None:
+        return None
+    return _prepare_time_trend_data(
+        data["df"], data["is_time_valid"],
+        time_agg or "M", time_slice or "",
+        data["c2b"], accent_color=data["accent"],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Callback 5: SLA Store
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("tasks-store-sla", "data"),
+    *_TASKS_FILTER_INPUTS,
+    Input("tasks-sla-agg", "value"),
+    Input("tasks-sla-slice", "value"),
+    running=[(Output("tasks-chart-sla-loading", "visible"), True, False)],
+)
+def _update_tasks_sla(*args):
+    ctx = _unpack_tasks_filter_args(args)
+    sla_agg, sla_slice = args[9], args[10]
+    data = _load_and_filter_tasks(**ctx)
+    if data is None:
+        return None
+    return _prepare_sla_data(
+        data["df"], data["is_completed"],
+        sla_agg or "W", sla_slice or "",
+        data["c2b"], accent_color=data["accent"],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Callback 6: Histogram (server-rendered figure)
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("tasks-chart-histogram", "figure"),
+    *_TASKS_FILTER_INPUTS,
+    Input("tasks-hist-slice", "value"),
+    Input("tasks-histogram-settings-type", "value"),
+    running=[(Output("tasks-chart-histogram-loading", "visible"), True, False)],
+)
+def _update_tasks_histogram(*args):
+    ctx = _unpack_tasks_filter_args(args)
+    hist_slice, hist_type = args[9], args[10]
+    data = _load_and_filter_tasks(**ctx)
+    if data is None:
+        return empty_figure("Tasks data unavailable")
+    return _build_histogram(
+        data["df"], data["is_time_valid"],
+        hist_slice or "", hist_type or "histogram",
+        data["c2b"], accent_color=data["accent"],
     )
 
 
@@ -1575,7 +1710,8 @@ def _prepare_volume_data(df, agg, slice_by="", c2b=None, accent_color=None):
 
 def _prepare_cumulative_data(df_all, start, end, date_preset,
                               mode="prior", period_type="calendar",
-                              slice_by="task", c2b=None, accent_color=None):
+                              slice_by="task", c2b=None, accent_color=None,
+                              max_prior=5):
     """Prepare cumulative task volume data for overlay chart."""
     if df_all.empty or "StartDateTime" not in df_all.columns:
         return None
@@ -1607,6 +1743,8 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
         sub = df.loc[mask]
         if sub.empty:
             return {}
+        if sb == "total":
+            return {"Total": len(sub)}
         if sb == "task" and "ActivityName" in sub.columns:
             sub_c = sub.copy()
             sub_c["_TaskGroup"] = sub_c["ActivityName"].map(_TASK_TYPE_TO_GROUP).fillna(sub_c["ActivityName"])
@@ -1644,7 +1782,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
 
     windows = []
     if date_preset != "all":
-        for i in range(1, 6):
+        for i in range(1, max_prior + 1):
             if period_type == "calendar":
                 try:
                     p_start = start - pd.DateOffset(years=i)
@@ -1660,14 +1798,14 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             windows.append((_period_label(p_start, p_end), p_start, p_end))
 
     prior = []
-    for label, p_start, p_end in windows:
+    for pi, (label, p_start, p_end) in enumerate(windows):
         vals = _cumulative_for_window(dff_all, p_start, p_end)
         if vals and any(v > 0 for v in vals):
             if len(vals) < n_days:
                 vals = vals + [vals[-1] if vals else 0] * (n_days - len(vals))
             elif len(vals) > n_days:
                 vals = vals[:n_days]
-            prior.append({"label": label, "values": vals, "color": "#D1D5DB"})
+            prior.append({"label": label, "values": vals, "color": PRIOR_PERIOD_COLORS[min(pi, len(PRIOR_PERIOD_COLORS) - 1)]})
 
     current_label = _period_label(start, end)
     if len(current_vals) < n_days:
@@ -2158,11 +2296,14 @@ clientside_callback(
 )
 
 clientside_callback(
-    ClientsideFunction(namespace="cumulative", function_name="renderCumulative"),
+    """function(rawData, smoothPct, chartType, maxPrior, currentFig) {
+        return window.dash_clientside.cumulative.renderCumulative(rawData, smoothPct, chartType, currentFig, null, maxPrior);
+    }""",
     Output("tasks-chart-cumulative", "figure"),
     Input("tasks-store-cumulative", "data"),
     Input("tasks-cumulative-settings-smooth", "value"),
     Input("tasks-cumulative-settings-type", "value"),
+    Input("tasks-cumulative-settings-prior-periods", "value"),
     State("tasks-chart-cumulative", "figure"),
 )
 
@@ -2227,10 +2368,10 @@ register_chart_callbacks([
 # Slice-by dim styling
 # ---------------------------------------------------------------------------
 _SLICE_CLASS_JS = """function(val) {
-    return val ? "slice-group-active" : "slice-total-active";
+    return (val && val !== "total") ? "slice-group-active" : "slice-total-active";
 }"""
 
-for _sid in ["tasks-volume-slice", "tasks-hist-slice", "tasks-time-slice", "tasks-sla-slice"]:
+for _sid in ["tasks-volume-slice", "tasks-hist-slice", "tasks-time-slice", "tasks-sla-slice", "tasks-cumulative-slice"]:
     clientside_callback(
         _SLICE_CLASS_JS,
         Output(_sid, "className"),

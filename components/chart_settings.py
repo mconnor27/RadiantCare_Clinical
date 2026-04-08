@@ -15,6 +15,8 @@ def chart_settings_button(
     smooth_default: float = 15,
     show_grouping: bool = True,
     slider_label: str = "Smoothing",
+    show_prior_periods: bool = False,
+    prior_periods_default: int = 3,
 ):
     """Create a settings gear icon with small dropdown panel.
 
@@ -88,6 +90,32 @@ def chart_settings_button(
                             size="xs",
                             showLabelOnHover=True,
                             updatemode="drag",
+                        ),
+                    ],
+                ),
+            )
+        )
+
+    # Prior periods slider
+    if show_prior_periods:
+        panel_children.append(
+            html.Div(
+                id=f"{chart_id}-settings-prior-wrap",
+                children=dmc.Stack(
+                    gap=4,
+                    children=[
+                        dmc.Text("Prior Periods", size="xs", fw=500, c="#6B7280"),
+                        dmc.Slider(
+                            id=f"{chart_id}-settings-prior-periods",
+                            min=1,
+                            max=5,
+                            step=1,
+                            value=prior_periods_default,
+                            size="xs",
+                            showLabelOnHover=True,
+                            updatemode="drag",
+                            marks=[{"value": i, "label": str(i)} for i in range(1, 6)],
+                            mb=16,
                         ),
                     ],
                 ),

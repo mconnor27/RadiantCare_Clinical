@@ -33,6 +33,8 @@ def chart_card(
     settings_id=None,
     sub_header=None,
     show_grouping=True,
+    show_prior_periods=False,
+    prior_periods_default=5,
 ):
     """Build a chart card with standardized Paper, Graph, LoadingOverlay, and settings.
 
@@ -81,6 +83,8 @@ def chart_card(
                 smooth_default=smooth_default,
                 show_grouping=show_grouping,
                 slider_label=slider_label,
+                show_prior_periods=show_prior_periods,
+                prior_periods_default=prior_periods_default,
             )
         )
 

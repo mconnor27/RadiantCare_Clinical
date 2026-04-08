@@ -15,6 +15,7 @@ from config.settings import (
     DEPARTMENTS, DEPARTMENT_COLORS, CHART_COLORWAY, PRIMARY,
     DEFAULT_LAYOUT, FONT_FAMILY, SEMANTIC_COLORS, NEUTRAL,
     DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, DEFAULT_GRID_STYLE, DEFAULT_GRID_CLASS, CHART_PAPER_HEIGHT,
+    PRIOR_PERIOD_COLORS,
 )
 from components.filter_bar import department_chips
 from components.kpi_card import kpi_card
@@ -429,6 +430,7 @@ layout = dmc.Stack(
                         {"value": "bar", "label": "Bar"},
                     ],
                     show_smooth=True,
+                    show_prior_periods=True,
                     smooth_max=50,
                     smooth_default=0,
                     paper_padding="md",
@@ -454,11 +456,12 @@ layout = dmc.Stack(
                         dmc.SegmentedControl(
                             id="courses-cumulative-slice",
                             data=[
+                                {"value": "total", "label": "Total"},
                                 {"value": "physician", "label": "MD"},
                                 {"value": "site", "label": "Site"},
                                 {"value": "diagnosis", "label": "Dx"},
                             ],
-                            value="site",
+                            value="total",
                             size="xs",
                             style={"display": "none"},
                         ),
@@ -508,10 +511,10 @@ register_chart_callbacks([
 # Slice-by dim styling
 # ---------------------------------------------------------------------------
 _SLICE_CLASS_JS = """function(val) {
-    return val ? "slice-group-active" : "slice-total-active";
+    return (val && val !== "total") ? "slice-group-active" : "slice-total-active";
 }"""
 
-for _sid in ["courses-volume-slice"]:
+for _sid in ["courses-volume-slice", "courses-cumulative-slice"]:
     clientside_callback(
         _SLICE_CLASS_JS,
         Output(_sid, "className"),
@@ -1776,7 +1779,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
                               status, frac_range, c2b, inpatient=False,
                               techniques=None, date_mode="started",
                               mode="prior", period_type="calendar",
-                              slice_by="site"):
+                              slice_by="site", max_prior=5):
     """Prepare cumulative course volume data for overlay chart."""
     if df_all.empty or date_col not in df_all.columns:
         return None
@@ -1815,6 +1818,8 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
         sub = df.loc[_window_mask(df, w_start, w_end)]
         if sub.empty:
             return {}
+        if sb == "total":
+            return {"Total": len(sub)}
         if sb == "site" and "Department" in sub.columns:
             return sub.groupby("Department").size().to_dict()
         elif sb == "physician" and "TreatingPhysician" in sub.columns:
@@ -1857,7 +1862,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
 
     windows = []
     if date_preset != "all":
-        for i in range(1, 6):
+        for i in range(1, max_prior + 1):
             if period_type == "calendar":
                 try:
                     p_start = start - pd.DateOffset(years=i)
@@ -1873,14 +1878,14 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             windows.append((_period_label(p_start, p_end), p_start, p_end))
 
     prior = []
-    for label, p_start, p_end in windows:
+    for pi, (label, p_start, p_end) in enumerate(windows):
         vals = _cumulative_for_window(dff_all, p_start, p_end)
         if vals and any(v > 0 for v in vals):
             if len(vals) < n_days:
                 vals = vals + [vals[-1] if vals else 0] * (n_days - len(vals))
             elif len(vals) > n_days:
                 vals = vals[:n_days]
-            prior.append({"label": label, "values": vals, "color": "#D1D5DB"})
+            prior.append({"label": label, "values": vals, "color": PRIOR_PERIOD_COLORS[min(pi, len(PRIOR_PERIOD_COLORS) - 1)]})
 
     current_label = _period_label(start, end)
     if len(current_vals) < n_days:
@@ -2106,88 +2111,66 @@ def _apply_filters(df, departments, physician, diagnosis_cats, status, frac_rang
 
 
 # ---------------------------------------------------------------------------
-# Main Callback
+# Module-level helpers (extracted from monolithic callback)
 # ---------------------------------------------------------------------------
 
-@callback(
-    Output("courses-kpi-active", "children"),
-    Output("courses-kpi-started", "children"),
-    Output("courses-kpi-completed", "children"),
-    Output("courses-kpi-median-fractions", "children"),
-    Output("courses-kpi-median-duration", "children"),
-    Output("courses-kpi-multiplan", "children"),
-    Output("courses-store-volume", "data"),
-    Output("courses-store-cumulative", "data"),
-    Output("courses-store-kpi-sparklines", "data"),
-    Output("courses-store-ridgeline", "data"),
-    Output("courses-store-frac-trend", "data"),
-    Output("courses-store-frac-dist", "data"),
-    Output("courses-store-complexity-trends", "data"),
-    Output("courses-store-technique-dist", "data"),
-    Output("courses-store-quit-trend", "data"),
-    Output("courses-charts", "children"),
-    Output("courses-table-container", "children"),
-    Output("courses-fraction-slider", "min"),
-    Output("courses-fraction-slider", "max"),
-    Input("courses-interval", "n_intervals"),
-    Input("courses-volume-agg", "value"),
-    Input("courses-volume-slice", "value"),
-    Input("courses-cumulative-mode", "value"),
-    Input("courses-cumulative-period-type", "value"),
-    Input("courses-cumulative-slice", "value"),
-    Input("courses-date-slider", "value"),
-    Input("courses-filter-department", "value"),
-    Input("courses-filter-physician", "value"),
-    Input("courses-filter-diagnosis", "value"),
-    Input("courses-filter-technique", "value"),
-    Input("courses-filter-status", "value"),
-    Input("courses-fraction-slider", "value"),
-    Input("courses-date-mode", "value"),
-    Input("courses-filter-date-preset", "value"),
-    Input("courses-inpatient-switch", "checked"),
-    State("courses-fraction-engaged", "data"),
-    running=[
-        (Output("courses-chart-volume-loading", "visible"), True, False),
-        (Output("courses-chart-cumulative-loading", "visible"), True, False),
-    ],
-)
-def update_courses(_n, agg, volume_slice,
-                    cumul_mode, cumul_period_type, cumul_slice,
-                    slider_val,
-                    departments, physician, diagnosis_cats, techniques,
-                    status, frac_range, date_mode, date_preset, inpatient,
-                    frac_engaged):
+_PRIOR_MAP = {
+    "12mo": ("vs prior 12 mo", lambda s, e: (s - (e - s) - pd.Timedelta(days=1), s - pd.Timedelta(days=1))),
+    "6mo": ("vs prior 6 mo", lambda s, e: (s - (e - s) - pd.Timedelta(days=1), s - pd.Timedelta(days=1))),
+    "3mo": ("vs prior 3 mo", lambda s, e: (s - (e - s) - pd.Timedelta(days=1), s - pd.Timedelta(days=1))),
+    "30d": ("vs prior 30 days", lambda s, e: (s - (e - s) - pd.Timedelta(days=1), s - pd.Timedelta(days=1))),
+    "ytd": ("vs prior YTD", lambda s, e: (
+        pd.Timestamp(s.year - 1, 1, 1),
+        min(pd.Timestamp(s.year - 1, e.month, min(e.day, 28)), pd.Timestamp(s.year - 1, 12, 31)),
+    )),
+    "last_year": ("vs year before", lambda s, e: (
+        pd.Timestamp(s.year - 1, 1, 1), pd.Timestamp(s.year - 1, 12, 31),
+    )),
+    "this_month": ("vs last MTD", lambda s, e: (
+        s - pd.DateOffset(months=1), e - pd.DateOffset(months=1),
+    )),
+    "last_month": ("vs month before", lambda s, e: (
+        s - pd.DateOffset(months=1), s - pd.Timedelta(days=1),
+    )),
+}
+
+
+def _trend(curr, prior, invert=False):
+    if prior is None or prior == 0:
+        return None, None
+    pct = (curr - prior) / abs(prior) * 100
+    direction = ("down" if pct > 0 else "up") if invert else ("up" if pct > 0 else "down")
+    return f"{abs(pct):.0f}%", direction
+
+
+# ---------------------------------------------------------------------------
+# Shared filter loading
+# ---------------------------------------------------------------------------
+
+def _load_and_filter_courses(slider_val, departments, physician, diagnosis_cats,
+                              techniques, status, frac_range, date_mode,
+                              date_preset, inpatient, frac_engaged):
+    """Load courses data, apply filters. Returns dict with shared frames or None."""
     from data.loader import load_courses
 
-    na_kpi = kpi_card("--", "N/A")
-    empty = empty_figure()
-    empty_result = (na_kpi,) * 6 + (None, None, {}, None, None, None, None, None, None, [], [], 0, 50)
-
     try:
-        df = load_courses()
+        df = load_courses().copy()
     except Exception:
-        return empty_result
+        return None
 
     if df.empty:
-        return empty_result
+        return None
 
-    # Build diagnosis lookup
     c2b = _build_diag_lookup()
 
-    # Determine date column based on mode
     date_col = _date_col_for_mode(date_mode)
-
-    # Ensure date column exists; fall back to CourseStartDate
     if date_col not in df.columns or df[date_col].notna().sum() == 0:
         date_col = "CourseStartDate"
 
-    # "Completed In" mode: restrict to effectively-completed courses BEFORE
-    # date filtering, so we only plot courses that actually finished — not
-    # every course that happened to have a LastTreatmentDate in the window.
     if date_mode == "completed":
         df = df[_is_effectively_completed(df)]
 
-    # Update fraction slider range from data (before date filter so range stays stable)
+    # Fraction slider range (before date filter so range stays stable)
     frac_min_data = 0
     frac_max_data = 50
     if "FractionsPrescribed" in df.columns:
@@ -2196,21 +2179,15 @@ def update_courses(_n, agg, volume_slice,
             frac_min_data = int(fvals.min())
             frac_max_data = int(fvals.max())
 
-    # Date range from slider
     start, end = _get_date_range(slider_val, None)
-
-    # Keep full df for cumulative prior-period comparison
     df_all = df.copy()
 
     # Date filter
     if date_mode == "treated":
-        # "Treated In" — include any course whose treatment span overlaps the window.
-        # Overlap condition: FirstTreatmentDate <= end AND LastTreatmentDate >= start
         ft = "FirstTreatmentDate"
         lt = "LastTreatmentDate"
         if ft in df.columns and lt in df.columns:
             df = df[df[ft].notna()]
-            # Fall back LastTreatmentDate to FirstTreatmentDate for active courses
             last = df[lt].fillna(df[ft])
             df = df[(df[ft] <= end) & (last >= start)]
     elif date_col in df.columns:
@@ -2218,54 +2195,23 @@ def update_courses(_n, agg, volume_slice,
         df = df[(df[date_col] >= start) & (df[date_col] <= end)]
 
     if df.empty:
-        return (na_kpi,) * 6 + (None, None, {}, None, None, None, None, None, [], [], frac_min_data, frac_max_data)
+        return None
 
-    # Only apply fraction filter when the user has engaged the slider
     active_frac_range = frac_range if frac_engaged else None
 
-    # Apply dimension filters
     dff = _apply_filters(df, departments, physician, diagnosis_cats, status, active_frac_range, c2b,
                          inpatient=inpatient, techniques=techniques)
 
     if dff.empty:
-        return (na_kpi,) * 6 + (None, None, {}, None, None, None, None, None, [], [], frac_min_data, frac_max_data)
+        return None
 
-    # ------------------------------------------------------------------
-    # Prior-period comparison
-    # ------------------------------------------------------------------
-    _PRIOR_MAP = {
-        "12mo": ("vs prior 12 mo", lambda s, e: (s - (e - s) - pd.Timedelta(days=1), s - pd.Timedelta(days=1))),
-        "6mo": ("vs prior 6 mo", lambda s, e: (s - (e - s) - pd.Timedelta(days=1), s - pd.Timedelta(days=1))),
-        "3mo": ("vs prior 3 mo", lambda s, e: (s - (e - s) - pd.Timedelta(days=1), s - pd.Timedelta(days=1))),
-        "30d": ("vs prior 30 days", lambda s, e: (s - (e - s) - pd.Timedelta(days=1), s - pd.Timedelta(days=1))),
-        "ytd": ("vs prior YTD", lambda s, e: (
-            pd.Timestamp(s.year - 1, 1, 1),
-            min(pd.Timestamp(s.year - 1, e.month, min(e.day, 28)), pd.Timestamp(s.year - 1, 12, 31)),
-        )),
-        "last_year": ("vs year before", lambda s, e: (
-            pd.Timestamp(s.year - 1, 1, 1), pd.Timestamp(s.year - 1, 12, 31),
-        )),
-        "this_month": ("vs last MTD", lambda s, e: (
-            s - pd.DateOffset(months=1), e - pd.DateOffset(months=1),
-        )),
-        "last_month": ("vs month before", lambda s, e: (
-            s - pd.DateOffset(months=1), s - pd.Timedelta(days=1),
-        )),
-    }
-
-    def _trend(curr, prior, invert=False):
-        if prior is None or prior == 0:
-            return None, None
-        pct = (curr - prior) / abs(prior) * 100
-        direction = ("down" if pct > 0 else "up") if invert else ("up" if pct > 0 else "down")
-        return f"{abs(pct):.0f}%", direction
-
+    # Prior period
     trend_label = None
+    prior_start = prior_end = None
     dff_prior = pd.DataFrame()
     if date_preset and date_preset in _PRIOR_MAP and date_col in df_all.columns:
         trend_label, prior_fn = _PRIOR_MAP[date_preset]
         prior_start, prior_end = prior_fn(start, end)
-        # Apply same date mode logic to prior period
         if date_mode == "treated":
             ft_col = "FirstTreatmentDate"
             lt_col = "LastTreatmentDate"
@@ -2284,9 +2230,99 @@ def update_courses(_n, agg, volume_slice,
         dff_prior = _apply_filters(df_prior, departments, physician, diagnosis_cats, status, active_frac_range, c2b,
                                    inpatient=inpatient, techniques=techniques)
 
-    # All data with dimension filters but no date or status filter (for active census)
     dff_all_no_date = _apply_filters(df_all, departments, physician, diagnosis_cats, "all", active_frac_range, c2b,
                                      inpatient=inpatient, techniques=techniques)
+
+    return {
+        "df": df, "df_all": df_all, "dff": dff,
+        "dff_prior": dff_prior, "dff_all_no_date": dff_all_no_date,
+        "c2b": c2b, "date_col": date_col, "date_mode": date_mode,
+        "start": start, "end": end, "date_preset": date_preset,
+        "departments": departments, "physician": physician,
+        "diagnosis_cats": diagnosis_cats, "techniques": techniques,
+        "status": status, "active_frac_range": active_frac_range,
+        "inpatient": inpatient,
+        "trend_label": trend_label, "prior_start": prior_start, "prior_end": prior_end,
+        "frac_min_data": frac_min_data, "frac_max_data": frac_max_data,
+    }
+
+
+# Common filter inputs shared by all split callbacks
+_COURSES_FILTER_INPUTS = [
+    Input("courses-interval", "n_intervals"),
+    Input("courses-date-slider", "value"),
+    Input("courses-filter-department", "value"),
+    Input("courses-filter-physician", "value"),
+    Input("courses-filter-diagnosis", "value"),
+    Input("courses-filter-technique", "value"),
+    Input("courses-filter-status", "value"),
+    Input("courses-fraction-slider", "value"),
+    Input("courses-date-mode", "value"),
+    Input("courses-filter-date-preset", "value"),
+    Input("courses-inpatient-switch", "checked"),
+    State("courses-fraction-engaged", "data"),
+]
+
+
+def _unpack_courses_filter_args(args):
+    """Unpack the 12 common filter args (11 Inputs + 1 State) into kwargs for _load_and_filter_courses."""
+    (_n, slider_val, departments, physician, diagnosis_cats, techniques,
+     status, frac_range, date_mode, date_preset, inpatient, frac_engaged) = args[:12]
+    return dict(
+        slider_val=slider_val, departments=departments, physician=physician,
+        diagnosis_cats=diagnosis_cats, techniques=techniques, status=status,
+        frac_range=frac_range, date_mode=date_mode, date_preset=date_preset,
+        inpatient=inpatient, frac_engaged=frac_engaged,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Callback 1: KPIs + Sparklines + Detail Table + Charts container + Fraction slider
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("courses-kpi-active", "children"),
+    Output("courses-kpi-started", "children"),
+    Output("courses-kpi-completed", "children"),
+    Output("courses-kpi-median-fractions", "children"),
+    Output("courses-kpi-median-duration", "children"),
+    Output("courses-kpi-multiplan", "children"),
+    Output("courses-store-kpi-sparklines", "data"),
+    Output("courses-store-ridgeline", "data"),
+    Output("courses-store-frac-trend", "data"),
+    Output("courses-store-frac-dist", "data"),
+    Output("courses-store-complexity-trends", "data"),
+    Output("courses-store-technique-dist", "data"),
+    Output("courses-store-quit-trend", "data"),
+    Output("courses-charts", "children"),
+    Output("courses-table-container", "children"),
+    Output("courses-fraction-slider", "min"),
+    Output("courses-fraction-slider", "max"),
+    *_COURSES_FILTER_INPUTS,
+)
+def _update_courses_kpis(*args):
+    ctx = _unpack_courses_filter_args(args)
+    data = _load_and_filter_courses(**ctx)
+
+    na_kpi = kpi_card("--", "N/A")
+    empty_kpis = (na_kpi,) * 6 + ({}, None, None, None, None, None, None, [], [], 0, 50)
+
+    if data is None:
+        return empty_kpis
+
+    dff = data["dff"]
+    dff_prior = data["dff_prior"]
+    dff_all_no_date = data["dff_all_no_date"]
+    date_col = data["date_col"]
+    date_mode = data["date_mode"]
+    start, end = data["start"], data["end"]
+    date_preset = data["date_preset"]
+    trend_label = data["trend_label"]
+    prior_start = data["prior_start"]
+    prior_end = data["prior_end"]
+    c2b = data["c2b"]
+    frac_min_data = data["frac_min_data"]
+    frac_max_data = data["frac_max_data"]
 
     # ------------------------------------------------------------------
     # Sparkline data
@@ -2296,14 +2332,12 @@ def update_courses(_n, agg, volume_slice,
     _spark_period = "D" if range_months <= 3 else "W"
 
     def _build_count_sparkline(sub_df, key, color, use_col=None):
-        """Build a count-based sparkline grouped by period."""
         col = use_col or date_col
         if col not in sub_df.columns or sub_df.empty:
             return
         temp = sub_df[sub_df[col].notna()].copy()
         if temp.empty:
             return
-        # Clamp dates to window for overlap-matched courses
         plot_dates = temp[col].clip(lower=start, upper=end)
         if _spark_period == "D":
             temp["_sp"] = plot_dates.dt.normalize()
@@ -2318,7 +2352,6 @@ def update_courses(_n, agg, volume_slice,
             }
 
     def _build_median_sparkline(sub_df, val_col, key, color, hover_fmt=None):
-        """Build a median-value sparkline grouped by period."""
         if val_col not in sub_df.columns or date_col not in sub_df.columns or sub_df.empty:
             return
         temp = sub_df[[date_col, val_col]].copy()
@@ -2340,12 +2373,10 @@ def update_courses(_n, agg, volume_slice,
                 "hover_fmt": hover_fmt or "%{x|%b %d}: %{customdata:,.1f}<extra></extra>",
             }
 
-    # Active census sparkline — running count of courses under active treatment
-    # at each time point. A course is active at date d if FirstTreatmentDate <= d <= LastTreatmentDate.
+    # Active census sparkline
     if "FirstTreatmentDate" in dff_all_no_date.columns and "LastTreatmentDate" in dff_all_no_date.columns:
         _adf = dff_all_no_date[dff_all_no_date["FirstTreatmentDate"].notna()].copy()
         _adf["_lt"] = _adf["LastTreatmentDate"].fillna(_adf["FirstTreatmentDate"])
-        # Cap at last actual data date (data exports lag by ~1 day)
         _last_data_date = _adf["_lt"].dt.normalize().max()
         _spark_end = min(end, _last_data_date) if pd.notna(_last_data_date) else end
         if _spark_period == "D":
@@ -2365,7 +2396,7 @@ def update_courses(_n, agg, volume_slice,
                 "color": STATUS_COLORS["ACTIVE"],
             }
 
-    # Started sparkline (courses with FirstTreatmentDate in period)
+    # Started sparkline
     if "FirstTreatmentDate" in dff.columns:
         started_df = dff[(dff["FirstTreatmentDate"] >= start) & (dff["FirstTreatmentDate"] <= end)]
         _build_count_sparkline(started_df, "started", CHART_COLORWAY[0], use_col="FirstTreatmentDate")
@@ -2406,12 +2437,10 @@ def update_courses(_n, agg, volume_slice,
     # KPIs with trends
     # ------------------------------------------------------------------
 
-    # 1. Active Courses — across ALL data (not date-filtered)
+    # 1. Active Courses
     eff_completed_all = _is_effectively_completed(dff_all_no_date)
     active_count = int((~eff_completed_all).sum())
 
-    # Prior-period active count: courses where prior_end falls between
-    # FirstTreatmentDate and LastTreatmentDate (i.e. under treatment at that date).
     _t_active = (None, None)
     if trend_label and "FirstTreatmentDate" in dff_all_no_date.columns:
         _ft = dff_all_no_date["FirstTreatmentDate"]
@@ -2463,7 +2492,7 @@ def update_courses(_n, agg, volume_slice,
         trend_direction=_t_completed[1],
     )
 
-    # 4. Median Fractions — use FractionsPrescribed for active, FractionsDelivered for completed
+    # 4. Median Fractions
     median_frac_val = None
     if not dff.empty:
         frac_series = []
@@ -2546,34 +2575,37 @@ def update_courses(_n, agg, volume_slice,
     )
 
     # ------------------------------------------------------------------
-    # Volume trend data (clientside)
+    # Store data for charts rendered by other callbacks
     # ------------------------------------------------------------------
-    volume_data = _prepare_volume_data(dff, agg, volume_slice, date_col=date_col, c2b=c2b,
-                                       start=start, end=end, date_mode=date_mode)
+    ridgeline_data = _prepare_ridgeline_data(dff_all_no_date, date_col)
+    frac_trend_data = _prepare_frac_trend_data(dff, date_col, c2b, start=start, end=end)
+    frac_dist_data = _prepare_frac_dist_data(dff)
+    quit_trend_data = _prepare_quit_trend_data(completed_df, "LastTreatmentDate", c2b, start=start, end=end)
 
-    # ------------------------------------------------------------------
-    # Cumulative data (clientside)
-    # ------------------------------------------------------------------
-    cumulative_data = _prepare_cumulative_data(
-        df_all, start, end, date_preset,
-        date_col, departments, physician, diagnosis_cats,
-        status, active_frac_range, c2b, inpatient=inpatient,
-        techniques=techniques, date_mode=date_mode,
-        mode=cumul_mode or "prior",
-        period_type=cumul_period_type or "calendar",
-        slice_by=cumul_slice or "site",
+    # Build iso_map: max UniqueIsocenters per (PatientId, CourseId) from Treatment Detail
+    iso_map = None
+    try:
+        from data.loader import load_treatment_detail
+        td = load_treatment_detail()
+        if not td.empty and "UniqueIsocenters" in td.columns and "CourseName" in td.columns:
+            td["_isos"] = pd.to_numeric(td["UniqueIsocenters"], errors="coerce")
+            iso_map = td.groupby(["PatientId", "CourseName"])["_isos"].max()
+            iso_map.index.names = ["PatientId", "CourseId"]
+    except Exception:
+        pass
+    complexity_trend_data = _prepare_complexity_trend_data(
+        dff, date_col, start=start, end=end, iso_map=iso_map,
     )
+    technique_dist_data = _prepare_technique_dist_data(dff, date_col, start=start, end=end)
 
     # ------------------------------------------------------------------
-    # Remaining Charts (server-side)
+    # Remaining Charts (server-side layout)
     # ------------------------------------------------------------------
     chart_children = []
 
     # --- Row 2: Ridgeline + Technique Mix -------
     row2_charts = []
 
-    # Ridgeline: Fractions per Course by Year (all-time, but respects dimension filters)
-    ridgeline_data = _prepare_ridgeline_data(dff_all_no_date, date_col)
     row2_charts.append(
         dmc.GridCol(
             span={"base": 12, "md": 6},
@@ -2627,26 +2659,6 @@ def update_courses(_n, agg, volume_slice,
             ),
         ),
     )
-
-    # Fractions Trend + Distribution data (for stores, rendered by separate callbacks)
-    frac_trend_data = _prepare_frac_trend_data(dff, date_col, c2b, start=start, end=end)
-    frac_dist_data = _prepare_frac_dist_data(dff)
-    quit_trend_data = _prepare_quit_trend_data(completed_df, "LastTreatmentDate", c2b, start=start, end=end)
-    # Build iso_map: max UniqueIsocenters per (PatientId, CourseId) from Treatment Detail
-    iso_map = None
-    try:
-        from data.loader import load_treatment_detail
-        td = load_treatment_detail()
-        if not td.empty and "UniqueIsocenters" in td.columns and "CourseName" in td.columns:
-            td["_isos"] = pd.to_numeric(td["UniqueIsocenters"], errors="coerce")
-            iso_map = td.groupby(["PatientId", "CourseName"])["_isos"].max()
-            iso_map.index.names = ["PatientId", "CourseId"]
-    except Exception:
-        pass
-    complexity_trend_data = _prepare_complexity_trend_data(
-        dff, date_col, start=start, end=end, iso_map=iso_map,
-    )
-    technique_dist_data = _prepare_technique_dist_data(dff, date_col, start=start, end=end)
 
     # Right column: Median Fractions Trend (top) + Fractions Distribution (bottom)
     row2_charts.append(
@@ -2852,7 +2864,6 @@ def update_courses(_n, agg, volume_slice,
     if "PrescriptionSites" in dff.columns and not dff.empty:
         sites_series = dff["PrescriptionSites"].dropna()
         if not sites_series.empty:
-            # Split semicolon-separated sites, deduplicate per course, then count
             site_list = []
             for val in sites_series:
                 unique_sites = set()
@@ -3051,10 +3062,68 @@ def update_courses(_n, agg, volume_slice,
 
     return (
         kpi_active, kpi_started, kpi_completed, kpi_median_frac, kpi_median_dur, kpi_multiplan,
-        volume_data, cumulative_data, sparkline_data,
+        sparkline_data,
         ridgeline_data, frac_trend_data, frac_dist_data, complexity_trend_data, technique_dist_data, quit_trend_data,
         chart_children, table_children,
         frac_min_data, frac_max_data,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Callback 2: Volume Store
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("courses-store-volume", "data"),
+    *_COURSES_FILTER_INPUTS,
+    Input("courses-volume-agg", "value"),
+    Input("courses-volume-slice", "value"),
+    running=[(Output("courses-chart-volume-loading", "visible"), True, False)],
+)
+def _update_courses_volume(*args):
+    ctx = _unpack_courses_filter_args(args)
+    agg = args[12]
+    volume_slice = args[13]
+    data = _load_and_filter_courses(**ctx)
+    if data is None:
+        return None
+    return _prepare_volume_data(
+        data["dff"], agg, volume_slice or "", date_col=data["date_col"],
+        c2b=data["c2b"], start=data["start"], end=data["end"],
+        date_mode=data["date_mode"],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Callback 3: Cumulative Store
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("courses-store-cumulative", "data"),
+    *_COURSES_FILTER_INPUTS,
+    Input("courses-cumulative-mode", "value"),
+    Input("courses-cumulative-period-type", "value"),
+    Input("courses-cumulative-slice", "value"),
+    running=[(Output("courses-chart-cumulative-loading", "visible"), True, False)],
+)
+def _update_courses_cumulative(*args):
+    ctx = _unpack_courses_filter_args(args)
+    cumul_mode = args[12]
+    cumul_period_type = args[13]
+    cumul_slice = args[14]
+    data = _load_and_filter_courses(**ctx)
+    if data is None:
+        return None
+    return _prepare_cumulative_data(
+        data["df_all"], data["start"], data["end"], data["date_preset"],
+        data["date_col"], data["departments"], data["physician"],
+        data["diagnosis_cats"], data["status"], data["active_frac_range"],
+        data["c2b"], inpatient=data["inpatient"],
+        techniques=data["techniques"], date_mode=data["date_mode"],
+        mode=cumul_mode or "prior",
+        period_type=cumul_period_type or "calendar",
+        slice_by=cumul_slice or "site",
+        max_prior=5,
     )
 
 
@@ -3072,11 +3141,14 @@ clientside_callback(
 )
 
 clientside_callback(
-    ClientsideFunction(namespace="cumulative", function_name="renderCumulative"),
+    """function(rawData, smoothPct, chartType, maxPrior, currentFig) {
+        return window.dash_clientside.cumulative.renderCumulative(rawData, smoothPct, chartType, currentFig, null, maxPrior);
+    }""",
     Output("courses-chart-cumulative", "figure"),
     Input("courses-store-cumulative", "data"),
     Input("courses-cumulative-settings-smooth", "value"),
     Input("courses-cumulative-settings-type", "value"),
+    Input("courses-cumulative-settings-prior-periods", "value"),
     State("courses-chart-cumulative", "figure"),
 )
 

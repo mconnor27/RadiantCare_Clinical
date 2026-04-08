@@ -13,7 +13,7 @@ from datetime import timedelta
 from config.settings import (
     DEPARTMENTS, DEPARTMENT_COLORS, CHART_COLORWAY, PRIMARY,
     DEFAULT_LAYOUT, FONT_FAMILY, SEMANTIC_COLORS, NEUTRAL, CHART_PAPER_HEIGHT,
-    DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS,
+    DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, PRIOR_PERIOD_COLORS,
 )
 from components.filter_bar import department_chips
 from components.kpi_card import kpi_card
@@ -484,7 +484,8 @@ def _build_census_data(df, date_col, start, end, group_col, group_names, group_c
 def _build_cumulative(df, date_col, start, end, date_preset,
                       value_col=None, y_title="Cumulative",
                       mode="prior", period_type="calendar",
-                      slice_by="department", slice_configs=None):
+                      slice_by="department", slice_configs=None,
+                      max_prior=5):
     """Build cumulative data for renderCumulative JS.
 
     mode: "prior" or "slice".
@@ -540,7 +541,7 @@ def _build_cumulative(df, date_col, start, end, date_preset,
     data_min = df[date_col].min() if not df.empty else start
     windows = []
     if date_preset != "all":
-        for i in range(1, 6):
+        for i in range(1, max_prior + 1):
             if period_type == "calendar":
                 try:
                     p_start = start - pd.DateOffset(years=i)
@@ -556,14 +557,14 @@ def _build_cumulative(df, date_col, start, end, date_preset,
             windows.append((_plabel(p_start, p_end), p_start, p_end))
 
     prior = []
-    for label, p_start, p_end in windows:
+    for pi, (label, p_start, p_end) in enumerate(windows):
         vals = _cum_window(p_start, p_end)
         if vals and any(v > 0 for v in vals):
             if len(vals) < period_days:
                 vals += [vals[-1] if vals else 0] * (period_days - len(vals))
             elif len(vals) > period_days:
                 vals = vals[:period_days]
-            prior.append({"label": label, "values": vals, "color": "#D1D5DB"})
+            prior.append({"label": label, "values": vals, "color": PRIOR_PERIOD_COLORS[min(pi, len(PRIOR_PERIOD_COLORS) - 1)]})
 
     current_label = _plabel(start, end_norm)
     if len(current_vals) < period_days:
@@ -574,7 +575,33 @@ def _build_cumulative(df, date_col, start, end, date_preset,
     series = []  # For slice mode line/area
     dates = []
 
-    if slice_configs and slice_by in slice_configs:
+    if slice_by == "total":
+        # No grouping — single "Total" series
+        all_windows = [(current_label, start, end_norm)] + \
+                      [(l, s, e) for l, s, e in windows]
+        periods_rev = [t[0] for t in reversed(all_windows)]
+        total_vals = []
+        for wlabel, ws, we in reversed(all_windows):
+            sub = df[(df[date_col] >= ws) & (df[date_col] <= we)]
+            if value_col and value_col in sub.columns:
+                total_vals.append(float(sub[value_col].sum()))
+            else:
+                total_vals.append(len(sub))
+        slice_breakdown = {
+            "periods": periods_rev,
+            "slices": [{"name": "Total", "values": total_vals, "color": PRIMARY}],
+        }
+        # Line/area series: single cumulative line
+        current_sub = df[(df[date_col] >= start) & (df[date_col] <= end_norm)]
+        date_range = pd.date_range(start_norm, end_norm, freq="D")
+        dates = [d.strftime("%Y-%m-%d") for d in date_range]
+        daily = _daily(current_sub).reindex(date_range, fill_value=0)
+        series = [{
+            "name": "Total",
+            "values": daily.cumsum().tolist(),
+            "color": PRIMARY,
+        }]
+    elif slice_configs and slice_by in slice_configs:
         group_col, names, colors = slice_configs[slice_by]
 
         # Bar breakdown: totals per period per slice
@@ -942,6 +969,7 @@ def _build_filter_bar():
 # ---------------------------------------------------------------------------
 
 _SLICE_TOGGLE = [
+    {"value": "total", "label": "Total"},
     {"value": "category", "label": "Category"},
     {"value": "department", "label": "Site"},
     {"value": "physician", "label": "MD"},
@@ -1039,6 +1067,7 @@ layout = dmc.Stack(
                         settings_id=f"{PAGE_ID}-volcum",
                         chart_types=_CUM_CHART_TYPES,
                         show_smooth=False,
+                        show_prior_periods=True,
                         paper_padding="md",
                         extra_controls=[
                             dmc.SegmentedControl(
@@ -1055,7 +1084,7 @@ layout = dmc.Stack(
                             ),
                             dmc.SegmentedControl(
                                 id=f"{PAGE_ID}-volcum-slice",
-                                data=_SLICE_TOGGLE, value="department", size="xs",
+                                data=_SLICE_TOGGLE, value="total", size="xs",
                             ),
                         ],
                     ),
@@ -1099,6 +1128,7 @@ layout = dmc.Stack(
                         settings_id=f"{PAGE_ID}-rvucum",
                         chart_types=_CUM_CHART_TYPES,
                         show_smooth=False,
+                        show_prior_periods=True,
                         paper_padding="md",
                         extra_controls=[
                             dmc.SegmentedControl(
@@ -1115,7 +1145,7 @@ layout = dmc.Stack(
                             ),
                             dmc.SegmentedControl(
                                 id=f"{PAGE_ID}-rvucum-slice",
-                                data=_SLICE_TOGGLE, value="department", size="xs",
+                                data=_SLICE_TOGGLE, value="total", size="xs",
                             ),
                         ],
                     ),
@@ -1547,6 +1577,12 @@ clientside_callback(
     Input(f"{PAGE_ID}-filter-reviewed", "data"),
     Input(f"{PAGE_ID}-filter-exported", "data"),
     Input(f"{PAGE_ID}-filter-date-preset", "value"),
+    running=[
+        (Output(f"{PAGE_ID}-chart-vol-trend-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-chart-rvu-trend-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-chart-payor-event-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-chart-payor-patient-loading", "visible"), True, False),
+    ],
 )
 def update_billing(_n, start_date, end_date, departments, physician,
                    physician_role, codetype, charge_status, categories,
@@ -1841,15 +1877,23 @@ def update_billing(_n, start_date, end_date, departments, physician,
     Input(f"{PAGE_ID}-volcum-mode", "value"),
     Input(f"{PAGE_ID}-volcum-period-type", "value"),
     Input(f"{PAGE_ID}-volcum-slice", "value"),
+    Input(f"{PAGE_ID}-volcum-settings-prior-periods", "value"),
     Input(f"{PAGE_ID}-rvucum-mode", "value"),
     Input(f"{PAGE_ID}-rvucum-period-type", "value"),
     Input(f"{PAGE_ID}-rvucum-slice", "value"),
+    Input(f"{PAGE_ID}-rvucum-settings-prior-periods", "value"),
+    running=[
+        (Output(f"{PAGE_ID}-chart-vol-cum-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-chart-rvu-cum-loading", "visible"), True, False),
+    ],
 )
 def update_cumulative(_n, start_date, end_date, departments, physician,
                       physician_role, codetype, charge_status, categories,
                       reviewed_filter, exported_filter, date_preset,
                       volcum_mode, volcum_period_type, volcum_slice,
-                      rvucum_mode, rvucum_period_type, rvucum_slice):
+                      volcum_prior_periods,
+                      rvucum_mode, rvucum_period_type, rvucum_slice,
+                      rvucum_prior_periods):
     """Cumulative stores only — separate callback so toggle changes are fast."""
     try:
         df = _get_enriched_billing()
@@ -1917,16 +1961,18 @@ def update_cumulative(_n, start_date, end_date, departments, physician,
         y_title="Cumulative Events",
         mode=volcum_mode or "prior",
         period_type=volcum_period_type or "calendar",
-        slice_by=volcum_slice or "department",
+        slice_by=volcum_slice or "total",
         slice_configs=_slice_cfgs,
+        max_prior=volcum_prior_periods or 5,
     )
     rvu_cum = _build_cumulative(
         df_all, "DateOfService", start, end, _dp,
         value_col="wRVU", y_title="Cumulative wRVU",
         mode=rvucum_mode or "prior",
         period_type=rvucum_period_type or "calendar",
-        slice_by=rvucum_slice or "department",
+        slice_by=rvucum_slice or "total",
         slice_configs=_slice_cfgs,
+        max_prior=rvucum_prior_periods or 5,
     )
     return vol_cum, rvu_cum
 
@@ -2062,6 +2108,21 @@ clientside_callback(
     Input(f"{PAGE_ID}-payor-patient-mode", "value"),
     Input(f"{PAGE_ID}-payor-patient-unit", "value"),
 )
+
+
+# ---------------------------------------------------------------------------
+# Slice toggle dimming
+# ---------------------------------------------------------------------------
+_SLICE_CLASS_JS = """function(val) {
+    return (val && val !== "total") ? "slice-group-active" : "slice-total-active";
+}"""
+
+for _sid in [f"{PAGE_ID}-volcum-slice", f"{PAGE_ID}-rvucum-slice"]:
+    clientside_callback(
+        _SLICE_CLASS_JS,
+        Output(_sid, "className"),
+        Input(_sid, "value"),
+    )
 
 
 # ---------------------------------------------------------------------------

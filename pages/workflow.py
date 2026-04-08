@@ -1503,87 +1503,43 @@ def _compute_available_options(wf_base, departments, physician, techniques, body
 
 
 # ---------------------------------------------------------------------------
-# Callbacks — main
+# Shared filter/load helper
 # ---------------------------------------------------------------------------
 
-
-@callback(
-    Output("wf-store-sankey", "data"),
-    Output("wf-store-flow-details", "data"),
-    Output("wf-store-trend", "data"),
-    Output("wf-detail-grid", "rowData"),
-    Output("wf-detail-grid", "columnDefs"),
-    Output("wf-store-selected-flow", "data"),
-    Output("wf-filter-options", "data"),
-    Input("wf-interval", "n_intervals"),
-    Input("workflow-filter-department", "value"),
-    Input("wf-date-slider", "value"),
-    Input("workflow-filter-physician", "value"),
-    Input("workflow-filter-technique", "value"),
-    Input("workflow-filter-body-system", "value"),
-    Input("wf-sankey-loopback-switch", "checked"),
-    Input("wf-business-days-switch", "checked"),
-    Input("wf-inpatient-switch", "checked"),
-    Input("wf-agg-toggle", "value"),
-    Input("wf-outlier-enabled", "data"),
-    Input("wf-outlier-cap-0", "value"),
-    Input("wf-outlier-cap-1", "value"),
-    Input("wf-outlier-cap-2", "value"),
-    Input("wf-outlier-cap-3", "value"),
-    Input("wf-outlier-cap-4", "value"),
-    running=[
-        (Output("wf-sankey-loading", "visible"), True, False),
-        (Output("wf-dist-loading", "visible"), True, False),
-        (Output("wf-trend-loading", "visible"), True, False),
-    ],
-)
-def update_workflow(_n, departments, slider_val, physician, techniques, body_systems, show_loopbacks, use_business_days, inpatient_only, agg_func, outlier_enabled, cap0, cap1, cap2, cap3, cap4):
-    return _process_workflow_dataset(
-        departments, slider_val, physician, techniques, body_systems,
-        show_loopbacks, use_business_days, inpatient_only, agg_func,
-        outlier_enabled, [cap0, cap1, cap2, cap3, cap4],
-    )
+_EXCLUDED_MODALITIES = frozenset({"BRACHYTHERAPY", "PLUVICTO"})
 
 
-def _process_workflow_dataset(
-    departments, slider_val, physician, techniques, body_systems,
-    show_loopbacks, use_business_days, inpatient_only, agg_func,
-    outlier_enabled, caps,
-):
-    """Process workflow data for a single filter configuration.
+def _load_and_filter_wf(slider_val, departments, physician, techniques,
+                        body_systems, show_loopbacks, use_business_days,
+                        inpatient_only, outlier_enabled, caps):
+    """Load workflow data, apply all filters, pivot to courses.
 
-    Returns: (sankey_data, flow_details, trend_data,
-              row_data, col_defs, selected_flow, filter_options)
+    Returns a dict with keys: pivot, wf_full, filter_options, bdays, start, end.
+    Returns None if data is empty after filtering.
     """
     from data.loader import load_workflow, load_courses, load_diagnosis, load_clinic_visits
 
-    empty = (None, None, None, [], [], None, None)
-
     try:
-        wf = load_workflow()
+        wf = load_workflow().copy()
     except Exception:
-        return empty
-
+        return None
     if wf.empty:
-        return empty
+        return None
 
     # Forward-fill exam info (Department, Physician, etc.)
     wf = _forward_fill_exam_info(wf)
 
     # Deduplicate overlapping chains: keep only the primary exam per sim
-    # (SimVisitRank=1) and chains with no completed sim yet (NULL).
-    # Rank > 1 means an older exam claimed the same sim — drop those.
     if "SimVisitRank" in wf.columns:
         wf = wf[wf["SimVisitRank"].isna() | (wf["SimVisitRank"] == 1)]
 
     # Exclude non-EBRT modalities (Brachytherapy, Pluvicto/radiopharmaceuticals)
-    _EXCLUDED_MODALITIES = {"Brachytherapy", "Pluvicto"}
     if "ModalityType" in wf.columns:
         wf = wf[~wf["ModalityType"].str.strip().str.upper().isin(
-            {m.upper() for m in _EXCLUDED_MODALITIES}
+            _EXCLUDED_MODALITIES
         ) | wf["ModalityType"].isna()]
 
-    # Exclude future-dated open/scheduled appointments (tomorrow's schedule, etc.)
+    # Exclude future-dated open/scheduled appointments
     _today = pd.Timestamp.now().normalize()
     if "StageDateTime" in wf.columns and "StageStatus" in wf.columns:
         wf = wf[~((wf["StageDateTime"] > _today) & (wf["StageStatus"] == "Open"))]
@@ -1591,13 +1547,10 @@ def _process_workflow_dataset(
     # Get date range from Exam rows
     exam_dates = wf.loc[wf["StageName"] == "Exam", "StageDateTime"].dropna()
     last_date = exam_dates.max() if not exam_dates.empty else pd.Timestamp.now().normalize()
-    # Modern 6-stage ARIA workflow (with Isodose/ReviewPlan) began Dec 2013.
-    # Data before that reflects a fundamentally different pipeline config.
     first_date = pd.Timestamp("2014-01-01")
     start, end = _get_date_range(slider_val, None, first_date, last_date)
 
-    # Inpatient filter: keep only workflows whose Exam patient had an
-    # inpatient clinic visit on the same date (joined by PatientId + date)
+    # Inpatient filter
     if inpatient_only:
         try:
             cv = load_clinic_visits()
@@ -1620,9 +1573,9 @@ def _process_workflow_dataset(
                 inpt_chains = set(exams.loc[exams.index[match_mask], "UniqueRowID"])
                 wf = wf[wf["UniqueRowID"].isin(inpt_chains)]
         except Exception:
-            pass  # clinic visits unavailable — skip filter
+            pass
 
-    # Load lookup tables once (needed for cross-filtering and dimension filters)
+    # Load lookup tables once
     try:
         courses_df = load_courses()
     except Exception:
@@ -1632,8 +1585,7 @@ def _process_workflow_dataset(
     except Exception:
         diag_df = None
 
-    # --- Date filter first (base filter for cross-filtering) ---
-    # Date filter: apply to Exam rows and then keep all stages for matching patients
+    # Date filter: apply to Exam rows and keep all stages for matching patients
     if "StageDateTime" in wf.columns:
         exam_in_range = wf[
             (wf["StageName"] == "Exam") &
@@ -1652,52 +1604,52 @@ def _process_workflow_dataset(
             wf = wf[wf["PatientId"].isin(patient_ids)]
 
     if wf.empty:
-        return empty
+        return None
 
-    # --- Cross-filter: compute available options for each dimension ---
+    # Cross-filter: compute available options for each dimension
     filter_options = _compute_available_options(
         wf, departments, physician, techniques, body_systems,
         courses_df, diag_df,
     )
 
-    # --- Apply dimension filters ---
+    # Apply dimension filters
     wf = _apply_dimension_filter(
         wf, departments, physician, techniques, body_systems,
         courses_df, diag_df,
     )
 
     if wf.empty:
-        return (None, None, None, [], [], None, filter_options)
+        return {"pivot": None, "wf_full": None, "filter_options": filter_options,
+                "bdays": bool(use_business_days), "start": start, "end": end}
 
-    # Keep filtered data (respects date/dept/physician/etc.) for loopback counts
+    # Keep filtered data for loopback counts
     wf_full = wf
 
-    # Filter to pure workflows (no repeats) when loopbacks switch is off
+    # Filter to pure workflows when loopbacks switch is off
     if not show_loopbacks and "StageOccurrence" in wf.columns and "UniqueRowID" in wf.columns:
         chains_with_loopbacks = wf.loc[
             wf["StageOccurrence"].fillna(1) > 1, "UniqueRowID"
         ].unique()
         wf = wf[~wf["UniqueRowID"].isin(chains_with_loopbacks)]
         if wf.empty:
-            return (None, None, None, [], [], None, filter_options)
+            return {"pivot": None, "wf_full": None, "filter_options": filter_options,
+                    "bdays": bool(use_business_days), "start": start, "end": end}
 
-    # Pivot to course-level — ensure clean integer index for column arithmetic
+    # Pivot to course-level
     pivot = _pivot_to_courses(wf).reset_index(drop=True)
-
     if pivot.empty:
-        return (None, None, None, [], [], None, filter_options)
+        return {"pivot": None, "wf_full": None, "filter_options": filter_options,
+                "bdays": bool(use_business_days), "start": start, "end": end}
 
-    # Enforce date range on pivoted Exam dates — prevents old courses from
-    # leaking through the PatientId fallback when DimCourseID is null
+    # Enforce date range on pivoted Exam dates
     if "Exam" in pivot.columns:
         pivot = pivot[(pivot["Exam"] >= start) & (pivot["Exam"] <= end)]
         pivot = pivot.reset_index(drop=True)
         if pivot.empty:
-            return (None, None, None, [], [], None, filter_options)
+            return {"pivot": None, "wf_full": None, "filter_options": filter_options,
+                    "bdays": bool(use_business_days), "start": start, "end": end}
 
-    # Drop dead-end follow-ups: Exam is a follow-up AND no Simulation was
-    # ever scheduled for the chain (not even cancelled/deleted — check raw
-    # wf_full, which includes all statuses).
+    # Drop dead-end follow-ups
     if "StageActivityName" in pivot.columns and "UniqueRowID" in pivot.columns:
         chains_with_sim = set(
             wf_full.loc[wf_full["StageName"] == "Simulation", "UniqueRowID"]
@@ -1708,11 +1660,10 @@ def _process_workflow_dataset(
         has_no_sim = ~pivot["UniqueRowID"].isin(chains_with_sim)
         pivot = pivot[~(is_followup & has_no_sim)].reset_index(drop=True)
         if pivot.empty:
-            return (None, None, None, [], [], None, filter_options)
+            return {"pivot": None, "wf_full": None, "filter_options": filter_options,
+                    "bdays": bool(use_business_days), "start": start, "end": end}
 
-    # Remove chains with stage gaps (e.g., has Treatment but skipped Isodose).
-    # Pre-2014 ARIA didn't have Isodose/ReviewPlan stages, so legacy chains
-    # would otherwise distort the funnel with false "cancelled" exits.
+    # Remove chains with stage gaps
     stage_cols = [s for s in STAGES if s in pivot.columns]
     if len(stage_cols) >= 2:
         _present = pivot[stage_cols].notna()
@@ -1723,15 +1674,15 @@ def _process_workflow_dataset(
             _seen_null |= ~_present[_col]
         pivot = pivot[~_has_gap].reset_index(drop=True)
         if pivot.empty:
-            return (None, None, None, [], [], None, filter_options)
+            return {"pivot": None, "wf_full": None, "filter_options": filter_options,
+                    "bdays": bool(use_business_days), "start": start, "end": end}
 
-    # Enrich pivot with per-stage BaselineDateTime from ARIA (handles hidden
-    # intermediate stages like ContourReview between Draw and Isodose)
+    # Enrich pivot with per-stage BaselineDateTime
     pivot = _enrich_pivot_with_baselines(pivot, wf_full)
 
     bdays = bool(use_business_days)
 
-    # --- Outlier exclusion ---
+    # Outlier exclusion
     cap0, cap1, cap2, cap3, cap4 = caps
     if outlier_enabled:
         outlier_caps = [cap0, cap1, cap2, cap3, cap4]
@@ -1757,24 +1708,164 @@ def _process_workflow_dataset(
             keep_mask &= ~(both & (dur > cap))
         pivot = pivot[keep_mask].reset_index(drop=True)
         if pivot.empty:
-            return (None, None, None, [], [], None, filter_options)
+            return {"pivot": None, "wf_full": None, "filter_options": filter_options,
+                    "bdays": bdays, "start": start, "end": end}
 
+    return {
+        "pivot": pivot, "wf_full": wf_full, "filter_options": filter_options,
+        "bdays": bdays, "start": start, "end": end,
+    }
+
+
+# Common filter inputs shared by all split callbacks — Dataset A
+_WF_FILTER_INPUTS = [
+    Input("wf-interval", "n_intervals"),
+    Input("workflow-filter-department", "value"),
+    Input("wf-date-slider", "value"),
+    Input("workflow-filter-physician", "value"),
+    Input("workflow-filter-technique", "value"),
+    Input("workflow-filter-body-system", "value"),
+    Input("wf-sankey-loopback-switch", "checked"),
+    Input("wf-business-days-switch", "checked"),
+    Input("wf-inpatient-switch", "checked"),
+    Input("wf-outlier-enabled", "data"),
+    Input("wf-outlier-cap-0", "value"),
+    Input("wf-outlier-cap-1", "value"),
+    Input("wf-outlier-cap-2", "value"),
+    Input("wf-outlier-cap-3", "value"),
+    Input("wf-outlier-cap-4", "value"),
+]
+
+
+def _unpack_wf_filter_args(args):
+    """Unpack the 15 common filter args into kwargs for _load_and_filter_wf."""
+    (_n, departments, slider_val, physician, techniques, body_systems,
+     show_loopbacks, use_business_days, inpatient_only,
+     outlier_enabled, cap0, cap1, cap2, cap3, cap4) = args[:15]
+    return dict(
+        slider_val=slider_val, departments=departments, physician=physician,
+        techniques=techniques, body_systems=body_systems,
+        show_loopbacks=show_loopbacks, use_business_days=use_business_days,
+        inpatient_only=inpatient_only, outlier_enabled=outlier_enabled,
+        caps=[cap0, cap1, cap2, cap3, cap4],
+    )
+
+
+# Common filter inputs — Dataset B
+_WF_B_FILTER_INPUTS = [
+    Input("wf-compare-mode", "data"),
+    Input("wf-interval", "n_intervals"),
+    Input("wf-b-filter-department", "value"),
+    Input(_id("wf-b", "date-slider"), "value"),
+    Input("wf-b-filter-physician", "value"),
+    Input("wf-b-filter-technique", "value"),
+    Input("wf-b-filter-body-system", "value"),
+    Input(_id("wf-b", "loopback-switch"), "checked"),
+    Input(_id("wf-b", "business-days-switch"), "checked"),
+    Input(_id("wf-b", "inpatient-switch"), "checked"),
+    Input("wf-b-outlier-enabled", "data"),
+    Input(_id("wf-b", "outlier-cap-0"), "value"),
+    Input(_id("wf-b", "outlier-cap-1"), "value"),
+    Input(_id("wf-b", "outlier-cap-2"), "value"),
+    Input(_id("wf-b", "outlier-cap-3"), "value"),
+    Input(_id("wf-b", "outlier-cap-4"), "value"),
+]
+
+
+def _unpack_wf_b_filter_args(args):
+    """Unpack the 16 common filter args for Dataset B into kwargs."""
+    (compare_mode, _n, departments, slider_val, physician, techniques,
+     body_systems, show_loopbacks, use_business_days, inpatient_only,
+     outlier_enabled, cap0, cap1, cap2, cap3, cap4) = args[:16]
+    return dict(
+        compare_mode=compare_mode,
+        slider_val=slider_val, departments=departments, physician=physician,
+        techniques=techniques, body_systems=body_systems,
+        show_loopbacks=show_loopbacks, use_business_days=use_business_days,
+        inpatient_only=inpatient_only, outlier_enabled=outlier_enabled,
+        caps=[cap0, cap1, cap2, cap3, cap4],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Callback 1A: Detail Table + Filter Options + Selected Flow (Dataset A)
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("wf-detail-grid", "rowData"),
+    Output("wf-detail-grid", "columnDefs"),
+    Output("wf-store-selected-flow", "data"),
+    Output("wf-filter-options", "data"),
+    *_WF_FILTER_INPUTS,
+)
+def _update_wf_table_and_filters(*args):
+    ctx = _unpack_wf_filter_args(args)
+    data = _load_and_filter_wf(**ctx)
+    if data is None or data["pivot"] is None:
+        fo = data["filter_options"] if data is not None else None
+        return [], [], None, fo
+    row_data, col_defs = _build_table_data(data["pivot"], data["bdays"])
+    return row_data, col_defs, None, data["filter_options"]
+
+
+# ---------------------------------------------------------------------------
+# Callback 2A: Sankey Store (Dataset A)
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("wf-store-sankey", "data"),
+    *_WF_FILTER_INPUTS,
+    Input("wf-agg-toggle", "value"),
+    running=[(Output("wf-sankey-loading", "visible"), True, False)],
+)
+def _update_wf_sankey(*args):
+    ctx = _unpack_wf_filter_args(args)
+    agg_func = args[15]
+    data = _load_and_filter_wf(**ctx)
+    if data is None or data["pivot"] is None:
+        return None
     agg = agg_func or "median"
+    return _compute_flow_data(data["pivot"], data["wf_full"], data["bdays"], agg)
 
-    # --- Flow-Gantt data ---
-    sankey_data = _compute_flow_data(pivot, wf_full, bdays, agg)
 
-    # --- Flow details (for distribution + trend charts) ---
-    flow_details = _compute_flow_details(pivot, wf_full, bdays, agg)
+# ---------------------------------------------------------------------------
+# Callback 3A: Flow Details Store (Dataset A)
+# ---------------------------------------------------------------------------
 
-    # --- Trend data ---
-    trend_data = _prepare_trend_data(pivot, bdays, agg)
+@callback(
+    Output("wf-store-flow-details", "data"),
+    *_WF_FILTER_INPUTS,
+    Input("wf-agg-toggle", "value"),
+    running=[(Output("wf-dist-loading", "visible"), True, False)],
+)
+def _update_wf_flow_details(*args):
+    ctx = _unpack_wf_filter_args(args)
+    agg_func = args[15]
+    data = _load_and_filter_wf(**ctx)
+    if data is None or data["pivot"] is None:
+        return None
+    agg = agg_func or "median"
+    return _compute_flow_details(data["pivot"], data["wf_full"], data["bdays"], agg)
 
-    # --- Detail table ---
-    row_data, col_defs = _build_table_data(pivot, bdays)
 
-    return (sankey_data, flow_details, trend_data,
-            row_data, col_defs, None, filter_options)
+# ---------------------------------------------------------------------------
+# Callback 4A: Trend Store (Dataset A)
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("wf-store-trend", "data"),
+    *_WF_FILTER_INPUTS,
+    Input("wf-agg-toggle", "value"),
+    running=[(Output("wf-trend-loading", "visible"), True, False)],
+)
+def _update_wf_trend(*args):
+    ctx = _unpack_wf_filter_args(args)
+    agg_func = args[15]
+    data = _load_and_filter_wf(**ctx)
+    if data is None or data["pivot"] is None:
+        return None
+    agg = agg_func or "median"
+    return _prepare_trend_data(data["pivot"], data["bdays"], agg)
 
 
 # ---------------------------------------------------------------------------
@@ -1831,50 +1922,90 @@ clientside_callback(
 
 
 # ---------------------------------------------------------------------------
-# Dataset B server callback
+# Callback 1B: Filter Options + Selected Flow (Dataset B)
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("wf-b-store-selected-flow", "data"),
+    Output("wf-b-filter-options", "data"),
+    *_WF_B_FILTER_INPUTS,
+)
+def _update_wfb_filters(*args):
+    ctx = _unpack_wf_b_filter_args(args)
+    compare_mode = ctx.pop("compare_mode")
+    if not compare_mode:
+        return None, None
+    data = _load_and_filter_wf(**ctx)
+    if data is None:
+        return None, None
+    return None, data["filter_options"]
+
+
+# ---------------------------------------------------------------------------
+# Callback 2B: Sankey Store (Dataset B)
 # ---------------------------------------------------------------------------
 
 @callback(
     Output("wf-b-store-sankey", "data"),
-    Output("wf-b-store-flow-details", "data"),
-    Output("wf-b-store-trend", "data"),
-    Output("wf-b-store-selected-flow", "data"),
-    Output("wf-b-filter-options", "data"),
-    Input("wf-compare-mode", "data"),
-    Input("wf-interval", "n_intervals"),
-    Input("wf-b-filter-department", "value"),
-    Input(_id("wf-b", "date-slider"), "value"),
-    Input("wf-b-filter-physician", "value"),
-    Input("wf-b-filter-technique", "value"),
-    Input("wf-b-filter-body-system", "value"),
-    Input(_id("wf-b", "loopback-switch"), "checked"),
-    Input(_id("wf-b", "business-days-switch"), "checked"),
-    Input(_id("wf-b", "inpatient-switch"), "checked"),
+    *_WF_B_FILTER_INPUTS,
     Input(_id("wf-b", "agg-toggle"), "value"),
-    Input("wf-b-outlier-enabled", "data"),
-    Input(_id("wf-b", "outlier-cap-0"), "value"),
-    Input(_id("wf-b", "outlier-cap-1"), "value"),
-    Input(_id("wf-b", "outlier-cap-2"), "value"),
-    Input(_id("wf-b", "outlier-cap-3"), "value"),
-    Input(_id("wf-b", "outlier-cap-4"), "value"),
-    running=[
-        (Output("wf-sankey-loading", "visible"), True, False),
-    ],
+    running=[(Output("wf-sankey-loading", "visible"), True, False)],
 )
-def update_workflow_b(compare_mode, _n, departments, slider_val, physician,
-                      techniques, body_systems, show_loopbacks,
-                      use_business_days, inpatient_only, agg_func,
-                      outlier_enabled, cap0, cap1, cap2, cap3, cap4):
+def _update_wfb_sankey(*args):
+    ctx = _unpack_wf_b_filter_args(args)
+    compare_mode = ctx.pop("compare_mode")
     if not compare_mode:
-        return (None,) * 5
-    result = _process_workflow_dataset(
-        departments, slider_val, physician, techniques, body_systems,
-        show_loopbacks, use_business_days, inpatient_only, agg_func,
-        outlier_enabled, [cap0, cap1, cap2, cap3, cap4],
-    )
-    # result is (sankey, flow_details, trend, row_data, col_defs, selected_flow, filter_options)
-    # We only need: sankey, flow_details, trend, selected_flow, filter_options
-    return (result[0], result[1], result[2], result[5], result[6])
+        return None
+    agg_func = args[16]
+    data = _load_and_filter_wf(**ctx)
+    if data is None or data["pivot"] is None:
+        return None
+    agg = agg_func or "median"
+    return _compute_flow_data(data["pivot"], data["wf_full"], data["bdays"], agg)
+
+
+# ---------------------------------------------------------------------------
+# Callback 3B: Flow Details Store (Dataset B)
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("wf-b-store-flow-details", "data"),
+    *_WF_B_FILTER_INPUTS,
+    Input(_id("wf-b", "agg-toggle"), "value"),
+)
+def _update_wfb_flow_details(*args):
+    ctx = _unpack_wf_b_filter_args(args)
+    compare_mode = ctx.pop("compare_mode")
+    if not compare_mode:
+        return None
+    agg_func = args[16]
+    data = _load_and_filter_wf(**ctx)
+    if data is None or data["pivot"] is None:
+        return None
+    agg = agg_func or "median"
+    return _compute_flow_details(data["pivot"], data["wf_full"], data["bdays"], agg)
+
+
+# ---------------------------------------------------------------------------
+# Callback 4B: Trend Store (Dataset B)
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("wf-b-store-trend", "data"),
+    *_WF_B_FILTER_INPUTS,
+    Input(_id("wf-b", "agg-toggle"), "value"),
+)
+def _update_wfb_trend(*args):
+    ctx = _unpack_wf_b_filter_args(args)
+    compare_mode = ctx.pop("compare_mode")
+    if not compare_mode:
+        return None
+    agg_func = args[16]
+    data = _load_and_filter_wf(**ctx)
+    if data is None or data["pivot"] is None:
+        return None
+    agg = agg_func or "median"
+    return _prepare_trend_data(data["pivot"], data["bdays"], agg)
 
 
 # ---------------------------------------------------------------------------

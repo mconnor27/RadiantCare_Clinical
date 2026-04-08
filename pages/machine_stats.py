@@ -576,6 +576,12 @@ def _build_timeline(lifetime, machines, chart_height=None):
     Input(f"{PAGE_ID}-filter-machine", "value"),
     Input(f"{PAGE_ID}-filter-section", "value"),
     Input(f"{PAGE_ID}-filter-ytd", "value"),
+    running=[
+        (Output(f"{PAGE_ID}-chart-sessions-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-chart-patients-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-chart-dose-per-fx-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-chart-fields-per-fx-loading", "visible"), True, False),
+    ],
 )
 def update_yearly_stores(_, machines, section, ytd_mode):
     empty = {}

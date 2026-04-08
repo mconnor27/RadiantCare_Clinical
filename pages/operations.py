@@ -797,6 +797,75 @@ def _machine_dept_values(machines):
     lacey_machines = set(MACHINE_MAP["Lacey"])
     if not machines:
         return [], [], False
+
+
+# ---------------------------------------------------------------------------
+# Common filter inputs / unpack / load-and-filter
+# ---------------------------------------------------------------------------
+
+_OPS_FILTER_INPUTS = [
+    Input("ops-interval", "n_intervals"),
+    Input("operations-filter-department", "value"),
+    Input("operations-filter-machine", "value"),
+]
+
+
+def _unpack_ops_filter_args(args):
+    """Unpack the 3 common filter args into a dict for _load_and_filter_ops."""
+    _n, departments, machines = args[:3]
+    return dict(departments=departments, machines=machines)
+
+
+def _load_and_filter_ops(departments, machines):
+    """Load core operations datasets, apply department/machine filters.
+
+    Returns a dict with filtered dataframes and computed filter metadata,
+    or None if all data is empty.
+    """
+    from data.loader import load_daily_volume, load_treatment
+
+    try:
+        dv = load_daily_volume().copy()
+        tx = load_treatment().copy()
+    except Exception:
+        dv = pd.DataFrame()
+        tx = pd.DataFrame()
+
+    if dv.empty and tx.empty:
+        return None
+
+    sites = departments if departments else DEPARTMENTS
+    dv_machine_depts, tx_machine_depts, machine_active = _machine_dept_values(machines)
+
+    # Filter daily volume
+    if not dv.empty and "Department" in dv.columns:
+        if machine_active and "Lacey" in sites:
+            dv_eff = [s for s in sites if s != "Lacey"] + dv_machine_depts
+            dv = dv[dv["Department"].isin(dv_eff)].copy()
+            dv.loc[dv["Department"].isin(dv_machine_depts), "Department"] = "Lacey"
+        else:
+            dv = dv[dv["Department"].isin(sites)]
+
+    # Filter treatment
+    if not tx.empty and "Department" in tx.columns:
+        if machine_active and "Lacey" in sites:
+            tx_eff = [s for s in sites if s != "Lacey"] + tx_machine_depts
+            tx = tx[tx["Department"].isin(tx_eff)].copy()
+            tx.loc[tx["Department"].isin(tx_machine_depts), "Department"] = "Lacey"
+        else:
+            tx_sites = [d for d in tx["Department"].unique() if d in sites]
+            tx = tx[tx["Department"].isin(tx_sites)]
+
+    return {
+        "dv": dv,
+        "tx": tx,
+        "sites": sites,
+        "machines": machines,
+        "departments": departments,
+        "dv_machine_depts": dv_machine_depts,
+        "tx_machine_depts": tx_machine_depts,
+        "machine_active": machine_active,
+    }
     selected_lacey = lacey_machines & set(machines)
     if not selected_lacey or selected_lacey == lacey_machines:
         return [], [], False
@@ -814,47 +883,34 @@ def _machine_dept_values(machines):
     Output("ops-kpi-sim-lead", "children"),
     Output("ops-kpi-new-starts", "children"),
     Output("ops-store-kpi-sparklines", "data"),
-    Input("ops-interval", "n_intervals"),
-    Input("operations-filter-department", "value"),
-    Input("operations-filter-machine", "value"),
+    *_OPS_FILTER_INPUTS,
 )
-def update_kpis(_n, departments, machines):
+def update_kpis(*args):
     """Compute all 6 KPI cards with fixed 30-day sparklines."""
-    from data.loader import load_daily_volume, load_treatment, load_clinic_visits, load_simulations
+    from data.loader import load_daily_volume, load_clinic_visits, load_simulations
+
+    ctx = _unpack_ops_filter_args(args)
+    data = _load_and_filter_ops(**ctx)
 
     sparkline_data = {}
 
+    na_card = kpi_card("--", "N/A")
+    empty_kpis = (na_card,) * 7 + ({},)
+    if data is None:
+        return empty_kpis
+
+    dv_filtered = data["dv"]
+    tx_filtered = data["tx"]
+    sites = data["sites"]
+    machines = ctx["machines"]
+    dv_machine_depts = data["dv_machine_depts"]
+    machine_active = data["machine_active"]
+
+    # Need unfiltered dv for per-site hours (all sites, not just selected)
     try:
         dv = load_daily_volume()
-        tx = load_treatment()
     except Exception:
         dv = pd.DataFrame()
-        tx = pd.DataFrame()
-
-    # Filter departments + machine sub-filter for Lacey
-    sites = departments if departments else DEPARTMENTS
-    dv_machine_depts, tx_machine_depts, machine_active = _machine_dept_values(machines)
-
-    if not dv.empty and "Department" in dv.columns:
-        if machine_active and "Lacey" in sites:
-            dv_eff = [s for s in sites if s != "Lacey"] + dv_machine_depts
-            dv_filtered = dv[dv["Department"].isin(dv_eff)].copy()
-            dv_filtered.loc[dv_filtered["Department"].isin(dv_machine_depts), "Department"] = "Lacey"
-        else:
-            dv_filtered = dv[dv["Department"].isin(sites)]
-    else:
-        dv_filtered = dv
-
-    if not tx.empty and "Department" in tx.columns:
-        if machine_active and "Lacey" in sites:
-            tx_eff = [s for s in sites if s != "Lacey"] + tx_machine_depts
-            tx_filtered = tx[tx["Department"].isin(tx_eff)].copy()
-            tx_filtered.loc[tx_filtered["Department"].isin(tx_machine_depts), "Department"] = "Lacey"
-        else:
-            tx_sites = [d for d in tx["Department"].unique() if d in sites]
-            tx_filtered = tx[tx["Department"].isin(tx_sites)]
-    else:
-        tx_filtered = tx
 
     actual_today = pd.Timestamp.now().normalize()
     last_date = dv_filtered["ScheduledDate"].max() if not dv_filtered.empty and "ScheduledDate" in dv_filtered.columns else actual_today
@@ -999,6 +1055,7 @@ def update_kpis(_n, departments, machines):
         sims_data = pd.DataFrame()
 
     # Filter consults by department; sims always in Lacey so leave unfiltered
+    departments = ctx["departments"]
     if departments:
         if not cv.empty and "Department" in cv.columns:
             cv = cv[cv["Department"].isin(sites)]
@@ -1260,28 +1317,25 @@ clientside_callback(
 
 @callback(
     Output("ops-store-volume", "data"),
-    Input("ops-interval", "n_intervals"),
+    *_OPS_FILTER_INPUTS,
     Input("ops-volume-agg", "value"),
-    Input("operations-filter-department", "value"),
-    Input("operations-filter-machine", "value"),
     running=[(Output("ops-chart-volume-loading", "visible"), True, False)],
 )
-def update_volume_data(_n, agg, departments, machines):
+def update_volume_data(*args):
     """Load ALL treatment volume data to store (time window applied clientside)."""
     from data.loader import load_daily_volume
+
+    ctx = _unpack_ops_filter_args(args)
+    agg = args[3]
 
     try:
         dv = load_daily_volume()
         if dv.empty:
             return None
 
-        # Always load all data - time window will be applied clientside for initial view
         start = dv["ScheduledDate"].min()
         last_date = dv["ScheduledDate"].max()
-        result = _prepare_volume_data(departments, machines, agg, start, last_date)
-
-        # Debug logging
-        return result
+        return _prepare_volume_data(ctx["departments"], ctx["machines"], agg, start, last_date)
     except Exception:
         return None
 
@@ -1340,15 +1394,18 @@ def update_volume_smooth_slider(range_days, current_value):
 
 @callback(
     Output("ops-chart-heatmap", "figure"),
-    Input("ops-interval", "n_intervals"),
-    Input("operations-filter-department", "value"),
-    Input("operations-filter-machine", "value"),
+    *_OPS_FILTER_INPUTS,
     Input("ops-heatmap-scope", "value"),
     running=[(Output("ops-chart-heatmap-loading", "visible"), True, False)],
 )
-def update_heatmap(_n, departments, machines, scope):
+def update_heatmap(*args):
     """Build combined heatmap of treatment schedule + exam/sim availability."""
     from data.loader import load_daily_volume_future, load_availability, load_clinic_visits, load_simulations
+
+    ctx = _unpack_ops_filter_args(args)
+    scope = args[3]
+    departments = ctx["departments"]
+    machines = ctx["machines"]
     consults_only = scope != "all"
 
     try:
@@ -1674,19 +1731,20 @@ register_hours_ribbon_callbacks("ops")
 
 @callback(
     Output("ops-store-hours", "data"),
-    Input("ops-interval", "n_intervals"),
+    *_OPS_FILTER_INPUTS,
     Input("ops-hours-site", "value"),
-    Input("operations-filter-department", "value"),
-    Input("operations-filter-machine", "value"),
     running=[(Output("ops-hours-loading", "visible"), True, False)],
 )
-def update_hours_data(_n, site_filter, departments, machines):
+def update_hours_data(*args):
     """Load operating hours data to store."""
+    ctx = _unpack_ops_filter_args(args)
+    site_filter = args[3]
+
     if site_filter and site_filter != "all":
         sites = [site_filter]
     else:
-        sites = departments if departments else None
-    result = _prepare_hours_data(sites, machines, days_back=0, aggregate_weekly=False)
+        sites = ctx["departments"] if ctx["departments"] else None
+    result = _prepare_hours_data(sites, ctx["machines"], days_back=0, aggregate_weekly=False)
     if result:
         result["height"] = 380
     return result
@@ -1706,15 +1764,16 @@ clientside_callback(
 
 @callback(
     Output("ops-store-efficiency", "data"),
-    Input("ops-interval", "n_intervals"),
+    *_OPS_FILTER_INPUTS,
     Input("ops-efficiency-agg", "value"),
-    Input("operations-filter-department", "value"),
-    Input("operations-filter-machine", "value"),
     running=[(Output("ops-chart-efficiency-loading", "visible"), True, False)],
 )
-def update_efficiency_data(_n, agg, departments, machines):
+def update_efficiency_data(*args):
     """Load resource utilization data to store (time window applied clientside)."""
     from data.loader import load_daily_volume_by_resource
+
+    ctx = _unpack_ops_filter_args(args)
+    agg = args[3]
 
     try:
         dv = load_daily_volume_by_resource()
@@ -1722,7 +1781,7 @@ def update_efficiency_data(_n, agg, departments, machines):
             return None
         start = dv["ScheduledDate"].min()
         last_date = dv["ScheduledDate"].max()
-        return _prepare_efficiency_data(departments, machines, agg, start, last_date)
+        return _prepare_efficiency_data(ctx["departments"], ctx["machines"], agg, start, last_date)
     except Exception:
         return None
 
@@ -1813,16 +1872,21 @@ def update_table_columns(view_by):
 
 @callback(
     Output("ops-table", "rowData"),
-    Input("ops-interval", "n_intervals"),
+    *_OPS_FILTER_INPUTS,
     Input("ops-volume-range", "value"),
-    Input("operations-filter-department", "value"),
-    Input("operations-filter-machine", "value"),
     Input("ops-table-include-future", "checked"),
     Input("ops-table-view-by", "value"),
 )
-def update_table(_n, range_days, departments, machines, include_future, view_by):
+def update_table(*args):
     """Build daily detail table data with optional future data and machine-level detail."""
     from data.loader import load_daily_volume, load_daily_volume_future, load_treatment
+
+    ctx = _unpack_ops_filter_args(args)
+    range_days = args[3]
+    include_future = args[4]
+    view_by = args[5]
+    departments = ctx["departments"]
+    machines = ctx["machines"]
 
     try:
         dv_past = load_daily_volume()

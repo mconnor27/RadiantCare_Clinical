@@ -50,6 +50,28 @@ def _clean_department(df):
     return df
 
 
+# Generic physician names used in ARIA for site-level placeholders
+_GENERIC_PHYSICIAN_MAP = {
+    "Physician, Aberdeen": "Aberdeen MD, ",
+    "Physician, Centralia": "Centralia MD, ",
+}
+
+
+def _rename_generic_physicians(df):
+    """Replace generic 'Physician, Site' entries with 'Site MD, ' in physician columns.
+
+    This ensures legend labels show 'Aberdeen MD' / 'Centralia MD' instead of
+    the ambiguous 'Physician' after the standard split-on-comma display logic.
+    Skips 'Specialty' columns to avoid corrupting actual specialty values.
+    """
+    phys_cols = [c for c in df.columns
+                 if "Physician" in c and "Specialty" not in c]
+    for col in phys_cols:
+        if df[col].dtype == object:
+            df[col] = df[col].replace(_GENERIC_PHYSICIAN_MAP)
+    return df
+
+
 def _reshape_daily_volume(df):
     """Reshape new Daily Volume CSV format to match the old Location-based layout.
 
@@ -265,6 +287,7 @@ def load_treatment_detail():
     _usable = [c for c in _composite if c in df.columns]
     if _usable:
         df = df.drop_duplicates(subset=_usable, keep="last")
+    df = _rename_generic_physicians(df)
     return df
 
 
@@ -359,6 +382,7 @@ def load_clinic_visits():
     df = _clean_department(df)
     df = _parse_dates(df, ["ScheduledDateTime", "AppointmentCreatedDate",
                            "SimulationDateTime"])
+    df = _rename_generic_physicians(df)
     return df
 
 
@@ -379,6 +403,7 @@ def load_simulations():
         if not dept_map.empty:
             df = df.merge(dept_map, on="PatientId", how="left")
     df = _clean_department(df)
+    df = _rename_generic_physicians(df)
     return df
 
 
@@ -403,6 +428,7 @@ def load_workflow():
         if not dept_map.empty:
             df = df.merge(dept_map, on="PatientId", how="left")
     df = _clean_department(df)
+    df = _rename_generic_physicians(df)
     return df
 
 
@@ -422,6 +448,7 @@ def load_tasks():
     ])
     if "UniqueRowID" in df.columns:
         df = df.drop_duplicates(subset=["UniqueRowID"], keep="last")
+    df = _rename_generic_physicians(df)
     return df
 
 
@@ -463,6 +490,7 @@ def load_courses():
         df["Department"] = df["Departments"].str.split(",").str[0].str.strip()
     df = _clean_department(df)
     df = _parse_dates(df, ["CourseStartDate", "FirstTreatmentDate", "LastTreatmentDate"])
+    df = _rename_generic_physicians(df)
     return df
 
 
@@ -481,6 +509,7 @@ def load_plans():
     df = _clean_department(df)
     df = _parse_dates(df, ["PlanCreationDate", "CourseStartDateTime",
                            "FirstTreatmentDate", "LastTreatmentDate"])
+    df = _rename_generic_physicians(df)
     return df
 
 
@@ -599,6 +628,7 @@ def load_billing():
     df = _normalize_columns(df, {"DepartmentName": "Department"})
     df = _clean_department(df)
     df = _parse_dates(df, ["DateOfService", "ActivityDateTime"])
+    df = _rename_generic_physicians(df)
     return df
 
 
@@ -626,6 +656,7 @@ def load_procedures():
     df = _normalize_columns(df, {"DepartmentName": "Department"})
     df = _clean_department(df)
     df = _parse_dates(df, ["ScheduledDateTime", "AppointmentCreatedDate"])
+    df = _rename_generic_physicians(df)
     return df
 
 
@@ -1156,6 +1187,7 @@ def load_physician_schedule():
         "PhysicianName": "Physician",
         "ActivityName": "Status",
     })
+    df = _rename_generic_physicians(df)
     return df
 
 

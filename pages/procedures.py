@@ -13,7 +13,7 @@ import numpy as np
 from config.settings import (
     DEPARTMENTS, DEPARTMENT_COLORS, CHART_COLORWAY, PRIMARY,
     DEFAULT_LAYOUT, FONT_FAMILY, SEMANTIC_COLORS, NEUTRAL,
-    DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, CHART_PAPER_HEIGHT,
+    DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, CHART_PAPER_HEIGHT, PRIOR_PERIOD_COLORS,
 )
 from components.filter_bar import department_chips
 from components.kpi_card import kpi_card
@@ -380,6 +380,7 @@ layout = dmc.Stack(
                         {"value": "bar", "label": "Bar"},
                     ],
                     show_smooth=True,
+                    show_prior_periods=True,
                     smooth_max=50,
                     smooth_default=0,
                     paper_padding="md",
@@ -396,10 +397,11 @@ layout = dmc.Stack(
                         dmc.SegmentedControl(
                             id=f"{PAGE_ID}-cumul-slice",
                             data=[
+                                {"value": "total", "label": "Total"},
                                 {"value": "physician", "label": "MD"},
                                 {"value": "dept", "label": "Dept"},
                             ],
-                            value="dept",
+                            value="total",
                             size="xs",
                             orientation="horizontal",
                             style={"display": "none"},
@@ -570,6 +572,16 @@ clientside_callback(
     }""",
     Output(f"{PAGE_ID}-cumul-slice", "style"),
     Input(f"{PAGE_ID}-cumul-mode", "value"),
+)
+
+_SLICE_CLASS_JS = """function(val) {
+    return (val && val !== "total") ? "slice-group-active" : "slice-total-active";
+}"""
+
+clientside_callback(
+    _SLICE_CLASS_JS,
+    Output(f"{PAGE_ID}-cumul-slice", "className"),
+    Input(f"{PAGE_ID}-cumul-slice", "value"),
 )
 
 
@@ -919,7 +931,7 @@ def _build_day_index_ticks(start_norm, n_days, max_ticks=12):
 
 
 def _prepare_cumul_data(dff_all, cat_name, start, end, date_preset="12mo",
-                        slice_by="", mode="prior"):
+                        slice_by="", mode="prior", max_prior=5):
     """Build cumulative chart data for clientside rendering.
 
     mode="prior": Current period + prior periods overlay (day-index x-axis).
@@ -986,7 +998,7 @@ def _prepare_cumul_data(dff_all, cat_name, start, end, date_preset="12mo",
         # Build prior windows
         prior = []
         if date_preset != "all":
-            for i in range(1, 6):
+            for i in range(1, max_prior + 1):
                 try:
                     p_start = start - pd.DateOffset(years=i)
                     p_end = end - pd.DateOffset(years=i)
@@ -1000,7 +1012,7 @@ def _prepare_cumul_data(dff_all, cat_name, start, end, date_preset="12mo",
                         vals = vals + [vals[-1] if vals else 0] * (n_days - len(vals))
                     elif len(vals) > n_days:
                         vals = vals[:n_days]
-                    prior.append({"label": _period_label(p_start, p_end), "values": vals, "color": "#D1D5DB"})
+                    prior.append({"label": _period_label(p_start, p_end), "values": vals, "color": PRIOR_PERIOD_COLORS[min(i - 1, len(PRIOR_PERIOD_COLORS) - 1)]})
 
         return {
             "mode": "prior",
@@ -1428,6 +1440,7 @@ _OUTPUTS.append(Output(f"{PAGE_ID}-spacer-queue", "children"))
     Input(f"{PAGE_ID}-trend-slice", "value"),
     Input(f"{PAGE_ID}-cumul-mode", "value"),
     Input(f"{PAGE_ID}-cumul-slice", "value"),
+    Input(f"{PAGE_ID}-cumul-settings-prior-periods", "value"),
     Input(f"{PAGE_ID}-filter-date-preset", "value"),
     running=[
         (Output(f"{PAGE_ID}-chart-trend-loading", "visible"), True, False),
@@ -1437,7 +1450,7 @@ _OUTPUTS.append(Output(f"{PAGE_ID}-spacer-queue", "children"))
 def _update_procedures(
     _n, range_start, range_end, dept_filter, physician_filter, status_filter, slider_val,
     queue_filter, active_tab, trend_agg, trend_slice,
-    cumul_mode, cumul_slice, date_preset,
+    cumul_mode, cumul_slice, cumul_prior_periods, date_preset,
 ):
     from data.loader import load_procedures
 
@@ -1486,8 +1499,9 @@ def _update_procedures(
     cumul_data = _prepare_cumul_data(
         cat_base, active_cat, start, end,
         date_preset=date_preset or "12mo",
-        slice_by=cumul_slice or "dept" if cumul_mode == "slice" else "",
+        slice_by=cumul_slice or "total" if cumul_mode == "slice" else "",
         mode=cumul_mode or "prior",
+        max_prior=cumul_prior_periods or 5,
     )
 
     # --- Tab grids ---

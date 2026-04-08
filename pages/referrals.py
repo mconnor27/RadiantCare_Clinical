@@ -2526,6 +2526,15 @@ def _prior_range(start, end):
     Input(f"{PAGE_ID}-outlier-cap-1", "value"),
     Input(f"{PAGE_ID}-dim-toggle", "value"),
     Input(f"{PAGE_ID}-dim-compare-period", "value"),
+    running=[
+        (Output(f"{PAGE_ID}-chart-dim-trend-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-chart-providers-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-chart-departments-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-chart-trend-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-chart-ridge-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-chart-conv-dept-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-chart-new-referrers-loading", "visible"), True, False),
+    ],
 )
 def update_referrals(_n, start_date, end_date, departments, specialty_filter,
                      diagnosis_filter, outlier_enabled, cap_0, cap_1,

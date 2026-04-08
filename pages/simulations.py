@@ -12,7 +12,7 @@ from datetime import timedelta
 
 from config.settings import (
     DEPARTMENTS, DEPARTMENT_COLORS, CHART_COLORWAY,
-    CHART_PAPER_HEIGHT_SM, PRIMARY, FONT_FAMILY,
+    CHART_PAPER_HEIGHT_SM, PRIMARY, FONT_FAMILY, PRIOR_PERIOD_COLORS,
 )
 from components.filter_bar import department_chips
 from components.kpi_card import kpi_card
@@ -545,6 +545,7 @@ layout = dmc.Stack(
                         {"value": "bar", "label": "Bar"},
                     ],
                     show_smooth=True,
+                    show_prior_periods=True,
                     smooth_max=50,
                     smooth_default=0,
                     paper_padding="md",
@@ -570,6 +571,7 @@ layout = dmc.Stack(
                         dmc.SegmentedControl(
                             id="sim-cumulative-slice",
                             data=[
+                                {"value": "total", "label": "Total"},
                                 {"value": "scope", "label": "Scope"},
                                 {"value": "type", "label": "Type"},
                                 {"value": "physician", "label": "MD"},
@@ -577,7 +579,7 @@ layout = dmc.Stack(
                                 {"value": "machine", "label": "Machine"},
                                 {"value": "bodysite", "label": "Dx"},
                             ],
-                            value="dept",
+                            value="total",
                             size="xs",
                             style={"display": "none"},
                         ),
@@ -1091,105 +1093,103 @@ def _populate_sim_physician_chips(_n):
 # Main callback
 # ---------------------------------------------------------------------------
 
-@callback(
-    Output("sim-kpi-total", "children"),
-    Output("sim-kpi-initial", "children"),
-    Output("sim-kpi-lead", "children"),
-    Output("sim-kpi-time-to-tx", "children"),
-    Output("sim-kpi-resim", "children"),
-    Output("sim-store-volume", "data"),
-    Output("sim-store-timing", "data"),
-    Output("sim-store-cumulative", "data"),
-    Output("sim-store-cancel", "data"),
-    Output("sim-chart-diagnosis", "figure"),
-    Output("sim-chart-billing", "figure"),
-    Output("sim-detail-grid", "rowData"),
-    Output("sim-detail-grid", "columnDefs"),
-    Output("sim-store-kpi-sparklines", "data"),
-    Input("sim-interval", "n_intervals"),
-    Input("sim-volume-agg", "value"),
-    Input("sim-volume-slice", "value"),
-    Input("sim-volume-scope", "value"),
-    Input("sim-cumulative-mode", "value"),
-    Input("sim-cumulative-period-type", "value"),
-    Input("sim-cumulative-slice", "value"),
-    Input("sim-timing-metric", "value"),
-    Input("sim-timing-agg", "value"),
-    Input("sim-timing-slice", "value"),
-    Input("sim-cancel-agg", "value"),
-    Input("sim-cancel-slice", "value"),
-    Input("sim-diagnosis-compare", "value"),
-    Input("sim-diagnosis-slice", "value"),
-    Input("sim-diagnosis-mode", "value"),
-    Input("sim-billing-slice", "value"),
-    Input("sim-billing-mode", "value"),
-    Input("sim-filter-department", "value"),
-    Input("sim-filter-physician", "value"),
-    Input("sim-date-slider", "value"),
-    Input("sim-filter-simtype", "value"),
-    Input("sim-filter-machine", "value"),
-    Input("sim-filter-bodysite", "value"),
-    Input("sim-inpatient-switch", "checked"),
-    Input("sim-weekend-switch", "checked"),
-    Input("sim-filter-date-preset", "value"),
-    Input("sim-store-resim-scope", "data"),
-    running=[
-        (Output("sim-chart-volume-loading", "visible"), True, False),
-        (Output("sim-chart-timing-loading", "visible"), True, False),
-        (Output("sim-chart-cumulative-loading", "visible"), True, False),
-        (Output("sim-chart-cancel-rate-loading", "visible"), True, False),
-        (Output("sim-diagnosis-loading", "visible"), True, False),
-        (Output("sim-billing-loading", "visible"), True, False),
-    ],
-)
-def update_simulations(_n, agg, volume_slice, volume_scope,
-                        cumul_mode, cumul_period_type, cumul_slice,
-                        timing_metric, timing_agg, timing_slice,
-                        cancel_agg, cancel_slice,
-                        diagnosis_compare, diagnosis_slice, diagnosis_mode,
-                        billing_slice, billing_mode,
-                        departments, physician, slider_val, sim_types,
-                        machines, body_sites, inpatient, weekend_only,
-                        date_preset, resim_scope):
+# ---------------------------------------------------------------------------
+# Shared data loading/filtering helper
+# ---------------------------------------------------------------------------
+
+_SIM_PERIOD_LABELS = {
+    "30d": "30 Days", "3mo": "3 Mo", "6mo": "6 Mo", "12mo": "12 Mo",
+    "ytd": "YTD", "last_year": "Last Year", "this_month": "This Mo",
+    "last_month": "Last Mo", "all": "All Time", "custom": "Custom",
+}
+_SIM_TREND_LABELS = {
+    "30d": "vs prior 30d", "3mo": "vs prior 3 mo", "6mo": "vs prior 6 mo",
+    "12mo": "vs prior 12 mo", "ytd": "vs prior year",
+    "last_year": "vs prior year", "this_month": "vs prior month",
+    "last_month": "vs 2 months ago", "all": "", "custom": "",
+}
+
+
+def _sim_prior_range(date_preset, last_date):
+    """Return (prior_start, prior_end) matching the current date_preset."""
+    if date_preset == "30d":
+        return last_date - timedelta(days=59), last_date - timedelta(days=30)
+    elif date_preset == "3mo":
+        return last_date - timedelta(days=179), last_date - timedelta(days=90)
+    elif date_preset == "6mo":
+        return last_date - timedelta(days=364), last_date - timedelta(days=183)
+    elif date_preset == "12mo":
+        return last_date - timedelta(days=730), last_date - timedelta(days=366)
+    elif date_preset == "ytd":
+        try:
+            pe = pd.Timestamp(last_date.year - 1, last_date.month, last_date.day)
+        except ValueError:
+            pe = pd.Timestamp(last_date.year - 1, last_date.month, 28)
+        return pd.Timestamp(last_date.year - 1, 1, 1), pe
+    elif date_preset == "last_year":
+        return pd.Timestamp(last_date.year - 2, 1, 1), pd.Timestamp(last_date.year - 2, 12, 31)
+    elif date_preset == "this_month":
+        pm_end = pd.Timestamp(last_date.year, last_date.month, 1) - timedelta(days=1)
+        pm_start = pd.Timestamp(pm_end.year, pm_end.month, 1)
+        return pm_start, pm_end
+    elif date_preset == "last_month":
+        lm_start = pd.Timestamp(last_date.year, last_date.month, 1) - timedelta(days=1)
+        two_ago_start = pd.Timestamp(lm_start.year, lm_start.month, 1) - timedelta(days=1)
+        return pd.Timestamp(two_ago_start.year, two_ago_start.month, 1), pd.Timestamp(lm_start.year, lm_start.month, 1) - timedelta(days=1)
+    return None, None
+
+
+def _sim_trend(curr, prior, invert=False):
+    if prior is None or prior == 0:
+        return None, None, None
+    pct = (curr - prior) / prior * 100
+    direction = ("down" if pct > 0 else "up") if invert else ("up" if pct > 0 else "down")
+    return f"{abs(pct):.0f}%", direction, prior
+
+
+def _dedup_patient_day(src):
+    """Deduplicate simulations to one per patient per day."""
+    if "PatientId" not in src.columns or "ScheduledDateTime" not in src.columns:
+        return src
+    sort_col = "DurationMinutes" if "DurationMinutes" in src.columns else None
+    if sort_col:
+        return (src.sort_values(sort_col, ascending=False)
+                  .drop_duplicates(subset=["PatientId", "_SimDate"], keep="first"))
+    return src.drop_duplicates(subset=["PatientId", "_SimDate"], keep="first")
+
+
+def _load_and_filter_sim(slider_val, departments, physician, sim_types,
+                          machines, body_sites, volume_scope, inpatient,
+                          weekend_only, date_preset):
+    """Load simulations data, apply filters. Returns dict or None."""
     from data.loader import load_simulations, load_diagnosis
 
-    na_card = kpi_card("--", "N/A")
-    empty = empty_figure()
-    _empty_store = {"dates": [], "series": []}
-    empty_result = (na_card,) * 5 + (_empty_store, _empty_store, None, None, empty, empty, [], [], {})
-
     try:
-        df = load_simulations()
+        df = load_simulations().copy()
     except Exception:
-        return empty_result
-
+        return None
     if df.empty:
-        return empty_result
+        return None
 
-    # Apply dimension filters (shared across completed + all-status)
+    # Dimension filters
     if "ActivityName" in df.columns:
         df = df[~df["ActivityName"].isin(_SIM_TYPE_EXCLUDE)]
-
     if departments and "Department" in df.columns:
         df = df[df["Department"].isin(departments) | df["Department"].isna()]
-
     if physician and "SupervisingPhysician" in df.columns:
         df = df[df["SupervisingPhysician"] == physician]
-
     if sim_types and "ActivityName" in df.columns:
         df = df[df["ActivityName"].isin(sim_types)]
-
     if machines and "SimulationResource" in df.columns:
         df = df[df["SimulationResource"].isin(machines)]
 
-    # Load diagnosis lookup for body system mapping
+    # Diagnosis lookup
     try:
         diag_df = load_diagnosis()
     except Exception:
         diag_df = None
     c2b = build_code_to_category(diag_df)
 
-    # Body site filter
     if body_sites and "DiagnosisCodes" in df.columns and c2b:
         bs_set = set(body_sites)
         row_bs = df["DiagnosisCodes"].apply(
@@ -1197,128 +1197,126 @@ def update_simulations(_n, agg, volume_slice, volume_scope,
         )
         df = df[row_bs.apply(lambda cats: bool(cats & bs_set))]
 
-    # Scope filter: Initial only
     if volume_scope == "initial" and "ActivityName" in df.columns:
         df = df[df["ActivityName"].apply(_is_initial_sim)]
-
     if inpatient and "InPatientFlag" in df.columns:
         df = df[df["InPatientFlag"].str.upper() == "YES"]
 
-    # Save pre-status-filtered copy for cancellation rate
     df_all_status = df.copy()
 
-    # Filter to completed or billed simulations only
+    # Status filter (completed or billed)
     if "Status" in df.columns:
         completed = df["Status"].str.contains("Completed", case=False, na=False)
         billed = df["ProcedureCodes"].notna() & (df["ProcedureCodes"].astype(str).str.strip() != "") if "ProcedureCodes" in df.columns else pd.Series(False, index=df.index)
         df = df[completed | billed]
 
-    # Weekend filter
     if weekend_only and "ScheduledDateTime" in df.columns:
         df = df[df["ScheduledDateTime"].dt.dayofweek >= 5]
-
     if df.empty:
-        return empty_result
+        return None
 
-    # Date range from slider
     start, end = _get_date_range(slider_val)
 
-    # Keep pre-date-filtered copy for prior-period KPI comparisons
     if "PatientId" in df.columns and "ScheduledDateTime" in df.columns:
         df["_SimDate"] = df["ScheduledDateTime"].dt.normalize()
-    df_all = df  # all filters applied except date range
+    df_all = df
 
     if "ScheduledDateTime" in df.columns:
         df = df[(df["ScheduledDateTime"] >= start) & (df["ScheduledDateTime"] <= end)]
-
     if df.empty:
-        return empty_result
-
-    # ------------------------------------------------------------------
-    # Deduplicate by patient-date for volume counts.
-    # A patient simulated on a given day = one sim event, regardless of
-    # how many activities (e.g. Initial Sim + PET/CT) occurred.
-    # Keep full df for interval medians, detail table, and ribbon.
-    # ------------------------------------------------------------------
-    def _dedup_patient_day(src):
-        if "PatientId" not in src.columns or "ScheduledDateTime" not in src.columns:
-            return src
-        sort_col = "DurationMinutes" if "DurationMinutes" in src.columns else None
-        if sort_col:
-            return (src.sort_values(sort_col, ascending=False)
-                      .drop_duplicates(subset=["PatientId", "_SimDate"], keep="first"))
-        return src.drop_duplicates(subset=["PatientId", "_SimDate"], keep="first")
+        return None
 
     dfu = _dedup_patient_day(df)
     dfu_all = _dedup_patient_day(df_all)
 
+    ps, pe = _sim_prior_range(date_preset, end)
+
+    return {
+        "df": df, "df_all": df_all, "df_all_status": df_all_status,
+        "dfu": dfu, "dfu_all": dfu_all, "c2b": c2b,
+        "start": start, "end": end, "date_preset": date_preset,
+        "departments": departments, "physician": physician,
+        "sim_types": sim_types, "ps": ps, "pe": pe,
+    }
+
+
+# Common filter inputs shared by all split callbacks
+_SIM_FILTER_INPUTS = [
+    Input("sim-interval", "n_intervals"),
+    Input("sim-date-slider", "value"),
+    Input("sim-filter-department", "value"),
+    Input("sim-filter-physician", "value"),
+    Input("sim-filter-simtype", "value"),
+    Input("sim-filter-machine", "value"),
+    Input("sim-filter-bodysite", "value"),
+    Input("sim-volume-scope", "value"),
+    Input("sim-inpatient-switch", "checked"),
+    Input("sim-weekend-switch", "checked"),
+    Input("sim-filter-date-preset", "value"),
+]
+
+
+def _unpack_sim_filter_args(args):
+    """Unpack the 11 common filter args into kwargs for _load_and_filter_sim."""
+    (_n, slider_val, departments, physician, sim_types,
+     machines, body_sites, volume_scope, inpatient,
+     weekend_only, date_preset) = args[:11]
+    return dict(
+        slider_val=slider_val, departments=departments, physician=physician,
+        sim_types=sim_types, machines=machines, body_sites=body_sites,
+        volume_scope=volume_scope, inpatient=inpatient,
+        weekend_only=weekend_only, date_preset=date_preset,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Callback 1: KPIs + Sparklines + Detail Table
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("sim-kpi-total", "children"),
+    Output("sim-kpi-initial", "children"),
+    Output("sim-kpi-lead", "children"),
+    Output("sim-kpi-time-to-tx", "children"),
+    Output("sim-kpi-resim", "children"),
+    Output("sim-detail-grid", "rowData"),
+    Output("sim-detail-grid", "columnDefs"),
+    Output("sim-store-kpi-sparklines", "data"),
+    *_SIM_FILTER_INPUTS,
+    Input("sim-store-resim-scope", "data"),
+)
+def _update_sim_kpis(*args):
+    ctx = _unpack_sim_filter_args(args)
+    resim_scope = args[11] or "resim"
+    data = _load_and_filter_sim(**ctx)
+
+    na_card = kpi_card("--", "N/A")
+    empty_kpis = (na_card,) * 5 + ([], [], {})
+    if data is None:
+        return empty_kpis
+
+    dfu = data["dfu"]
+    dfu_all = data["dfu_all"]
+    df = data["df"]
+    df_all = data["df_all"]
+    start, end = data["start"], data["end"]
+    date_preset = data["date_preset"]
+    ps, pe = data["ps"], data["pe"]
+
+    period_label = _SIM_PERIOD_LABELS.get(date_preset, "YTD")
+    trend_label = _SIM_TREND_LABELS.get(date_preset, "")
+
     sparkline_data = {}
-    resim_scope = resim_scope or "resim"
 
-    # ------------------------------------------------------------------
-    # Date-aware KPI helpers (home.py pattern)
-    # ------------------------------------------------------------------
-    PERIOD_LABELS = {
-        "30d": "30 Days", "3mo": "3 Mo", "6mo": "6 Mo", "12mo": "12 Mo",
-        "ytd": "YTD", "last_year": "Last Year", "this_month": "This Mo",
-        "last_month": "Last Mo", "all": "All Time", "custom": "Custom",
-    }
-    TREND_LABELS = {
-        "30d": "vs prior 30d", "3mo": "vs prior 3 mo", "6mo": "vs prior 6 mo",
-        "12mo": "vs prior 12 mo", "ytd": "vs prior year",
-        "last_year": "vs prior year", "this_month": "vs prior month",
-        "last_month": "vs 2 months ago", "all": "", "custom": "",
-    }
-    period_label = PERIOD_LABELS.get(date_preset, "YTD")
-    trend_label = TREND_LABELS.get(date_preset, "")
-
-    def _kpi_prior_range(last_date):
-        """Return (prior_start, prior_end) matching the current date_preset."""
-        if date_preset == "30d":
-            return last_date - timedelta(days=59), last_date - timedelta(days=30)
-        elif date_preset == "3mo":
-            return last_date - timedelta(days=179), last_date - timedelta(days=90)
-        elif date_preset == "6mo":
-            return last_date - timedelta(days=364), last_date - timedelta(days=183)
-        elif date_preset == "12mo":
-            return last_date - timedelta(days=730), last_date - timedelta(days=366)
-        elif date_preset == "ytd":
-            try:
-                pe = pd.Timestamp(last_date.year - 1, last_date.month, last_date.day)
-            except ValueError:
-                pe = pd.Timestamp(last_date.year - 1, last_date.month, 28)
-            return pd.Timestamp(last_date.year - 1, 1, 1), pe
-        elif date_preset == "last_year":
-            return pd.Timestamp(last_date.year - 2, 1, 1), pd.Timestamp(last_date.year - 2, 12, 31)
-        elif date_preset == "this_month":
-            pm_end = pd.Timestamp(last_date.year, last_date.month, 1) - timedelta(days=1)
-            pm_start = pd.Timestamp(pm_end.year, pm_end.month, 1)
-            return pm_start, pm_end
-        elif date_preset == "last_month":
-            lm_start = pd.Timestamp(last_date.year, last_date.month, 1) - timedelta(days=1)
-            two_ago_start = pd.Timestamp(lm_start.year, lm_start.month, 1) - timedelta(days=1)
-            return pd.Timestamp(two_ago_start.year, two_ago_start.month, 1), pd.Timestamp(lm_start.year, lm_start.month, 1) - timedelta(days=1)
-        return None, None
-
-    def _trend(curr, prior, invert=False):
-        if prior is None or prior == 0:
-            return None, None, None
-        pct = (curr - prior) / prior * 100
-        direction = ("down" if pct > 0 else "up") if invert else ("up" if pct > 0 else "down")
-        return f"{abs(pct):.0f}%", direction, prior
-
-    # Adaptive sparkline granularity: daily for <=3 months, weekly otherwise
     range_months = (end.year - start.year) * 12 + (end.month - start.month) + 1
     _spark_period = "D" if range_months <= 3 else "W"
 
-    def _spark_bucket(series, date_col="ScheduledDateTime"):
-        """Bucket a datetime series by the adaptive spark period."""
+    def _spark_bucket(series):
         if _spark_period == "D":
             return series.dt.normalize()
         return series.dt.to_period("W").dt.to_timestamp()
 
     def _count_spark_raw(sub_df, date_col="ScheduledDateTime"):
-        """Count sparkline using adaptive granularity."""
         if sub_df.empty or date_col not in sub_df.columns:
             return None
         temp = sub_df.copy()
@@ -1326,13 +1324,9 @@ def update_simulations(_n, agg, volume_slice, volume_scope,
         grp = temp.groupby("_sp").size()
         if len(grp) < 3:
             return None
-        return {
-            "labels": [d.isoformat() for d in grp.index],
-            "values": grp.tolist(),
-        }
+        return {"labels": [d.isoformat() for d in grp.index], "values": grp.tolist()}
 
     def _median_spark_raw(sub_df, col, date_col="ScheduledDateTime"):
-        """Median sparkline using adaptive granularity."""
         if sub_df.empty or col not in sub_df.columns or date_col not in sub_df.columns:
             return None
         temp = sub_df[[date_col, col]].copy()
@@ -1344,10 +1338,7 @@ def update_simulations(_n, agg, volume_slice, volume_scope,
         grp = temp.groupby("_sp")[col].median()
         if len(grp) < 3:
             return None
-        return {
-            "labels": [d.isoformat() for d in grp.index],
-            "values": grp.tolist(),
-        }
+        return {"labels": [d.isoformat() for d in grp.index], "values": grp.tolist()}
 
     def _median_days(col):
         if col in dfu.columns:
@@ -1356,41 +1347,31 @@ def update_simulations(_n, agg, volume_slice, volume_scope,
                 return vals.median()
         return None
 
-    # ------------------------------------------------------------------
-    # Identify initial sims subset (patient-day deduped)
-    # ------------------------------------------------------------------
+    # Initial sims subset
     is_initial = (
         dfu["ActivityName"].str.contains("Initial", case=False, na=False) |
         dfu["ActivityName"].str.contains("Stereotactic Simulation", case=False, na=False)
     ) if "ActivityName" in dfu.columns else pd.Series(True, index=dfu.index)
     dfu_initial = dfu[is_initial]
 
-    # ------------------------------------------------------------------
     # 1. Total Simulations
-    # ------------------------------------------------------------------
     total_count = len(dfu)
     total_spark = _count_spark_raw(dfu)
     if total_spark:
         sparkline_data["total"] = {**total_spark, "color": PRIMARY, "hover_fmt": "%{x|%b %d}: %{customdata:,.0f}<extra></extra>"}
 
-    # Trend (use dfu_all which has all dates, not just current range)
-    ps, pe = _kpi_prior_range(end)
     if ps is not None:
         prior_total = len(dfu_all[(dfu_all["ScheduledDateTime"] >= ps) & (dfu_all["ScheduledDateTime"] <= pe)])
     else:
         prior_total = None
-    tt_pct, tt_dir, tt_pv = _trend(total_count, prior_total)
+    tt_pct, tt_dir, tt_pv = _sim_trend(total_count, prior_total)
     kpi_total_card = kpi_card(
         f"Total Simulations ({period_label})", f"{total_count:,}",
         trend_text=f"{tt_pct} {trend_label} ({tt_pv:,})" if tt_pct else None,
-        trend_direction=tt_dir,
-        accent_color=PRIMARY,
-        sparkline_id="sim-spark-total",
+        trend_direction=tt_dir, accent_color=PRIMARY, sparkline_id="sim-spark-total",
     )
 
-    # ------------------------------------------------------------------
     # 2. Initial Simulations
-    # ------------------------------------------------------------------
     initial_count = len(dfu_initial)
     init_spark = _count_spark_raw(dfu_initial)
     if init_spark:
@@ -1405,18 +1386,14 @@ def update_simulations(_n, agg, volume_slice, volume_scope,
         prior_init = len(dfu_all_initial[(dfu_all_initial["ScheduledDateTime"] >= ps) & (dfu_all_initial["ScheduledDateTime"] <= pe)])
     else:
         prior_init = None
-    it_pct, it_dir, it_pv = _trend(initial_count, prior_init)
+    it_pct, it_dir, it_pv = _sim_trend(initial_count, prior_init)
     kpi_initial_card = kpi_card(
         f"Initial Simulations ({period_label})", f"{initial_count:,}",
         trend_text=f"{it_pct} {trend_label} ({it_pv:,})" if it_pct else None,
-        trend_direction=it_dir,
-        accent_color=CHART_COLORWAY[1],
-        sparkline_id="sim-spark-initial",
+        trend_direction=it_dir, accent_color=CHART_COLORWAY[1], sparkline_id="sim-spark-initial",
     )
 
-    # ------------------------------------------------------------------
     # 3. Lead Time (Consult-to-Sim)
-    # ------------------------------------------------------------------
     cs_median = _median_days("DaysFromClinicExamToSimulation")
     cs_spark = _median_spark_raw(dfu, "DaysFromClinicExamToSimulation")
     if cs_spark:
@@ -1428,19 +1405,15 @@ def update_simulations(_n, agg, volume_slice, volume_scope,
         prior_lead = prior_lead_vals.median() if len(prior_lead_vals) > 0 else None
     else:
         prior_lead = None
-    lt_pct, lt_dir, lt_pv = _trend(cs_median, prior_lead, invert=True) if cs_median else (None, None, None)
+    lt_pct, lt_dir, lt_pv = _sim_trend(cs_median, prior_lead, invert=True) if cs_median else (None, None, None)
     kpi_lead_card = kpi_card(
         f"Lead Time ({period_label})", f"{cs_median:.0f}" if cs_median else "N/A",
         value_detail="days" if cs_median else None,
         trend_text=f"{lt_pct} {trend_label} ({lt_pv:.0f}d)" if lt_pct else None,
-        trend_direction=lt_dir,
-        accent_color=CHART_COLORWAY[2],
-        sparkline_id="sim-spark-lead",
+        trend_direction=lt_dir, accent_color=CHART_COLORWAY[2], sparkline_id="sim-spark-lead",
     )
 
-    # ------------------------------------------------------------------
-    # 4. Median Time to Treatment (Sim-to-Treatment)
-    # ------------------------------------------------------------------
+    # 4. Time to Treatment (Sim-to-Treatment)
     st_median = _median_days("DaysFromSimToTreatment")
     st_spark = _median_spark_raw(dfu, "DaysFromSimToTreatment")
     if st_spark:
@@ -1452,19 +1425,15 @@ def update_simulations(_n, agg, volume_slice, volume_scope,
         prior_tx = prior_tx_vals.median() if len(prior_tx_vals) > 0 else None
     else:
         prior_tx = None
-    st_pct, st_dir, st_pv = _trend(st_median, prior_tx, invert=True) if st_median else (None, None, None)
+    st_pct, st_dir, st_pv = _sim_trend(st_median, prior_tx, invert=True) if st_median else (None, None, None)
     kpi_time_to_tx_card = kpi_card(
         f"Time to Treatment ({period_label})", f"{st_median:.0f}" if st_median else "N/A",
         value_detail="days" if st_median else None,
         trend_text=f"{st_pct} {trend_label} ({st_pv:.0f}d)" if st_pct else None,
-        trend_direction=st_dir,
-        accent_color=CHART_COLORWAY[3],
-        sparkline_id="sim-spark-time-to-tx",
+        trend_direction=st_dir, accent_color=CHART_COLORWAY[3], sparkline_id="sim-spark-time-to-tx",
     )
 
-    # ------------------------------------------------------------------
-    # 5. Re-Sim Rate (with decub toggle)
-    # ------------------------------------------------------------------
+    # 5. Re-Sim Rate
     if "ActivityName" in df.columns and "PatientId" in df.columns:
         resim_mask = df["ActivityName"].str.contains("Re-Simulation", case=False, na=False)
         if resim_scope == "resim_decub":
@@ -1474,7 +1443,6 @@ def update_simulations(_n, agg, volume_slice, volume_scope,
         resim_pct_val = (resim_count / total_count * 100) if total_count > 0 else 0
         resim_pct = f"{resim_pct_val:.1f}%"
 
-        # Trend (use _all variants for prior period data)
         if ps is not None:
             prior_dfu = dfu_all[(dfu_all["ScheduledDateTime"] >= ps) & (dfu_all["ScheduledDateTime"] <= pe)]
             prior_df = df_all[(df_all["ScheduledDateTime"] >= ps) & (df_all["ScheduledDateTime"] <= pe)]
@@ -1485,9 +1453,8 @@ def update_simulations(_n, agg, volume_slice, volume_scope,
             prior_resim_pct = (len(prior_resim_days) / len(prior_dfu) * 100) if len(prior_dfu) > 0 else None
         else:
             prior_resim_pct = None
-        rs_pct, rs_dir, rs_pv = _trend(resim_pct_val, prior_resim_pct, invert=True)
+        rs_pct, rs_dir, rs_pv = _sim_trend(resim_pct_val, prior_resim_pct, invert=True)
 
-        # Sparkline: re-sim rate using adaptive granularity
         if "ScheduledDateTime" in df.columns:
             temp_all = dfu[["ScheduledDateTime"]].copy()
             temp_all["_sp"] = _spark_bucket(temp_all["ScheduledDateTime"])
@@ -1510,36 +1477,145 @@ def update_simulations(_n, agg, volume_slice, volume_scope,
     kpi_resim_card = kpi_card(
         f"Re-Sim Rate ({period_label})", resim_pct,
         trend_text=f"{rs_pct} {trend_label} ({rs_pv:.1f}%)" if rs_pct else None,
-        trend_direction=rs_dir,
-        accent_color=CHART_COLORWAY[4],
-        sparkline_id="sim-spark-resim",
-        header_control=_resim_scope_toggle(resim_scope),
+        trend_direction=rs_dir, accent_color=CHART_COLORWAY[4],
+        sparkline_id="sim-spark-resim", header_control=_resim_scope_toggle(resim_scope),
     )
 
-    # --- Data for clientside charts ---
-    # Volume data (deduped patient-day counts)
-    volume_data = _prepare_volume_data(
-        dfu, agg, slice_by=volume_slice or "", c2b=c2b,
-    )
-    timing_data = _prepare_timing_data(
-        dfu, metric=timing_metric or "consult_sim",
-        agg=timing_agg or "M", slice_by=timing_slice or "", c2b=c2b,
+    row_data, col_defs = _build_detail_table(df)
+
+    return (
+        kpi_total_card, kpi_initial_card, kpi_lead_card, kpi_time_to_tx_card, kpi_resim_card,
+        row_data, col_defs, sparkline_data,
     )
 
-    # Cumulative data (uses dfu_all for prior-period windows)
-    cumulative_data = _prepare_cumulative_data(
-        dfu_all, start, end, date_preset,
-        departments, physician, sim_types,
+
+# ---------------------------------------------------------------------------
+# Callback 2: Volume Store
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("sim-store-volume", "data"),
+    *_SIM_FILTER_INPUTS,
+    Input("sim-volume-agg", "value"),
+    Input("sim-volume-slice", "value"),
+    running=[(Output("sim-chart-volume-loading", "visible"), True, False)],
+)
+def _update_sim_volume(*args):
+    ctx = _unpack_sim_filter_args(args)
+    agg, volume_slice = args[11], args[12]
+    data = _load_and_filter_sim(**ctx)
+    if data is None:
+        return None
+    return _prepare_volume_data(data["dfu"], agg, slice_by=volume_slice or "", c2b=data["c2b"])
+
+
+# ---------------------------------------------------------------------------
+# Callback 3: Timing Store
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("sim-store-timing", "data"),
+    *_SIM_FILTER_INPUTS,
+    Input("sim-timing-metric", "value"),
+    Input("sim-timing-agg", "value"),
+    Input("sim-timing-slice", "value"),
+    running=[(Output("sim-chart-timing-loading", "visible"), True, False)],
+)
+def _update_sim_timing(*args):
+    ctx = _unpack_sim_filter_args(args)
+    timing_metric, timing_agg, timing_slice = args[11], args[12], args[13]
+    data = _load_and_filter_sim(**ctx)
+    if data is None:
+        return None
+    return _prepare_timing_data(
+        data["dfu"], metric=timing_metric or "consult_sim",
+        agg=timing_agg or "M", slice_by=timing_slice or "", c2b=data["c2b"],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Callback 4: Cumulative Store
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("sim-store-cumulative", "data"),
+    *_SIM_FILTER_INPUTS,
+    Input("sim-cumulative-mode", "value"),
+    Input("sim-cumulative-period-type", "value"),
+    Input("sim-cumulative-slice", "value"),
+    running=[(Output("sim-chart-cumulative-loading", "visible"), True, False)],
+)
+def _update_sim_cumulative(*args):
+    ctx = _unpack_sim_filter_args(args)
+    cumul_mode, cumul_period_type, cumul_slice = args[11], args[12], args[13]
+    data = _load_and_filter_sim(**ctx)
+    if data is None:
+        return None
+    return _prepare_cumulative_data(
+        data["dfu_all"], data["start"], data["end"], data["date_preset"],
+        data["departments"], data["physician"], data["sim_types"],
         mode=cumul_mode or "prior",
         period_type=cumul_period_type or "calendar",
         slice_by=cumul_slice or "dept",
-        c2b=c2b,
+        c2b=data["c2b"], max_prior=5,
     )
 
-    # Cancel rate data (uses all-status copy, clientside-rendered)
-    cancel_data = _prepare_cancel_data(df_all_status, start, end, cancel_agg, cancel_slice)
 
-    # Diagnosis mix (server-side horizontal bar chart)
+# ---------------------------------------------------------------------------
+# Callback 5: Cancel Rate Store
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("sim-store-cancel", "data"),
+    *_SIM_FILTER_INPUTS,
+    Input("sim-cancel-agg", "value"),
+    Input("sim-cancel-slice", "value"),
+    running=[(Output("sim-chart-cancel-rate-loading", "visible"), True, False)],
+)
+def _update_sim_cancel(*args):
+    ctx = _unpack_sim_filter_args(args)
+    cancel_agg, cancel_slice = args[11], args[12]
+    data = _load_and_filter_sim(**ctx)
+    if data is None:
+        return None
+    return _prepare_cancel_data(data["df_all_status"], data["start"], data["end"], cancel_agg, cancel_slice)
+
+
+# ---------------------------------------------------------------------------
+# Callback 6: Diagnosis + Billing Figures
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("sim-chart-diagnosis", "figure"),
+    Output("sim-chart-billing", "figure"),
+    *_SIM_FILTER_INPUTS,
+    Input("sim-diagnosis-compare", "value"),
+    Input("sim-diagnosis-slice", "value"),
+    Input("sim-diagnosis-mode", "value"),
+    Input("sim-billing-slice", "value"),
+    Input("sim-billing-mode", "value"),
+    running=[
+        (Output("sim-diagnosis-loading", "visible"), True, False),
+        (Output("sim-billing-loading", "visible"), True, False),
+    ],
+)
+def _update_sim_diag_billing(*args):
+    ctx = _unpack_sim_filter_args(args)
+    diagnosis_compare, diagnosis_slice, diagnosis_mode = args[11], args[12], args[13]
+    billing_slice, billing_mode = args[14], args[15]
+    data = _load_and_filter_sim(**ctx)
+
+    empty = empty_figure()
+    if data is None:
+        return empty, empty
+
+    dfu = data["dfu"]
+    dfu_all = data["dfu_all"]
+    c2b = data["c2b"]
+    date_preset = data["date_preset"]
+    ps, pe = data["ps"], data["pe"]
+    period_label = _SIM_PERIOD_LABELS.get(date_preset, "YTD")
+
     _diag_prior_df = None
     _diag_period_labels = None
     if diagnosis_compare == "prior" and ps is not None:
@@ -1550,24 +1626,13 @@ def update_simulations(_n, agg, volume_slice, volume_scope,
     fig_diagnosis = _build_diagnosis_mix(
         dfu, c2b=c2b, slice_by=diagnosis_slice or "",
         mode=diagnosis_mode or "count",
-        prior_df=_diag_prior_df,
-        period_labels=_diag_period_labels,
+        prior_df=_diag_prior_df, period_labels=_diag_period_labels,
     )
-
-    # Billing mix (server-side horizontal bar chart)
     fig_billing = _build_sim_billing_mix(
         dfu, slice_by=billing_slice or "", mode=billing_mode or "count",
     )
 
-    # --- Detail table (all rows for full granularity) ---
-    row_data, col_defs = _build_detail_table(df)
-
-    return (
-        kpi_total_card, kpi_initial_card, kpi_lead_card, kpi_time_to_tx_card, kpi_resim_card,
-        volume_data, timing_data, cumulative_data, cancel_data,
-        fig_diagnosis, fig_billing,
-        row_data, col_defs, sparkline_data,
-    )
+    return fig_diagnosis, fig_billing
 
 
 # ---------------------------------------------------------------------------
@@ -1601,11 +1666,14 @@ clientside_callback(
 )
 
 clientside_callback(
-    ClientsideFunction(namespace="cumulative", function_name="renderCumulative"),
+    """function(rawData, smoothPct, chartType, maxPrior, currentFig) {
+        return window.dash_clientside.cumulative.renderCumulative(rawData, smoothPct, chartType, currentFig, null, maxPrior);
+    }""",
     Output("sim-chart-cumulative", "figure"),
     Input("sim-store-cumulative", "data"),
     Input("sim-cumulative-settings-smooth", "value"),
     Input("sim-cumulative-settings-type", "value"),
+    Input("sim-cumulative-settings-prior-periods", "value"),
     State("sim-chart-cumulative", "figure"),
 )
 
@@ -1647,10 +1715,10 @@ register_chart_callbacks([
 # ---------------------------------------------------------------------------
 
 _SLICE_CLASS_JS = """function(val) {
-    return val ? "slice-group-active" : "slice-total-active";
+    return (val && val !== "total") ? "slice-group-active" : "slice-total-active";
 }"""
 
-for _sid in ["sim-volume-slice", "sim-timing-slice", "sim-cancel-slice"]:
+for _sid in ["sim-volume-slice", "sim-timing-slice", "sim-cancel-slice", "sim-cumulative-slice"]:
     clientside_callback(
         _SLICE_CLASS_JS,
         Output(_sid, "className"),
@@ -1966,7 +2034,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
                               departments, physician, sim_types,
                               mode="prior",
                               period_type="calendar", slice_by="dept",
-                              c2b=None):
+                              c2b=None, max_prior=5):
     """Prepare cumulative simulation volume data for overlay chart.
 
     mode="prior": Current period cumulative + up to 5 prior equivalent periods.
@@ -2004,6 +2072,8 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
         sub = df.loc[mask]
         if sub.empty:
             return {}
+        if sb == "total":
+            return {"Total": len(sub)}
         if sb == "dept" and "Department" in sub.columns:
             return sub.groupby("Department").size().to_dict()
         elif sb == "type" and "ActivityName" in sub.columns:
@@ -2059,7 +2129,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
     # Build prior windows
     windows = []
     if date_preset != "all":
-        for i in range(1, 6):
+        for i in range(1, max_prior + 1):
             if period_type == "calendar":
                 try:
                     p_start = start - pd.DateOffset(years=i)
@@ -2075,14 +2145,14 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             windows.append((_period_label(p_start, p_end), p_start, p_end))
 
     prior = []
-    for label, p_start, p_end in windows:
+    for pi, (label, p_start, p_end) in enumerate(windows):
         vals = _cumulative_for_window(dff_all, p_start, p_end)
         if vals and any(v > 0 for v in vals):
             if len(vals) < n_days:
                 vals = vals + [vals[-1] if vals else 0] * (n_days - len(vals))
             elif len(vals) > n_days:
                 vals = vals[:n_days]
-            prior.append({"label": label, "values": vals, "color": "#D1D5DB"})
+            prior.append({"label": label, "values": vals, "color": PRIOR_PERIOD_COLORS[min(pi, len(PRIOR_PERIOD_COLORS) - 1)]})
 
     current_label = _period_label(start, end)
 

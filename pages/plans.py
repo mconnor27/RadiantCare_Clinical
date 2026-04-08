@@ -15,6 +15,7 @@ from config.settings import (
     DEPARTMENTS, DEPARTMENT_COLORS, CHART_COLORWAY, PRIMARY,
     DEFAULT_LAYOUT, FONT_FAMILY, SEMANTIC_COLORS, NEUTRAL,
     DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, DEFAULT_GRID_STYLE, DEFAULT_GRID_CLASS, CHART_PAPER_HEIGHT,
+    PRIOR_PERIOD_COLORS,
 )
 from components.filter_bar import department_chips
 from components.kpi_card import kpi_card
@@ -422,6 +423,7 @@ layout = dmc.Stack(
                         {"value": "bar", "label": "Bar"},
                     ],
                     show_smooth=True,
+                    show_prior_periods=True,
                     smooth_max=50,
                     smooth_default=0,
                     paper_padding="md",
@@ -447,11 +449,12 @@ layout = dmc.Stack(
                         dmc.SegmentedControl(
                             id="plans-cumulative-slice",
                             data=[
+                                {"value": "total", "label": "Total"},
                                 {"value": "physician", "label": "MD"},
                                 {"value": "site", "label": "Site"},
                                 {"value": "diagnosis", "label": "Dx"},
                             ],
-                            value="site",
+                            value="total",
                             size="xs",
                             style={"display": "none"},
                         ),
@@ -461,11 +464,357 @@ layout = dmc.Stack(
             ),
         ]),
 
-        # Charts container (remaining charts)
-        dmc.Stack(id="plans-charts", gap=16),
+        # Row 2: Ridgeline + (Median Sessions Trend + Sessions Distribution)
+        dmc.Grid(gutter=16, align="stretch", children=[
+            dmc.GridCol(
+                span={"base": 12, "md": 6},
+                children=dmc.Paper(
+                    children=[
+                        dmc.Group(
+                            justify="space-between",
+                            align="center",
+                            children=[
+                                dmc.Text("Sessions per Plan by Year", size="sm", fw=500, c="#6B7280"),
+                                dmc.Group(
+                                    gap="md", align="center",
+                                    children=[
+                                        dmc.SegmentedControl(
+                                            id="plans-ridge-mode",
+                                            data=[
+                                                {"value": "density", "label": "Density"},
+                                                {"value": "histogram", "label": "Histogram"},
+                                            ],
+                                            value="density",
+                                            size="xs",
+                                        ),
+                                        dmc.Group(
+                                            id="plans-ridge-bw-group",
+                                            gap=6, align="center",
+                                            children=[
+                                                dmc.Text("Bandwidth", size="xs", c="#9CA3AF", fw=500),
+                                                dmc.Slider(
+                                                    id="plans-ridge-bw",
+                                                    min=0.05,
+                                                    max=1.0,
+                                                    step=0.05,
+                                                    value=0.1,
+                                                    size="xs",
+                                                    w=100,
+                                                    color="violet",
+                                                    showLabelOnHover=True,
+                                                    updatemode="mouseup",
+                                                ),
+                                            ],
+                                        ),
+                                    ],
+                                ),
+                            ],
+                            mb="sm",
+                        ),
+                        dcc.Graph(id="plans-chart-ridgeline", config={"displayModeBar": False},
+                                  style={"height": "720px"}),
+                    ],
+                    p="sm", radius="md", shadow="xs", withBorder=True,
+                ),
+            ),
+            dmc.GridCol(
+                span={"base": 12, "md": 6},
+                children=dmc.Stack(
+                    gap=16,
+                    style={"height": "100%"},
+                    children=[
+                        # Top: Median Sessions Trend
+                        dmc.Paper(
+                            children=[
+                                dmc.Group(
+                                    justify="space-between", align="center", mb="sm",
+                                    children=[
+                                        dmc.Group(
+                                            gap="sm", align="center",
+                                            children=[
+                                                dmc.Text("Median Sessions Trend", size="sm", fw=500, c="#6B7280"),
+                                                dmc.SegmentedControl(
+                                                    id="plans-session-trend-slice",
+                                                    data=[
+                                                        {"value": "", "label": "Total"},
+                                                        {"value": "physician", "label": "MD"},
+                                                        {"value": "site", "label": "Site"},
+                                                        {"value": "diagnosis", "label": "Dx"},
+                                                    ],
+                                                    value="",
+                                                    size="xs",
+                                                ),
+                                            ],
+                                        ),
+                                        dmc.Group(
+                                            gap="sm", align="center",
+                                            children=[
+                                                dmc.SegmentedControl(
+                                                    id="plans-session-trend-agg",
+                                                    data=[
+                                                        {"value": "W", "label": "Weekly"},
+                                                        {"value": "M", "label": "Monthly"},
+                                                        {"value": "Y", "label": "Yearly"},
+                                                    ],
+                                                    value="M",
+                                                    size="xs",
+                                                ),
+                                                chart_settings_popover(
+                                                    "plans-session-trend",
+                                                    chart_types=[
+                                                        {"value": "line", "label": "Line"},
+                                                        {"value": "area", "label": "Area"},
+                                                        {"value": "bar", "label": "Bar"},
+                                                    ],
+                                                    show_smooth=True,
+                                                    smooth_max=12,
+                                                    smooth_default=0,
+                                                ),
+                                            ],
+                                        ),
+                                    ],
+                                ),
+                                dcc.Graph(
+                                    id="plans-chart-session-trend",
+                                    config={"displayModeBar": False},
+                                    style={"flex": "1", "minHeight": 0},
+                                ),
+                            ],
+                            p="sm", radius="md", shadow="xs", withBorder=True,
+                            style={"flex": "1 1 0", "display": "flex", "flexDirection": "column"},
+                        ),
+                        # Bottom: Sessions Distribution (histogram/density)
+                        dmc.Paper(
+                            children=[
+                                dmc.Group(
+                                    justify="space-between", align="center", mb="sm",
+                                    children=[
+                                        dmc.Text("Sessions Distribution", size="sm", fw=500, c="#6B7280"),
+                                        dmc.SegmentedControl(
+                                            id="plans-session-dist-mode",
+                                            data=[
+                                                {"value": "histogram", "label": "Histogram"},
+                                                {"value": "density", "label": "Density"},
+                                            ],
+                                            value="histogram",
+                                            size="xs",
+                                        ),
+                                    ],
+                                ),
+                                dcc.Graph(
+                                    id="plans-chart-session-dist",
+                                    config={"displayModeBar": False},
+                                    style={"flex": "1", "minHeight": 0},
+                                ),
+                            ],
+                            p="sm", radius="md", shadow="xs", withBorder=True,
+                            style={"flex": "1 1 0", "display": "flex", "flexDirection": "column"},
+                        ),
+                    ],
+                ),
+            ),
+        ]),
 
-        # Detail table container
-        dmc.Stack(id="plans-table-container", gap=0),
+        # Technique Distribution (full-width stacked area)
+        chart_card(
+            "plans-chart-technique-dist",
+            "Technique Distribution",
+            settings_id="plans-technique-dist",
+            chart_types=[
+                {"value": "line", "label": "Line"},
+                {"value": "area", "label": "Area"},
+                {"value": "bar", "label": "Bar"},
+            ],
+            show_smooth=True,
+            smooth_max=24,
+            smooth_default=3,
+            paper_padding="md",
+            paper_height="500px",
+            graph_height="420px",
+            extra_controls_left=[
+                dmc.SegmentedControl(
+                    id="plans-technique-dist-mode",
+                    data=[
+                        {"value": "count", "label": "Count"},
+                        {"value": "pct", "label": "%"},
+                    ],
+                    value="count",
+                    size="xs",
+                ),
+            ],
+            extra_controls=[
+                dmc.SegmentedControl(
+                    id="plans-technique-dist-agg",
+                    data=[
+                        {"value": "W", "label": "Weekly"},
+                        {"value": "M", "label": "Monthly"},
+                        {"value": "Y", "label": "Yearly"},
+                    ],
+                    value="M",
+                    size="xs",
+                ),
+            ],
+        ),
+
+        # Plan Complexity Trends
+        chart_card(
+            "plans-chart-complexity",
+            "Plan Complexity Trends",
+            settings_id="plans-complexity",
+            chart_types=[
+                {"value": "line", "label": "Line"},
+                {"value": "area", "label": "Area"},
+                {"value": "bar", "label": "Bar"},
+            ],
+            show_smooth=True,
+            smooth_max=12,
+            smooth_default=4,
+            paper_padding="md",
+            paper_height="440px",
+            graph_height="380px",
+            extra_controls_left=[
+                dmc.SegmentedControl(
+                    id="plans-complexity-mode",
+                    data=[
+                        {"value": "pct", "label": "%"},
+                        {"value": "avg", "label": "Avg #"},
+                    ],
+                    value="pct",
+                    size="xs",
+                ),
+            ],
+            extra_controls=[
+                dmc.SegmentedControl(
+                    id="plans-complexity-agg",
+                    data=[
+                        {"value": "W", "label": "Weekly"},
+                        {"value": "M", "label": "Monthly"},
+                        {"value": "Y", "label": "Yearly"},
+                    ],
+                    value="W",
+                    size="xs",
+                ),
+            ],
+        ),
+
+        # Row 3: Treatment Site Distribution + Quitting Rate Trend
+        dmc.Grid(gutter=16, align="stretch", children=[
+            dmc.GridCol(
+                span={"base": 12, "md": 6},
+                children=dmc.Paper(
+                    children=[
+                        dmc.Text("Treatment Site Distribution", size="sm", fw=500, c="#6B7280", mb=0),
+                        dmc.Box(
+                            pos="relative",
+                            style={"flex": "1", "minHeight": 0},
+                            children=[
+                                dmc.Box(
+                                    style={"position": "absolute", "top": 0, "left": 0, "right": 0, "bottom": 0},
+                                    children=[
+                                        dcc.Graph(
+                                            id="plans-chart-treatment-site",
+                                            config={"displayModeBar": False},
+                                            style={"height": "100%"},
+                                        )
+                                    ],
+                                )
+                            ],
+                        ),
+                    ],
+                    p="sm", pt="md", pb=6, radius="md", shadow="xs", withBorder=True,
+                    h=CHART_PAPER_HEIGHT,
+                    style={"display": "flex", "flexDirection": "column"},
+                ),
+            ),
+            dmc.GridCol(
+                span={"base": 12, "md": 6},
+                children=dmc.Paper(
+                    children=[
+                        dmc.Group(
+                            justify="space-between", align="center", mb="sm",
+                            children=[
+                                dmc.Group(
+                                    gap="sm", align="center",
+                                    children=[
+                                        dmc.Text("Quitting Rate Trend", size="sm", fw=500, c="#6B7280"),
+                                        dmc.SegmentedControl(
+                                            id="plans-quit-trend-slice",
+                                            data=[
+                                                {"value": "", "label": "Total"},
+                                                {"value": "physician", "label": "MD"},
+                                                {"value": "site", "label": "Site"},
+                                                {"value": "diagnosis", "label": "Dx"},
+                                            ],
+                                            value="",
+                                            size="xs",
+                                        ),
+                                    ],
+                                ),
+                                dmc.Group(
+                                    gap="sm", align="center",
+                                    children=[
+                                        dmc.SegmentedControl(
+                                            id="plans-quit-trend-agg",
+                                            data=[
+                                                {"value": "W", "label": "Weekly"},
+                                                {"value": "M", "label": "Monthly"},
+                                                {"value": "Y", "label": "Yearly"},
+                                            ],
+                                            value="M",
+                                            size="xs",
+                                        ),
+                                        chart_settings_popover(
+                                            "plans-quit-trend",
+                                            chart_types=[
+                                                {"value": "line", "label": "Line"},
+                                                {"value": "area", "label": "Area"},
+                                                {"value": "bar", "label": "Bar"},
+                                            ],
+                                            show_smooth=True,
+                                            smooth_max=12,
+                                            smooth_default=0,
+                                        ),
+                                    ],
+                                ),
+                            ],
+                        ),
+                        dcc.Graph(
+                            id="plans-chart-quit-trend",
+                            config={"displayModeBar": False},
+                            style={"flex": "1", "minHeight": 0},
+                        ),
+                    ],
+                    p="sm", radius="md", shadow="xs", withBorder=True,
+                    h=CHART_PAPER_HEIGHT,
+                    style={"display": "flex", "flexDirection": "column"},
+                ),
+            ),
+        ]),
+
+        # Detail table
+        dmc.Paper(
+            children=[
+                dmc.Group(
+                    justify="space-between",
+                    mb="sm",
+                    children=[
+                        dmc.Text("Plan Details", size="sm", fw=500, c="#6B7280"),
+                        dmc.Button("Export CSV", id="plans-table-export", size="compact-xs", variant="light"),
+                    ],
+                ),
+                dag.AgGrid(
+                    id="plans-detail-table",
+                    rowData=[],
+                    columnDefs=[],
+                    defaultColDef=DEFAULT_COLUMN_DEFS,
+                    columnSize="autoSize",
+                    dashGridOptions={**DEFAULT_GRID_OPTIONS},
+                    style=DEFAULT_GRID_STYLE,
+                    className=DEFAULT_GRID_CLASS,
+                ),
+            ],
+            p="md", radius="md", shadow="xs", withBorder=True,
+        ),
 
         # Stores for clientside rendering
         dcc.Store(id="plans-store-volume"),
@@ -501,10 +850,10 @@ register_chart_callbacks([
 # Slice-by dim styling
 # ---------------------------------------------------------------------------
 _SLICE_CLASS_JS = """function(val) {
-    return val ? "slice-group-active" : "slice-total-active";
+    return (val && val !== "total") ? "slice-group-active" : "slice-total-active";
 }"""
 
-for _sid in ["plans-volume-slice"]:
+for _sid in ["plans-volume-slice", "plans-cumulative-slice"]:
     clientside_callback(
         _SLICE_CLASS_JS,
         Output(_sid, "className"),
@@ -1725,7 +2074,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
                               status, session_range, c2b,
                               techniques=None, date_mode="created",
                               mode="prior", period_type="calendar",
-                              slice_by="site"):
+                              slice_by="site", max_prior=5):
     """Prepare cumulative plan volume data for overlay chart."""
     if df_all.empty or date_col not in df_all.columns:
         return None
@@ -1764,6 +2113,8 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
         sub = df.loc[_window_mask(df, w_start, w_end)]
         if sub.empty:
             return {}
+        if sb == "total":
+            return {"Total": len(sub)}
         if sb == "site" and "Department" in sub.columns:
             return sub.groupby("Department").size().to_dict()
         elif sb == "physician" and "TreatingPhysician" in sub.columns:
@@ -1806,7 +2157,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
 
     windows = []
     if date_preset != "all":
-        for i in range(1, 6):
+        for i in range(1, max_prior + 1):
             if period_type == "calendar":
                 try:
                     p_start = start - pd.DateOffset(years=i)
@@ -1822,14 +2173,14 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             windows.append((_period_label(p_start, p_end), p_start, p_end))
 
     prior = []
-    for label, p_start, p_end in windows:
+    for pi, (label, p_start, p_end) in enumerate(windows):
         vals = _cumulative_for_window(dff_all, p_start, p_end)
         if vals and any(v > 0 for v in vals):
             if len(vals) < n_days:
                 vals = vals + [vals[-1] if vals else 0] * (n_days - len(vals))
             elif len(vals) > n_days:
                 vals = vals[:n_days]
-            prior.append({"label": label, "values": vals, "color": "#D1D5DB"})
+            prior.append({"label": label, "values": vals, "color": PRIOR_PERIOD_COLORS[min(pi, len(PRIOR_PERIOD_COLORS) - 1)]})
 
     current_label = _period_label(start, end)
     if len(current_vals) < n_days:
@@ -2029,69 +2380,125 @@ def _apply_filters(df, departments, physician, diagnosis_cats, status, session_r
 
 
 # ---------------------------------------------------------------------------
-# Main Callback
+# Module-level constants: prior-period comparison + trend helper
 # ---------------------------------------------------------------------------
 
-@callback(
-    Output("plans-kpi-active", "children"),
-    Output("plans-kpi-created", "children"),
-    Output("plans-kpi-completed", "children"),
-    Output("plans-kpi-median-sessions", "children"),
-    Output("plans-kpi-median-duration", "children"),
-    Output("plans-kpi-multimachine", "children"),
-    Output("plans-store-volume", "data"),
-    Output("plans-store-cumulative", "data"),
-    Output("plans-store-kpi-sparklines", "data"),
-    Output("plans-store-ridgeline", "data"),
-    Output("plans-store-session-trend", "data"),
-    Output("plans-store-session-dist", "data"),
-    Output("plans-store-complexity-trends", "data"),
-    Output("plans-store-technique-dist", "data"),
-    Output("plans-store-quit-trend", "data"),
-    Output("plans-charts", "children"),
-    Output("plans-table-container", "children"),
-    Output("plans-session-slider", "min"),
-    Output("plans-session-slider", "max"),
-    Input("plans-interval", "n_intervals"),
-    Input("plans-volume-agg", "value"),
-    Input("plans-volume-slice", "value"),
-    Input("plans-cumulative-mode", "value"),
-    Input("plans-cumulative-period-type", "value"),
-    Input("plans-cumulative-slice", "value"),
-    Input("plans-date-slider", "value"),
-    Input("plans-filter-department", "value"),
-    Input("plans-filter-physician", "value"),
-    Input("plans-filter-diagnosis", "value"),
-    Input("plans-filter-technique", "value"),
-    Input("plans-filter-status", "value"),
-    Input("plans-session-slider", "value"),
-    Input("plans-date-mode", "value"),
-    Input("plans-filter-date-preset", "value"),
-    State("plans-session-engaged", "data"),
-    running=[
-        (Output("plans-chart-volume-loading", "visible"), True, False),
-        (Output("plans-chart-cumulative-loading", "visible"), True, False),
-    ],
-)
-def update_plans(_n, agg, volume_slice,
-                    cumul_mode, cumul_period_type, cumul_slice,
-                    slider_val,
-                    departments, physician, diagnosis_cats, techniques,
-                    status, session_range, date_mode, date_preset,
-                    session_engaged):
+_PRIOR_MAP = {
+    "12mo": ("vs prior 12 mo", lambda s, e: (s - (e - s) - pd.Timedelta(days=1), s - pd.Timedelta(days=1))),
+    "6mo": ("vs prior 6 mo", lambda s, e: (s - (e - s) - pd.Timedelta(days=1), s - pd.Timedelta(days=1))),
+    "3mo": ("vs prior 3 mo", lambda s, e: (s - (e - s) - pd.Timedelta(days=1), s - pd.Timedelta(days=1))),
+    "30d": ("vs prior 30 days", lambda s, e: (s - (e - s) - pd.Timedelta(days=1), s - pd.Timedelta(days=1))),
+    "ytd": ("vs prior YTD", lambda s, e: (
+        pd.Timestamp(s.year - 1, 1, 1),
+        min(pd.Timestamp(s.year - 1, e.month, min(e.day, 28)), pd.Timestamp(s.year - 1, 12, 31)),
+    )),
+    "last_year": ("vs year before", lambda s, e: (
+        pd.Timestamp(s.year - 1, 1, 1), pd.Timestamp(s.year - 1, 12, 31),
+    )),
+    "this_month": ("vs last MTD", lambda s, e: (
+        s - pd.DateOffset(months=1), e - pd.DateOffset(months=1),
+    )),
+    "last_month": ("vs month before", lambda s, e: (
+        s - pd.DateOffset(months=1), s - pd.Timedelta(days=1),
+    )),
+}
+
+
+def _trend(curr, prior, invert=False):
+    """Compute trend text + direction from current vs prior values."""
+    if prior is None or prior == 0:
+        return None, None
+    pct = (curr - prior) / abs(prior) * 100
+    direction = ("down" if pct > 0 else "up") if invert else ("up" if pct > 0 else "down")
+    return f"{abs(pct):.0f}%", direction
+
+
+# ---------------------------------------------------------------------------
+# Complexity chart helpers (module-level)
+# ---------------------------------------------------------------------------
+
+def _hex_to_rgba(hex_color, alpha=0.1):
+    """Convert hex color to rgba string."""
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"rgba({r},{g},{b},{alpha})"
+
+
+_COMPLEXITY_DIM_CFG = {
+    "machines": {"color": CHART_COLORWAY[0], "pct_label": "% Multi-Machine", "avg_label": "Avg Machines"},
+    "depts": {"color": CHART_COLORWAY[1], "pct_label": "% Multi-Department", "avg_label": "Avg Departments"},
+    "plans": {"color": CHART_COLORWAY[2], "pct_label": "% Multi-Plan", "avg_label": "Avg Plans"},
+    "isos": {"color": CHART_COLORWAY[3], "pct_label": "% Multi-Isocenter", "avg_label": "Avg Isocenters"},
+}
+
+
+def _apply_moving_avg(values, window):
+    """Apply simple moving average to a list of values (None-safe)."""
+    if window <= 1:
+        return values
+    result = []
+    for i in range(len(values)):
+        s = max(0, i - window + 1)
+        chunk = [v for v in values[s:i + 1] if v is not None]
+        result.append(round(sum(chunk) / len(chunk), 2) if chunk else None)
+    return result
+
+
+_COMPLEXITY_FACETS = [
+    ("machines", "Multi-Machine"),
+    ("depts", "Multi-Department"),
+]
+
+
+# Detail table column definitions (static)
+_TABLE_COLUMN_DEFS = [
+    {"field": "PatientFullName", "headerName": "Patient", "width": 180},
+    {"field": "CourseId", "headerName": "Course", "width": 110},
+    {"field": "PlanSetupId", "headerName": "Plan Name", "width": 140},
+    {"field": "PlanCreationDate", "headerName": "Created", "width": 110, "sort": "desc"},
+    {"field": "ClinicalStatus", "headerName": "Status", "width": 100},
+    {"field": "PlanStatus", "headerName": "Plan Status", "width": 130},
+    {"field": "TreatmentTechnique", "headerName": "Technique", "width": 100},
+    {"field": "NoSessionPlanned", "headerName": "Sessions", "width": 100, "type": "numericColumn"},
+    {"field": "SessionBasedFractionCount", "headerName": "Delivered", "width": 100, "type": "numericColumn"},
+    {"field": "NoFractionsRemaining", "headerName": "Remaining", "width": 100, "type": "numericColumn"},
+    {"field": "TreatmentDurationDays", "headerName": "Duration (d)", "width": 100, "type": "numericColumn"},
+    {"field": "Department", "headerName": "Department", "width": 100},
+    {"field": "Machines", "headerName": "Machines", "width": 140},
+    {"field": "PrescriptionSite", "headerName": "Rx Site", "width": 160},
+]
+
+_TABLE_FIELDS = [
+    "PatientFullName", "CourseId", "PlanSetupId", "PlanCreationDate",
+    "ClinicalStatus", "PlanStatus", "TreatmentTechnique",
+    "NoSessionPlanned", "SessionBasedFractionCount", "NoFractionsRemaining",
+    "TreatmentDurationDays", "Department", "Machines", "PrescriptionSite",
+]
+
+
+# ---------------------------------------------------------------------------
+# Shared data loading/filtering helper
+# ---------------------------------------------------------------------------
+
+def _load_and_filter_plans(slider_val, departments, physician, diagnosis_cats,
+                           techniques, status, session_range, date_mode,
+                           date_preset, session_engaged):
+    """Load plans data, filter, and return shared context.
+
+    Returns a dict with keys: df_all, dff, dff_prior, dff_all_no_date,
+    c2b, date_col, start, end, date_preset, trend_label,
+    prior_start, prior_end, completed_df, session_min_data, session_max_data.
+    Returns None if data is empty.
+    """
     from data.loader import load_plans
 
-    na_kpi = kpi_card("--", "N/A")
-    empty = empty_figure()
-    empty_result = (na_kpi,) * 6 + (None, None, {}, None, None, None, None, None, None, [], [], 0, 50)
-
     try:
-        df = load_plans()
+        df = load_plans().copy()
     except Exception:
-        return empty_result
+        return None
 
     if df.empty:
-        return empty_result
+        return None
 
     # Build diagnosis lookup
     c2b = _build_diag_lookup()
@@ -2104,8 +2511,7 @@ def update_plans(_n, agg, volume_slice,
         date_col = "PlanCreationDate"
 
     # "Completed In" mode: restrict to effectively-completed plans BEFORE
-    # date filtering, so we only plot plans that actually finished — not
-    # every course that happened to have a LastTreatmentDate in the window.
+    # date filtering, so we only plot plans that actually finished.
     if date_mode == "completed":
         df = df[_is_effectively_completed(df)]
 
@@ -2126,13 +2532,10 @@ def update_plans(_n, agg, volume_slice,
 
     # Date filter
     if date_mode == "treated":
-        # "Treated In" — include any course whose treatment span overlaps the window.
-        # Overlap condition: FirstTreatmentDate <= end AND LastTreatmentDate >= start
         ft = "FirstTreatmentDate"
         lt = "LastTreatmentDate"
         if ft in df.columns and lt in df.columns:
             df = df[df[ft].notna()]
-            # Fall back LastTreatmentDate to FirstTreatmentDate for active plans
             last = df[lt].fillna(df[ft])
             df = df[(df[ft] <= end) & (last >= start)]
     elif date_col in df.columns:
@@ -2140,7 +2543,7 @@ def update_plans(_n, agg, volume_slice,
         df = df[(df[date_col] >= start) & (df[date_col] <= end)]
 
     if df.empty:
-        return (na_kpi,) * 6 + (None, None, {}, None, None, None, None, None, [], [], session_min_data, session_max_data)
+        return None
 
     # Only apply session filter when the user has engaged the slider
     active_session_range = session_range if session_engaged else None
@@ -2150,44 +2553,15 @@ def update_plans(_n, agg, volume_slice,
                          techniques=techniques)
 
     if dff.empty:
-        return (na_kpi,) * 6 + (None, None, {}, None, None, None, None, None, [], [], session_min_data, session_max_data)
+        return None
 
-    # ------------------------------------------------------------------
     # Prior-period comparison
-    # ------------------------------------------------------------------
-    _PRIOR_MAP = {
-        "12mo": ("vs prior 12 mo", lambda s, e: (s - (e - s) - pd.Timedelta(days=1), s - pd.Timedelta(days=1))),
-        "6mo": ("vs prior 6 mo", lambda s, e: (s - (e - s) - pd.Timedelta(days=1), s - pd.Timedelta(days=1))),
-        "3mo": ("vs prior 3 mo", lambda s, e: (s - (e - s) - pd.Timedelta(days=1), s - pd.Timedelta(days=1))),
-        "30d": ("vs prior 30 days", lambda s, e: (s - (e - s) - pd.Timedelta(days=1), s - pd.Timedelta(days=1))),
-        "ytd": ("vs prior YTD", lambda s, e: (
-            pd.Timestamp(s.year - 1, 1, 1),
-            min(pd.Timestamp(s.year - 1, e.month, min(e.day, 28)), pd.Timestamp(s.year - 1, 12, 31)),
-        )),
-        "last_year": ("vs year before", lambda s, e: (
-            pd.Timestamp(s.year - 1, 1, 1), pd.Timestamp(s.year - 1, 12, 31),
-        )),
-        "this_month": ("vs last MTD", lambda s, e: (
-            s - pd.DateOffset(months=1), e - pd.DateOffset(months=1),
-        )),
-        "last_month": ("vs month before", lambda s, e: (
-            s - pd.DateOffset(months=1), s - pd.Timedelta(days=1),
-        )),
-    }
-
-    def _trend(curr, prior, invert=False):
-        if prior is None or prior == 0:
-            return None, None
-        pct = (curr - prior) / abs(prior) * 100
-        direction = ("down" if pct > 0 else "up") if invert else ("up" if pct > 0 else "down")
-        return f"{abs(pct):.0f}%", direction
-
     trend_label = None
+    prior_start = prior_end = None
     dff_prior = pd.DataFrame()
     if date_preset and date_preset in _PRIOR_MAP and date_col in df_all.columns:
         trend_label, prior_fn = _PRIOR_MAP[date_preset]
         prior_start, prior_end = prior_fn(start, end)
-        # Apply same date mode logic to prior period
         if date_mode == "treated":
             ft_col = "FirstTreatmentDate"
             lt_col = "LastTreatmentDate"
@@ -2210,6 +2584,90 @@ def update_plans(_n, agg, volume_slice,
     dff_all_no_date = _apply_filters(df_all, departments, physician, diagnosis_cats, "all", active_session_range, c2b,
                                      techniques=techniques)
 
+    # Completed subset
+    eff_completed = _is_effectively_completed(dff)
+    completed_df = dff[eff_completed]
+
+    return {
+        "df_all": df_all, "dff": dff, "dff_prior": dff_prior,
+        "dff_all_no_date": dff_all_no_date, "completed_df": completed_df,
+        "c2b": c2b, "date_col": date_col,
+        "start": start, "end": end, "date_preset": date_preset,
+        "trend_label": trend_label,
+        "prior_start": prior_start, "prior_end": prior_end,
+        "date_mode": date_mode, "departments": departments,
+        "session_min_data": session_min_data, "session_max_data": session_max_data,
+        "active_session_range": session_range if session_engaged else None,
+    }
+
+
+# Common filter inputs shared by all split callbacks
+_PLANS_FILTER_INPUTS = [
+    Input("plans-interval", "n_intervals"),
+    Input("plans-date-slider", "value"),
+    Input("plans-filter-department", "value"),
+    Input("plans-filter-physician", "value"),
+    Input("plans-filter-diagnosis", "value"),
+    Input("plans-filter-technique", "value"),
+    Input("plans-filter-status", "value"),
+    Input("plans-session-slider", "value"),
+    Input("plans-date-mode", "value"),
+    Input("plans-filter-date-preset", "value"),
+    State("plans-session-engaged", "data"),
+]
+
+
+def _unpack_plans_filter_args(args):
+    """Unpack the 11 common filter args into a dict for _load_and_filter_plans."""
+    (_n, slider_val, departments, physician, diagnosis_cats,
+     techniques, status, session_range, date_mode, date_preset,
+     session_engaged) = args[:11]
+    return dict(
+        slider_val=slider_val, departments=departments, physician=physician,
+        diagnosis_cats=diagnosis_cats, techniques=techniques, status=status,
+        session_range=session_range, date_mode=date_mode,
+        date_preset=date_preset, session_engaged=session_engaged,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Callback 1: KPIs + Sparklines + Detail Table + Session Slider Range
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("plans-kpi-active", "children"),
+    Output("plans-kpi-created", "children"),
+    Output("plans-kpi-completed", "children"),
+    Output("plans-kpi-median-sessions", "children"),
+    Output("plans-kpi-median-duration", "children"),
+    Output("plans-kpi-multimachine", "children"),
+    Output("plans-store-kpi-sparklines", "data"),
+    Output("plans-detail-table", "rowData"),
+    Output("plans-detail-table", "columnDefs"),
+    Output("plans-session-slider", "min"),
+    Output("plans-session-slider", "max"),
+    *_PLANS_FILTER_INPUTS,
+)
+def _update_plans_kpis(*args):
+    ctx = _unpack_plans_filter_args(args)
+    data = _load_and_filter_plans(**ctx)
+
+    na_kpi = kpi_card("--", "N/A")
+    empty_kpis = (na_kpi,) * 6 + ({}, [], _TABLE_COLUMN_DEFS, 0, 50)
+    if data is None:
+        return empty_kpis
+
+    dff = data["dff"]
+    dff_prior = data["dff_prior"]
+    dff_all_no_date = data["dff_all_no_date"]
+    completed_df = data["completed_df"]
+    trend_label = data["trend_label"]
+    prior_start = data["prior_start"]
+    prior_end = data["prior_end"]
+    date_col = data["date_col"]
+    c2b = data["c2b"]
+    start, end = data["start"], data["end"]
+
     # ------------------------------------------------------------------
     # Sparkline data
     # ------------------------------------------------------------------
@@ -2218,14 +2676,12 @@ def update_plans(_n, agg, volume_slice,
     _spark_period = "D" if range_months <= 3 else "W"
 
     def _build_count_sparkline(sub_df, key, color, use_col=None):
-        """Build a count-based sparkline grouped by period."""
         col = use_col or date_col
         if col not in sub_df.columns or sub_df.empty:
             return
         temp = sub_df[sub_df[col].notna()].copy()
         if temp.empty:
             return
-        # Clamp dates to window for overlap-matched plans
         plot_dates = temp[col].clip(lower=start, upper=end)
         if _spark_period == "D":
             temp["_sp"] = plot_dates.dt.normalize()
@@ -2240,7 +2696,6 @@ def update_plans(_n, agg, volume_slice,
             }
 
     def _build_median_sparkline(sub_df, val_col, key, color, hover_fmt=None):
-        """Build a median-value sparkline grouped by period."""
         if val_col not in sub_df.columns or date_col not in sub_df.columns or sub_df.empty:
             return
         temp = sub_df[[date_col, val_col]].copy()
@@ -2262,12 +2717,10 @@ def update_plans(_n, agg, volume_slice,
                 "hover_fmt": hover_fmt or "%{x|%b %d}: %{customdata:,.1f}<extra></extra>",
             }
 
-    # Active census sparkline — running count of plans under active treatment
-    # at each time point. A course is active at date d if FirstTreatmentDate <= d <= LastTreatmentDate.
+    # Active census sparkline
     if "FirstTreatmentDate" in dff_all_no_date.columns and "LastTreatmentDate" in dff_all_no_date.columns:
         _adf = dff_all_no_date[dff_all_no_date["FirstTreatmentDate"].notna()].copy()
         _adf["_lt"] = _adf["LastTreatmentDate"].fillna(_adf["FirstTreatmentDate"])
-        # Cap at last actual data date (data exports lag by ~1 day)
         _last_data_date = _adf["_lt"].dt.normalize().max()
         _spark_end = min(end, _last_data_date) if pd.notna(_last_data_date) else end
         if _spark_period == "D":
@@ -2287,14 +2740,12 @@ def update_plans(_n, agg, volume_slice,
                 "color": STATUS_COLORS["ACTIVE"],
             }
 
-    # Created sparkline (plans with PlanCreationDate in period)
+    # Created sparkline
     if "PlanCreationDate" in dff.columns:
         created_df = dff[(dff["PlanCreationDate"] >= start) & (dff["PlanCreationDate"] <= end)]
         _build_count_sparkline(created_df, "created", CHART_COLORWAY[0], use_col="PlanCreationDate")
 
     # Completed sparkline
-    eff_completed = _is_effectively_completed(dff)
-    completed_df = dff[eff_completed]
     _build_count_sparkline(completed_df, "completed", STATUS_COLORS["COMPLETED"])
 
     # Median sessions sparkline
@@ -2330,9 +2781,6 @@ def update_plans(_n, agg, volume_slice,
     # 1. Active Plans — across ALL data (not date-filtered)
     eff_completed_all = _is_effectively_completed(dff_all_no_date)
     active_count = int((~eff_completed_all).sum())
-
-    # Prior-period active count: plans where prior_end falls between
-    # FirstTreatmentDate and LastTreatmentDate (i.e. under treatment at that date).
     _t_active = (None, None)
     if trend_label and "FirstTreatmentDate" in dff_all_no_date.columns:
         _ft = dff_all_no_date["FirstTreatmentDate"]
@@ -2340,7 +2788,6 @@ def update_plans(_n, agg, volume_slice,
         prior_active = int(((_ft <= prior_end) & (_lt >= prior_end)).sum())
         if prior_active > 0:
             _t_active = _trend(active_count, prior_active)
-
     kpi_active = kpi_card(
         "Currently Active", f"{active_count:,}",
         accent_color=STATUS_COLORS["ACTIVE"],
@@ -2371,7 +2818,7 @@ def update_plans(_n, agg, volume_slice,
     )
 
     # 3. Completed (in period)
-    completed_count = int(eff_completed.sum())
+    completed_count = len(completed_df)
     _t_completed = (None, None)
     if trend_label and not dff_prior.empty:
         prior_completed = int(_is_effectively_completed(dff_prior).sum())
@@ -2451,489 +2898,235 @@ def update_plans(_n, agg, volume_slice,
     )
 
     # ------------------------------------------------------------------
-    # Volume trend data (clientside)
-    # ------------------------------------------------------------------
-    volume_data = _prepare_volume_data(dff, agg, volume_slice, date_col=date_col, c2b=c2b,
-                                       start=start, end=end, date_mode=date_mode)
-
-    # ------------------------------------------------------------------
-    # Cumulative data (clientside)
-    # ------------------------------------------------------------------
-    cumulative_data = _prepare_cumulative_data(
-        df_all, start, end, date_preset,
-        date_col, departments, physician, diagnosis_cats,
-        status, active_session_range, c2b,
-        techniques=techniques, date_mode=date_mode,
-        mode=cumul_mode or "prior",
-        period_type=cumul_period_type or "calendar",
-        slice_by=cumul_slice or "site",
-    )
-
-    # ------------------------------------------------------------------
-    # Remaining Charts (server-side)
-    # ------------------------------------------------------------------
-    chart_children = []
-
-    # --- Row 2: Ridgeline + Technique Mix -------
-    row2_charts = []
-
-    # Ridgeline: Sessions per Plan by Year (all-time, but respects dimension filters)
-    ridgeline_data = _prepare_ridgeline_data(dff_all_no_date, date_col)
-    row2_charts.append(
-        dmc.GridCol(
-            span={"base": 12, "md": 6},
-            children=dmc.Paper(
-                children=[
-                    dmc.Group(
-                        justify="space-between",
-                        align="center",
-                        children=[
-                            dmc.Text("Sessions per Plan by Year", size="sm", fw=500, c="#6B7280"),
-                            dmc.Group(
-                                gap="md", align="center",
-                                children=[
-                                    dmc.SegmentedControl(
-                                        id="plans-ridge-mode",
-                                        data=[
-                                            {"value": "density", "label": "Density"},
-                                            {"value": "histogram", "label": "Histogram"},
-                                        ],
-                                        value="density",
-                                        size="xs",
-                                    ),
-                                    dmc.Group(
-                                        id="plans-ridge-bw-group",
-                                        gap=6, align="center",
-                                        children=[
-                                            dmc.Text("Bandwidth", size="xs", c="#9CA3AF", fw=500),
-                                            dmc.Slider(
-                                                id="plans-ridge-bw",
-                                                min=0.05,
-                                                max=1.0,
-                                                step=0.05,
-                                                value=0.1,
-                                                size="xs",
-                                                w=100,
-                                                color="violet",
-                                                showLabelOnHover=True,
-                                                updatemode="mouseup",
-                                            ),
-                                        ],
-                                    ),
-                                ],
-                            ),
-                        ],
-                        mb="sm",
-                    ),
-                    dcc.Graph(id="plans-chart-ridgeline", config={"displayModeBar": False},
-                              style={"height": "720px"}),
-                ],
-                p="sm", radius="md", shadow="xs", withBorder=True,
-            ),
-        ),
-    )
-
-    # Sessions Trend + Distribution data (for stores, rendered by separate callbacks)
-    session_trend_data = _prepare_session_trend_data(dff, date_col, c2b, start=start, end=end)
-    session_dist_data = _prepare_session_dist_data(dff)
-    quit_trend_data = _prepare_quit_trend_data(completed_df, "LastTreatmentDate", c2b, start=start, end=end)
-    complexity_trend_data = _prepare_complexity_trend_data(
-        dff, date_col, start=start, end=end,
-    )
-    technique_dist_data = _prepare_technique_dist_data(dff, date_col, start=start, end=end)
-
-    # Right column: Median Sessions Trend (top) + Sessions Distribution (bottom)
-    row2_charts.append(
-        dmc.GridCol(
-            span={"base": 12, "md": 6},
-            children=dmc.Stack(
-                gap=16,
-                style={"height": "100%"},
-                children=[
-                    # Top: Median Sessions Trend
-                    dmc.Paper(
-                        children=[
-                            dmc.Group(
-                                justify="space-between", align="center", mb="sm",
-                                children=[
-                                    dmc.Group(
-                                        gap="sm", align="center",
-                                        children=[
-                                            dmc.Text("Median Sessions Trend", size="sm", fw=500, c="#6B7280"),
-                                            dmc.SegmentedControl(
-                                                id="plans-session-trend-slice",
-                                                data=[
-                                                    {"value": "", "label": "Total"},
-                                                    {"value": "physician", "label": "MD"},
-                                                    {"value": "site", "label": "Site"},
-                                                    {"value": "diagnosis", "label": "Dx"},
-                                                ],
-                                                value="",
-                                                size="xs",
-                                            ),
-                                        ],
-                                    ),
-                                    dmc.Group(
-                                        gap="sm", align="center",
-                                        children=[
-                                            dmc.SegmentedControl(
-                                                id="plans-session-trend-agg",
-                                                data=[
-                                                    {"value": "W", "label": "Weekly"},
-                                                    {"value": "M", "label": "Monthly"},
-                                                    {"value": "Y", "label": "Yearly"},
-                                                ],
-                                                value="M",
-                                                size="xs",
-                                            ),
-                                            chart_settings_popover(
-                                                "plans-session-trend",
-                                                chart_types=[
-                                                    {"value": "line", "label": "Line"},
-                                                    {"value": "area", "label": "Area"},
-                                                    {"value": "bar", "label": "Bar"},
-                                                ],
-                                                show_smooth=True,
-                                                smooth_max=12,
-                                                smooth_default=0,
-                                            ),
-                                        ],
-                                    ),
-                                ],
-                            ),
-                            dcc.Graph(
-                                id="plans-chart-session-trend",
-                                config={"displayModeBar": False},
-                                style={"flex": "1", "minHeight": 0},
-                            ),
-                        ],
-                        p="sm", radius="md", shadow="xs", withBorder=True,
-                        style={"flex": "1 1 0", "display": "flex", "flexDirection": "column"},
-                    ),
-                    # Bottom: Sessions Distribution (histogram/density)
-                    dmc.Paper(
-                        children=[
-                            dmc.Group(
-                                justify="space-between", align="center", mb="sm",
-                                children=[
-                                    dmc.Text("Sessions Distribution", size="sm", fw=500, c="#6B7280"),
-                                    dmc.SegmentedControl(
-                                        id="plans-session-dist-mode",
-                                        data=[
-                                            {"value": "histogram", "label": "Histogram"},
-                                            {"value": "density", "label": "Density"},
-                                        ],
-                                        value="histogram",
-                                        size="xs",
-                                    ),
-                                ],
-                            ),
-                            dcc.Graph(
-                                id="plans-chart-session-dist",
-                                config={"displayModeBar": False},
-                                style={"flex": "1", "minHeight": 0},
-                            ),
-                        ],
-                        p="sm", radius="md", shadow="xs", withBorder=True,
-                        style={"flex": "1 1 0", "display": "flex", "flexDirection": "column"},
-                    ),
-                ],
-            ),
-        ),
-    )
-
-    chart_children.append(dmc.Grid(gutter=16, align="stretch", children=row2_charts))
-
-    # --- Technique Distribution (full-width stacked area) ---
-    chart_children.append(
-        chart_card(
-            "plans-chart-technique-dist",
-            "Technique Distribution",
-            settings_id="plans-technique-dist",
-            chart_types=[
-                {"value": "line", "label": "Line"},
-                {"value": "area", "label": "Area"},
-                {"value": "bar", "label": "Bar"},
-            ],
-            show_smooth=True,
-            smooth_max=24,
-            smooth_default=3,
-            paper_padding="md",
-            paper_height="500px",
-            graph_height="420px",
-            extra_controls_left=[
-                dmc.SegmentedControl(
-                    id="plans-technique-dist-mode",
-                    data=[
-                        {"value": "count", "label": "Count"},
-                        {"value": "pct", "label": "%"},
-                    ],
-                    value="count",
-                    size="xs",
-                ),
-            ],
-            extra_controls=[
-                dmc.SegmentedControl(
-                    id="plans-technique-dist-agg",
-                    data=[
-                        {"value": "W", "label": "Weekly"},
-                        {"value": "M", "label": "Monthly"},
-                        {"value": "Y", "label": "Yearly"},
-                    ],
-                    value="M",
-                    size="xs",
-                ),
-            ],
-        )
-    )
-
-    # --- Course Complexity Trends (2x2 facets) ---
-    chart_children.append(
-        chart_card(
-            "plans-chart-complexity",
-            "Plan Complexity Trends",
-            settings_id="plans-complexity",
-            chart_types=[
-                {"value": "line", "label": "Line"},
-                {"value": "area", "label": "Area"},
-                {"value": "bar", "label": "Bar"},
-            ],
-            show_smooth=True,
-            smooth_max=12,
-            smooth_default=4,
-            paper_padding="md",
-            paper_height="440px",
-            graph_height="380px",
-            extra_controls_left=[
-                dmc.SegmentedControl(
-                    id="plans-complexity-mode",
-                    data=[
-                        {"value": "pct", "label": "%"},
-                        {"value": "avg", "label": "Avg #"},
-                    ],
-                    value="pct",
-                    size="xs",
-                ),
-            ],
-            extra_controls=[
-                dmc.SegmentedControl(
-                    id="plans-complexity-agg",
-                    data=[
-                        {"value": "W", "label": "Weekly"},
-                        {"value": "M", "label": "Monthly"},
-                        {"value": "Y", "label": "Yearly"},
-                    ],
-                    value="W",
-                    size="xs",
-                ),
-            ],
-        )
-    )
-
-    # --- Row 3: Treatment Site Distribution + Quitting Rate Trend -------
-    row3a_charts = []
-
-    # Treatment Site Distribution (horizontal bar)
-    if "PrescriptionSite" in dff.columns and not dff.empty:
-        sites_series = dff["PrescriptionSite"].dropna()
-        if not sites_series.empty:
-            _site_display = {
-                "Prostate and Seminal Vessicles.": "Prostate/SV",
-            }
-            site_counts = sites_series.value_counts().head(15).sort_values(ascending=True)
-            display_labels = [_site_display.get(s, s) for s in site_counts.index]
-            fig_sites = go.Figure(go.Bar(
-                y=display_labels,
-                x=site_counts.values.tolist(),
-                orientation="h",
-                marker_color=PRIMARY,
-                customdata=site_counts.index.tolist(),
-                hovertemplate="<b>%{customdata}</b><br>Count: %{x}<extra></extra>",
-            ))
-            apply_default_layout(fig_sites)
-            fig_sites.update_layout(
-                height=None,
-                yaxis_title="",
-                xaxis_title="",
-                margin=dict(l=120, r=8, t=0, b=0),
-            )
-            fig_sites.update_xaxes(automargin=True)
-            fig_sites.update_yaxes(automargin=True)
-        else:
-            fig_sites = empty_figure("No prescription site data")
-            fig_sites.update_layout(height=None)
-    else:
-        fig_sites = empty_figure("No prescription site data")
-        fig_sites.update_layout(height=None)
-
-    row3a_charts.append(
-        dmc.GridCol(
-            span={"base": 12, "md": 6},
-            children=dmc.Paper(
-                children=[
-                    dmc.Text("Treatment Site Distribution", size="sm", fw=500, c="#6B7280", mb=0),
-                    dmc.Box(
-                        pos="relative",
-                        style={"flex": "1", "minHeight": 0},
-                        children=[
-                            dmc.Box(
-                                style={"position": "absolute", "top": 0, "left": 0, "right": 0, "bottom": 0},
-                                children=[
-                                    dcc.Graph(
-                                        figure=fig_sites,
-                                        config={"displayModeBar": False},
-                                        style={"height": "100%"},
-                                    )
-                                ],
-                            )
-                        ],
-                    ),
-                ],
-                p="sm", pt="md", pb=6, radius="md", shadow="xs", withBorder=True,
-                h=CHART_PAPER_HEIGHT,
-                style={"display": "flex", "flexDirection": "column"},
-            ),
-        )
-    )
-
-    # Quitting Rate Trend (clientside-rendered from store)
-    row3a_charts.append(
-        dmc.GridCol(
-            span={"base": 12, "md": 6},
-            children=dmc.Paper(
-                children=[
-                    dmc.Group(
-                        justify="space-between", align="center", mb="sm",
-                        children=[
-                            dmc.Group(
-                                gap="sm", align="center",
-                                children=[
-                                    dmc.Text("Quitting Rate Trend", size="sm", fw=500, c="#6B7280"),
-                                    dmc.SegmentedControl(
-                                        id="plans-quit-trend-slice",
-                                        data=[
-                                            {"value": "", "label": "Total"},
-                                            {"value": "physician", "label": "MD"},
-                                            {"value": "site", "label": "Site"},
-                                            {"value": "diagnosis", "label": "Dx"},
-                                        ],
-                                        value="",
-                                        size="xs",
-                                    ),
-                                ],
-                            ),
-                            dmc.Group(
-                                gap="sm", align="center",
-                                children=[
-                                    dmc.SegmentedControl(
-                                        id="plans-quit-trend-agg",
-                                        data=[
-                                            {"value": "W", "label": "Weekly"},
-                                            {"value": "M", "label": "Monthly"},
-                                            {"value": "Y", "label": "Yearly"},
-                                        ],
-                                        value="M",
-                                        size="xs",
-                                    ),
-                                    chart_settings_popover(
-                                        "plans-quit-trend",
-                                        chart_types=[
-                                            {"value": "line", "label": "Line"},
-                                            {"value": "area", "label": "Area"},
-                                            {"value": "bar", "label": "Bar"},
-                                        ],
-                                        show_smooth=True,
-                                        smooth_max=12,
-                                        smooth_default=0,
-                                    ),
-                                ],
-                            ),
-                        ],
-                    ),
-                    dcc.Graph(
-                        id="plans-chart-quit-trend",
-                        config={"displayModeBar": False},
-                        style={"flex": "1", "minHeight": 0},
-                    ),
-                ],
-                p="sm", radius="md", shadow="xs", withBorder=True,
-                h=CHART_PAPER_HEIGHT,
-                style={"display": "flex", "flexDirection": "column"},
-            ),
-        )
-    )
-
-    chart_children.append(dmc.Grid(gutter=16, align="stretch", children=row3a_charts))
-
-    # ------------------------------------------------------------------
-    # Detail Table (AG Grid)
+    # Detail Table
     # ------------------------------------------------------------------
     table_df = dff.copy()
-
-    table_cols = [
-        "PatientFullName", "CourseId", "PlanSetupId", "PlanCreationDate",
-        "ClinicalStatus", "PlanStatus", "TreatmentTechnique",
-        "NoSessionPlanned", "SessionBasedFractionCount", "NoFractionsRemaining",
-        "TreatmentDurationDays", "Department", "Machines", "PrescriptionSite",
-    ]
-    available_cols = [c for c in table_cols if c in table_df.columns]
+    available_cols = [c for c in _TABLE_FIELDS if c in table_df.columns]
     table_df = table_df[available_cols].copy()
-
     if "PlanCreationDate" in table_df.columns:
         table_df["PlanCreationDate"] = table_df["PlanCreationDate"].dt.strftime("%Y-%m-%d")
-
     records = table_df.to_dict("records")
-
-    column_defs = [
-        {"field": "PatientFullName", "headerName": "Patient", "width": 180},
-        {"field": "CourseId", "headerName": "Course", "width": 110},
-        {"field": "PlanSetupId", "headerName": "Plan Name", "width": 140},
-        {"field": "PlanCreationDate", "headerName": "Created", "width": 110, "sort": "desc"},
-        {"field": "ClinicalStatus", "headerName": "Status", "width": 100},
-        {"field": "PlanStatus", "headerName": "Plan Status", "width": 130},
-        {"field": "TreatmentTechnique", "headerName": "Technique", "width": 100},
-        {"field": "NoSessionPlanned", "headerName": "Sessions", "width": 100, "type": "numericColumn"},
-        {"field": "SessionBasedFractionCount", "headerName": "Delivered", "width": 100, "type": "numericColumn"},
-        {"field": "NoFractionsRemaining", "headerName": "Remaining", "width": 100, "type": "numericColumn"},
-        {"field": "TreatmentDurationDays", "headerName": "Duration (d)", "width": 100, "type": "numericColumn"},
-        {"field": "Department", "headerName": "Department", "width": 100},
-        {"field": "Machines", "headerName": "Machines", "width": 140},
-        {"field": "PrescriptionSite", "headerName": "Rx Site", "width": 160},
-    ]
-
-    table_children = [
-        dmc.Paper(
-            children=[
-                dmc.Group(
-                    justify="space-between",
-                    mb="sm",
-                    children=[
-                        dmc.Text("Plan Details", size="sm", fw=500, c="#6B7280"),
-                        dmc.Button("Export CSV", id="plans-table-export", size="compact-xs", variant="light"),
-                    ],
-                ),
-                dag.AgGrid(
-                    id="plans-detail-table",
-                    rowData=records,
-                    columnDefs=column_defs,
-                    defaultColDef=DEFAULT_COLUMN_DEFS,
-                    columnSize="autoSize",
-                    dashGridOptions={**DEFAULT_GRID_OPTIONS},
-                    style=DEFAULT_GRID_STYLE,
-                    className=DEFAULT_GRID_CLASS,
-                ),
-            ],
-            p="md", radius="md", shadow="xs", withBorder=True,
-        ),
-    ]
 
     return (
         kpi_active, kpi_created, kpi_completed, kpi_median_sessions, kpi_median_dur, kpi_multimachine,
-        volume_data, cumulative_data, sparkline_data,
-        ridgeline_data, session_trend_data, session_dist_data, complexity_trend_data, technique_dist_data, quit_trend_data,
-        chart_children, table_children,
-        session_min_data, session_max_data,
+        sparkline_data, records, _TABLE_COLUMN_DEFS,
+        data["session_min_data"], data["session_max_data"],
     )
+
+
+# ---------------------------------------------------------------------------
+# Callback 2: Volume Store
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("plans-store-volume", "data"),
+    *_PLANS_FILTER_INPUTS,
+    Input("plans-volume-agg", "value"),
+    Input("plans-volume-slice", "value"),
+    running=[(Output("plans-chart-volume-loading", "visible"), True, False)],
+)
+def _update_plans_volume(*args):
+    ctx = _unpack_plans_filter_args(args)
+    agg, volume_slice = args[11], args[12]
+    data = _load_and_filter_plans(**ctx)
+    if data is None:
+        return None
+    return _prepare_volume_data(
+        data["dff"], agg, volume_slice, date_col=data["date_col"],
+        c2b=data["c2b"], start=data["start"], end=data["end"],
+        date_mode=data["date_mode"],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Callback 3: Cumulative Store
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("plans-store-cumulative", "data"),
+    *_PLANS_FILTER_INPUTS,
+    Input("plans-cumulative-mode", "value"),
+    Input("plans-cumulative-period-type", "value"),
+    Input("plans-cumulative-slice", "value"),
+    running=[(Output("plans-chart-cumulative-loading", "visible"), True, False)],
+)
+def _update_plans_cumulative(*args):
+    ctx = _unpack_plans_filter_args(args)
+    cumul_mode, cumul_period_type, cumul_slice = args[11], args[12], args[13]
+    data = _load_and_filter_plans(**ctx)
+    if data is None:
+        return None
+    return _prepare_cumulative_data(
+        data["df_all"], data["start"], data["end"], data["date_preset"],
+        data["date_col"], ctx["departments"], ctx["physician"], ctx["diagnosis_cats"],
+        ctx["status"], data["active_session_range"], data["c2b"],
+        techniques=ctx["techniques"], date_mode=data["date_mode"],
+        mode=cumul_mode or "prior",
+        period_type=cumul_period_type or "calendar",
+        slice_by=cumul_slice or "site",
+        max_prior=5,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Callback 4: Ridgeline Store
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("plans-store-ridgeline", "data"),
+    *_PLANS_FILTER_INPUTS,
+)
+def _update_plans_ridgeline(*args):
+    ctx = _unpack_plans_filter_args(args)
+    data = _load_and_filter_plans(**ctx)
+    if data is None:
+        return None
+    return _prepare_ridgeline_data(data["dff_all_no_date"], data["date_col"])
+
+
+# ---------------------------------------------------------------------------
+# Callback 5: Session Trend Store
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("plans-store-session-trend", "data"),
+    *_PLANS_FILTER_INPUTS,
+)
+def _update_plans_session_trend(*args):
+    ctx = _unpack_plans_filter_args(args)
+    data = _load_and_filter_plans(**ctx)
+    if data is None:
+        return None
+    return _prepare_session_trend_data(
+        data["dff"], data["date_col"], data["c2b"],
+        start=data["start"], end=data["end"],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Callback 6: Session Distribution Store
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("plans-store-session-dist", "data"),
+    *_PLANS_FILTER_INPUTS,
+)
+def _update_plans_session_dist(*args):
+    ctx = _unpack_plans_filter_args(args)
+    data = _load_and_filter_plans(**ctx)
+    if data is None:
+        return None
+    return _prepare_session_dist_data(data["dff"])
+
+
+# ---------------------------------------------------------------------------
+# Callback 7: Complexity Trends Store
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("plans-store-complexity-trends", "data"),
+    *_PLANS_FILTER_INPUTS,
+)
+def _update_plans_complexity(*args):
+    ctx = _unpack_plans_filter_args(args)
+    data = _load_and_filter_plans(**ctx)
+    if data is None:
+        return None
+    return _prepare_complexity_trend_data(
+        data["dff"], data["date_col"],
+        start=data["start"], end=data["end"],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Callback 8: Technique Distribution Store
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("plans-store-technique-dist", "data"),
+    *_PLANS_FILTER_INPUTS,
+)
+def _update_plans_technique_dist(*args):
+    ctx = _unpack_plans_filter_args(args)
+    data = _load_and_filter_plans(**ctx)
+    if data is None:
+        return None
+    return _prepare_technique_dist_data(
+        data["dff"], data["date_col"],
+        start=data["start"], end=data["end"],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Callback 9: Quit Trend Store
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("plans-store-quit-trend", "data"),
+    *_PLANS_FILTER_INPUTS,
+)
+def _update_plans_quit_trend(*args):
+    ctx = _unpack_plans_filter_args(args)
+    data = _load_and_filter_plans(**ctx)
+    if data is None:
+        return None
+    return _prepare_quit_trend_data(
+        data["completed_df"], "LastTreatmentDate", data["c2b"],
+        start=data["start"], end=data["end"],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Callback 10: Treatment Site Distribution (server-rendered figure)
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("plans-chart-treatment-site", "figure"),
+    *_PLANS_FILTER_INPUTS,
+)
+def _update_plans_treatment_site(*args):
+    ctx = _unpack_plans_filter_args(args)
+    data = _load_and_filter_plans(**ctx)
+    if data is None:
+        fig = empty_figure("No prescription site data")
+        fig.update_layout(height=None)
+        return fig
+
+    dff = data["dff"]
+    if "PrescriptionSite" not in dff.columns or dff.empty:
+        fig = empty_figure("No prescription site data")
+        fig.update_layout(height=None)
+        return fig
+
+    sites_series = dff["PrescriptionSite"].dropna()
+    if sites_series.empty:
+        fig = empty_figure("No prescription site data")
+        fig.update_layout(height=None)
+        return fig
+
+    _site_display = {
+        "Prostate and Seminal Vessicles.": "Prostate/SV",
+    }
+    site_counts = sites_series.value_counts().head(15).sort_values(ascending=True)
+    display_labels = [_site_display.get(s, s) for s in site_counts.index]
+    fig = go.Figure(go.Bar(
+        y=display_labels,
+        x=site_counts.values.tolist(),
+        orientation="h",
+        marker_color=PRIMARY,
+        customdata=site_counts.index.tolist(),
+        hovertemplate="<b>%{customdata}</b><br>Count: %{x}<extra></extra>",
+    ))
+    apply_default_layout(fig)
+    fig.update_layout(
+        height=None,
+        yaxis_title="",
+        xaxis_title="",
+        margin=dict(l=120, r=8, t=0, b=0),
+    )
+    fig.update_xaxes(automargin=True)
+    fig.update_yaxes(automargin=True)
+    return fig
 
 
 # ---------------------------------------------------------------------------
@@ -2949,17 +3142,20 @@ clientside_callback(
     State("plans-chart-volume", "figure"),
 )
 
+# Cumulative: prior-periods slider moved from server to clientside input
 clientside_callback(
-    ClientsideFunction(namespace="cumulative", function_name="renderCumulative"),
+    """function(rawData, smoothPct, chartType, maxPrior, currentFig) {
+        return window.dash_clientside.cumulative.renderCumulative(rawData, smoothPct, chartType, currentFig, null, maxPrior);
+    }""",
     Output("plans-chart-cumulative", "figure"),
     Input("plans-store-cumulative", "data"),
     Input("plans-cumulative-settings-smooth", "value"),
     Input("plans-cumulative-settings-type", "value"),
+    Input("plans-cumulative-settings-prior-periods", "value"),
     State("plans-chart-cumulative", "figure"),
 )
 
 
-# ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # KPI Sparkline clientside callbacks
 # ---------------------------------------------------------------------------
@@ -3008,7 +3204,7 @@ clientside_callback(
 
 
 # ---------------------------------------------------------------------------
-# Fractions Trend callback (clientside: agg + slice-by + smooth + chart type)
+# Session Trend callback (clientside: agg + slice-by + smooth + chart type)
 # ---------------------------------------------------------------------------
 
 clientside_callback(
@@ -3092,7 +3288,7 @@ clientside_callback(
 
 
 # ---------------------------------------------------------------------------
-# Fractions Distribution callback (histogram/density toggle)
+# Sessions Distribution callback (histogram/density toggle)
 # ---------------------------------------------------------------------------
 
 @callback(
@@ -3150,40 +3346,8 @@ def _update_session_dist(data, mode):
 
 
 # ---------------------------------------------------------------------------
-# Complexity Trend callbacks (multi-machine / multi-dept / multi-plan)
+# Complexity Trend callback (server-rendered faceted figure)
 # ---------------------------------------------------------------------------
-
-def _hex_to_rgba(hex_color, alpha=0.1):
-    """Convert hex color to rgba string."""
-    h = hex_color.lstrip("#")
-    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-    return f"rgba({r},{g},{b},{alpha})"
-
-
-_COMPLEXITY_DIM_CFG = {
-    "machines": {"color": CHART_COLORWAY[0], "pct_label": "% Multi-Machine", "avg_label": "Avg Machines"},
-    "depts": {"color": CHART_COLORWAY[1], "pct_label": "% Multi-Department", "avg_label": "Avg Departments"},
-    "plans": {"color": CHART_COLORWAY[2], "pct_label": "% Multi-Plan", "avg_label": "Avg Plans"},
-    "isos": {"color": CHART_COLORWAY[3], "pct_label": "% Multi-Isocenter", "avg_label": "Avg Isocenters"},
-}
-
-def _apply_moving_avg(values, window):
-    """Apply simple moving average to a list of values (None-safe)."""
-    if window <= 1:
-        return values
-    result = []
-    for i in range(len(values)):
-        start = max(0, i - window + 1)
-        chunk = [v for v in values[start:i + 1] if v is not None]
-        result.append(round(sum(chunk) / len(chunk), 2) if chunk else None)
-    return result
-
-
-_COMPLEXITY_FACETS = [
-    ("machines", "Multi-Machine"),
-    ("depts", "Multi-Department"),
-]
-
 
 @callback(
     Output("plans-chart-complexity", "figure"),
@@ -3273,7 +3437,7 @@ def _update_complexity_facets(data, agg, mode, smooth, chart_type):
 
 
 # ---------------------------------------------------------------------------
-# Technique Distribution callback
+# Technique Distribution callback (server-rendered from store)
 # ---------------------------------------------------------------------------
 
 @callback(
@@ -3300,7 +3464,6 @@ def _update_technique_dist(data, mode, agg, smooth, chart_type):
     smooth = smooth or 0
 
     # Build raw values per technique; stack order: least advanced at bottom
-    # (reversed from _TECHNIQUE_ORDER so most advanced ends up on top)
     raw_series = list(reversed(combo["series"]))
 
     # Convert to proportions if needed
@@ -3364,7 +3527,6 @@ def _update_technique_dist(data, mode, agg, smooth, chart_type):
             ))
 
     apply_default_layout(fig)
-    n_series = len(proc_series)
     fig.update_layout(
         height=420,
         yaxis_title="Proportion (%)" if mode == "pct" else "Plan Count",
@@ -3382,6 +3544,7 @@ def _update_technique_dist(data, mode, agg, smooth, chart_type):
     return fig
 
 
+# ---------------------------------------------------------------------------
 # Table CSV Export (clientside)
 # ---------------------------------------------------------------------------
 

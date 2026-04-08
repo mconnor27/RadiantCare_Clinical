@@ -613,19 +613,21 @@ div:has(> .wf-filter-clear-btn[style*="inline-flex"]) > .mantine-Button-root .ma
    Target by input value attribute since :first-child is unreliable
    (Mantine inserts an indicator element before the controls). */
 /* When Total is active, dim the group options */
-.slice-total-active .mantine-SegmentedControl-input:not([value=""]) + .mantine-SegmentedControl-label {
+.slice-total-active .mantine-SegmentedControl-input:not([value=""]):not([value="total"]) + .mantine-SegmentedControl-label {
     opacity: 0.4;
     transition: opacity 0.15s ease;
 }
-.slice-total-active .mantine-SegmentedControl-input:not([value=""]) + .mantine-SegmentedControl-label:hover {
+.slice-total-active .mantine-SegmentedControl-input:not([value=""]):not([value="total"]) + .mantine-SegmentedControl-label:hover {
     opacity: 0.75;
 }
 /* When a group option is active, dim Total */
-.slice-group-active .mantine-SegmentedControl-input[value=""] + .mantine-SegmentedControl-label {
+.slice-group-active .mantine-SegmentedControl-input[value=""] + .mantine-SegmentedControl-label,
+.slice-group-active .mantine-SegmentedControl-input[value="total"] + .mantine-SegmentedControl-label {
     opacity: 0.4;
     transition: opacity 0.15s ease;
 }
-.slice-group-active .mantine-SegmentedControl-input[value=""] + .mantine-SegmentedControl-label:hover {
+.slice-group-active .mantine-SegmentedControl-input[value=""] + .mantine-SegmentedControl-label:hover,
+.slice-group-active .mantine-SegmentedControl-input[value="total"] + .mantine-SegmentedControl-label:hover {
     opacity: 0.75;
 }
 

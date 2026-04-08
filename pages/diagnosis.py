@@ -504,6 +504,13 @@ layout = dmc.Stack(
                 dmc.GridCol(
                     dmc.Paper(
                         children=[
+                            dmc.LoadingOverlay(
+                                id="diag-chart-comparison-loading",
+                                visible=False,
+                                loaderProps={"type": "dots", "color": PRIMARY},
+                                overlayProps={"radius": "sm", "blur": 2},
+                                zIndex=10,
+                            ),
                             dmc.Group(
                                 justify="space-between",
                                 mb=8,
@@ -810,6 +817,10 @@ def _slider_to_preset(slider_val):
     Input("diag-filter-diagnosis", "value"),
     Input("diag-mode-toggle", "value"),
     Input("diag-compare-period-type", "value"),
+    running=[
+        (Output("diag-chart-trend-loading", "visible"), True, False),
+        (Output("diag-chart-comparison-loading", "visible"), True, False),
+    ],
 )
 def update_diagnosis(_n, slider_val, departments, physician, diag_filter, mode, period_type):
     from data.loader import load_diagnosis

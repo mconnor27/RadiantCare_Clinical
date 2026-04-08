@@ -921,6 +921,10 @@ def _build_patient_map(
     Input("patients-filter-department", "value"),
     Input("patients-filter-age", "value"),
     Input("patients-age-ref", "value"),
+    running=[
+        (Output("patients-chart-top-cities-loading", "visible"), True, False),
+        (Output("patients-chart-age-dist-loading", "visible"), True, False),
+    ],
 )
 def update_patients(_n_interval, _n_geocode, slider_val, date_preset,
                     departments, age_range, age_ref):
@@ -1016,6 +1020,9 @@ def update_patients(_n_interval, _n_geocode, slider_val, date_preset,
     Input("patients-age-dist-mode", "value"),
     Input("patients-age-dist-group", "value"),
     Input("patients-age-settings-smooth", "value"),
+    running=[
+        (Output("patients-chart-age-dist-loading", "visible"), True, False),
+    ],
 )
 def _update_age_dist(data, mode, group, bandwidth_pct):
     if not data:

@@ -12,7 +12,7 @@ import numpy as np
 from config.settings import (
     DEPARTMENTS, DEPARTMENT_COLORS, CHART_COLORWAY,
     PRIMARY, DEFAULT_LAYOUT, FONT_FAMILY, DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS,
-    CHART_PAPER_HEIGHT_SM,
+    CHART_PAPER_HEIGHT_SM, PRIOR_PERIOD_COLORS,
 )
 from components.filter_bar import department_chips
 from components.kpi_card import kpi_card
@@ -221,7 +221,8 @@ def _build_cv_filter_bar():
                                     dmc.ChipGroup(
                                         children=[],
                                         id="cv-filter-physician",
-                                        multiple=False,
+                                        multiple=True,
+                                        value=[],
                                     ),
                                 ],
                                 p="xs",
@@ -557,6 +558,7 @@ layout = dmc.Stack(
                         {"value": "bar", "label": "Bar"},
                     ],
                     show_smooth=True,
+                    show_prior_periods=True,
                     smooth_min=0,
                     smooth_max=1,
                     smooth_step=0.05,
@@ -585,13 +587,14 @@ layout = dmc.Stack(
                         dmc.SegmentedControl(
                             id="cv-cumulative-slice",
                             data=[
+                                {"value": "total", "label": "Total"},
                                 {"value": "category", "label": "Category"},
                                 {"value": "type", "label": "Type"},
                                 {"value": "physician", "label": "MD"},
                                 {"value": "site", "label": "Site"},
                                 {"value": "diagnosis", "label": "Dx"},
                             ],
-                            value="site",
+                            value="total",
                             size="xs",
                             orientation="horizontal",
                             style={"display": "none"},
@@ -1021,7 +1024,7 @@ def _apply_cv_filters(df, departments, physician, body_systems, visit_type,
     if skip != "department" and departments and "Department" in d.columns:
         d = d[d["Department"].isin(departments)]
     if skip != "physician" and physician and "AppointmentPhysician" in d.columns:
-        d = d[d["AppointmentPhysician"] == physician]
+        d = d[d["AppointmentPhysician"].isin(physician)]
     if skip != "body_system" and body_systems and "DiagnosisCodes" in d.columns and c2b:
         bs_set = set(body_systems)
         row_bs = _get_body_systems_for_rows(d, c2b)
@@ -1161,9 +1164,10 @@ def _register_cv_filter_callbacks():
 
     # --- Trigger labels ---
     clientside_callback(
-        """function(val) {
-            if (!val) return "Physician";
-            return val.split(", ")[0];
+        """function(vals) {
+            if (!vals || vals.length === 0) return "Physician";
+            if (vals.length === 1) return vals[0].split(", ")[0];
+            return vals.length + " selected";
         }""",
         Output("cv-physician-trigger", "children"),
         Input("cv-filter-physician", "value"),
@@ -1180,7 +1184,7 @@ def _register_cv_filter_callbacks():
 
     # --- Clear-button visibility ---
     clientside_callback(
-        """function(val) { return val ? {"display": "inline-flex"} : {"display": "none"}; }""",
+        """function(vals) { return vals && vals.length > 0 ? {"display": "inline-flex"} : {"display": "none"}; }""",
         Output("cv-physician-clear", "style"),
         Input("cv-filter-physician", "value"),
     )
@@ -1192,7 +1196,7 @@ def _register_cv_filter_callbacks():
 
     # --- Clear-button actions ---
     clientside_callback(
-        """function(n) { return null; }""",
+        """function(n) { return []; }""",
         Output("cv-filter-physician", "value", allow_duplicate=True),
         Input("cv-physician-clear", "n_clicks"),
         prevent_initial_call=True,
@@ -1233,81 +1237,52 @@ def _populate_cv_physician_chips(_n):
 
 
 # ---------------------------------------------------------------------------
-# Main Callback
+# Shared data loading/filtering helper
 # ---------------------------------------------------------------------------
 
-@callback(
-    Output("cv-kpi-total", "children"),
-    Output("cv-kpi-consults", "children"),
-    Output("cv-kpi-followups", "children"),
-    Output("cv-kpi-lead-time", "children"),
-    Output("cv-kpi-sim-conversion", "children"),
-    Output("cv-kpi-days-to-sim", "children"),
-    Output("cv-store-volume", "data"),
-    Output("cv-store-lead", "data"),
-    Output("cv-store-conversion", "data"),
-    Output("cv-store-cumulative", "data"),
-    Output("cv-store-cancel", "data"),
-    Output("cv-chart-diagnosis", "figure"),
-    Output("cv-chart-billing", "figure"),
-    Output("cv-detail-grid", "rowData"),
-    Output("cv-detail-grid", "columnDefs"),
-    Output("cv-store-kpi-sparklines", "data"),
-    Output("cv-filter-options", "data"),
-    Input("cv-interval", "n_intervals"),
-    Input("cv-volume-agg", "value"),
-    Input("cv-volume-slice", "value"),
-    Input("cv-lead-agg", "value"),
-    Input("cv-lead-slice", "value"),
-    Input("cv-conversion-agg", "value"),
-    Input("cv-conversion-slice", "value"),
-    Input("cv-cancel-agg", "value"),
-    Input("cv-cancel-slice", "value"),
-    Input("cv-cumulative-mode", "value"),
-    Input("cv-cumulative-period-type", "value"),
-    Input("cv-cumulative-slice", "value"),
-    Input("cv-date-slider", "value"),
-    Input("cv-filter-department", "value"),
-    Input("cv-filter-physician", "value"),
-    Input("cv-filter-body-system", "value"),
-    Input("cv-filter-visit-type", "value"),
-    Input("cv-filter-classified-type", "value"),
-    Input("cv-filter-status", "value"),
-    Input("cv-inpatient-switch", "checked"),
-    Input("cv-weekend-switch", "checked"),
-    Input("cv-filter-date-preset", "value"),
-    Input("cv-diagnosis-slice", "value"),
-    Input("cv-diagnosis-mode", "value"),
-    Input("cv-diagnosis-compare", "value"),
-    Input("cv-billing-group", "value"),
-    Input("cv-billing-slice", "value"),
-    Input("cv-billing-mode", "value"),
-    Input("cv-outlier-enabled", "data"),
-    Input("cv-outlier-cap-0", "value"),
-    Input("cv-outlier-cap-1", "value"),
-    running=[
-        (Output("cv-chart-volume-loading", "visible"), True, False),
-        (Output("cv-chart-lead-time-loading", "visible"), True, False),
-        (Output("cv-chart-conversion-loading", "visible"), True, False),
-        (Output("cv-chart-cumulative-loading", "visible"), True, False),
-        (Output("cv-chart-cancel-rate-loading", "visible"), True, False),
-        (Output("cv-diagnosis-loading", "visible"), True, False),
-        (Output("cv-billing-loading", "visible"), True, False),
-    ],
-)
-def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
-                          conv_agg, conv_slice,
-                          cancel_agg, cancel_slice,
-                          cumul_mode, cumul_period_type, cumul_slice,
-                          slider_val,
-                          departments, physician, body_systems, visit_type,
-                          classified_type, status, inpatient, weekend_only, date_preset,
-                          diagnosis_slice, diagnosis_mode, diagnosis_compare,
-                          billing_group, billing_slice, billing_mode,
-                          outlier_enabled, outlier_cap_0, outlier_cap_1):
+_PRIOR_MAP = {
+    "12mo": ("vs prior 12 mo", lambda s, e: (s - (e - s) - pd.Timedelta(days=1), s - pd.Timedelta(days=1))),
+    "6mo": ("vs prior 6 mo", lambda s, e: (s - (e - s) - pd.Timedelta(days=1), s - pd.Timedelta(days=1))),
+    "3mo": ("vs prior 3 mo", lambda s, e: (s - (e - s) - pd.Timedelta(days=1), s - pd.Timedelta(days=1))),
+    "30d": ("vs prior 30 days", lambda s, e: (s - (e - s) - pd.Timedelta(days=1), s - pd.Timedelta(days=1))),
+    "ytd": ("vs prior YTD", lambda s, e: (
+        pd.Timestamp(s.year - 1, 1, 1),
+        min(pd.Timestamp(s.year - 1, e.month, min(e.day, 28)), pd.Timestamp(s.year - 1, 12, 31)),
+    )),
+    "last_year": ("vs year before", lambda s, e: (
+        pd.Timestamp(s.year - 1, 1, 1), pd.Timestamp(s.year - 1, 12, 31),
+    )),
+    "this_month": ("vs last MTD", lambda s, e: (
+        s - pd.DateOffset(months=1),
+        e - pd.DateOffset(months=1),
+    )),
+    "last_month": ("vs month before", lambda s, e: (
+        s - pd.DateOffset(months=1),
+        s - pd.Timedelta(days=1),
+    )),
+}
+
+
+def _cv_trend(curr, prior, invert=False):
+    if prior is None or prior == 0:
+        return None, None
+    pct = (curr - prior) / abs(prior) * 100
+    direction = ("down" if pct > 0 else "up") if invert else ("up" if pct > 0 else "down")
+    return f"{abs(pct):.0f}%", direction
+
+
+def _load_and_filter_cv(slider_val, departments, physician, body_systems,
+                         visit_type, classified_type, status, inpatient,
+                         weekend_only, date_preset, outlier_enabled,
+                         outlier_cap_0, outlier_cap_1):
+    """Load clinic visits data, classify, filter, and return shared context.
+
+    Returns a dict with keys: df_all, dff, dff_all_status, dff_prior, c2b,
+    start, end, date_preset, trend_label, lead_max, days_to_sim_max,
+    filter_options.  Returns None if data is empty.
+    """
     from data.loader import load_clinic_visits, load_diagnosis
 
-    # Dynamic outlier caps
     if not outlier_enabled:
         lead_max = 365
         days_to_sim_max = 365
@@ -1315,19 +1290,15 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
         lead_max = outlier_cap_0 or _LEAD_MAX
         days_to_sim_max = outlier_cap_1 or _DAYS_TO_SIM_MAX
 
-    na_kpi = kpi_card("--", "N/A")
-    empty = empty_figure()
-    empty_result = (na_kpi,) * 6 + (None, None, None, None, None, empty, empty, [], [], {}, None)
-
     try:
-        df = load_clinic_visits()
+        df = load_clinic_visits().copy()
     except Exception:
-        return empty_result
+        return None
 
     if df.empty:
-        return empty_result
+        return None
 
-    # Classify visit types using duration + notes + activity name
+    # Classify visit types
     if "ActivityName" in df.columns:
         df["VisitType"] = df.apply(_classify_visit_type, axis=1)
         df["VisitCategory"] = df["ActivityName"].map(_ACTIVITY_TO_CATEGORY).fillna("Other")
@@ -1335,7 +1306,7 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
         df["VisitType"] = "Other"
         df["VisitCategory"] = "Other"
 
-    # Load diagnosis lookup for body system mapping
+    # Diagnosis lookup
     try:
         diag_df = load_diagnosis()
     except Exception:
@@ -1345,17 +1316,15 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
     # Date range from slider
     start, end = _get_date_range(slider_val, None)
 
-    # Weekend / holiday filter on full data (before date slicing) so prior-period
-    # comparisons also respect the toggle.
+    # Weekend / holiday filter (before date slicing)
     if weekend_only and "ScheduledDateTime" in df.columns:
         holidays = _get_cv_holidays()
         is_wk = df["ScheduledDateTime"].dt.dayofweek >= 5
         is_hol = df["ScheduledDateTime"].dt.normalize().isin(holidays)
         df = df[is_wk | is_hol]
         if df.empty:
-            return empty_result
+            return None
 
-    # Keep full df for prior-period comparison
     df_all = df.copy()
 
     # Date filter
@@ -1364,68 +1333,31 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
             (df["ScheduledDateTime"] >= start)
             & (df["ScheduledDateTime"] <= end)
         ]
-
     if df.empty:
-        return empty_result
+        return None
 
-    # Compute cross-filter options BEFORE applying dimension filters
+    # Cross-filter options BEFORE dimension filters
     filter_options = _compute_cv_available_options(
         df, departments, physician, body_systems,
         visit_type, status, inpatient, c2b,
         classified_type=classified_type,
     )
 
-    # Apply all dimension filters
+    # Apply dimension filters
     dff = _apply_cv_filters(
         df, departments, physician, body_systems,
         visit_type, status, inpatient, c2b,
         classified_type=classified_type,
     )
 
-    if dff.empty:
-        return (na_kpi,) * 6 + (None, None, None, None, None, empty, empty, [], [], {}, filter_options)
-
-    # For cancel rate, apply all filters except status
+    # Cancel rate needs all-status filtered frame
     dff_all_status = _apply_cv_filters(
         df, departments, physician, body_systems,
         visit_type, "All", inpatient, c2b,
         classified_type=classified_type,
     )
 
-    sparkline_data = {}
-
-    # ------------------------------------------------------------------
-    # Prior-period comparison for trend indicators
-    # ------------------------------------------------------------------
-    _PRIOR_MAP = {
-        "12mo": ("vs prior 12 mo", lambda s, e: (s - (e - s) - pd.Timedelta(days=1), s - pd.Timedelta(days=1))),
-        "6mo": ("vs prior 6 mo", lambda s, e: (s - (e - s) - pd.Timedelta(days=1), s - pd.Timedelta(days=1))),
-        "3mo": ("vs prior 3 mo", lambda s, e: (s - (e - s) - pd.Timedelta(days=1), s - pd.Timedelta(days=1))),
-        "30d": ("vs prior 30 days", lambda s, e: (s - (e - s) - pd.Timedelta(days=1), s - pd.Timedelta(days=1))),
-        "ytd": ("vs prior YTD", lambda s, e: (
-            pd.Timestamp(s.year - 1, 1, 1),
-            min(pd.Timestamp(s.year - 1, e.month, min(e.day, 28)), pd.Timestamp(s.year - 1, 12, 31)),
-        )),
-        "last_year": ("vs year before", lambda s, e: (
-            pd.Timestamp(s.year - 1, 1, 1), pd.Timestamp(s.year - 1, 12, 31),
-        )),
-        "this_month": ("vs last MTD", lambda s, e: (
-            s - pd.DateOffset(months=1),
-            e - pd.DateOffset(months=1),
-        )),
-        "last_month": ("vs month before", lambda s, e: (
-            s - pd.DateOffset(months=1),
-            s - pd.Timedelta(days=1),
-        )),
-    }
-
-    def _trend(curr, prior, invert=False):
-        if prior is None or prior == 0:
-            return None, None
-        pct = (curr - prior) / abs(prior) * 100
-        direction = ("down" if pct > 0 else "up") if invert else ("up" if pct > 0 else "down")
-        return f"{abs(pct):.0f}%", direction
-
+    # Prior-period comparison
     trend_label = None
     dff_prior = pd.DataFrame()
     if date_preset and date_preset in _PRIOR_MAP and "ScheduledDateTime" in df_all.columns:
@@ -1441,14 +1373,93 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
             classified_type=classified_type,
         )
 
-    # ------------------------------------------------------------------
-    # KPIs with sparklines
-    # ------------------------------------------------------------------
+    return {
+        "df_all": df_all, "dff": dff, "dff_all_status": dff_all_status,
+        "dff_prior": dff_prior, "c2b": c2b,
+        "start": start, "end": end, "date_preset": date_preset,
+        "trend_label": trend_label, "lead_max": lead_max,
+        "days_to_sim_max": days_to_sim_max, "filter_options": filter_options,
+        "departments": departments,
+    }
+
+
+# Common filter inputs shared by all split callbacks
+_CV_FILTER_INPUTS = [
+    Input("cv-interval", "n_intervals"),
+    Input("cv-date-slider", "value"),
+    Input("cv-filter-department", "value"),
+    Input("cv-filter-physician", "value"),
+    Input("cv-filter-body-system", "value"),
+    Input("cv-filter-visit-type", "value"),
+    Input("cv-filter-classified-type", "value"),
+    Input("cv-filter-status", "value"),
+    Input("cv-inpatient-switch", "checked"),
+    Input("cv-weekend-switch", "checked"),
+    Input("cv-filter-date-preset", "value"),
+    Input("cv-outlier-enabled", "data"),
+    Input("cv-outlier-cap-0", "value"),
+    Input("cv-outlier-cap-1", "value"),
+]
+
+
+def _unpack_filter_args(args):
+    """Unpack the 14 common filter args into a dict for _load_and_filter_cv."""
+    (_n, slider_val, departments, physician, body_systems,
+     visit_type, classified_type, status, inpatient,
+     weekend_only, date_preset, outlier_enabled,
+     outlier_cap_0, outlier_cap_1) = args[:14]
+    return dict(
+        slider_val=slider_val, departments=departments, physician=physician,
+        body_systems=body_systems, visit_type=visit_type,
+        classified_type=classified_type, status=status, inpatient=inpatient,
+        weekend_only=weekend_only, date_preset=date_preset,
+        outlier_enabled=outlier_enabled, outlier_cap_0=outlier_cap_0,
+        outlier_cap_1=outlier_cap_1,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Callback 1: KPIs + Sparklines + Filter Options + Detail Table
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("cv-kpi-total", "children"),
+    Output("cv-kpi-consults", "children"),
+    Output("cv-kpi-followups", "children"),
+    Output("cv-kpi-lead-time", "children"),
+    Output("cv-kpi-sim-conversion", "children"),
+    Output("cv-kpi-days-to-sim", "children"),
+    Output("cv-store-kpi-sparklines", "data"),
+    Output("cv-filter-options", "data"),
+    Output("cv-detail-grid", "rowData"),
+    Output("cv-detail-grid", "columnDefs"),
+    *_CV_FILTER_INPUTS,
+)
+def _update_cv_kpis(*args):
+    ctx = _unpack_filter_args(args)
+    data = _load_and_filter_cv(**ctx)
+
+    na_kpi = kpi_card("--", "N/A")
+    empty_kpis = (na_kpi,) * 6 + ({}, None, [], [])
+    if data is None:
+        return empty_kpis
+
+    dff = data["dff"]
+    if dff.empty:
+        return (na_kpi,) * 6 + ({}, data["filter_options"], [], [])
+
+    dff_prior = data["dff_prior"]
+    trend_label = data["trend_label"]
+    lead_max = data["lead_max"]
+    days_to_sim_max = data["days_to_sim_max"]
+    c2b = data["c2b"]
+    start, end = data["start"], data["end"]
+
+    sparkline_data = {}
     total_visits = len(dff)
     consult_count = len(dff[dff["VisitType"] == "Consult"]) if "VisitType" in dff.columns else 0
     followup_count = len(dff[dff["VisitType"] == "Follow-Up"]) if "VisitType" in dff.columns else 0
 
-    # Determine sparkline granularity: daily for <=3 months, weekly otherwise
     range_months = (end.year - start.year) * 12 + (end.month - start.month) + 1
     _spark_period = "D" if range_months <= 3 else "W"
 
@@ -1481,16 +1492,16 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
                 "color": CHART_COLORWAY[1],
             }
 
-    # Compute prior-period counts for volume KPIs
+    # Prior-period trends
     _t_total = (None, None)
     _t_consult = (None, None)
     _t_followup = (None, None)
     if trend_label and not dff_prior.empty:
         prior_total = len(dff_prior)
-        _t_total = _trend(total_visits, prior_total)
+        _t_total = _cv_trend(total_visits, prior_total)
         if "VisitType" in dff_prior.columns:
-            _t_consult = _trend(consult_count, len(dff_prior[dff_prior["VisitType"] == "Consult"]))
-            _t_followup = _trend(followup_count, len(dff_prior[dff_prior["VisitType"] == "Follow-Up"]))
+            _t_consult = _cv_trend(consult_count, len(dff_prior[dff_prior["VisitType"] == "Consult"]))
+            _t_followup = _cv_trend(followup_count, len(dff_prior[dff_prior["VisitType"] == "Follow-Up"]))
 
     kpi_total = kpi_card(
         "Total Visits", f"{total_visits:,}", accent_color=PRIMARY, sparkline_id="cv-spark-total",
@@ -1505,7 +1516,7 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
         trend_text=f"{_t_followup[0]} {trend_label}" if _t_followup[0] else None, trend_direction=_t_followup[1],
     )
 
-    # Lead time (exclude >30 days — purposeful waits / delays)
+    # Lead time KPI
     lead_vals = pd.Series(dtype=float)
     if "DaysFromCreatedToAppt" in dff.columns:
         _lv = pd.to_numeric(dff["DaysFromCreatedToAppt"], errors="coerce").dropna()
@@ -1514,7 +1525,6 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
     else:
         lead_time_str = "N/A"
 
-    # Lead time sparkline
     if "DaysFromCreatedToAppt" in dff.columns and "ScheduledDateTime" in dff.columns:
         lt = dff[["ScheduledDateTime", "DaysFromCreatedToAppt"]].copy()
         lt["val"] = pd.to_numeric(lt["DaysFromCreatedToAppt"], errors="coerce")
@@ -1533,13 +1543,12 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
                 "hover_fmt": "%{x|%b %d}: %{customdata:,.1f} days<extra></extra>",
             }
 
-    # Lead time trend (lower is better)
     _t_lead = (None, None)
     if trend_label and not dff_prior.empty and "DaysFromCreatedToAppt" in dff_prior.columns:
         _plv = pd.to_numeric(dff_prior["DaysFromCreatedToAppt"], errors="coerce").dropna()
         prior_lead = _plv[(_plv >= 0) & (_plv <= lead_max)]
         if len(prior_lead) > 0 and len(lead_vals) > 0:
-            _t_lead = _trend(lead_vals.median(), prior_lead.median(), invert=True)
+            _t_lead = _cv_trend(lead_vals.median(), prior_lead.median(), invert=True)
 
     _lead_info = dmc.Tooltip(
         dmc.Group(gap=2, children=[
@@ -1554,7 +1563,7 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
         header_control=_lead_info,
     )
 
-    # Sim conversion rate — includes completed + scheduled sims within 180 days
+    # Sim conversion KPI
     consults_df = dff[dff["VisitType"] == "Consult"] if "VisitType" in dff.columns else pd.DataFrame()
     sim_rate = None
     sim_rate_str = "N/A"
@@ -1564,11 +1573,9 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
         if "DaysToSimulation" in consults_df.columns:
             days_val = pd.to_numeric(consults_df["DaysToSimulation"], errors="coerce")
             has_sim = has_sim & (days_val.fillna(999) <= 180)
-
         sim_rate = has_sim.mean() * 100
         sim_rate_str = f"{sim_rate:.1f}%"
 
-    # Sim conversion sparkline
     if "SimulationStatus" in consults_df.columns and "ScheduledDateTime" in consults_df.columns and len(consults_df) > 0:
         sc = consults_df[["ScheduledDateTime", "SimulationStatus"]].copy()
         _sc_status = sc["SimulationStatus"].str.lower().str.strip()
@@ -1591,7 +1598,6 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
                 "hover_fmt": "%{x|%b %d}: %{customdata:.1f}%<extra></extra>",
             }
 
-    # Sim conversion trend (higher is better)
     _t_sim = (None, None)
     if trend_label and not dff_prior.empty and "SimulationStatus" in dff_prior.columns:
         prior_consults = dff_prior[dff_prior["VisitType"] == "Consult"] if "VisitType" in dff_prior.columns else pd.DataFrame()
@@ -1603,7 +1609,7 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
                 p_sim = p_sim & (p_days.fillna(999) <= 180)
             prior_rate = p_sim.mean() * 100
             if sim_rate is not None:
-                _t_sim = _trend(sim_rate, prior_rate)
+                _t_sim = _cv_trend(sim_rate, prior_rate)
 
     _sim_info = dmc.Tooltip(
         DashIconify(icon="mdi:information-outline", width=16, color="#9CA3AF", style={"cursor": "help"}),
@@ -1616,7 +1622,7 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
         header_control=_sim_info,
     )
 
-    # Median days to sim (exclude >21 days — purposeful waits)
+    # Days to sim KPI
     days_sim = pd.Series(dtype=float)
     if "DaysToSimulation" in consults_df.columns and len(consults_df) > 0:
         _dsv = pd.to_numeric(consults_df["DaysToSimulation"], errors="coerce").dropna()
@@ -1625,7 +1631,6 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
     else:
         days_sim_str = "N/A"
 
-    # Days to sim sparkline
     if "DaysToSimulation" in consults_df.columns and "ScheduledDateTime" in consults_df.columns and len(consults_df) > 0:
         ds = consults_df[["ScheduledDateTime", "DaysToSimulation"]].copy()
         ds["val"] = pd.to_numeric(ds["DaysToSimulation"], errors="coerce")
@@ -1644,7 +1649,6 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
                 "hover_fmt": "%{x|%b %d}: %{customdata:,.1f} days<extra></extra>",
             }
 
-    # Days to sim trend (lower is better)
     _t_days = (None, None)
     if trend_label and not dff_prior.empty and "DaysToSimulation" in dff_prior.columns:
         prior_consults_d = dff_prior[dff_prior["VisitType"] == "Consult"] if "VisitType" in dff_prior.columns else pd.DataFrame()
@@ -1652,7 +1656,7 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
             _pdsv = pd.to_numeric(prior_consults_d["DaysToSimulation"], errors="coerce").dropna()
             p_days_sim = _pdsv[(_pdsv >= 0) & (_pdsv <= days_to_sim_max)]
             if len(p_days_sim) > 0 and days_sim_str != "N/A":
-                _t_days = _trend(days_sim.median(), p_days_sim.median(), invert=True)
+                _t_days = _cv_trend(days_sim.median(), p_days_sim.median(), invert=True)
 
     _days_sim_info = dmc.Tooltip(
         DashIconify(icon="mdi:information-outline", width=16, color="#9CA3AF", style={"cursor": "help"}),
@@ -1665,25 +1669,159 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
         header_control=_days_sim_info,
     )
 
-    # ------------------------------------------------------------------
-    # Prepare data for clientside charts
-    # ------------------------------------------------------------------
-    volume_data = _prepare_volume_data(dff, agg, volume_slice, c2b=c2b)
-    lead_data = _prepare_lead_data(dff, departments, lead_agg, lead_slice)
-    conversion_data = _prepare_conversion_data(dff, departments, conv_agg, conv_slice)
-    cumulative_data = _prepare_cumulative_data(
-        df_all, start, end, date_preset,
-        departments, physician, body_systems,
-        visit_type, status, inpatient, c2b,
-        classified_type, mode=cumul_mode or "prior",
-        period_type=cumul_period_type or "calendar",
-        slice_by=cumul_slice or "category",
+    row_data, col_defs = _build_detail_table(dff, c2b)
+
+    return (
+        kpi_total, kpi_consults, kpi_followups, kpi_lead, kpi_sim_conv, kpi_days_sim,
+        sparkline_data, data["filter_options"],
+        row_data, col_defs,
     )
 
-    # Cancel rate data (clientside-rendered)
-    cancel_data = _prepare_cancel_data(dff_all_status, cancel_agg, cancel_slice)
 
-    # Server-side charts (simpler)
+# ---------------------------------------------------------------------------
+# Callback 2: Volume Store
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("cv-store-volume", "data"),
+    *_CV_FILTER_INPUTS,
+    Input("cv-volume-agg", "value"),
+    Input("cv-volume-slice", "value"),
+    running=[(Output("cv-chart-volume-loading", "visible"), True, False)],
+)
+def _update_cv_volume(*args):
+    ctx = _unpack_filter_args(args)
+    agg, volume_slice = args[14], args[15]
+    data = _load_and_filter_cv(**ctx)
+    if data is None or data["dff"].empty:
+        return None
+    return _prepare_volume_data(data["dff"], agg, volume_slice, c2b=data["c2b"])
+
+
+# ---------------------------------------------------------------------------
+# Callback 3: Lead Time Store
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("cv-store-lead", "data"),
+    *_CV_FILTER_INPUTS,
+    Input("cv-lead-agg", "value"),
+    Input("cv-lead-slice", "value"),
+    running=[(Output("cv-chart-lead-time-loading", "visible"), True, False)],
+)
+def _update_cv_lead(*args):
+    ctx = _unpack_filter_args(args)
+    lead_agg, lead_slice = args[14], args[15]
+    data = _load_and_filter_cv(**ctx)
+    if data is None or data["dff"].empty:
+        return None
+    return _prepare_lead_data(data["dff"], data["departments"], lead_agg, lead_slice)
+
+
+# ---------------------------------------------------------------------------
+# Callback 4: Conversion Store
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("cv-store-conversion", "data"),
+    *_CV_FILTER_INPUTS,
+    Input("cv-conversion-agg", "value"),
+    Input("cv-conversion-slice", "value"),
+    running=[(Output("cv-chart-conversion-loading", "visible"), True, False)],
+)
+def _update_cv_conversion(*args):
+    ctx = _unpack_filter_args(args)
+    conv_agg, conv_slice = args[14], args[15]
+    data = _load_and_filter_cv(**ctx)
+    if data is None or data["dff"].empty:
+        return None
+    return _prepare_conversion_data(data["dff"], data["departments"], conv_agg, conv_slice)
+
+
+# ---------------------------------------------------------------------------
+# Callback 5: Cumulative Store
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("cv-store-cumulative", "data"),
+    *_CV_FILTER_INPUTS,
+    Input("cv-cumulative-mode", "value"),
+    Input("cv-cumulative-period-type", "value"),
+    Input("cv-cumulative-slice", "value"),
+    running=[(Output("cv-chart-cumulative-loading", "visible"), True, False)],
+)
+def _update_cv_cumulative(*args):
+    ctx = _unpack_filter_args(args)
+    cumul_mode, cumul_period_type, cumul_slice = args[14], args[15], args[16]
+    data = _load_and_filter_cv(**ctx)
+    if data is None:
+        return None
+    return _prepare_cumulative_data(
+        data["df_all"], data["start"], data["end"], data["date_preset"],
+        data["departments"], ctx["physician"], ctx["body_systems"],
+        ctx["visit_type"], ctx["status"], ctx["inpatient"], data["c2b"],
+        ctx["classified_type"], mode=cumul_mode or "prior",
+        period_type=cumul_period_type or "calendar",
+        slice_by=cumul_slice or "category",
+        max_prior=5,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Callback 6: Cancel Rate Store
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("cv-store-cancel", "data"),
+    *_CV_FILTER_INPUTS,
+    Input("cv-cancel-agg", "value"),
+    Input("cv-cancel-slice", "value"),
+    running=[(Output("cv-chart-cancel-rate-loading", "visible"), True, False)],
+)
+def _update_cv_cancel(*args):
+    ctx = _unpack_filter_args(args)
+    cancel_agg, cancel_slice = args[14], args[15]
+    data = _load_and_filter_cv(**ctx)
+    if data is None or data["dff_all_status"].empty:
+        return None
+    return _prepare_cancel_data(data["dff_all_status"], cancel_agg, cancel_slice)
+
+
+# ---------------------------------------------------------------------------
+# Callback 7: Diagnosis + Billing Figures
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("cv-chart-diagnosis", "figure"),
+    Output("cv-chart-billing", "figure"),
+    *_CV_FILTER_INPUTS,
+    Input("cv-diagnosis-slice", "value"),
+    Input("cv-diagnosis-mode", "value"),
+    Input("cv-diagnosis-compare", "value"),
+    Input("cv-billing-group", "value"),
+    Input("cv-billing-slice", "value"),
+    Input("cv-billing-mode", "value"),
+    running=[
+        (Output("cv-diagnosis-loading", "visible"), True, False),
+        (Output("cv-billing-loading", "visible"), True, False),
+    ],
+)
+def _update_cv_diag_billing(*args):
+    ctx = _unpack_filter_args(args)
+    (diagnosis_slice, diagnosis_mode, diagnosis_compare,
+     billing_group, billing_slice, billing_mode) = args[14:20]
+    data = _load_and_filter_cv(**ctx)
+
+    empty = empty_figure()
+    if data is None or data["dff"].empty:
+        return empty, empty
+
+    dff = data["dff"]
+    dff_prior = data["dff_prior"]
+    c2b = data["c2b"]
+    start, end = data["start"], data["end"]
+    date_preset = data["date_preset"]
+
     _diag_prior_df = None
     _diag_period_labels = None
     if diagnosis_compare == "prior" and not dff_prior.empty:
@@ -1706,17 +1844,7 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
         slice_by=billing_slice or "", mode=billing_mode or "count",
     )
 
-    # ------------------------------------------------------------------
-    # Detail table
-    # ------------------------------------------------------------------
-    row_data, col_defs = _build_detail_table(dff, c2b)
-
-    return (
-        kpi_total, kpi_consults, kpi_followups, kpi_lead, kpi_sim_conv, kpi_days_sim,
-        volume_data, lead_data, conversion_data, cumulative_data,
-        cancel_data, fig_diagnosis, fig_billing,
-        row_data, col_defs, sparkline_data, filter_options,
-    )
+    return fig_diagnosis, fig_billing
 
 
 # ---------------------------------------------------------------------------
@@ -1725,10 +1853,10 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
 # ---------------------------------------------------------------------------
 
 _SLICE_CLASS_JS = """function(val) {
-    return val ? "slice-group-active" : "slice-total-active";
+    return (val && val !== "total") ? "slice-group-active" : "slice-total-active";
 }"""
 
-for _sid in ["cv-volume-slice", "cv-lead-slice", "cv-conversion-slice", "cv-cancel-slice", "cv-diagnosis-slice", "cv-billing-slice"]:
+for _sid in ["cv-volume-slice", "cv-lead-slice", "cv-conversion-slice", "cv-cancel-slice", "cv-diagnosis-slice", "cv-billing-slice", "cv-cumulative-slice"]:
     clientside_callback(
         _SLICE_CLASS_JS,
         Output(_sid, "className"),
@@ -1754,8 +1882,8 @@ _CENSUS_WITH_STACK = """function(rawData, smoothPct, chartType, stackVal, curren
     return window.dash_clientside.census.smoothChartWithType(rawData, smoothPct, chartType, currentFig, stackVal);
 }"""
 
-_CUMULATIVE_WITH_STACK = """function(rawData, smoothPct, chartType, stackVal, currentFig) {
-    return window.dash_clientside.cumulative.renderCumulative(rawData, smoothPct, chartType, currentFig, stackVal);
+_CUMULATIVE_WITH_STACK = """function(rawData, smoothPct, chartType, stackVal, maxPrior, currentFig) {
+    return window.dash_clientside.cumulative.renderCumulative(rawData, smoothPct, chartType, currentFig, stackVal, maxPrior);
 }"""
 
 clientside_callback(
@@ -1795,6 +1923,7 @@ clientside_callback(
     Input("cv-cumulative-settings-smooth", "value"),
     Input("cv-cumulative-settings-type", "value"),
     Input("cv-cumulative-settings-stack", "value"),
+    Input("cv-cumulative-settings-prior-periods", "value"),
     State("cv-chart-cumulative", "figure"),
 )
 
@@ -2343,7 +2472,8 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
                               departments, physician, body_systems,
                               visit_type, status, inpatient, c2b,
                               classified_type, mode="prior",
-                              period_type="calendar", slice_by="category"):
+                              period_type="calendar", slice_by="category",
+                              max_prior=5):
     """Prepare cumulative visit volume data for overlay chart.
 
     mode="prior": Current period cumulative + up to 5 prior equivalent periods (gray lines).
@@ -2395,6 +2525,8 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
         sub = df.loc[mask]
         if sub.empty:
             return {}
+        if slice_by == "total":
+            return {"Total": len(sub)}
         if slice_by == "site" and "Department" in sub.columns:
             return sub.groupby("Department").size().to_dict()
         elif slice_by == "category" and "VisitCategory" in sub.columns:
@@ -2459,7 +2591,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
     windows = []
     # "All time" has no meaningful prior periods — skip
     if date_preset != "all":
-        for i in range(1, 6):
+        for i in range(1, max_prior + 1):
             if period_type == "calendar":
                 try:
                     p_start = start - pd.DateOffset(years=i)
@@ -2476,14 +2608,14 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             windows.append((_period_label(p_start, p_end), p_start, p_end))
 
     prior = []
-    for label, p_start, p_end in windows:
+    for pi, (label, p_start, p_end) in enumerate(windows):
         vals = _cumulative_for_window(dff_all, p_start, p_end)
         if vals and any(v > 0 for v in vals):
             if len(vals) < n_days:
                 vals = vals + [vals[-1] if vals else 0] * (n_days - len(vals))
             elif len(vals) > n_days:
                 vals = vals[:n_days]
-            prior.append({"label": label, "values": vals, "color": "#D1D5DB"})
+            prior.append({"label": label, "values": vals, "color": PRIOR_PERIOD_COLORS[min(pi, len(PRIOR_PERIOD_COLORS) - 1)]})
 
     current_label = _period_label(start, end)
 

@@ -1105,7 +1105,7 @@ window.dash_clientside.cumulative = {
      * @param {Object} currentFig - Current figure (to preserve visibility)
      * @returns {Object} Plotly figure
      */
-    renderCumulative: function(rawData, smoothPct, chartType, currentFig) {
+    renderCumulative: function(rawData, smoothPct, chartType, currentFig, stackVal, maxPrior) {
         if (!rawData) {
             return {data: [], layout: Object.assign({}, window.dmc_default_layout || {}, {
                 xaxis: {visible: false}, yaxis: {visible: false},
@@ -1162,6 +1162,11 @@ window.dash_clientside.cumulative = {
             var current = rawData.current || {};
             var prior = rawData.prior || [];
 
+            // Limit prior periods to slider value
+            if (maxPrior && maxPrior > 0 && prior.length > maxPrior) {
+                prior = prior.slice(0, maxPrior);
+            }
+
             if (chartType === "bar") {
                 // --- Bar: stacked bars per period, broken down by slice ---
                 // Use numeric indices as x-values to prevent Plotly from coercing
@@ -1169,6 +1174,14 @@ window.dash_clientside.cumulative = {
                 var bd = rawData.sliceBreakdown || {};
                 var periods = bd.periods || [];
                 var slices = bd.slices || [];
+                // Trim bar breakdown to maxPrior + 1 (current + N priors)
+                var maxBars = (maxPrior && maxPrior > 0) ? maxPrior + 1 : periods.length;
+                if (periods.length > maxBars) {
+                    periods = periods.slice(0, maxBars);
+                    slices = slices.map(function(s) {
+                        return Object.assign({}, s, {values: s.values.slice(0, maxBars)});
+                    });
+                }
                 var barIndices = periods.map(function(_, i) { return i; });
 
                 // Compute per-period totals and summary HTML for hover
@@ -1186,7 +1199,9 @@ window.dash_clientside.cumulative = {
                                 total += val;
                             }
                         }
-                        parts.push("<b>Total: " + total.toLocaleString() + "</b>");
+                        if (slices.length > 1) {
+                            parts.push("<b>Total: " + total.toLocaleString() + "</b>");
+                        }
                         barTotals.push(parts.join("<br>"));
                         barTotalYs.push(total);
                     }
@@ -1240,7 +1255,7 @@ window.dash_clientside.cumulative = {
                             autorange: false
                         },
                         bargap: 0.15,
-                        showlegend: slices.length > 0,
+                        showlegend: slices.length > 1,
                         legend: {
                             orientation: "h", yanchor: "bottom", y: 1.02,
                             xanchor: "left", x: 0
@@ -1263,22 +1278,24 @@ window.dash_clientside.cumulative = {
             // Collect raw values per trace for summary hover
             var lineValsByName = {};
 
-            // Prior period traces (thin gray lines) — LOESS smoothed display
+            // Prior period traces (thin lines with spectrum colors) — LOESS smoothed display
             for (var i = 0; i < prior.length; i++) {
                 var p = prior[i];
+                var priorColor = p.color || "#D1D5DB";
                 lineValsByName[p.label] = p.values;  // raw for hover
                 var displayVals = loessFrac > 0 ? loessClamped(p.values, loessFrac) : p.values;
                 var traceObj = {
                     x: dayIndices, y: displayVals, name: p.label,
                     mode: "lines",
                     connectgaps: true,
-                    line: {color: "#D1D5DB", width: 1.5},
+                    line: {color: priorColor, width: 1.5},
+                    legendrank: i + 1,
                     hoverinfo: "skip",
                     opacity: 0.7
                 };
                 if (chartType === "area") {
                     traceObj.fill = "tozeroy";
-                    traceObj.fillcolor = "rgba(209, 213, 219, 0.08)";
+                    traceObj.fillcolor = hexToRgba(priorColor, 0.08);
                 }
                 if (visibilityMap.hasOwnProperty(p.label)) {
                     traceObj.visible = visibilityMap[p.label];
@@ -1305,6 +1322,7 @@ window.dash_clientside.cumulative = {
                 mode: "lines",
                 connectgaps: true,
                 line: {color: current.color || "#7C2A83", width: 3},
+                legendrank: 0,
                 hoverinfo: "skip"
             };
             if (chartType === "area") {
@@ -1319,7 +1337,7 @@ window.dash_clientside.cumulative = {
             // Summary hover trace — current period first, then prior (oldest last)
             var allTraceEntries = [{name: current.label || "Current", color: current.color || "#7C2A83"}];
             for (var pi = 0; pi < prior.length; pi++) {
-                allTraceEntries.push({name: prior[pi].label, color: "#D1D5DB"});
+                allTraceEntries.push({name: prior[pi].label, color: prior[pi].color || "#D1D5DB"});
             }
 
             var summaryXL = [];
@@ -1357,8 +1375,33 @@ window.dash_clientside.cumulative = {
                 showlegend: false
             });
 
-            // Endpoint annotation (always uses raw cumulative value)
+            // Endpoint annotations — oldest prior first, current last (later = drawn on top)
             var annotations = [];
+            // Prior period endpoint annotations (oldest → most recent)
+            for (var ai = prior.length - 1; ai >= 0; ai--) {
+                var pVals = prior[ai].values || [];
+                var pColor = prior[ai].color || "#D1D5DB";
+                var isVisible = !visibilityMap.hasOwnProperty(prior[ai].label) || visibilityMap[prior[ai].label] === true;
+                if (!isVisible || pVals.length === 0) continue;
+                // Find last non-null value
+                var pEndVal = null, pEndX = null;
+                for (var pxi = pVals.length - 1; pxi >= 0; pxi--) {
+                    if (pVals[pxi] !== null && pVals[pxi] !== undefined) {
+                        pEndVal = pVals[pxi]; pEndX = pxi; break;
+                    }
+                }
+                if (pEndVal !== null) {
+                    annotations.push({
+                        x: pEndX, y: pEndVal,
+                        text: pEndVal.toLocaleString(),
+                        showarrow: false,
+                        xanchor: "left", yanchor: "middle",
+                        xshift: 6,
+                        font: {color: pColor, size: 11, family: "Inter, system-ui, sans-serif"}
+                    });
+                }
+            }
+            // Current period endpoint (last = on top)
             if (trimmedY.length > 0) {
                 var endVal = trimmedY[trimmedY.length - 1];
                 var endX = trimmedX[trimmedX.length - 1];
@@ -1373,9 +1416,7 @@ window.dash_clientside.cumulative = {
                         yanchor: "bottom",
                         xshift: 6,
                         yshift: 2,
-                        font: {color: current.color || "#7C2A83", size: 13, family: "Inter, system-ui, sans-serif"},
-                        bgcolor: "rgba(255,255,255,0.85)",
-                        borderpad: 3
+                        font: {color: current.color || "#7C2A83", size: 13, family: "Inter, system-ui, sans-serif"}
                     });
                 }
             }
@@ -1460,7 +1501,9 @@ window.dash_clientside.cumulative = {
                                 total += val;
                             }
                         }
-                        parts.push("<b>Total: " + total.toLocaleString() + "</b>");
+                        if (slices.length > 1) {
+                            parts.push("<b>Total: " + total.toLocaleString() + "</b>");
+                        }
                         barTotals2.push(parts.join("<br>"));
                         barTotalYs2.push(total);
                     }
@@ -1510,7 +1553,7 @@ window.dash_clientside.cumulative = {
                             autorange: false
                         },
                         bargap: 0.15,
-                        showlegend: slices.length > 0,
+                        showlegend: slices.length > 1,
                         legend: {orientation: "h", yanchor: "bottom", y: 1.02, xanchor: "left", x: 0},
                         margin: {l: 50, r: 16, t: 8, b: 20},
                         plot_bgcolor: "white", paper_bgcolor: "white",

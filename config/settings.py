@@ -75,6 +75,9 @@ CHART_COLORWAY = [
     "#FF9800", "#00BCD4", "#9C27B0", "#795548",
 ]
 
+# Spectrum for prior-period cumulative lines (most recent → oldest)
+PRIOR_PERIOD_COLORS = ["#9CA3AF", "#B3B8C0", "#C9CDD4", "#DFE2E7", "#F0F1F4"]
+
 # ---------------------------------------------------------------------------
 # Physicians & Departments
 # ---------------------------------------------------------------------------

@@ -984,7 +984,7 @@ def _build_site_assignments(df, mode="count"):
     if df.empty or "Status" not in df.columns or "Physician" not in df.columns:
         return empty_figure("No assignment data")
 
-    df = df[~df["Physician"].str.startswith("Physician,", na=False)]
+    df = df[~df["Physician"].str.endswith(" MD, ", na=False)]
     if df.empty:
         return empty_figure("No assignment data")
 
@@ -1098,9 +1098,9 @@ def _build_calendar_heatmap(df):
         "OFF": 1,
     }
     temp = df.copy()
-    # Exclude weekend call rows and placeholder "Physician, ..." entries
+    # Exclude weekend call rows and placeholder site-MD entries
     temp = temp[temp["Status"].str.upper() != "WEEKEND CALL"]
-    temp = temp[~temp["Physician"].str.startswith("Physician,", na=False)]
+    temp = temp[~temp["Physician"].str.endswith(" MD, ", na=False)]
     if temp.empty:
         return empty_figure("No schedule data")
     temp["_priority"] = temp["Status"].str.upper().map(_STATUS_PRIORITY).fillna(2)

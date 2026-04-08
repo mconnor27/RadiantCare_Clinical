@@ -13,7 +13,7 @@ from datetime import timedelta
 from config.settings import (
     DEPARTMENTS, DEPARTMENT_COLORS, PRIMARY, NEUTRAL,
     SEMANTIC_COLORS, CHART_COLORWAY,
-    CHART_PAPER_HEIGHT_SM,
+    CHART_PAPER_HEIGHT_SM, PRIOR_PERIOD_COLORS,
 )
 from components.filter_bar import department_chips
 from components.kpi_card import kpi_card
@@ -360,6 +360,7 @@ layout = dmc.Stack(
                         {"value": "bar", "label": "Bar"},
                     ],
                     show_smooth=True,
+                    show_prior_periods=True,
                     smooth_max=50,
                     smooth_default=0,
                     paper_padding="md",
@@ -385,11 +386,12 @@ layout = dmc.Stack(
                         dmc.SegmentedControl(
                             id=f"{PAGE_ID}-cumulative-slice",
                             data=[
+                                {"value": "total", "label": "Total"},
                                 {"value": "treating", "label": "Treating MD"},
                                 {"value": "performing", "label": "Completing MD"},
                                 {"value": "dept", "label": "Site"},
                             ],
-                            value="dept",
+                            value="total",
                             size="xs",
                             style={"display": "none"},
                         ),
@@ -701,67 +703,73 @@ def _populate_otv_physician_chips(_n):
 
 
 # ---------------------------------------------------------------------------
-# Main callback
+# Shared filter helper
 # ---------------------------------------------------------------------------
 
-@callback(
-    Output(f"{PAGE_ID}-kpi-total", "children"),
-    Output(f"{PAGE_ID}-kpi-lacey", "children"),
-    Output(f"{PAGE_ID}-kpi-centralia", "children"),
-    Output(f"{PAGE_ID}-kpi-aberdeen", "children"),
-    Output(f"{PAGE_ID}-kpi-avg", "children"),
-    Output(f"{PAGE_ID}-kpi-self-rate", "children"),
-    Output(f"{PAGE_ID}-store-volume", "data"),
-    Output(f"{PAGE_ID}-store-cumulative", "data"),
-    Output(f"{PAGE_ID}-chart-coverage", "figure"),
-    Output(f"{PAGE_ID}-chart-billing", "figure"),
-    Output(f"{PAGE_ID}-detail-grid", "rowData"),
-    Output(f"{PAGE_ID}-detail-grid", "columnDefs"),
-    Output(f"{PAGE_ID}-store-kpi-sparklines", "data"),
-    Input(f"{PAGE_ID}-interval", "n_intervals"),
-    Input(f"{PAGE_ID}-volume-agg", "value"),
-    Input(f"{PAGE_ID}-volume-slice", "value"),
-    Input(f"{PAGE_ID}-cumulative-mode", "value"),
-    Input(f"{PAGE_ID}-cumulative-period-type", "value"),
-    Input(f"{PAGE_ID}-cumulative-slice", "value"),
-    Input(f"{PAGE_ID}-billing-slice", "value"),
-    Input(f"{PAGE_ID}-billing-mode", "value"),
-    Input(f"{PAGE_ID}-filter-department", "value"),
-    Input(f"{PAGE_ID}-filter-treating", "value"),
-    Input(f"{PAGE_ID}-filter-performing", "value"),
-    Input(f"{PAGE_ID}-filter-diagnosis", "value"),
-    Input(f"{PAGE_ID}-date-slider", "value"),
-    Input(f"{PAGE_ID}-filter-date-preset", "value"),
-    running=[
-        (Output(f"{PAGE_ID}-chart-volume-loading", "visible"), True, False),
-        (Output(f"{PAGE_ID}-chart-cumulative-loading", "visible"), True, False),
-        (Output(f"{PAGE_ID}-coverage-loading", "visible"), True, False),
-        (Output(f"{PAGE_ID}-billing-loading", "visible"), True, False),
-    ],
-)
-def update_otvs(_n, agg, volume_slice,
-                cumul_mode, cumul_period_type, cumul_slice,
-                billing_slice, billing_mode,
-                departments, treating_md, performing_md,
-                body_sites, slider_val, date_preset):
+_PERIOD_LABELS = {
+    "30d": "30 Days", "3mo": "3 Mo", "6mo": "6 Mo", "12mo": "12 Mo",
+    "ytd": "YTD", "last_year": "Last Year", "this_month": "This Mo",
+    "last_month": "Last Mo", "all": "All Time", "custom": "Custom",
+}
+_TREND_LABELS = {
+    "30d": "vs prior 30d", "3mo": "vs prior 3 mo", "6mo": "vs prior 6 mo",
+    "12mo": "vs prior 12 mo", "ytd": "vs prior year",
+    "last_year": "vs prior year", "this_month": "vs prior month",
+    "last_month": "vs 2 months ago", "all": "", "custom": "",
+}
+
+
+def _kpi_prior_range(date_preset, last_date):
+    if date_preset == "30d":
+        return last_date - timedelta(days=59), last_date - timedelta(days=30)
+    elif date_preset == "3mo":
+        return last_date - timedelta(days=179), last_date - timedelta(days=90)
+    elif date_preset == "6mo":
+        return last_date - timedelta(days=364), last_date - timedelta(days=183)
+    elif date_preset == "12mo":
+        return last_date - timedelta(days=730), last_date - timedelta(days=366)
+    elif date_preset == "ytd":
+        try:
+            pe = pd.Timestamp(last_date.year - 1, last_date.month, last_date.day)
+        except ValueError:
+            pe = pd.Timestamp(last_date.year - 1, last_date.month, 28)
+        return pd.Timestamp(last_date.year - 1, 1, 1), pe
+    elif date_preset == "last_year":
+        return pd.Timestamp(last_date.year - 2, 1, 1), pd.Timestamp(last_date.year - 2, 12, 31)
+    elif date_preset == "this_month":
+        pm_end = pd.Timestamp(last_date.year, last_date.month, 1) - timedelta(days=1)
+        pm_start = pd.Timestamp(pm_end.year, pm_end.month, 1)
+        return pm_start, pm_end
+    elif date_preset == "last_month":
+        lm_start = pd.Timestamp(last_date.year, last_date.month, 1) - timedelta(days=1)
+        two_ago_start = pd.Timestamp(lm_start.year, lm_start.month, 1) - timedelta(days=1)
+        return pd.Timestamp(two_ago_start.year, two_ago_start.month, 1), pd.Timestamp(lm_start.year, lm_start.month, 1) - timedelta(days=1)
+    return None, None
+
+
+def _trend(curr, prior, invert=False):
+    if prior is None or prior == 0:
+        return None, None, None
+    pct = (curr - prior) / prior * 100
+    direction = ("down" if pct > 0 else "up") if invert else ("up" if pct > 0 else "down")
+    return f"{abs(pct):.0f}%", direction, prior
+
+
+def _load_and_filter_otvs(slider_val, departments, treating_md, performing_md,
+                           body_sites, date_preset):
+    """Load weekly visits data, apply filters. Returns dict or None."""
     from data.loader import load_weekly_visits, load_diagnosis
 
-    na_card = kpi_card("--", "N/A")
-    empty = empty_figure()
-    _empty_store = {"dates": [], "series": []}
-    empty_result = (na_card,) * 6 + (_empty_store, None, empty, empty, [], [], {})
-
     try:
-        df = load_weekly_visits()
+        df = load_weekly_visits().copy()
     except Exception:
-        return empty_result
-
+        return None
     if df.empty:
-        return empty_result
+        return None
 
     date_col = "AppointmentDateTime"
     if date_col not in df.columns:
-        return empty_result
+        return None
 
     # --- Dimension filters ---
     if departments and "Department" in df.columns:
@@ -788,7 +796,7 @@ def update_otvs(_n, agg, volume_slice,
         df = df[row_bs.apply(lambda cats: bool(cats & bs_set))]
 
     if df.empty:
-        return empty_result
+        return None
 
     # Date range from slider
     start, end = _get_date_range(slider_val)
@@ -799,58 +807,74 @@ def update_otvs(_n, agg, volume_slice,
     df = df[(df[date_col] >= start) & (df[date_col] <= end)]
 
     if df.empty:
-        return empty_result
+        return None
 
-    # ------------------------------------------------------------------
-    # Date-aware KPI helpers
-    # ------------------------------------------------------------------
-    PERIOD_LABELS = {
-        "30d": "30 Days", "3mo": "3 Mo", "6mo": "6 Mo", "12mo": "12 Mo",
-        "ytd": "YTD", "last_year": "Last Year", "this_month": "This Mo",
-        "last_month": "Last Mo", "all": "All Time", "custom": "Custom",
+    ps, pe = _kpi_prior_range(date_preset, end)
+
+    return {
+        "df": df, "df_all": df_all,
+        "start": start, "end": end, "date_preset": date_preset,
+        "ps": ps, "pe": pe,
     }
-    TREND_LABELS = {
-        "30d": "vs prior 30d", "3mo": "vs prior 3 mo", "6mo": "vs prior 6 mo",
-        "12mo": "vs prior 12 mo", "ytd": "vs prior year",
-        "last_year": "vs prior year", "this_month": "vs prior month",
-        "last_month": "vs 2 months ago", "all": "", "custom": "",
-    }
-    period_label = PERIOD_LABELS.get(date_preset, "YTD")
-    trend_label = TREND_LABELS.get(date_preset, "")
 
-    def _kpi_prior_range(last_date):
-        if date_preset == "30d":
-            return last_date - timedelta(days=59), last_date - timedelta(days=30)
-        elif date_preset == "3mo":
-            return last_date - timedelta(days=179), last_date - timedelta(days=90)
-        elif date_preset == "6mo":
-            return last_date - timedelta(days=364), last_date - timedelta(days=183)
-        elif date_preset == "12mo":
-            return last_date - timedelta(days=730), last_date - timedelta(days=366)
-        elif date_preset == "ytd":
-            try:
-                pe = pd.Timestamp(last_date.year - 1, last_date.month, last_date.day)
-            except ValueError:
-                pe = pd.Timestamp(last_date.year - 1, last_date.month, 28)
-            return pd.Timestamp(last_date.year - 1, 1, 1), pe
-        elif date_preset == "last_year":
-            return pd.Timestamp(last_date.year - 2, 1, 1), pd.Timestamp(last_date.year - 2, 12, 31)
-        elif date_preset == "this_month":
-            pm_end = pd.Timestamp(last_date.year, last_date.month, 1) - timedelta(days=1)
-            pm_start = pd.Timestamp(pm_end.year, pm_end.month, 1)
-            return pm_start, pm_end
-        elif date_preset == "last_month":
-            lm_start = pd.Timestamp(last_date.year, last_date.month, 1) - timedelta(days=1)
-            two_ago_start = pd.Timestamp(lm_start.year, lm_start.month, 1) - timedelta(days=1)
-            return pd.Timestamp(two_ago_start.year, two_ago_start.month, 1), pd.Timestamp(lm_start.year, lm_start.month, 1) - timedelta(days=1)
-        return None, None
 
-    def _trend(curr, prior, invert=False):
-        if prior is None or prior == 0:
-            return None, None, None
-        pct = (curr - prior) / prior * 100
-        direction = ("down" if pct > 0 else "up") if invert else ("up" if pct > 0 else "down")
-        return f"{abs(pct):.0f}%", direction, prior
+# Common filter inputs shared by all split callbacks
+_OTVS_FILTER_INPUTS = [
+    Input(f"{PAGE_ID}-interval", "n_intervals"),
+    Input(f"{PAGE_ID}-date-slider", "value"),
+    Input(f"{PAGE_ID}-filter-department", "value"),
+    Input(f"{PAGE_ID}-filter-treating", "value"),
+    Input(f"{PAGE_ID}-filter-performing", "value"),
+    Input(f"{PAGE_ID}-filter-diagnosis", "value"),
+    Input(f"{PAGE_ID}-filter-date-preset", "value"),
+]
+
+
+def _unpack_otvs_filter_args(args):
+    """Unpack the 7 common filter args into kwargs for _load_and_filter_otvs."""
+    (_n, slider_val, departments, treating_md, performing_md,
+     body_sites, date_preset) = args[:7]
+    return dict(
+        slider_val=slider_val, departments=departments,
+        treating_md=treating_md, performing_md=performing_md,
+        body_sites=body_sites, date_preset=date_preset,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Callback 1: KPIs + Sparklines + Detail Table
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output(f"{PAGE_ID}-kpi-total", "children"),
+    Output(f"{PAGE_ID}-kpi-lacey", "children"),
+    Output(f"{PAGE_ID}-kpi-centralia", "children"),
+    Output(f"{PAGE_ID}-kpi-aberdeen", "children"),
+    Output(f"{PAGE_ID}-kpi-avg", "children"),
+    Output(f"{PAGE_ID}-kpi-self-rate", "children"),
+    Output(f"{PAGE_ID}-detail-grid", "rowData"),
+    Output(f"{PAGE_ID}-detail-grid", "columnDefs"),
+    Output(f"{PAGE_ID}-store-kpi-sparklines", "data"),
+    *_OTVS_FILTER_INPUTS,
+)
+def _update_otvs_kpis(*args):
+    ctx = _unpack_otvs_filter_args(args)
+    data = _load_and_filter_otvs(**ctx)
+
+    na_card = kpi_card("--", "N/A")
+    empty_kpis = (na_card,) * 6 + ([], [], {})
+    if data is None:
+        return empty_kpis
+
+    df = data["df"]
+    df_all = data["df_all"]
+    start, end = data["start"], data["end"]
+    date_preset = data["date_preset"]
+    ps, pe = data["ps"], data["pe"]
+    date_col = "AppointmentDateTime"
+
+    period_label = _PERIOD_LABELS.get(date_preset, "YTD")
+    trend_label = _TREND_LABELS.get(date_preset, "")
 
     # Adaptive sparkline granularity
     range_months = (end.year - start.year) * 12 + (end.month - start.month) + 1
@@ -874,20 +898,6 @@ def update_otvs(_n, agg, volume_slice,
             "values": grp.tolist(),
         }
 
-    def _mean_weekly_spark(sub_df):
-        """Weekly mean for sparkline (rolling 4-week avg)."""
-        if sub_df.empty or date_col not in sub_df.columns:
-            return None
-        temp = sub_df.copy()
-        temp["_wk"] = temp[date_col].dt.to_period("W").dt.to_timestamp()
-        weekly = temp.groupby("_wk").size()
-        if len(weekly) < 3:
-            return None
-        return {
-            "labels": [d.isoformat() for d in weekly.index],
-            "values": weekly.tolist(),
-        }
-
     sparkline_data = {}
 
     # ------------------------------------------------------------------
@@ -899,7 +909,6 @@ def update_otvs(_n, agg, volume_slice,
         sparkline_data["total"] = {**total_spark, "color": PRIMARY,
                                     "hover_fmt": "%{x|%b %d}: %{customdata:,.0f}<extra></extra>"}
 
-    ps, pe = _kpi_prior_range(end)
     if ps is not None:
         prior_total = len(df_all[(df_all[date_col] >= ps) & (df_all[date_col] <= pe)])
     else:
@@ -1048,29 +1057,98 @@ def update_otvs(_n, agg, volume_slice,
         sparkline_id=f"{PAGE_ID}-spark-selfrate",
     )
 
-    # --- Data for clientside charts ---
-    volume_data = _prepare_volume_data(df, agg, slice_by=volume_slice or "")
-    cumulative_data = _prepare_cumulative_data(
-        df_all, start, end, date_preset,
-        mode=cumul_mode or "prior",
-        period_type=cumul_period_type or "calendar",
-        slice_by=cumul_slice or "dept",
-    )
-
-    # Server-side charts
-    fig_coverage = _build_coverage_chart(df)
-    fig_billing = _build_billing_mix(df, slice_by=billing_slice or "", mode=billing_mode or "count")
-
     # Detail table
     row_data, col_defs = _build_detail_table(df)
 
     return (
         kpi_total_card, kpi_lacey, kpi_centralia, kpi_aberdeen,
         kpi_avg_card, kpi_self_card,
-        volume_data, cumulative_data,
-        fig_coverage, fig_billing,
         row_data, col_defs, sparkline_data,
     )
+
+
+# ---------------------------------------------------------------------------
+# Callback 2: Volume Store
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output(f"{PAGE_ID}-store-volume", "data"),
+    *_OTVS_FILTER_INPUTS,
+    Input(f"{PAGE_ID}-volume-agg", "value"),
+    Input(f"{PAGE_ID}-volume-slice", "value"),
+    running=[(Output(f"{PAGE_ID}-chart-volume-loading", "visible"), True, False)],
+)
+def _update_otvs_volume(*args):
+    ctx = _unpack_otvs_filter_args(args)
+    agg, volume_slice = args[7], args[8]
+    data = _load_and_filter_otvs(**ctx)
+    if data is None:
+        return None
+    return _prepare_volume_data(data["df"], agg, slice_by=volume_slice or "")
+
+
+# ---------------------------------------------------------------------------
+# Callback 3: Cumulative Store
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output(f"{PAGE_ID}-store-cumulative", "data"),
+    *_OTVS_FILTER_INPUTS,
+    Input(f"{PAGE_ID}-cumulative-mode", "value"),
+    Input(f"{PAGE_ID}-cumulative-period-type", "value"),
+    Input(f"{PAGE_ID}-cumulative-slice", "value"),
+    running=[(Output(f"{PAGE_ID}-chart-cumulative-loading", "visible"), True, False)],
+)
+def _update_otvs_cumulative(*args):
+    ctx = _unpack_otvs_filter_args(args)
+    cumul_mode, cumul_period_type, cumul_slice = args[7], args[8], args[9]
+    data = _load_and_filter_otvs(**ctx)
+    if data is None:
+        return None
+    return _prepare_cumulative_data(
+        data["df_all"], data["start"], data["end"], data["date_preset"],
+        mode=cumul_mode or "prior",
+        period_type=cumul_period_type or "calendar",
+        slice_by=cumul_slice or "dept",
+        max_prior=5,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Callback 4: Coverage Chart
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output(f"{PAGE_ID}-chart-coverage", "figure"),
+    *_OTVS_FILTER_INPUTS,
+    running=[(Output(f"{PAGE_ID}-coverage-loading", "visible"), True, False)],
+)
+def _update_otvs_coverage(*args):
+    ctx = _unpack_otvs_filter_args(args)
+    data = _load_and_filter_otvs(**ctx)
+    if data is None:
+        return empty_figure()
+    return _build_coverage_chart(data["df"])
+
+
+# ---------------------------------------------------------------------------
+# Callback 5: Billing Chart
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output(f"{PAGE_ID}-chart-billing", "figure"),
+    *_OTVS_FILTER_INPUTS,
+    Input(f"{PAGE_ID}-billing-slice", "value"),
+    Input(f"{PAGE_ID}-billing-mode", "value"),
+    running=[(Output(f"{PAGE_ID}-billing-loading", "visible"), True, False)],
+)
+def _update_otvs_billing(*args):
+    ctx = _unpack_otvs_filter_args(args)
+    billing_slice, billing_mode = args[7], args[8]
+    data = _load_and_filter_otvs(**ctx)
+    if data is None:
+        return empty_figure()
+    return _build_billing_mix(data["df"], slice_by=billing_slice or "", mode=billing_mode or "count")
 
 
 # ---------------------------------------------------------------------------
@@ -1087,11 +1165,14 @@ clientside_callback(
 )
 
 clientside_callback(
-    ClientsideFunction(namespace="cumulative", function_name="renderCumulative"),
+    """function(rawData, smoothPct, chartType, maxPrior, currentFig) {
+        return window.dash_clientside.cumulative.renderCumulative(rawData, smoothPct, chartType, currentFig, null, maxPrior);
+    }""",
     Output(f"{PAGE_ID}-chart-cumulative", "figure"),
     Input(f"{PAGE_ID}-store-cumulative", "data"),
     Input(f"{PAGE_ID}-cumulative-settings-smooth", "value"),
     Input(f"{PAGE_ID}-cumulative-settings-type", "value"),
+    Input(f"{PAGE_ID}-cumulative-settings-prior-periods", "value"),
     State(f"{PAGE_ID}-chart-cumulative", "figure"),
 )
 
@@ -1117,14 +1198,15 @@ register_chart_callbacks([
 
 # Slice-by dim styling
 _SLICE_CLASS_JS = """function(val) {
-    return val ? "slice-group-active" : "slice-total-active";
+    return (val && val !== "total") ? "slice-group-active" : "slice-total-active";
 }"""
 
-clientside_callback(
-    _SLICE_CLASS_JS,
-    Output(f"{PAGE_ID}-volume-slice", "className"),
-    Input(f"{PAGE_ID}-volume-slice", "value"),
-)
+for _sid in [f"{PAGE_ID}-volume-slice", f"{PAGE_ID}-cumulative-slice"]:
+    clientside_callback(
+        _SLICE_CLASS_JS,
+        Output(_sid, "className"),
+        Input(_sid, "value"),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1299,7 +1381,7 @@ def _build_day_index_ticks(start_norm, n_days, max_ticks=12):
 
 def _prepare_cumulative_data(df_all, start, end, date_preset,
                               mode="prior", period_type="calendar",
-                              slice_by="dept"):
+                              slice_by="dept", max_prior=5):
     """Prepare cumulative volume data for overlay chart."""
     date_col = "AppointmentDateTime"
     if df_all.empty or date_col not in df_all.columns:
@@ -1332,6 +1414,8 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
         sub = dfa.loc[mask]
         if sub.empty:
             return {}
+        if sb == "total":
+            return {"Total": len(sub)}
         if sb == "dept" and "Department" in sub.columns:
             return sub.groupby("Department").size().to_dict()
         elif sb == "treating" and "TreatingPhysician" in sub.columns:
@@ -1382,7 +1466,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
 
     windows = []
     if date_preset != "all":
-        for i in range(1, 6):
+        for i in range(1, max_prior + 1):
             if period_type == "calendar":
                 try:
                     p_start = start - pd.DateOffset(years=i)
@@ -1398,14 +1482,14 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             windows.append((_period_label(p_start, p_end), p_start, p_end))
 
     prior = []
-    for label, p_start, p_end in windows:
+    for pi, (label, p_start, p_end) in enumerate(windows):
         vals = _cumulative_for_window(dff_all, p_start, p_end)
         if vals and any(v > 0 for v in vals):
             if len(vals) < n_days:
                 vals = vals + [vals[-1] if vals else 0] * (n_days - len(vals))
             elif len(vals) > n_days:
                 vals = vals[:n_days]
-            prior.append({"label": label, "values": vals, "color": "#D1D5DB"})
+            prior.append({"label": label, "values": vals, "color": PRIOR_PERIOD_COLORS[min(pi, len(PRIOR_PERIOD_COLORS) - 1)]})
 
     current_label = _period_label(start, end)
 
