@@ -9,7 +9,10 @@ import pandas as pd
 
 from dash_iconify import DashIconify
 
-from config.settings import PRIMARY, NEUTRAL, SEMANTIC_COLORS
+from config.settings import (
+    PRIMARY, NEUTRAL, SEMANTIC_COLORS,
+    DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, DEFAULT_GRID_STYLE, DEFAULT_GRID_CLASS,
+)
 from components.filter_bar import department_chips
 from utils.charts import apply_default_layout, empty_figure
 from utils.date_slider import month_idx, idx_to_date, MAX_IDX, preset_to_slider_val
@@ -582,21 +585,11 @@ def update_table(table_records, review_filter, result_filter, table_date, review
         id="cpt-detail-grid",
         rowData=table_records,
         columnDefs=_COL_DEFS,
-        defaultColDef={"sortable": True, "filter": True, "resizable": True,
-                       "suppressHeaderMenuButton": True},
+        defaultColDef=DEFAULT_COLUMN_DEFS,
         columnSize="autoSize",
-        dashGridOptions={
-            "pagination": True,
-            "paginationPageSize": 50,
-            "domLayout": "autoHeight",
-            "rowHeight": 32,
-            "headerHeight": 32,
-            "animateRows": False,
-            "suppressRowTransform": True,
-            "skipHeaderOnAutoSize": False,
-        },
-        className="ag-theme-alpine compact",
-        style={"fontSize": "13px"},
+        dashGridOptions={**DEFAULT_GRID_OPTIONS, "skipHeaderOnAutoSize": False},
+        className=DEFAULT_GRID_CLASS,
+        style=DEFAULT_GRID_STYLE,
     )
 
     return grid, review_text, info_text, filtered_sids, ok_all_label

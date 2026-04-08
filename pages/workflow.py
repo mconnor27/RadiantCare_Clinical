@@ -9,7 +9,7 @@ import pandas as pd
 import numpy as np
 from datetime import timedelta
 
-from config.settings import CHART_COLORWAY, DEFAULT_GRAPH_CONFIG, DEFAULT_LAYOUT, FONT_FAMILY, PRIMARY, PHYSICIANS
+from config.settings import CHART_COLORWAY, DEFAULT_GRAPH_CONFIG, DEFAULT_LAYOUT, FONT_FAMILY, PRIMARY
 from utils.diagnosis_categories import build_code_to_category, get_categories_for_codes
 from components.filter_bar import department_chips
 from components.chart_card import register_chart_callbacks
@@ -227,15 +227,7 @@ def _build_filter_bar(prefix, label=None):
                                 id=_id(prefix, "physician-panel"),
                                 children=[
                                     dmc.ChipGroup(
-                                        children=[
-                                            dmc.Chip(
-                                                p.split(", ")[0],
-                                                value=p,
-                                                size="xs",
-                                                variant="filled",
-                                            )
-                                            for p in PHYSICIANS
-                                        ],
+                                        children=[],
                                         id=_id(prefix, "filter-physician"),
                                         multiple=False,
                                     ),
@@ -650,6 +642,17 @@ layout = dmc.Stack(
                                         value="histogram",
                                         size="xs",
                                     ),
+                                    chart_settings_popover(
+                                        "wf-dist",
+                                        chart_types=None,
+                                        show_smooth=True,
+                                        smooth_min=0.5,
+                                        smooth_max=10,
+                                        smooth_step=0.5,
+                                        smooth_default=3,
+                                        show_grouping=False,
+                                        slider_label="Kernel Bandwidth",
+                                    ),
                                 ]),
                             ],
                         ),
@@ -707,8 +710,8 @@ layout = dmc.Stack(
                                     chart_settings_popover(
                                         "wf-trend",
                                         chart_types=[
-                                            {"value": "area", "label": "Area"},
                                             {"value": "line", "label": "Line"},
+                                            {"value": "area", "label": "Area"},
                                             {"value": "bar", "label": "Bar"},
                                         ],
                                         show_smooth=True,
@@ -802,6 +805,47 @@ layout = dmc.Stack(
         html.Div(id="wf-b-filter-options-applier", style={"display": "none"}),
     ],
 )
+
+
+# ---------------------------------------------------------------------------
+# Physician filter — dynamic from data
+# ---------------------------------------------------------------------------
+@callback(
+    Output("workflow-filter-physician", "children"),
+    Input("wf-interval", "n_intervals"),
+)
+def _populate_wf_physician_chips(_n):
+    from data.loader import load_workflow
+    try:
+        df = load_workflow()
+    except Exception:
+        return []
+    if df.empty or "TreatingPhysician" not in df.columns:
+        return []
+    from components.filter_bar import physician_options, physician_short_name
+    return [
+        dmc.Chip(physician_short_name(opt["label"]), value=opt["value"], size="xs", variant="filled")
+        for opt in physician_options(df["TreatingPhysician"])
+    ]
+
+
+@callback(
+    Output("wf-b-filter-physician", "children"),
+    Input("wf-interval", "n_intervals"),
+)
+def _populate_wfb_physician_chips(_n):
+    from data.loader import load_workflow
+    try:
+        df = load_workflow()
+    except Exception:
+        return []
+    if df.empty or "TreatingPhysician" not in df.columns:
+        return []
+    from components.filter_bar import physician_options, physician_short_name
+    return [
+        dmc.Chip(physician_short_name(opt["label"]), value=opt["value"], size="xs", variant="filled")
+        for opt in physician_options(df["TreatingPhysician"])
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -1862,6 +1906,7 @@ clientside_callback(
     Input("wf-compare-mode", "data"),
     Input("wf-agg-toggle", "value"),
     Input(_id("wf-b", "agg-toggle"), "value"),
+    Input("wf-dist-settings-smooth", "value"),
 )
 
 # Trend chart — compare-aware
@@ -2260,7 +2305,16 @@ def _build_table_data(pivot, use_business_days=False):
 # Settings toggle + PNG export (shared framework)
 # ---------------------------------------------------------------------------
 
-register_chart_callbacks([("wf-trend", "wf-chart-trend")])
+register_chart_callbacks([("wf-trend", "wf-chart-trend"), ("wf-dist", "wf-chart-dist")])
+
+# Hide bandwidth slider when in histogram mode
+clientside_callback(
+    """function(distType) {
+        return distType === "density" ? {"display": ""} : {"display": "none"};
+    }""",
+    Output("wf-dist-settings-smooth-wrap", "style"),
+    Input("wf-dist-type", "value"),
+)
 
 clientside_callback(
     """function(n) {

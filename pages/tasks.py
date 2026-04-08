@@ -9,9 +9,10 @@ import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
 from config.settings import (
-    PHYSICIANS, CHART_COLORWAY, PRIMARY,
+    CHART_COLORWAY, PRIMARY,
     SEMANTIC_COLORS, NEUTRAL,
     CHART_PAPER_HEIGHT_SM,
+    DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, DEFAULT_GRID_STYLE, DEFAULT_GRID_CLASS,
 )
 from components.chart_card import chart_card, register_chart_callbacks
 from components.kpi_card import kpi_card
@@ -125,8 +126,7 @@ def _load_known_physicians():
             return set(sched["Physician"].dropna().unique())
     except Exception:
         pass
-    # Fallback to config list
-    return set(PHYSICIANS)
+    return set()
 
 
 def _resolve_md(df, known_mds=None):
@@ -715,9 +715,9 @@ layout = dmc.Stack(
                     "Task Volume Trend",
                     settings_id="tasks-volume",
                     chart_types=[
-                        {"value": "bar", "label": "Bar"},
-                        {"value": "area", "label": "Area"},
                         {"value": "line", "label": "Line"},
+                        {"value": "area", "label": "Area"},
+                        {"value": "bar", "label": "Bar"},
                     ],
                     show_smooth=True,
                     smooth_max=12,
@@ -1223,11 +1223,12 @@ def _populate_physician_chips(_n, slider_val, task_types, diagnosis_cats, status
         tasks = tasks[is_comp]
 
     # Get unique resolved MDs in filtered data
+    from components.filter_bar import physician_short_name
     mds = sorted(tasks["ResolvedMD"].dropna().unique())
 
     return [
         dmc.Chip(
-            md.split(", ")[0],
+            physician_short_name(md),
             value=md,
             size="xs",
             variant="filled",
@@ -2080,9 +2081,11 @@ def _build_table(df, is_completed):
         id="tasks-detail-grid",
         rowData=table_df.to_dict("records"),
         columnDefs=display_cols,
-        defaultColDef={"sortable": True, "filter": True, "resizable": True},
-        dashGridOptions={"pagination": True, "paginationPageSize": 25, "domLayout": "autoHeight"},
-        className="ag-theme-alpine",
+        defaultColDef=DEFAULT_COLUMN_DEFS,
+        columnSize="autoSize",
+        dashGridOptions={**DEFAULT_GRID_OPTIONS, "paginationPageSize": 25},
+        style=DEFAULT_GRID_STYLE,
+        className=DEFAULT_GRID_CLASS,
     )
 
 

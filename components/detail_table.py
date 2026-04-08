@@ -6,10 +6,7 @@ and optional extra controls in the header row.
 
 import dash_ag_grid as dag
 import dash_mantine_components as dmc
-from config.settings import DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS
-
-
-_TABLE_HEIGHT = 600  # consistent height across all pages
+from config.settings import DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, DEFAULT_GRID_STYLE, DEFAULT_GRID_CLASS
 
 
 def detail_table(
@@ -17,7 +14,7 @@ def detail_table(
     title: str = "Details",
     export_id: str | None = None,
     extra_controls: list | None = None,
-    height: int = _TABLE_HEIGHT,
+    height: int | None = None,
 ):
     """Return a collapsible Accordion containing an AG Grid detail table.
 
@@ -31,8 +28,8 @@ def detail_table(
         ID for the Export CSV button.  If None, no export button is rendered.
     extra_controls : list or None
         Additional Dash components to place in the header row (left of export).
-    height : int
-        Grid height in pixels.  Default is the standard 600px.
+    height : int or None
+        Grid height in pixels.  If None, uses DEFAULT_GRID_STYLE.
     """
     header_children = [
         dmc.Text(title, size="sm", fw=500, c="#6B7280"),
@@ -78,12 +75,13 @@ def detail_table(
                             columnDefs=[],
                             rowData=[],
                             defaultColDef=DEFAULT_COLUMN_DEFS,
+                            columnSize="responsiveSizeToFit",
                             dashGridOptions={
                                 **DEFAULT_GRID_OPTIONS,
                                 "domLayout": "normal",
                             },
-                            style={"height": height},
-                            className="ag-theme-quartz",
+                            style={**DEFAULT_GRID_STYLE, **({"height": f"{height}px"} if height else {})},
+                            className=DEFAULT_GRID_CLASS,
                         ),
                     ),
                 ],

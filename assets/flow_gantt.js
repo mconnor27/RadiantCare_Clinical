@@ -1292,9 +1292,39 @@ window.dash_clientside.flowGantt = {
     },
 
     // ─── Distribution chart (histogram/density) driven by flow selection ──
-    renderFlowDistribution: function(flowDetails, selectedFlow, distType, useKM, flowDetailsB, compareMode, aggA, aggB) {
+    renderFlowDistribution: function(flowDetails, selectedFlow, distType, useKM, flowDetailsB, compareMode, aggA, aggB, bwSlider) {
         var font = "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
         useKM = !!useKM;  // coerce to boolean
+
+        // Client-side Gaussian KDE with configurable bandwidth
+        function clientKDE(days, bwOverride, nPoints) {
+            nPoints = nPoints || 100;
+            var n = days.length;
+            if (n < 2) return null;
+            var mean = 0; for (var i = 0; i < n; i++) mean += days[i]; mean /= n;
+            var variance = 0; for (var i = 0; i < n; i++) variance += (days[i] - mean) * (days[i] - mean); variance /= n;
+            var std = Math.sqrt(variance);
+            var sorted = days.slice().sort(function(a, b) { return a - b; });
+            var q1 = sorted[Math.floor(n * 0.25)], q3 = sorted[Math.floor(n * 0.75)];
+            var iqr = q3 - q1;
+            var bw = bwOverride > 0 ? bwOverride : (0.9 * Math.min(std, iqr / 1.34) * Math.pow(n, -0.2));
+            if (bw <= 0) bw = 1.0;
+            var xMin = Math.max(0, sorted[0] - bw * 3), xMax = sorted[n - 1] + bw * 3;
+            var x = [], step = (xMax - xMin) / (nPoints - 1);
+            for (var i = 0; i < nPoints; i++) x.push(xMin + i * step);
+            var y = [];
+            var coeff = 1 / (n * bw * Math.sqrt(2 * Math.PI));
+            for (var i = 0; i < nPoints; i++) {
+                var sum = 0;
+                for (var j = 0; j < n; j++) {
+                    var z = (x[i] - days[j]) / bw;
+                    sum += Math.exp(-0.5 * z * z);
+                }
+                y.push(sum * coeff);
+            }
+            return {x: x, y: y};
+        }
+
         // Use live toggle values (instant) over stale store aggFunc
         var statFunc = (aggA === "mean") ? "mean" : "median";
         var statLabel = statFunc === "mean" ? "Mean" : "Median";
@@ -1313,7 +1343,7 @@ window.dash_clientside.flowGantt = {
                 data: [],
                 layout: {
                     font: {family: font, size: 12},
-                    margin: {l: 48, r: 16, t: 16, b: 20},
+                    margin: {l: 48, r: 16, t: 16, b: 32},
                     plot_bgcolor: "#FFFFFF", paper_bgcolor: "#FFFFFF",
                     xaxis: {visible: false}, yaxis: {visible: false},
                     autosize: true,
@@ -1497,7 +1527,7 @@ window.dash_clientside.flowGantt = {
             ];
             var tLay = {
                 font: {family: font, size: 12},
-                margin: {l: 48, r: 16, t: 32, b: 20},
+                margin: {l: 48, r: 16, t: 32, b: 32},
                 plot_bgcolor: "#FFFFFF", paper_bgcolor: "#FFFFFF",
                 xaxis: {showgrid: false, title: tu.axisTitle, autorange: true},
                 yaxis: {gridcolor: "#F0F0F0", gridwidth: 1},
@@ -1506,10 +1536,14 @@ window.dash_clientside.flowGantt = {
                 datarevision: (useKM ? "km" : "naive") + distType + (compareMode ? "cmp" : "") + Date.now(),
             };
             if (distType === "density") {
-                var tDensityX = tu.scale === 1 ? tot.density.x : tot.density.x.map(function(v) { return v * tu.scale; });
-                var tDensityY = tu.scale === 1 ? tot.density.y : tot.density.y.map(function(v) { return v / tu.scale; });
+                var tDensity = (bwSlider && tot.days && tot.days.length > 1)
+                    ? clientKDE(tot.days, bwSlider)
+                    : tot.density;
+                var tDensityX = tu.scale === 1 ? tDensity.x : tDensity.x.map(function(v) { return v * tu.scale; });
+                var tDensityY = tu.scale === 1 ? tDensity.y : tDensity.y.map(function(v) { return v / tu.scale; });
                 var tRgba = (typeof hexToRgba === "function") ? hexToRgba(tot.color, 0.2) : tot.color;
                 tLay.yaxis = {gridcolor: "#F0F0F0", gridwidth: 1, title: "Density"};
+                tLay.datarevision += (bwSlider || 0);
                 return addBOverlay([{
                     data: [{
                         type: "scatter", mode: "lines",
@@ -1576,7 +1610,7 @@ window.dash_clientside.flowGantt = {
 
         var baseLay = {
             font: {family: font, size: 12},
-            margin: {l: 48, r: 16, t: 32, b: 20},
+            margin: {l: 48, r: 16, t: 32, b: 32},
             plot_bgcolor: "#FFFFFF", paper_bgcolor: "#FFFFFF",
             xaxis: {showgrid: false, title: u.axisTitle, autorange: true},
             yaxis: {gridcolor: "#F0F0F0", gridwidth: 1},
@@ -1586,10 +1620,14 @@ window.dash_clientside.flowGantt = {
         };
 
         if (distType === "density") {
-            var densityX = u.scale === 1 ? t.density.x : t.density.x.map(function(v) { return v * u.scale; });
-            var densityY = u.scale === 1 ? t.density.y : t.density.y.map(function(v) { return v / u.scale; });
+            var density = (bwSlider && t.days && t.days.length > 1)
+                ? clientKDE(t.days, bwSlider)
+                : t.density;
+            var densityX = u.scale === 1 ? density.x : density.x.map(function(v) { return v * u.scale; });
+            var densityY = u.scale === 1 ? density.y : density.y.map(function(v) { return v / u.scale; });
             var rgba = (typeof hexToRgba === "function") ? hexToRgba(t.color, 0.2) : t.color;
             baseLay.yaxis = {gridcolor: "#F0F0F0", gridwidth: 1, title: "Density"};
+            baseLay.datarevision += (bwSlider || 0);
             return addBOverlay([{
                 data: [{
                     type: "scatter", mode: "lines",
@@ -1649,7 +1687,7 @@ window.dash_clientside.flowGantt = {
                 data: [],
                 layout: {
                     font: {family: font, size: 12},
-                    margin: {l: 48, r: 16, t: 16, b: 20},
+                    margin: {l: 48, r: 16, t: 16, b: 32},
                     plot_bgcolor: "#FFFFFF", paper_bgcolor: "#FFFFFF",
                     xaxis: {visible: false}, yaxis: {visible: false},
                     autosize: true,
@@ -1791,7 +1829,7 @@ window.dash_clientside.flowGantt = {
 
         var baseLay = {
             font: {family: font, size: 12},
-            margin: {l: 48, r: 16, t: 32, b: 20},
+            margin: {l: 48, r: 16, t: 32, b: 32},
             plot_bgcolor: "#FFFFFF", paper_bgcolor: "#FFFFFF",
             xaxis: {showgrid: false},
             yaxis: {gridcolor: "#F0F0F0", gridwidth: 1, title: statLabel + " Days"},

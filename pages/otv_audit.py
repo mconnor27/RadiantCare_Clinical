@@ -12,6 +12,7 @@ from datetime import timedelta
 from config.settings import (
     DEPARTMENTS, DEPARTMENT_COLORS, PRIMARY, NEUTRAL,
     SEMANTIC_COLORS, CHART_COLORWAY, CHART_PAPER_HEIGHT,
+    DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, DEFAULT_GRID_STYLE, DEFAULT_GRID_CLASS,
 )
 from components.filter_bar import department_chips
 from components.kpi_card import kpi_card
@@ -1181,18 +1182,9 @@ def _build_table(df, result_filter="all", course_status="all"):
         id="otv-detail-grid",
         rowData=table_df.to_dict("records"),
         columnDefs=existing_cols,
-        defaultColDef={"sortable": True, "filter": True, "resizable": True,
-                       "suppressHeaderMenuButton": True},
-        columnSize="responsiveSizeToFit",
-        dashGridOptions={
-            "pagination": True,
-            "paginationPageSize": 50,
-            "domLayout": "autoHeight",
-            "rowHeight": 32,
-            "headerHeight": 32,
-            "animateRows": False,
-            "suppressRowTransform": True,
-        },
-        className="ag-theme-alpine compact",
-        style={"fontSize": "13px"},
+        defaultColDef=DEFAULT_COLUMN_DEFS,
+        columnSize="autoSize",
+        dashGridOptions={**DEFAULT_GRID_OPTIONS},
+        className=DEFAULT_GRID_CLASS,
+        style=DEFAULT_GRID_STYLE,
     )

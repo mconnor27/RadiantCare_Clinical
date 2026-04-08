@@ -11,7 +11,7 @@ import pandas as pd
 import numpy as np
 
 from config.settings import (
-    PHYSICIANS, DEPARTMENTS, DEPARTMENT_COLORS, CHART_COLORWAY, PRIMARY,
+    DEPARTMENTS, DEPARTMENT_COLORS, CHART_COLORWAY, PRIMARY,
     DEFAULT_LAYOUT, FONT_FAMILY, SEMANTIC_COLORS, NEUTRAL,
     DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, CHART_PAPER_HEIGHT,
 )
@@ -334,9 +334,9 @@ layout = dmc.Stack(
                     "Volume Trend",
                     settings_id=f"{PAGE_ID}-trend",
                     chart_types=[
-                        {"value": "bar", "label": "Bar"},
-                        {"value": "area", "label": "Area"},
                         {"value": "line", "label": "Line"},
+                        {"value": "area", "label": "Area"},
+                        {"value": "bar", "label": "Bar"},
                     ],
                     show_smooth=True,
                     smooth_max=12,
@@ -595,9 +595,10 @@ def _populate_physician_chips(_n, range_start, range_end, dept_filter, status_fi
         return []
     start, end = _get_date_range(slider_val, [range_start, range_end])
     dff = _filter_data(df, start, end, dept_filter, None, status_filter)
+    from components.filter_bar import physician_short_name
     mds = sorted(dff["AppointmentPhysician"].dropna().unique())
     return [
-        dmc.Chip(md.split(", ")[0], value=md, size="xs", variant="filled")
+        dmc.Chip(physician_short_name(md), value=md, size="xs", variant="filled")
         for md in mds
     ]
 

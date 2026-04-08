@@ -11,8 +11,8 @@ import numpy as np
 from datetime import datetime, timedelta
 
 from config.settings import (
-    PHYSICIANS, DEPARTMENTS, DEPARTMENT_COLORS, MACHINE_MAP, CHART_COLORWAY,
-    PRIMARY, DEFAULT_LAYOUT, FONT_FAMILY,
+    DEPARTMENTS, DEPARTMENT_COLORS, MACHINE_MAP, RETIRED_MACHINES,
+    CHART_COLORWAY, PRIMARY, DEFAULT_LAYOUT, FONT_FAMILY,
 )
 from components.kpi_card import kpi_card
 from components.chart_card import chart_card, register_chart_callbacks
@@ -105,8 +105,8 @@ layout = dmc.Stack(
                         "Treatments",
                         settings_id="ops-volume",
                         chart_types=[
-                            {"value": "area", "label": "Area"},
                             {"value": "line", "label": "Line"},
+                            {"value": "area", "label": "Area"},
                             {"value": "bar", "label": "Bar"},
                         ],
                         show_smooth=True,
@@ -1364,12 +1364,12 @@ def update_heatmap(_n, departments, machines, scope):
         dv = dv[(dv["ScheduledDate"] >= today) & (dv["ScheduledDate"] <= four_weeks)]
         sites = departments if departments else DEPARTMENTS
 
-        # Derive machines from selected departments
+        # Derive machines from selected departments (exclude retired)
         machines_to_show = []
         for s in sites:
-            machines_to_show.extend(MACHINE_MAP.get(s, []))
+            machines_to_show.extend(m for m in MACHINE_MAP.get(s, []) if m not in RETIRED_MACHINES)
         if not machines_to_show:
-            machines_to_show = MACHINES
+            machines_to_show = [m for m in MACHINES if m not in RETIRED_MACHINES]
 
         exam_suffix = "Consult" if consults_only else "Exam"
         exam_labels = [f"{site} {exam_suffix}" for site in sites]
@@ -1442,7 +1442,6 @@ def update_heatmap(_n, departments, machines, scope):
             sims_future = sims_future[~sims_future["Status"].str.contains("Cancel|Deleted", case=False, na=False)]
 
         # Build exam matrices: z_pct (for color), text (cell label), hover text
-        _md_set = set(PHYSICIANS)
         z_exam_pct = np.full((n_exams, n_dates), 100.0)
         text_exams = np.full((n_exams, n_dates), "", dtype=object)
         hover_exams = np.full((n_exams, n_dates), "", dtype=object)
@@ -1468,7 +1467,7 @@ def update_heatmap(_n, departments, machines, scope):
                 mds = []
                 if not day_open.empty and "AssignedResource" in day_open.columns:
                     for res in day_open["AssignedResource"].dropna().unique():
-                        if res in _md_set:
+                        if "," in str(res):
                             mds.append(res.split(",")[0].strip())
                 md_str = ", ".join(sorted(set(mds)))
 
@@ -1789,15 +1788,22 @@ def update_table_columns(view_by):
     location_header = "Machine" if view_by == "machine" else "Location"
 
     return [
-        {"field": "Date", "sortable": True, "filter": True, "width": 140},
-        {"field": "Location", "headerName": location_header, "sortable": True, "filter": True, "width": 160},
-        {"field": "Appointments", "sortable": True, "filter": True, "width": 160, "type": "numericColumn"},
-        {"field": "Scheduled Start", "sortable": True, "filter": True, "width": 165},
-        {"field": "Scheduled End", "sortable": True, "filter": True, "width": 160},
-        {"field": "Actual Start", "sortable": True, "filter": True, "width": 145},
-        {"field": "Actual End", "sortable": True, "filter": True, "width": 135},
-        {"field": "Duration (hrs)", "sortable": True, "filter": True, "width": 150, "type": "numericColumn"},
-        {"field": "New Starts", "sortable": True, "filter": True, "width": 130, "type": "numericColumn"},
+        {"field": "Date", "width": 110},
+        {"field": "Location", "headerName": location_header, "width": 130},
+        {"field": "Appts", "headerName": "Appts", "type": "numericColumn", "width": 80},
+        {"field": "Completed", "type": "numericColumn", "width": 100},
+        {"field": "Patients", "type": "numericColumn", "width": 90},
+        {"field": "Plans", "type": "numericColumn", "width": 80},
+        {"field": "New Starts", "type": "numericColumn", "width": 100},
+        {"field": "Sched Start", "width": 105},
+        {"field": "Sched End", "width": 95},
+        {"field": "Actual Start", "width": 105},
+        {"field": "Actual End", "width": 95},
+        {"field": "Dur (hrs)", "type": "numericColumn", "width": 90},
+        {"field": "Sched Min", "type": "numericColumn", "width": 95},
+        {"field": "Actual Min", "type": "numericColumn", "width": 95},
+        {"field": "Beam Min", "type": "numericColumn", "width": 90},
+        {"field": "Appt Min", "type": "numericColumn", "width": 85},
     ]
 
 
@@ -1940,40 +1946,59 @@ def update_table(_n, range_days, departments, machines, include_future, view_by)
             except Exception:
                 pass
 
-            # Get new starts from treatment data (only for past dates)
-            new_starts = 0
-            if not tx.empty and "ScheduledDate" in tx.columns and row["ScheduledDate"] <= today:
-                # Match department/machine name format in treatment data
-                tx_dept = dept
-                if view_by == "machine":
-                    # Treatment data uses "Lacey - MachineName" for Lacey machines
-                    if dept in ["TrueBeamNorth", "21EX"]:
-                        tx_dept = f"Lacey - {dept}"
-                    # Treatment data uses machine names directly for other sites
-                    elif dept in ["21iX_CEN", "21iX_AB"]:
-                        tx_dept = dept
-
-                tx_row = tx[(tx["ScheduledDate"] == row["ScheduledDate"]) & (tx["Department"] == tx_dept)]
-                ns_col = next((c for c in tx_row.columns if "NewStarts" in c and "Course" in c), None)
-                if ns_col and not tx_row.empty:
-                    new_starts = int(tx_row[ns_col].sum())
-
             # Format time strings, ensuring NaN/empty values show as blank
             def format_time(time_val):
                 if pd.isna(time_val) or not time_val or str(time_val).strip() == "":
                     return ""
                 return str(time_val)[:5]
 
+            # Minute columns from Daily Volume
+            sched_active = row.get("ScheduledActiveMinutes", None)
+            actual_active = row.get("ActualActiveMinutes", None)
+            beam_on = row.get("BeamOnMinutes", None)
+            appt_actual = row.get("ApptActualMinutes", None)
+
+            def fmt_min(v):
+                if pd.isna(v) or v is None:
+                    return ""
+                return int(round(v))
+
+            # Treatment data fields
+            new_starts = 0
+            completed = 0
+            unique_pts = 0
+            unique_plans = 0
+            if not tx.empty and "ScheduledDate" in tx.columns and row["ScheduledDate"] <= today:
+                tx_dept = dept
+                if view_by == "machine":
+                    if dept in ["TrueBeamNorth", "21EX"]:
+                        tx_dept = f"Lacey - {dept}"
+                tx_row = tx[(tx["ScheduledDate"] == row["ScheduledDate"]) & (tx["Department"] == tx_dept)]
+                if not tx_row.empty:
+                    completed = int(tx_row["CompletedAppointments"].sum()) if "CompletedAppointments" in tx_row.columns else 0
+                    unique_pts = int(tx_row["UniquePatients"].sum()) if "UniquePatients" in tx_row.columns else 0
+                    unique_plans = int(tx_row["UniquePlans"].sum()) if "UniquePlans" in tx_row.columns else 0
+                    ns_col = next((c for c in tx_row.columns if "NewStarts" in c and "Course" in c), None)
+                    if ns_col:
+                        new_starts = int(tx_row[ns_col].sum())
+
             rows.append({
                 "Date": date_str,
                 "Location": dept,
-                "Appointments": appts,
-                "Scheduled Start": format_time(sched_start),
-                "Scheduled End": format_time(sched_end),
+                "Appts": appts,
+                "Completed": completed or "",
+                "Patients": unique_pts or "",
+                "Plans": unique_plans or "",
+                "New Starts": new_starts,
+                "Sched Start": format_time(sched_start),
+                "Sched End": format_time(sched_end),
                 "Actual Start": format_time(actual_start),
                 "Actual End": format_time(actual_end),
-                "Duration (hrs)": duration,
-                "New Starts": new_starts,
+                "Dur (hrs)": duration,
+                "Sched Min": fmt_min(sched_active),
+                "Actual Min": fmt_min(actual_active),
+                "Beam Min": fmt_min(beam_on),
+                "Appt Min": fmt_min(appt_actual),
             })
 
         return sorted(rows, key=lambda x: x["Date"], reverse=True)

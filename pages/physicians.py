@@ -12,6 +12,7 @@ from datetime import timedelta
 from config.settings import (
     DEPARTMENTS, DEPARTMENT_COLORS, PRIMARY, NEUTRAL,
     SEMANTIC_COLORS, CHART_COLORWAY, CHART_PAPER_HEIGHT,
+    DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, DEFAULT_GRID_STYLE, DEFAULT_GRID_CLASS,
 )
 from components.chart_settings import chart_settings_popover
 from components.kpi_card import kpi_card
@@ -177,8 +178,8 @@ layout = dmc.Stack(
                                         chart_settings_popover(
                                             f"{PAGE_ID}-manpower",
                                             chart_types=[
-                                                {"value": "area", "label": "Area"},
                                                 {"value": "line", "label": "Line"},
+                                                {"value": "area", "label": "Area"},
                                                 {"value": "bar", "label": "Bar"},
                                             ],
                                             show_smooth=True,
@@ -1242,9 +1243,11 @@ def _build_schedule_table(df):
         id=f"{PAGE_ID}-detail-grid",
         rowData=table_df.to_dict("records"),
         columnDefs=display_cols,
-        defaultColDef={"sortable": True, "filter": True, "resizable": True},
-        dashGridOptions={"pagination": True, "paginationPageSize": 25, "domLayout": "autoHeight"},
-        className="ag-theme-alpine",
+        defaultColDef=DEFAULT_COLUMN_DEFS,
+        columnSize="autoSize",
+        dashGridOptions={**DEFAULT_GRID_OPTIONS, "paginationPageSize": 25},
+        style=DEFAULT_GRID_STYLE,
+        className=DEFAULT_GRID_CLASS,
     )
 
 

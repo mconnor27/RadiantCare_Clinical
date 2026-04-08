@@ -11,7 +11,7 @@ import pandas as pd
 import numpy as np
 
 from config.settings import (
-    PHYSICIANS, DEPARTMENTS, DEPARTMENT_COLORS, CHART_COLORWAY, PRIMARY,
+    DEPARTMENTS, DEPARTMENT_COLORS, CHART_COLORWAY, PRIMARY,
     DEFAULT_LAYOUT, FONT_FAMILY, SEMANTIC_COLORS, NEUTRAL,
     DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, CHART_PAPER_HEIGHT,
     MACHINE_DEPT,
@@ -112,15 +112,7 @@ def _build_tx_filter_bar():
                                 id="tx-physician-panel",
                                 children=[
                                     dmc.ChipGroup(
-                                        children=[
-                                            dmc.Chip(
-                                                p.split(", ")[0],
-                                                value=p,
-                                                size="xs",
-                                                variant="filled",
-                                            )
-                                            for p in PHYSICIANS
-                                        ],
+                                        children=[],
                                         id="tx-filter-physician",
                                         multiple=False,
                                     ),
@@ -270,8 +262,8 @@ layout = dmc.Stack(
                     "Treatment Volume by Department",
                     settings_id="tx-volume",
                     chart_types=[
-                        {"value": "area", "label": "Area"},
                         {"value": "line", "label": "Line"},
+                        {"value": "area", "label": "Area"},
                         {"value": "bar", "label": "Bar"},
                     ],
                     show_smooth=True,
@@ -288,9 +280,9 @@ layout = dmc.Stack(
                     "Technique Mix",
                     settings_id="tx-technique",
                     chart_types=[
+                        {"value": "line", "label": "Line"},
                         {"value": "area", "label": "Area"},
                         {"value": "bar", "label": "Bar"},
-                        {"value": "line", "label": "Line"},
                     ],
                     show_smooth=True,
                     smooth_max=40,
@@ -332,9 +324,9 @@ layout = dmc.Stack(
                     "Field Type Breakdown",
                     settings_id="tx-fields",
                     chart_types=[
+                        {"value": "line", "label": "Line"},
                         {"value": "area", "label": "Area"},
                         {"value": "bar", "label": "Bar"},
-                        {"value": "line", "label": "Line"},
                     ],
                     show_smooth=True,
                     smooth_max=40,
@@ -354,8 +346,8 @@ layout = dmc.Stack(
                     "New Starts Trend",
                     settings_id="tx-newstarts",
                     chart_types=[
-                        {"value": "area", "label": "Area"},
                         {"value": "line", "label": "Line"},
+                        {"value": "area", "label": "Area"},
                         {"value": "bar", "label": "Bar"},
                     ],
                     show_smooth=True,
@@ -565,6 +557,28 @@ def _register_tx_filter_callbacks():
 
 
 _register_tx_filter_callbacks()
+
+
+# ---------------------------------------------------------------------------
+# Physician filter — dynamic from data
+# ---------------------------------------------------------------------------
+@callback(
+    Output("tx-filter-physician", "children"),
+    Input("tx-interval", "n_intervals"),
+)
+def _populate_physician_chips(_n):
+    from data.loader import load_treatment_detail
+    try:
+        df = load_treatment_detail()
+    except Exception:
+        return []
+    if df.empty or "TreatingPhysician" not in df.columns:
+        return []
+    from components.filter_bar import physician_options, physician_short_name
+    return [
+        dmc.Chip(physician_short_name(opt["label"]), value=opt["value"], size="xs", variant="filled")
+        for opt in physician_options(df["TreatingPhysician"])
+    ]
 
 
 # ---------------------------------------------------------------------------

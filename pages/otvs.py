@@ -12,7 +12,7 @@ from datetime import timedelta
 
 from config.settings import (
     DEPARTMENTS, DEPARTMENT_COLORS, PRIMARY, NEUTRAL,
-    SEMANTIC_COLORS, PHYSICIANS, CHART_COLORWAY,
+    SEMANTIC_COLORS, CHART_COLORWAY,
     CHART_PAPER_HEIGHT_SM,
 )
 from components.filter_bar import department_chips
@@ -78,15 +78,7 @@ def _build_otvs_filter_bar():
                                 id=f"{PAGE_ID}-treating-panel",
                                 children=[
                                     dmc.ChipGroup(
-                                        children=[
-                                            dmc.Chip(
-                                                p.split(", ")[0],
-                                                value=p,
-                                                size="xs",
-                                                variant="filled",
-                                            )
-                                            for p in PHYSICIANS
-                                        ],
+                                        children=[],
                                         id=f"{PAGE_ID}-filter-treating",
                                         multiple=False,
                                     ),
@@ -128,15 +120,7 @@ def _build_otvs_filter_bar():
                                 id=f"{PAGE_ID}-performing-panel",
                                 children=[
                                     dmc.ChipGroup(
-                                        children=[
-                                            dmc.Chip(
-                                                p.split(", ")[0],
-                                                value=p,
-                                                size="xs",
-                                                variant="filled",
-                                            )
-                                            for p in PHYSICIANS
-                                        ],
+                                        children=[],
                                         id=f"{PAGE_ID}-filter-performing",
                                         multiple=False,
                                     ),
@@ -329,9 +313,9 @@ layout = dmc.Stack(
                     "Weekly Check Volume Trend",
                     settings_id=f"{PAGE_ID}-volume",
                     chart_types=[
-                        {"value": "bar", "label": "Bar"},
-                        {"value": "area", "label": "Area"},
                         {"value": "line", "label": "Line"},
+                        {"value": "area", "label": "Area"},
+                        {"value": "bar", "label": "Bar"},
                     ],
                     show_smooth=True,
                     smooth_max=12,
@@ -687,6 +671,33 @@ def _register_otvs_filter_callbacks():
 
 # Register filter callbacks
 _register_otvs_filter_callbacks()
+
+
+# ---------------------------------------------------------------------------
+# Physician filters — dynamic from data
+# ---------------------------------------------------------------------------
+@callback(
+    Output(f"{PAGE_ID}-filter-treating", "children"),
+    Output(f"{PAGE_ID}-filter-performing", "children"),
+    Input(f"{PAGE_ID}-interval", "n_intervals"),
+)
+def _populate_otv_physician_chips(_n):
+    from data.loader import load_weekly_visits
+    try:
+        df = load_weekly_visits()
+    except Exception:
+        return [], []
+    from components.filter_bar import physician_options, physician_short_name
+
+    def _chips(col):
+        if col not in df.columns:
+            return []
+        return [
+            dmc.Chip(physician_short_name(opt["label"]), value=opt["value"], size="xs", variant="filled")
+            for opt in physician_options(df[col])
+        ]
+
+    return _chips("TreatingPhysician"), _chips("AppointmentPhysician")
 
 
 # ---------------------------------------------------------------------------
@@ -1524,8 +1535,8 @@ def _build_coverage_chart(df):
     if coverage.empty:
         return empty_figure("No coverage data")
 
-    rows = [p for p in PHYSICIANS if p in coverage.index]
-    cols = [p for p in PHYSICIANS if p in coverage.columns]
+    rows = sorted(coverage.index.tolist())
+    cols = sorted(coverage.columns.tolist())
 
     if not rows or not cols:
         return empty_figure("No physician coverage data")

@@ -11,7 +11,7 @@ import numpy as np
 from datetime import timedelta
 
 from config.settings import (
-    DEPARTMENTS, DEPARTMENT_COLORS, PHYSICIANS, CHART_COLORWAY,
+    DEPARTMENTS, DEPARTMENT_COLORS, CHART_COLORWAY,
     CHART_PAPER_HEIGHT_SM, PRIMARY, FONT_FAMILY,
 )
 from components.filter_bar import department_chips
@@ -187,15 +187,7 @@ def _build_sim_filter_bar():
                                 id="sim-physician-panel",
                                 children=[
                                     dmc.ChipGroup(
-                                        children=[
-                                            dmc.Chip(
-                                                p.split(", ")[0],
-                                                value=p,
-                                                size="xs",
-                                                variant="filled",
-                                            )
-                                            for p in PHYSICIANS
-                                        ],
+                                        children=[],
                                         id="sim-filter-physician",
                                         multiple=False,
                                     ),
@@ -503,9 +495,9 @@ layout = dmc.Stack(
                     "Simulation Volume Trend",
                     settings_id="sim-volume",
                     chart_types=[
-                        {"value": "bar", "label": "Bar"},
-                        {"value": "area", "label": "Area"},
                         {"value": "line", "label": "Line"},
+                        {"value": "area", "label": "Area"},
+                        {"value": "bar", "label": "Bar"},
                     ],
                     show_smooth=True,
                     smooth_max=12,
@@ -701,9 +693,9 @@ layout = dmc.Stack(
                     settings_id="sim-cancel",
                     paper_height=CHART_PAPER_HEIGHT_SM,
                     chart_types=[
+                        {"value": "line", "label": "Line"},
                         {"value": "area", "label": "Area"},
                         {"value": "bar", "label": "Bar"},
-                        {"value": "line", "label": "Line"},
                     ],
                     show_smooth=True,
                     smooth_max=12,
@@ -1071,6 +1063,28 @@ def _register_sim_filter_callbacks():
 
 # Register filter callbacks
 _register_sim_filter_callbacks()
+
+
+# ---------------------------------------------------------------------------
+# Physician filter — dynamic from data
+# ---------------------------------------------------------------------------
+@callback(
+    Output("sim-filter-physician", "children"),
+    Input("sim-interval", "n_intervals"),
+)
+def _populate_sim_physician_chips(_n):
+    from data.loader import load_simulations
+    try:
+        df = load_simulations()
+    except Exception:
+        return []
+    if df.empty or "SupervisingPhysician" not in df.columns:
+        return []
+    from components.filter_bar import physician_options, physician_short_name
+    return [
+        dmc.Chip(physician_short_name(opt["label"]), value=opt["value"], size="xs", variant="filled")
+        for opt in physician_options(df["SupervisingPhysician"])
+    ]
 
 
 # ---------------------------------------------------------------------------

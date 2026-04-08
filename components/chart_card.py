@@ -15,8 +15,11 @@ def chart_card(
     title: str,
     chart_types=None,
     show_smooth=True,
+    smooth_min=0,
     smooth_max=40,
+    smooth_step=1,
     smooth_default=15,
+    slider_label="Smoothing",
     graph_height=CHART_GRAPH_HEIGHT,
     extra_controls=None,
     extra_controls_left=None,
@@ -72,9 +75,12 @@ def chart_card(
                 sid,
                 chart_types=chart_types,
                 show_smooth=show_smooth,
+                smooth_min=smooth_min,
                 smooth_max=smooth_max,
+                smooth_step=smooth_step,
                 smooth_default=smooth_default,
                 show_grouping=show_grouping,
+                slider_label=slider_label,
             )
         )
 
@@ -167,7 +173,8 @@ def register_chart_callbacks(chart_ids):
     - A string: used as both the settings prefix AND the graph ID for export.
     - A 2-tuple (settings_id, graph_id): settings prefix differs from graph ID.
     - A 3-tuple (settings_id, graph_id, store_id): also wire the Stacked/Grouped
-      toggle to the chart's dcc.Store so toggling grouping triggers a re-render.
+      toggle and smooth-hide-on-bar to the chart's settings type selector.
+    - A dict with keys: sid, gid, store_id, show_smooth (for fine-grained control).
 
     Examples:
         register_chart_callbacks(["ops-chart-volume", "ops-chart-efficiency"])
@@ -175,7 +182,15 @@ def register_chart_callbacks(chart_ids):
         register_chart_callbacks([("home-md", "home-chart-physician", "home-store-md-census")])
     """
     for entry in chart_ids:
-        if isinstance(entry, tuple) and len(entry) == 3:
+        show_smooth = True
+        show_grouping = True
+        if isinstance(entry, dict):
+            sid = entry["sid"]
+            gid = entry["gid"]
+            store_id = entry.get("store_id")
+            show_smooth = entry.get("show_smooth", True)
+            show_grouping = entry.get("show_grouping", True)
+        elif isinstance(entry, tuple) and len(entry) == 3:
             sid, gid, store_id = entry
         elif isinstance(entry, tuple):
             sid, gid = entry
@@ -203,12 +218,25 @@ def register_chart_callbacks(chart_ids):
         # The actual stacking logic is handled by passing the stack toggle
         # value directly as an Input to the chart render callback (per-page).
         if store_id:
-            clientside_callback(
-                """function(chartType) {
-                    return chartType === "line"
-                        ? {"display": "none"}
-                        : {"display": ""};
-                }""",
-                Output(f"{sid}-settings-stack-wrap", "style"),
-                Input(f"{sid}-settings-type", "value"),
-            )
+            if show_grouping:
+                clientside_callback(
+                    """function(chartType) {
+                        return chartType === "line"
+                            ? {"display": "none"}
+                            : {"display": ""};
+                    }""",
+                    Output(f"{sid}-settings-stack-wrap", "style"),
+                    Input(f"{sid}-settings-type", "value"),
+                )
+            # Smoothing slider — hide on bar charts (smoothing only applies to line/area).
+            # Only register if the smooth-wrap element exists (show_smooth=True).
+            if show_smooth:
+                clientside_callback(
+                    """function(chartType) {
+                        return chartType === "bar"
+                            ? {"display": "none"}
+                            : {"display": ""};
+                    }""",
+                    Output(f"{sid}-settings-smooth-wrap", "style"),
+                    Input(f"{sid}-settings-type", "value"),
+                )

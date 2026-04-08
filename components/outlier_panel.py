@@ -63,7 +63,7 @@ def outlier_panel(page_id, transitions, slider_max=OUTLIER_SLIDER_MAX):
     return html.Div(
         children=[
             dmc.Button(
-                "Outliers: Default",
+                "Outliers: " + " / ".join(f"{d}d" for _, d in transitions),
                 id=f"{page_id}-outlier-trigger",
                 variant="default", size="sm",
                 rightSection=DashIconify(icon="mdi:chevron-down", width=14),
@@ -155,14 +155,8 @@ def register_outlier_callbacks(page_id, n_transitions, defaults):
     clientside_callback(
         f"""function(enabled, {vals_args}) {{
             if (!enabled) return "Outliers: Off";
-            var defaults = {defaults_js};
             var vals = {vals_array};
-            var isDefault = true;
-            for (var i = 0; i < {n_transitions}; i++) {{
-                if (vals[i] !== defaults[i]) {{ isDefault = false; break; }}
-            }}
-            if (isDefault) return "Outliers: Default";
-            return "Outliers: " + vals.join("/");
+            return "Outliers: " + vals.map(function(v) {{ return v + "d"; }}).join(" / ");
         }}""",
         Output(f"{page_id}-outlier-trigger", "children"),
         Input(enabled_id, "data"),

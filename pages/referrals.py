@@ -13,9 +13,9 @@ import numpy as np
 from datetime import timedelta
 
 from config.settings import (
-    PHYSICIANS, DEPARTMENTS, DEPARTMENT_COLORS, CHART_COLORWAY, PRIMARY,
+    DEPARTMENTS, DEPARTMENT_COLORS, CHART_COLORWAY, PRIMARY,
     DEFAULT_LAYOUT, FONT_FAMILY, SEMANTIC_COLORS, NEUTRAL, CHART_PAPER_HEIGHT,
-    DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, ABMS_SPECIALTIES,
+    DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, DEFAULT_GRID_STYLE, DEFAULT_GRID_CLASS, ABMS_SPECIALTIES,
 )
 from components.filter_bar import department_chips
 from components.kpi_card import kpi_card, create_sparkline
@@ -2081,9 +2081,10 @@ def _build_detail_table(df):
                 rowData=table_df.to_dict("records"),
                 columnDefs=column_defs,
                 defaultColDef=DEFAULT_COLUMN_DEFS,
+                columnSize="autoSize",
                 dashGridOptions={**DEFAULT_GRID_OPTIONS, "paginationPageSize": 25},
-                style={"height": "500px"},
-                className="ag-theme-alpine",
+                style=DEFAULT_GRID_STYLE,
+                className=DEFAULT_GRID_CLASS,
             ),
         ],
         p="sm", radius="md", shadow="xs", withBorder=True,

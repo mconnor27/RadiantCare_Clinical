@@ -11,7 +11,7 @@ import numpy as np
 from datetime import datetime, timedelta
 
 from config.settings import (
-    PHYSICIANS, DEPARTMENTS, DEPARTMENT_COLORS, CHART_COLORWAY, PRIMARY,
+    DEPARTMENTS, DEPARTMENT_COLORS, CHART_COLORWAY, PRIMARY,
     DEFAULT_LAYOUT, FONT_FAMILY, SEMANTIC_COLORS,
 )
 from components.filter_bar import department_chips
@@ -412,7 +412,6 @@ def _build_availability_calendar(departments, consults_only=True):
             y_labels_sim.append(f"{base}<br><span style='font-size:9px;color:#6B7280'>{ss}/{st}</span>")
 
         # Pre-compute per-site exam detail for rich tooltips
-        _md_set = set(PHYSICIANS)
         all_sites = departments if departments else list(DEPARTMENTS)
 
         # Per-date, per-department open exam slots with physician names
@@ -424,7 +423,8 @@ def _build_availability_calendar(departments, consults_only=True):
                 mds = []
                 if "AssignedResource" in grp.columns:
                     for res in grp["AssignedResource"].dropna().unique():
-                        if res in _md_set:
+                        # Resources with a comma are physician names ("Last, First")
+                        if "," in str(res):
                             mds.append(res.split(",")[0].strip())
                 _exam_detail[dt][dept] = {"open": len(grp), "mds": sorted(set(mds))}
 
@@ -731,8 +731,8 @@ layout = dmc.Stack(
                         "Active Patients by Physician",
                         settings_id="home-md",
                         chart_types=[
-                            {"value": "area", "label": "Area"},
                             {"value": "line", "label": "Line"},
+                            {"value": "area", "label": "Area"},
                             {"value": "bar", "label": "Bar"},
                         ],
                         smooth_max=50, smooth_default=15,
@@ -768,8 +768,8 @@ layout = dmc.Stack(
                         "Treatments by Site",
                         settings_id="home-site",
                         chart_types=[
-                            {"value": "area", "label": "Area"},
                             {"value": "line", "label": "Line"},
+                            {"value": "area", "label": "Area"},
                             {"value": "bar", "label": "Bar"},
                         ],
                         smooth_max=50, smooth_default=15,
@@ -1271,19 +1271,16 @@ def update_physician_data(_n, departments, agg):
         if td.empty or "ScheduledDateTime" not in td.columns:
             return None
 
-        # Get physicians dynamically from data, prioritizing the 4 main ones first
+        # Get physicians dynamically from data
         if "TreatingPhysician" in td.columns:
-            all_physicians = td["TreatingPhysician"].dropna().unique().tolist()
-            # Put main physicians first (in order), then others alphabetically
-            main_first = [p for p in PHYSICIANS if p in all_physicians]
-            others = sorted([p for p in all_physicians if p not in PHYSICIANS])
-            physicians = main_first + others
-            render_physicians = others + main_first
-            # Extend colors if needed
+            from components.filter_bar import physician_options
+            opts = physician_options(td["TreatingPhysician"])
+            physicians = [o["value"] for o in opts]
+            render_physicians = list(physicians)
             colors = list(CHART_COLORWAY) * ((len(physicians) // len(CHART_COLORWAY)) + 1)
         else:
-            physicians = PHYSICIANS
-            render_physicians = PHYSICIANS
+            physicians = []
+            render_physicians = []
             colors = CHART_COLORWAY
 
         return _build_census_data(

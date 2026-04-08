@@ -96,6 +96,10 @@ MACHINE_MAP = {
 # Reverse lookup: machine name → department
 MACHINE_DEPT = {m: dept for dept, machines in MACHINE_MAP.items() for m in machines}
 
+# Retired machines — kept in MACHINE_MAP for historical data mapping,
+# but excluded from forward-looking views (heatmaps, schedules).
+RETIRED_MACHINES = {"6EX"}
+
 # ---------------------------------------------------------------------------
 # Font stack
 # ---------------------------------------------------------------------------
@@ -160,15 +164,23 @@ DEFAULT_COLUMN_DEFS = {
     "filter": True,
     "resizable": True,
     "floatingFilter": False,
+    "suppressHeaderMenuButton": True,
 }
 
 DEFAULT_GRID_OPTIONS = {
     "pagination": True,
     "paginationPageSize": 50,
-    "domLayout": "autoHeight",
+    "domLayout": "normal",
     "rowSelection": "single",
-    "animateRows": True,
+    "animateRows": False,
+    "rowHeight": 32,
+    "headerHeight": 32,
+    "suppressRowTransform": True,
 }
+
+DEFAULT_GRID_STYLE = {"fontSize": "13px", "height": "750px"}
+
+DEFAULT_GRID_CLASS = "ag-theme-alpine compact"
 
 # ---------------------------------------------------------------------------
 # Mapbox

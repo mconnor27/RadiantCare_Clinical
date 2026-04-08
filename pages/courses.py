@@ -12,9 +12,9 @@ import numpy as np
 from datetime import timedelta
 
 from config.settings import (
-    PHYSICIANS, DEPARTMENTS, DEPARTMENT_COLORS, CHART_COLORWAY, PRIMARY,
+    DEPARTMENTS, DEPARTMENT_COLORS, CHART_COLORWAY, PRIMARY,
     DEFAULT_LAYOUT, FONT_FAMILY, SEMANTIC_COLORS, NEUTRAL,
-    DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, CHART_PAPER_HEIGHT,
+    DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, DEFAULT_GRID_STYLE, DEFAULT_GRID_CLASS, CHART_PAPER_HEIGHT,
 )
 from components.filter_bar import department_chips
 from components.kpi_card import kpi_card
@@ -382,9 +382,9 @@ layout = dmc.Stack(
                     "Course Volume Trend",
                     settings_id="courses-volume",
                     chart_types=[
-                        {"value": "bar", "label": "Bar"},
-                        {"value": "area", "label": "Area"},
                         {"value": "line", "label": "Line"},
+                        {"value": "area", "label": "Area"},
+                        {"value": "bar", "label": "Bar"},
                     ],
                     show_smooth=True,
                     smooth_max=12,
@@ -760,6 +760,7 @@ clientside_callback(
 def _populate_physician_chips(_n):
     """Populate physician filter with MDs from the courses dataset."""
     from data.loader import load_courses
+    from components.filter_bar import physician_short_name
 
     try:
         df = load_courses()
@@ -773,7 +774,7 @@ def _populate_physician_chips(_n):
 
     return [
         dmc.Chip(
-            md.split(", ")[0],
+            physician_short_name(md),
             value=md,
             size="xs",
             variant="filled",
@@ -2695,8 +2696,8 @@ def update_courses(_n, agg, volume_slice,
                                                 "courses-frac-trend",
                                                 chart_types=[
                                                     {"value": "line", "label": "Line"},
-                                                    {"value": "bar", "label": "Bar"},
                                                     {"value": "area", "label": "Area"},
+                                                    {"value": "bar", "label": "Bar"},
                                                 ],
                                                 show_smooth=True,
                                                 smooth_max=12,
@@ -2756,9 +2757,9 @@ def update_courses(_n, agg, volume_slice,
             "Technique Distribution",
             settings_id="courses-technique-dist",
             chart_types=[
+                {"value": "line", "label": "Line"},
                 {"value": "area", "label": "Area"},
                 {"value": "bar", "label": "Bar"},
-                {"value": "line", "label": "Line"},
             ],
             show_smooth=True,
             smooth_max=24,
@@ -2962,8 +2963,8 @@ def update_courses(_n, agg, volume_slice,
                                         "courses-quit-trend",
                                         chart_types=[
                                             {"value": "line", "label": "Line"},
-                                            {"value": "bar", "label": "Bar"},
                                             {"value": "area", "label": "Area"},
+                                            {"value": "bar", "label": "Bar"},
                                         ],
                                         show_smooth=True,
                                         smooth_max=12,
@@ -3038,9 +3039,10 @@ def update_courses(_n, agg, volume_slice,
                     rowData=records,
                     columnDefs=column_defs,
                     defaultColDef=DEFAULT_COLUMN_DEFS,
+                    columnSize="autoSize",
                     dashGridOptions={**DEFAULT_GRID_OPTIONS},
-                    style={"height": "500px"},
-                    className="ag-theme-quartz",
+                    style=DEFAULT_GRID_STYLE,
+                    className=DEFAULT_GRID_CLASS,
                 ),
             ],
             p="md", radius="md", shadow="xs", withBorder=True,

@@ -1131,8 +1131,28 @@ window.dash_clientside.cumulative = {
         var traces = [];
         var yTitle = rawData.yTitle || "Cumulative Visits";
 
-        // Smoothing window
-        var windowSize = Math.max(1, Math.floor(smoothPct) + 1);
+        // LOESS smoothing for cumulative charts: pin endpoints to raw values,
+        // ensure no value drops below 0.
+        var loessFrac = smoothPct > 0 ? Math.min(smoothPct, 1.0) : 0;
+
+        function loessClamped(raw, frac) {
+            if (frac <= 0 || !raw || raw.length < 4) return raw;
+            var smoothed = loess(raw, frac);
+            var first = -1, last = -1;
+            for (var i = 0; i < raw.length; i++) {
+                if (raw[i] !== null && raw[i] !== undefined) {
+                    if (first < 0) first = i;
+                    last = i;
+                }
+            }
+            if (first < 0) return smoothed;
+            smoothed[first] = raw[first];
+            smoothed[last] = raw[last];
+            for (var j = 0; j < smoothed.length; j++) {
+                if (smoothed[j] < 0) smoothed[j] = 0;
+            }
+            return smoothed;
+        }
 
         if (rawData.mode === "prior") {
             // --- Prior Periods Mode ---
@@ -1243,13 +1263,13 @@ window.dash_clientside.cumulative = {
             // Collect raw values per trace for summary hover
             var lineValsByName = {};
 
-            // Prior period traces (thin gray lines)
+            // Prior period traces (thin gray lines) — LOESS smoothed display
             for (var i = 0; i < prior.length; i++) {
                 var p = prior[i];
-                var pVals = smoothPct > 0 ? rollingAvg(p.values, windowSize) : p.values;
-                lineValsByName[p.label] = pVals;
+                lineValsByName[p.label] = p.values;  // raw for hover
+                var displayVals = loessFrac > 0 ? loessClamped(p.values, loessFrac) : p.values;
                 var traceObj = {
-                    x: dayIndices, y: pVals, name: p.label,
+                    x: dayIndices, y: displayVals, name: p.label,
                     mode: "lines",
                     connectgaps: true,
                     line: {color: "#D1D5DB", width: 1.5},
@@ -1266,7 +1286,7 @@ window.dash_clientside.cumulative = {
                 traces.push(traceObj);
             }
 
-            // Current period trace (bold, on top)
+            // Current period trace (bold, on top) — LOESS smoothed display
             var currentVals = current.values || [];
             var trimmedX = [];
             var trimmedY = [];
@@ -1276,11 +1296,11 @@ window.dash_clientside.cumulative = {
                     trimmedY.push(currentVals[k]);
                 }
             }
-            var smoothedY = smoothPct > 0 ? rollingAvg(trimmedY, windowSize) : trimmedY;
-            lineValsByName[current.label || "Current"] = smoothedY;
+            lineValsByName[current.label || "Current"] = trimmedY;  // raw for hover
+            var displayCurrentY = loessFrac > 0 ? loessClamped(trimmedY, loessFrac) : trimmedY;
 
             var currentTrace = {
-                x: trimmedX, y: smoothedY,
+                x: trimmedX, y: displayCurrentY,
                 name: current.label || "Current",
                 mode: "lines",
                 connectgaps: true,
@@ -1337,10 +1357,10 @@ window.dash_clientside.cumulative = {
                 showlegend: false
             });
 
-            // Endpoint annotation
+            // Endpoint annotation (always uses raw cumulative value)
             var annotations = [];
-            if (smoothedY.length > 0) {
-                var endVal = smoothedY[smoothedY.length - 1];
+            if (trimmedY.length > 0) {
+                var endVal = trimmedY[trimmedY.length - 1];
                 var endX = trimmedX[trimmedX.length - 1];
                 if (endVal !== null && endVal !== undefined) {
                     var fmtVal = endVal.toLocaleString();
@@ -1505,19 +1525,18 @@ window.dash_clientside.cumulative = {
                 };
             }
 
-            // Line/Area: build traces with summary hover (not delegated, to get unified tooltip)
+            // Line/Area: build traces with summary hover — LOESS smoothed display
             var sliceDates = rawData.dates || [];
-            var windowSize2 = Math.max(1, Math.floor(smoothPct) + 1);
             var monthNames2 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
             var sliceValsByName = {};
-
             for (var si = 0; si < sliceSeries.length; si++) {
                 var ss = sliceSeries[si];
-                var sVals = (smoothPct > 0) ? rollingAvg(ss.values, windowSize2) : ss.values;
-                sliceValsByName[ss.name] = sVals;
+                sliceValsByName[ss.name] = ss.values;  // raw for hover
+                var displaySliceVals = loessFrac > 0 ? loessClamped(ss.values, loessFrac) : ss.values;
                 var sTrace = {
-                    x: sliceDates, y: sVals, name: ss.name,
-                    mode: "lines", connectgaps: true, line: {color: ss.color, width: 2},
+                    x: sliceDates, y: displaySliceVals, name: ss.name,
+                    mode: "lines", connectgaps: true,
+                    line: {color: ss.color, width: 2},
                     hoverinfo: "skip"
                 };
                 if (chartType === "area") {

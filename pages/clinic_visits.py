@@ -10,7 +10,7 @@ import pandas as pd
 import numpy as np
 
 from config.settings import (
-    DEPARTMENTS, DEPARTMENT_COLORS, PHYSICIANS, CHART_COLORWAY,
+    DEPARTMENTS, DEPARTMENT_COLORS, CHART_COLORWAY,
     PRIMARY, DEFAULT_LAYOUT, FONT_FAMILY, DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS,
     CHART_PAPER_HEIGHT_SM,
 )
@@ -135,9 +135,11 @@ def _derive_cv_holidays():
     if sched.empty or "Date" not in sched.columns:
         return set()
 
-    core = set(PHYSICIANS)
-    sched = sched[sched["Physician"].isin(core)].copy()
     sched["_status_upper"] = sched["Status"].str.upper().str.strip()
+
+    core = set(sched["Physician"].dropna().unique())
+    if len(core) < 2:
+        return set()
 
     holidays = set()
     for date, grp in sched.groupby(sched["Date"].dt.normalize()):
@@ -158,6 +160,24 @@ def _get_cv_holidays():
     if _cv_holidays_cache is None:
         _cv_holidays_cache = _derive_cv_holidays()
     return _cv_holidays_cache
+
+
+def _get_cv_export_date():
+    """Get the date suffix from the most recent Clinic Visits CSV file."""
+    from config.settings import DATA_INCREMENTAL
+    from pathlib import Path
+    folder = DATA_INCREMENTAL / "ClinicVisits"
+    dates = []
+    for f in folder.glob("Clinic Visits_*.csv"):
+        suffix = f.stem[len("Clinic Visits") + 1:]
+        try:
+            dates.append(int(suffix))
+        except ValueError:
+            continue
+    if not dates:
+        return None
+    latest = str(max(dates))
+    return pd.Timestamp(f"{latest[:4]}-{latest[4:6]}-{latest[6:8]}")
 
 
 # ---------------------------------------------------------------------------
@@ -199,15 +219,7 @@ def _build_cv_filter_bar():
                                 id="cv-physician-panel",
                                 children=[
                                     dmc.ChipGroup(
-                                        children=[
-                                            dmc.Chip(
-                                                p.split(", ")[0],
-                                                value=p,
-                                                size="xs",
-                                                variant="filled",
-                                            )
-                                            for p in PHYSICIANS
-                                        ],
+                                        children=[],
                                         id="cv-filter-physician",
                                         multiple=False,
                                     ),
@@ -267,31 +279,80 @@ def _build_cv_filter_bar():
                         style={"position": "relative", "display": "inline-block"},
                     ),
                     # Visit Category (from ActivityName mapping)
-                    dmc.Group(gap=4, align="center", children=[
-                        dmc.Text("Category", size="xs", c="#6B7280", fw=500),
-                        dmc.SegmentedControl(
-                            id="cv-filter-visit-type",
-                            data=[{"value": v, "label": v} for v in VISIT_CATEGORIES],
-                            value="All",
-                            size="xs",
-                        ),
-                    ]),
+                    html.Div(
+                        children=[
+                            html.Div(
+                                children=[
+                                    dmc.Button(
+                                        "Category: All",
+                                        id="cv-visit-type-trigger",
+                                        variant="default",
+                                        size="sm",
+                                        rightSection=DashIconify(icon="mdi:chevron-down", width=14),
+                                    ),
+                                ],
+                                style={"position": "relative", "display": "inline-block"},
+                            ),
+                            dmc.Paper(
+                                dmc.ChipGroup(
+                                    children=[
+                                        dmc.Chip(v, value=v, size="xs", variant="filled")
+                                        for v in VISIT_CATEGORIES
+                                    ],
+                                    id="cv-filter-visit-type",
+                                    multiple=False,
+                                    value="All",
+                                ),
+                                id="cv-visit-type-panel",
+                                p="xs",
+                                shadow="md",
+                                withBorder=True,
+                                radius="md",
+                                className="wf-chip-dropdown",
+                                style={"display": "none"},
+                            ),
+                        ],
+                        style={"position": "relative", "display": "inline-block"},
+                    ),
                     # Classified Type (duration/notes reclassification: consult vs follow-up)
-                    dmc.Group(gap=4, align="center", children=[
-                        dmc.Text("Type", size="xs", c="#6B7280", fw=500),
-                        dmc.SegmentedControl(
-                            id="cv-filter-classified-type",
-                            data=[
-                                {"value": "All", "label": "All"},
-                                {"value": "Consult", "label": "Consult"},
-                                {"value": "Follow-Up", "label": "Follow-Up"},
-                            ],
-                            value="All",
-                            size="xs",
-                        ),
-                    ]),
-                    # Hidden status store (always Completed)
-                    dcc.Store(id="cv-filter-status", data="Completed"),
+                    html.Div(
+                        children=[
+                            html.Div(
+                                children=[
+                                    dmc.Button(
+                                        "Type: All",
+                                        id="cv-classified-type-trigger",
+                                        variant="default",
+                                        size="sm",
+                                        rightSection=DashIconify(icon="mdi:chevron-down", width=14),
+                                    ),
+                                ],
+                                style={"position": "relative", "display": "inline-block"},
+                            ),
+                            dmc.Paper(
+                                dmc.ChipGroup(
+                                    children=[
+                                        dmc.Chip("All", value="All", size="xs", variant="filled"),
+                                        dmc.Chip("Consult", value="Consult", size="xs", variant="filled"),
+                                        dmc.Chip("Follow-Up", value="Follow-Up", size="xs", variant="filled"),
+                                    ],
+                                    id="cv-filter-classified-type",
+                                    multiple=False,
+                                    value="All",
+                                ),
+                                id="cv-classified-type-panel",
+                                p="xs",
+                                shadow="md",
+                                withBorder=True,
+                                radius="md",
+                                className="wf-chip-dropdown",
+                                style={"display": "none"},
+                            ),
+                        ],
+                        style={"position": "relative", "display": "inline-block"},
+                    ),
+                    # Hidden status store — exclude cancelled/deleted/future-open
+                    dcc.Store(id="cv-filter-status", data="Attended"),
                     # Inpatient
                     dmc.Switch(
                         id="cv-inpatient-switch",
@@ -370,7 +431,10 @@ def _build_cv_filter_bar():
                             number_of_months_shown=2,
                             minimum_nights=0,
                             start_date=idx_to_date(preset_to_slider_val(_DEFAULT_DATE_PRESET, MAX_IDX)[0]).strftime("%Y-%m-%d"),
-                            end_date=idx_to_date(preset_to_slider_val(_DEFAULT_DATE_PRESET, MAX_IDX)[1], end_of_month=True).strftime("%Y-%m-%d"),
+                            end_date=min(
+                                idx_to_date(preset_to_slider_val(_DEFAULT_DATE_PRESET, MAX_IDX)[1], end_of_month=True),
+                                pd.Timestamp.now().normalize(),
+                            ).strftime("%Y-%m-%d"),
                             className="wf-date-picker-range",
                         ),
                         px="xs",
@@ -445,8 +509,8 @@ layout = dmc.Stack(
                     settings_id="cv-volume",
                     chart_types=[
                         {"value": "bar", "label": "Bar"},
-                        {"value": "area", "label": "Area"},
                         {"value": "line", "label": "Line"},
+                        {"value": "area", "label": "Area"},
                     ],
                     show_smooth=True,
                     smooth_max=12,
@@ -493,8 +557,11 @@ layout = dmc.Stack(
                         {"value": "bar", "label": "Bar"},
                     ],
                     show_smooth=True,
-                    smooth_max=50,
-                    smooth_default=0,
+                    smooth_min=0,
+                    smooth_max=1,
+                    smooth_step=0.05,
+                    smooth_default=0.15,
+                    slider_label="Smoothing",
                     paper_padding="md",
                     extra_controls=[
                         dmc.SegmentedControl(
@@ -544,12 +611,13 @@ layout = dmc.Stack(
                     settings_id="cv-lead",
                     chart_types=[
                         {"value": "line", "label": "Line"},
-                        {"value": "bar", "label": "Bar"},
                         {"value": "area", "label": "Area"},
+                        {"value": "bar", "label": "Bar"},
                     ],
                     show_smooth=True,
                     smooth_max=6,
                     smooth_default=1,
+                    show_grouping=False,
                     paper_padding="md",
                     extra_controls_left=[
                         dmc.SegmentedControl(
@@ -586,13 +654,14 @@ layout = dmc.Stack(
                     "Consult \u2192 Sim Conversion Rate",
                     settings_id="cv-conversion",
                     chart_types=[
-                        {"value": "area", "label": "Area"},
                         {"value": "line", "label": "Line"},
+                        {"value": "area", "label": "Area"},
                         {"value": "bar", "label": "Bar"},
                     ],
                     show_smooth=True,
                     smooth_max=6,
                     smooth_default=1,
+                    show_grouping=False,
                     paper_padding="md",
                     extra_controls_left=[
                         dmc.SegmentedControl(
@@ -634,13 +703,14 @@ layout = dmc.Stack(
                     settings_id="cv-cancel",
                     paper_height=CHART_PAPER_HEIGHT_SM,
                     chart_types=[
+                        {"value": "line", "label": "Line"},
                         {"value": "area", "label": "Area"},
                         {"value": "bar", "label": "Bar"},
-                        {"value": "line", "label": "Line"},
                     ],
                     show_smooth=True,
                     smooth_max=12,
                     smooth_default=1,
+                    show_grouping=False,
                     extra_controls_left=[
                         dmc.SegmentedControl(
                             id="cv-cancel-slice",
@@ -812,9 +882,12 @@ layout = dmc.Stack(
         # Stores for clientside rendering
         dcc.Store(id="cv-store-volume"),
         dcc.Store(id="cv-store-lead"),
+        dcc.Store(id="cv-lead-settings-stack", data="stacked"),
         dcc.Store(id="cv-store-conversion"),
+        dcc.Store(id="cv-conversion-settings-stack", data="stacked"),
         dcc.Store(id="cv-store-cumulative"),
         dcc.Store(id="cv-store-cancel"),
+        dcc.Store(id="cv-cancel-settings-stack", data="stacked"),
         dcc.Store(id="cv-store-kpi-sparklines"),
         dcc.Store(id="cv-filter-options"),
         html.Div(id="cv-filter-options-applier", style={"display": "none"}),
@@ -958,7 +1031,19 @@ def _apply_cv_filters(df, departments, physician, body_systems, visit_type,
     if skip != "classified_type" and classified_type and classified_type != "All" and "VisitType" in d.columns:
         d = d[d["VisitType"] == classified_type]
     if skip != "status" and status and status != "All" and "Status" in d.columns:
-        d = d[d["Status"].str.contains(status, case=False, na=False)]
+        if status == "Attended":
+            # Exclude cancelled, no-shows, deleted, and future open
+            _EXCLUDE_STATUSES = {"Cancelled", "Cancelled - Patient No-Show", "Deleted"}
+            d = d[~d["Status"].isin(_EXCLUDE_STATUSES)]
+            export_date = _get_cv_export_date()
+            if export_date is not None:
+                future_open = (
+                    (d["Status"] == "Open")
+                    & (d["ScheduledDateTime"].dt.normalize() >= export_date)
+                )
+                d = d[~future_open]
+        else:
+            d = d[d["Status"].str.contains(status, case=False, na=False)]
     if skip != "inpatient" and inpatient and "InPatientFlag" in d.columns:
         d = d[d["InPatientFlag"].str.upper() == "YES"]
     return d
@@ -1123,6 +1208,28 @@ def _register_cv_filter_callbacks():
 
 # Register filter callbacks
 _register_cv_filter_callbacks()
+
+
+# ---------------------------------------------------------------------------
+# Physician filter — dynamic from data
+# ---------------------------------------------------------------------------
+@callback(
+    Output("cv-filter-physician", "children"),
+    Input("cv-interval", "n_intervals"),
+)
+def _populate_cv_physician_chips(_n):
+    from data.loader import load_clinic_visits
+    try:
+        df = load_clinic_visits()
+    except Exception:
+        return []
+    if df.empty or "AppointmentPhysician" not in df.columns:
+        return []
+    from components.filter_bar import physician_options, physician_short_name
+    return [
+        dmc.Chip(physician_short_name(opt["label"]), value=opt["value"], size="xs", variant="filled")
+        for opt in physician_options(df["AppointmentPhysician"])
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -1602,7 +1709,7 @@ def update_clinic_visits(_n, agg, volume_slice, lead_agg, lead_slice,
     # ------------------------------------------------------------------
     # Detail table
     # ------------------------------------------------------------------
-    row_data, col_defs = _build_detail_table(dff)
+    row_data, col_defs = _build_detail_table(dff, c2b)
 
     return (
         kpi_total, kpi_consults, kpi_followups, kpi_lead, kpi_sim_conv, kpi_days_sim,
@@ -1643,48 +1750,61 @@ clientside_callback(
 # Clientside callbacks for charts
 # ---------------------------------------------------------------------------
 
+_CENSUS_WITH_STACK = """function(rawData, smoothPct, chartType, stackVal, currentFig) {
+    return window.dash_clientside.census.smoothChartWithType(rawData, smoothPct, chartType, currentFig, stackVal);
+}"""
+
+_CUMULATIVE_WITH_STACK = """function(rawData, smoothPct, chartType, stackVal, currentFig) {
+    return window.dash_clientside.cumulative.renderCumulative(rawData, smoothPct, chartType, currentFig, stackVal);
+}"""
+
 clientside_callback(
-    ClientsideFunction(namespace="census", function_name="smoothChartWithType"),
+    _CENSUS_WITH_STACK,
     Output("cv-chart-volume", "figure"),
     Input("cv-store-volume", "data"),
     Input("cv-volume-settings-smooth", "value"),
     Input("cv-volume-settings-type", "value"),
+    Input("cv-volume-settings-stack", "value"),
     State("cv-chart-volume", "figure"),
 )
 
 clientside_callback(
-    ClientsideFunction(namespace="census", function_name="smoothChartWithType"),
+    _CENSUS_WITH_STACK,
     Output("cv-chart-lead-time", "figure"),
     Input("cv-store-lead", "data"),
     Input("cv-lead-settings-smooth", "value"),
     Input("cv-lead-settings-type", "value"),
+    Input("cv-lead-settings-stack", "value"),
     State("cv-chart-lead-time", "figure"),
 )
 
 clientside_callback(
-    ClientsideFunction(namespace="census", function_name="smoothChartWithType"),
+    _CENSUS_WITH_STACK,
     Output("cv-chart-conversion", "figure"),
     Input("cv-store-conversion", "data"),
     Input("cv-conversion-settings-smooth", "value"),
     Input("cv-conversion-settings-type", "value"),
+    Input("cv-conversion-settings-stack", "value"),
     State("cv-chart-conversion", "figure"),
 )
 
 clientside_callback(
-    ClientsideFunction(namespace="cumulative", function_name="renderCumulative"),
+    _CUMULATIVE_WITH_STACK,
     Output("cv-chart-cumulative", "figure"),
     Input("cv-store-cumulative", "data"),
     Input("cv-cumulative-settings-smooth", "value"),
     Input("cv-cumulative-settings-type", "value"),
+    Input("cv-cumulative-settings-stack", "value"),
     State("cv-chart-cumulative", "figure"),
 )
 
 clientside_callback(
-    ClientsideFunction(namespace="census", function_name="smoothChartWithType"),
+    _CENSUS_WITH_STACK,
     Output("cv-chart-cancel-rate", "figure"),
     Input("cv-store-cancel", "data"),
     Input("cv-cancel-settings-smooth", "value"),
     Input("cv-cancel-settings-type", "value"),
+    Input("cv-cancel-settings-stack", "value"),
     State("cv-chart-cancel-rate", "figure"),
 )
 
@@ -1741,16 +1861,28 @@ clientside_callback(
 # ---------------------------------------------------------------------------
 
 register_chart_callbacks([
-    ("cv-volume", "cv-chart-volume"),
-    ("cv-cumulative", "cv-chart-cumulative"),
-    ("cv-lead", "cv-chart-lead-time"),
-    ("cv-conversion", "cv-chart-conversion"),
-    ("cv-cancel", "cv-chart-cancel-rate"),
+    ("cv-volume", "cv-chart-volume", "cv-store-volume"),
+    ("cv-cumulative", "cv-chart-cumulative", "cv-store-cumulative"),
+    {"sid": "cv-lead", "gid": "cv-chart-lead-time", "store_id": "cv-store-lead", "show_grouping": False},
+    {"sid": "cv-conversion", "gid": "cv-chart-conversion", "store_id": "cv-store-conversion", "show_grouping": False},
+    {"sid": "cv-cancel", "gid": "cv-chart-cancel-rate", "store_id": "cv-store-cancel", "show_grouping": False},
     ("cv-diagnosis", "cv-chart-diagnosis"),
     ("cv-billing", "cv-chart-billing"),
 ])
 
 register_outlier_callbacks("cv", n_transitions=2, defaults=[_LEAD_MAX, _DAYS_TO_SIM_MAX])
+
+# Category / Type button labels
+clientside_callback(
+    """function(v) { return "Category: " + (v || "All"); }""",
+    Output("cv-visit-type-trigger", "children"),
+    Input("cv-filter-visit-type", "value"),
+)
+clientside_callback(
+    """function(v) { return "Type: " + (v || "All"); }""",
+    Output("cv-classified-type-trigger", "children"),
+    Input("cv-filter-classified-type", "value"),
+)
 
 
 # --- Cumulative chart mode toggle: show/hide sub-controls ---
@@ -2120,7 +2252,12 @@ def _prepare_conversion_data(dff, departments, agg="M", slice_by="site"):
     agg: time aggregation — "W", "M", or "Y".
     slice_by: "category", "type", "physician", or "site" (department).
     """
-    consults = dff[dff["VisitType"] == "Consult"].copy() if "VisitType" in dff.columns else pd.DataFrame()
+    # For "type" slicing, use full dataset so each VisitType gets its own rate.
+    # For all other slices, pre-filter to consults only.
+    if slice_by == "type" and "VisitType" in dff.columns:
+        consults = dff.copy()
+    else:
+        consults = dff[dff["VisitType"] == "Consult"].copy() if "VisitType" in dff.columns else pd.DataFrame()
 
     if consults.empty or "SimulationStatus" not in consults.columns:
         return None
@@ -2219,10 +2356,22 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
     if df_all.empty or "ScheduledDateTime" not in df_all.columns:
         return None
 
-    # Cap end at today so cumulative lines don't flatten into future scheduled dates
-    today = pd.Timestamp.now().normalize()
-    if end.normalize() > today:
-        end = today
+    # Exclude future "Open" appointments — these are scheduled but haven't happened.
+    # "Future" = on or after the most recent CSV export date. Open appointments
+    # before the export date are stale (never updated) and should still count.
+    if "Status" in df_all.columns:
+        export_date = _get_cv_export_date()
+        if export_date is not None:
+            future_open = (
+                (df_all["Status"] == "Open")
+                & (df_all["ScheduledDateTime"].dt.normalize() >= export_date)
+            )
+            df_all = df_all[~future_open]
+    if df_all.empty:
+        return None
+    last_data = df_all["ScheduledDateTime"].dt.normalize().max()
+    if end.normalize() > last_data:
+        end = last_data
 
     period_days = (end - start).days + 1
     if period_days < 2:
@@ -2672,7 +2821,8 @@ def _build_diagnosis_mix(dff, c2b=None, slice_by="", mode="count", prior_df=None
             orientation="h",
             marker_color=CHART_COLORWAY[0],
             showlegend=False,
-            text=text, textposition="auto",
+            text=text, textposition="outside", textfont=dict(size=12),
+            cliponaxis=False,
             hovertemplate=hover,
         ))
     else:
@@ -2728,7 +2878,7 @@ def _build_diagnosis_mix(dff, c2b=None, slice_by="", mode="count", prior_df=None
         xaxis_title="", yaxis_title="",
         xaxis_visible=False,
         yaxis=dict(automargin="left+top+bottom", ticklabelstandoff=0),
-        margin=dict(l=0, r=8, t=24, b=12),
+        margin=dict(l=0, r=40, t=24, b=12),
         showlegend=bool(slice_by),
     )
     if mode == "pct":
@@ -2905,10 +3055,17 @@ def _build_billing_mix(dff, group="new", slice_by="", mode="count"):
     return fig
 
 
-def _build_detail_table(dff):
+def _build_detail_table(dff, c2b=None):
     """Build the AG Grid detail table."""
     if dff.empty:
         return [], []
+
+    # Derive diagnosis category from codes
+    if c2b and "DiagnosisCodes" in dff.columns:
+        dff = dff.copy()
+        dff["DiagnosisCategory"] = dff["DiagnosisCodes"].apply(
+            lambda v: primary_category(v, c2b) if pd.notna(v) else ""
+        )
 
     col_header_map = {
         "PatientFullName": "Patient",
@@ -2916,6 +3073,9 @@ def _build_detail_table(dff):
         "Department": "Department",
         "AppointmentPhysician": "Physician",
         "VisitType": "Visit Type",
+        "DiagnosisCategory": "Diagnosis",
+        "DiagnosisCodes": "Dx Code",
+        "ProcedureCodes": "CPT",
         "Status": "Status",
         "DaysFromCreatedToAppt": "Lead Time (days)",
         "SimulationStatus": "Sim Status",
@@ -2926,12 +3086,20 @@ def _build_detail_table(dff):
     if not display_cols:
         return [], []
 
-    table_df = dff[display_cols].head(500).copy()
+    table_df = dff[display_cols].copy()
+    if "ScheduledDateTime" in table_df.columns:
+        table_df = table_df.sort_values("ScheduledDateTime", ascending=False)
+    table_df = table_df.head(500)
     for c in table_df.select_dtypes(include=["datetime64"]).columns:
         table_df[c] = table_df[c].dt.strftime("%m/%d/%Y %I:%M %p")
     table_df = table_df.fillna("--")
 
-    col_defs = [{"field": c, "headerName": col_header_map.get(c, c)} for c in display_cols]
+    col_defs = []
+    for c in display_cols:
+        cd = {"field": c, "headerName": col_header_map.get(c, c)}
+        if c == "ScheduledDateTime":
+            cd["sort"] = "desc"
+        col_defs.append(cd)
 
     return table_df.to_dict("records"), col_defs
 

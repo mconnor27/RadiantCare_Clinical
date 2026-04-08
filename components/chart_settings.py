@@ -9,9 +9,12 @@ def chart_settings_button(
     chart_id: str,
     chart_types: list[dict] | None = None,
     show_smooth: bool = True,
-    smooth_max: int = 50,
-    smooth_default: int = 15,
+    smooth_min: float = 0,
+    smooth_max: float = 50,
+    smooth_step: float = 1,
+    smooth_default: float = 15,
     show_grouping: bool = True,
+    slider_label: str = "Smoothing",
 ):
     """Create a settings gear icon with small dropdown panel.
 
@@ -70,21 +73,24 @@ def chart_settings_button(
     # Smoothing slider
     if show_smooth:
         panel_children.append(
-            dmc.Stack(
-                gap=4,
-                children=[
-                    dmc.Text("Smoothing", size="xs", fw=500, c="#6B7280"),
-                    dmc.Slider(
-                        id=f"{chart_id}-settings-smooth",
-                        min=0,
-                        max=smooth_max,
-                        step=1,
-                        value=smooth_default,
-                        size="xs",
-                        showLabelOnHover=True,
-                        updatemode="drag",
-                    ),
-                ],
+            html.Div(
+                id=f"{chart_id}-settings-smooth-wrap",
+                children=dmc.Stack(
+                    gap=4,
+                    children=[
+                        dmc.Text(slider_label, size="xs", fw=500, c="#6B7280"),
+                        dmc.Slider(
+                            id=f"{chart_id}-settings-smooth",
+                            min=smooth_min,
+                            max=smooth_max,
+                            step=smooth_step,
+                            value=smooth_default,
+                            size="xs",
+                            showLabelOnHover=True,
+                            updatemode="drag",
+                        ),
+                    ],
+                ),
             )
         )
 

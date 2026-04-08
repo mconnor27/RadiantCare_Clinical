@@ -14,7 +14,7 @@ from datetime import timedelta
 from config.settings import (
     DEPARTMENT_COLORS, CHART_COLORWAY, PRIMARY, MACHINE_DEPT,
     DEFAULT_LAYOUT, FONT_FAMILY, NEUTRAL, SEMANTIC_COLORS,
-    DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS,
+    DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, DEFAULT_GRID_STYLE, DEFAULT_GRID_CLASS,
 )
 from components.kpi_card import kpi_card
 from components.chart_card import chart_card, register_chart_callbacks
@@ -311,9 +311,9 @@ layout = dmc.Stack(
                 chart_card(
                     f"{PAGE_ID}-chart-trend", "Downtime Trend",
                     chart_types=[
-                        {"value": "bar", "label": "Bar"},
-                        {"value": "area", "label": "Area"},
                         {"value": "line", "label": "Line"},
+                        {"value": "area", "label": "Area"},
+                        {"value": "bar", "label": "Bar"},
                     ],
                     smooth_max=40, smooth_default=10, store_data=True,
                     extra_controls=[
@@ -334,9 +334,9 @@ layout = dmc.Stack(
                 chart_card(
                     f"{PAGE_ID}-chart-patient-impact", "Patient Impact",
                     chart_types=[
-                        {"value": "bar", "label": "Bar"},
-                        {"value": "area", "label": "Area"},
                         {"value": "line", "label": "Line"},
+                        {"value": "area", "label": "Area"},
+                        {"value": "bar", "label": "Bar"},
                     ],
                     smooth_max=30, smooth_default=5, store_data=True,
                     extra_controls_left=[
@@ -390,8 +390,10 @@ layout = dmc.Stack(
                         {"field": "NextPatient", "headerName": "Next Patient", "width": 140},
                     ],
                     defaultColDef={**DEFAULT_COLUMN_DEFS, "sortable": True, "filter": True},
-                    dashGridOptions={**DEFAULT_GRID_OPTIONS, "pagination": True, "paginationPageSize": 25},
-                    style={"height": "500px"},
+                    columnSize="autoSize",
+                    dashGridOptions={**DEFAULT_GRID_OPTIONS, "paginationPageSize": 25},
+                    style=DEFAULT_GRID_STYLE,
+                    className=DEFAULT_GRID_CLASS,
                 ),
             ],
             p="sm", radius="md", shadow="xs", withBorder=True,
