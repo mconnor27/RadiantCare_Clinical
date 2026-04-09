@@ -1274,10 +1274,21 @@ def _load_and_filter_tasks(slider_val, physician, task_types, diagnosis_cats,
 
     is_completed = _task_is_completed(df)
 
+    # Strictly date-ranged frame for trend charts (no old open tasks)
+    if "StartDateTime" in df.columns:
+        df_in_range = df[(df["StartDateTime"] >= start) & (df["StartDateTime"] <= end)]
+    else:
+        df_in_range = df
+    is_completed_in_range = _task_is_completed(df_in_range)
+
     # Time-valid mask: completed + non-zero + within cap
     _mtc = (pd.to_numeric(df["MinutesToComplete"], errors="coerce")
             if "MinutesToComplete" in df.columns else pd.Series(dtype=float))
     is_time_valid = is_completed & (_mtc > 0) & (_mtc <= _max_minutes)
+
+    _mtc_ir = (pd.to_numeric(df_in_range["MinutesToComplete"], errors="coerce")
+               if "MinutesToComplete" in df_in_range.columns else pd.Series(dtype=float))
+    is_time_valid_in_range = is_completed_in_range & (_mtc_ir > 0) & (_mtc_ir <= _max_minutes)
 
     # Pre-date-filtered copy for cumulative prior periods
     df_all_dates = tasks.copy()
@@ -1311,9 +1322,12 @@ def _load_and_filter_tasks(slider_val, physician, task_types, diagnosis_cats,
         "df_base": df_base,
         "df_prior_base": df_prior_base,
         "df": df,
+        "df_in_range": df_in_range,
         "df_all_dates": df_all_dates,
         "is_completed": is_completed,
+        "is_completed_in_range": is_completed_in_range,
         "is_time_valid": is_time_valid,
+        "is_time_valid_in_range": is_time_valid_in_range,
         "c2b": c2b,
         "start": start,
         "end": end,
@@ -1424,12 +1438,12 @@ def _update_tasks_kpis(*args):
 )
 def _update_tasks_volume(*args):
     ctx = _unpack_tasks_filter_args(args)
-    agg, volume_slice = args[9], args[10]
+    agg, volume_slice = args[10], args[11]
     data = _load_and_filter_tasks(**ctx)
     if data is None:
         return None
     return _prepare_volume_data(
-        data["df"], agg or "W", volume_slice or "",
+        data["df_in_range"], agg or "W", volume_slice or "",
         data["c2b"], accent_color=data["accent"],
     )
 
@@ -1448,7 +1462,7 @@ def _update_tasks_volume(*args):
 )
 def _update_tasks_cumulative(*args):
     ctx = _unpack_tasks_filter_args(args)
-    cumul_mode, cumul_period_type, cumul_slice = args[9], args[10], args[11]
+    cumul_mode, cumul_period_type, cumul_slice = args[10], args[11], args[12]
     data = _load_and_filter_tasks(**ctx)
     if data is None:
         return None
@@ -1476,12 +1490,12 @@ def _update_tasks_cumulative(*args):
 )
 def _update_tasks_time_trend(*args):
     ctx = _unpack_tasks_filter_args(args)
-    time_agg, time_slice = args[9], args[10]
+    time_agg, time_slice = args[10], args[11]
     data = _load_and_filter_tasks(**ctx)
     if data is None:
         return None
     return _prepare_time_trend_data(
-        data["df"], data["is_time_valid"],
+        data["df_in_range"], data["is_time_valid_in_range"],
         time_agg or "M", time_slice or "",
         data["c2b"], accent_color=data["accent"],
     )
@@ -1500,12 +1514,12 @@ def _update_tasks_time_trend(*args):
 )
 def _update_tasks_sla(*args):
     ctx = _unpack_tasks_filter_args(args)
-    sla_agg, sla_slice = args[9], args[10]
+    sla_agg, sla_slice = args[10], args[11]
     data = _load_and_filter_tasks(**ctx)
     if data is None:
         return None
     return _prepare_sla_data(
-        data["df"], data["is_completed"],
+        data["df_in_range"], data["is_completed_in_range"],
         sla_agg or "W", sla_slice or "",
         data["c2b"], accent_color=data["accent"],
     )
@@ -1524,12 +1538,12 @@ def _update_tasks_sla(*args):
 )
 def _update_tasks_histogram(*args):
     ctx = _unpack_tasks_filter_args(args)
-    hist_slice, hist_type = args[9], args[10]
+    hist_slice, hist_type = args[10], args[11]
     data = _load_and_filter_tasks(**ctx)
     if data is None:
         return empty_figure("Tasks data unavailable")
     return _build_histogram(
-        data["df"], data["is_time_valid"],
+        data["df_in_range"], data["is_time_valid_in_range"],
         hist_slice or "", hist_type or "histogram",
         data["c2b"], accent_color=data["accent"],
     )

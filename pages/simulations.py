@@ -42,9 +42,9 @@ PAGE_ID = "sim"
 # Constants
 # ---------------------------------------------------------------------------
 _DEFAULT_DATE_PRESET = "ytd" if pd.Timestamp.now().month > 1 else "3mo"
-_CAP_LEAD = 30          # outlier cap: consult → sim (days)
-_CAP_TIME_TO_TX = 60    # outlier cap: sim → treatment (days)
-_CAP_LEAD_TIME = 30     # outlier cap: lead time / booked → sim (days)
+_CAP_LEAD = 21          # outlier cap: consult → sim (days)
+_CAP_TIME_TO_TX = 21    # outlier cap: sim → treatment (days)
+_CAP_LEAD_TIME = 21     # outlier cap: lead time / booked → sim (days)
 
 # Sim types to exclude from filter and charts
 _SIM_TYPE_EXCLUDE = frozenset({"HOLD SIM TIME", "MD Needed in Sim"})
