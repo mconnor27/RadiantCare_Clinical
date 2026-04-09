@@ -1645,6 +1645,7 @@ def _update_sim_volume(*args):
     Input("sim-outlier-enabled", "data"),
     Input("sim-outlier-cap-0", "value"),
     Input("sim-outlier-cap-1", "value"),
+    Input("sim-outlier-cap-2", "value"),
     Input("sim-table-filter-rows", "data"),
     running=[(Output("sim-chart-timing-loading", "visible"), True, False)],
 )
@@ -1652,16 +1653,17 @@ def _update_sim_timing(*args):
     ctx = _unpack_sim_filter_args(args)
     timing_metric, timing_agg, timing_slice = args[12], args[13], args[14]
     outlier_enabled = args[15]
-    cap_lead_raw, cap_tx_raw = args[16], args[17]
-    grid_rows = args[18]
+    cap_lead_raw, cap_tx_raw, cap_lt_raw = args[16], args[17], args[18]
+    grid_rows = args[19]
     if not outlier_enabled:
-        cap_lead, cap_tx = 365, 365
+        cap_lead, cap_tx, cap_lt = 365, 365, 365
     else:
         cap_lead = cap_lead_raw or _CAP_LEAD
         cap_tx = cap_tx_raw or _CAP_TIME_TO_TX
+        cap_lt = cap_lt_raw or _CAP_LEAD_TIME
     # Pick the appropriate cap based on which metric is selected
     metric = timing_metric or "consult_sim"
-    cap = cap_lead if metric == "consult_sim" else cap_tx
+    cap = cap_lead if metric == "consult_sim" else (cap_lt if metric == "lead_time" else cap_tx)
     data = _load_and_filter_sim(**ctx)
     if data is None:
         return None
