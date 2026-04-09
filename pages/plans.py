@@ -18,6 +18,7 @@ from config.settings import (
     PRIOR_PERIOD_COLORS,
 )
 from components.filter_bar import department_chips
+from components.diagnosis_filter import diagnosis_accordion, register_diagnosis_callbacks
 from components.kpi_card import kpi_card, kpi_placeholder
 from components.chart_card import chart_card, register_chart_callbacks
 from components.chart_settings import chart_settings_popover
@@ -28,7 +29,7 @@ from utils.date_slider import (
     preset_to_slider_val,
 )
 from utils.diagnosis_categories import (
-    CATEGORIES as BODY_SYSTEMS,
+    assign_diagnosis_column,
     build_code_to_category,
     get_categories_for_codes,
     primary_category,
@@ -109,50 +110,7 @@ def _build_plans_filter_bar():
                         ],
                         style={"position": "relative", "display": "inline-block"},
                     ),
-                    # Diagnosis dropdown
-                    html.Div(
-                        children=[
-                            html.Div(
-                                children=[
-                                    dmc.Button(
-                                        "Diagnosis",
-                                        id="plans-diagnosis-trigger",
-                                        variant="default",
-                                        size="sm",
-                                        rightSection=DashIconify(icon="mdi:chevron-down", width=14),
-                                    ),
-                                    dmc.ActionIcon(
-                                        DashIconify(icon="mdi:close-circle", width=18),
-                                        id="plans-diagnosis-clear",
-                                        variant="subtle",
-                                        color="gray",
-                                        size="sm",
-                                        className="wf-filter-clear-btn",
-                                    ),
-                                ],
-                                style={"position": "relative", "display": "inline-block"},
-                            ),
-                            dmc.Paper(
-                                dmc.ChipGroup(
-                                    children=[
-                                        dmc.Chip(bs, value=bs, size="xs", variant="filled")
-                                        for bs in BODY_SYSTEMS
-                                    ],
-                                    id="plans-filter-diagnosis",
-                                    multiple=True,
-                                    value=[],
-                                ),
-                                id="plans-diagnosis-panel",
-                                p="xs",
-                                shadow="md",
-                                withBorder=True,
-                                radius="md",
-                                className="wf-chip-dropdown",
-                                style={"display": "none"},
-                            ),
-                        ],
-                        style={"position": "relative", "display": "inline-block"},
-                    ),
+                    diagnosis_accordion("plans"),
                     # Technique dropdown
                     html.Div(
                         children=[
@@ -424,8 +382,11 @@ layout = dmc.Stack(
                     ],
                     show_smooth=True,
                     show_prior_periods=True,
-                    smooth_max=50,
-                    smooth_default=0,
+                    smooth_min=0,
+                    smooth_max=1,
+                    smooth_step=0.05,
+                    smooth_default=0.1,
+                    prior_periods_default=3,
                     paper_padding="md",
                     extra_controls=[
                         dmc.SegmentedControl(
@@ -845,6 +806,8 @@ register_chart_callbacks([
     ("plans-quit-trend", "plans-chart-quit-trend"),
 ])
 
+register_diagnosis_callbacks("plans")
+
 
 # ---------------------------------------------------------------------------
 # Slice-by dim styling
@@ -858,6 +821,24 @@ for _sid in ["plans-volume-slice", "plans-cumulative-slice"]:
         _SLICE_CLASS_JS,
         Output(_sid, "className"),
         Input(_sid, "value"),
+    )
+
+_HIDE_STACK_JS = """function(sliceVal, chartType) {
+    var single = !sliceVal || sliceVal === "total" || sliceVal === "";
+    var noStack = chartType === "line";
+    return (single || noStack) ? {"display": "none"} : {};
+}"""
+
+for _slice_id, _settings_id in [
+    ("plans-volume-slice", "plans-volume"),
+    ("plans-cumulative-slice", "plans-cumulative"),
+]:
+    clientside_callback(
+        _HIDE_STACK_JS,
+        Output(f"{_settings_id}-settings-stack-wrap", "style", allow_duplicate=True),
+        Input(_slice_id, "value"),
+        Input(f"{_settings_id}-settings-type", "value"),
+        prevent_initial_call=True,
     )
 
 
@@ -955,15 +936,6 @@ def _register_plans_filter_callbacks():
         Output("plans-physician-trigger", "children"),
         Input("plans-filter-physician", "value"),
     )
-    clientside_callback(
-        """function(vals) {
-            if (!vals || vals.length === 0) return "Diagnosis";
-            if (vals.length === 1) return vals[0];
-            return vals.length + " selected";
-        }""",
-        Output("plans-diagnosis-trigger", "children"),
-        Input("plans-filter-diagnosis", "value"),
-    )
 
     # --- Clear-button visibility ---
     clientside_callback(
@@ -971,23 +943,12 @@ def _register_plans_filter_callbacks():
         Output("plans-physician-clear", "style"),
         Input("plans-filter-physician", "value"),
     )
-    clientside_callback(
-        """function(vals) { return vals && vals.length > 0 ? {"display": "inline-flex"} : {"display": "none"}; }""",
-        Output("plans-diagnosis-clear", "style"),
-        Input("plans-filter-diagnosis", "value"),
-    )
 
     # --- Clear-button actions ---
     clientside_callback(
         """function(n) { return null; }""",
         Output("plans-filter-physician", "value", allow_duplicate=True),
         Input("plans-physician-clear", "n_clicks"),
-        prevent_initial_call=True,
-    )
-    clientside_callback(
-        """function(n) { return []; }""",
-        Output("plans-filter-diagnosis", "value", allow_duplicate=True),
-        Input("plans-diagnosis-clear", "n_clicks"),
         prevent_initial_call=True,
     )
 
@@ -1347,7 +1308,7 @@ def _prepare_ridgeline_data(df, date_col):
 # Sessions Trend: median sessions over time (all agg × slice combos)
 # ---------------------------------------------------------------------------
 
-def _prepare_session_trend_data(dff, date_col, c2b, start=None, end=None):
+def _prepare_session_trend_data(dff, date_col, c2b, start=None, end=None, diag_mode="primary"):
     """Prepare median-sessions-over-time data for all agg × slice combos."""
     frac_col = "NoSessionPlanned"
     if frac_col not in dff.columns or date_col not in dff.columns or dff.empty:
@@ -1410,12 +1371,10 @@ def _prepare_session_trend_data(dff, date_col, c2b, start=None, end=None):
                             "color": DEPARTMENT_COLORS.get(dept, CHART_COLORWAY[0]),
                         })
             elif slice_key == "diagnosis" and c2b and "DiagnosisCodes" in t.columns:
-                t2 = t.copy()
-                t2["_bs"] = t2["DiagnosisCodes"].apply(lambda v: primary_category(v, c2b))
-                t2_bs = t2[t2["_bs"] != "Unknown"]
-                top_bs = t2_bs["_bs"].value_counts().head(8).index.tolist()
+                t2 = assign_diagnosis_column(t, c2b, mode=diag_mode)
+                top_bs = t2["_bs"].value_counts().head(8).index.tolist()
                 for i, bs in enumerate(top_bs):
-                    sub = t2_bs[t2_bs["_bs"] == bs]
+                    sub = t2[t2["_bs"] == bs]
                     medians = sub.groupby("period")["_frac"].median().reindex(all_periods)
                     series.append({
                         "name": bs,
@@ -1435,7 +1394,7 @@ def _prepare_session_trend_data(dff, date_col, c2b, start=None, end=None):
 # Quit Rate Trend: % of completed plans where delivered < planned
 # ---------------------------------------------------------------------------
 
-def _prepare_quit_trend_data(completed_df, date_col, c2b, start=None, end=None):
+def _prepare_quit_trend_data(completed_df, date_col, c2b, start=None, end=None, diag_mode="primary"):
     """Prepare quit-rate-over-time data for all agg × slice combos."""
     needed = {"NoSessionPlanned", "SessionBasedFractionCount", date_col}
     if not needed.issubset(completed_df.columns) or completed_df.empty:
@@ -1505,13 +1464,11 @@ def _prepare_quit_trend_data(completed_df, date_col, c2b, start=None, end=None):
                             DEPARTMENT_COLORS.get(dept, CHART_COLORWAY[0]),
                         )
             elif slice_key == "diagnosis" and c2b and "DiagnosisCodes" in t.columns:
-                t2 = t.copy()
-                t2["_bs"] = t2["DiagnosisCodes"].apply(lambda v: primary_category(v, c2b))
-                t2_bs = t2[t2["_bs"] != "Unknown"]
-                top_bs = t2_bs["_bs"].value_counts().head(8).index.tolist()
+                t2 = assign_diagnosis_column(t, c2b, mode=diag_mode)
+                top_bs = t2["_bs"].value_counts().head(8).index.tolist()
                 for i, bs in enumerate(top_bs):
                     _rate_series(
-                        t2_bs[t2_bs["_bs"] == bs], bs,
+                        t2[t2["_bs"] == bs], bs,
                         CHART_COLORWAY[i % len(CHART_COLORWAY)],
                     )
 
@@ -1910,7 +1867,7 @@ def _build_ridgeline_figure(data, bw_factor=0.5, mode="density"):
 # Data Preparation: Volume Trend
 # ---------------------------------------------------------------------------
 
-def _prepare_volume_data(dff, agg, slice_by="", date_col="PlanCreationDate", c2b=None,
+def _prepare_volume_data(dff, agg, slice_by="", date_col="PlanCreationDate", c2b=None, diag_mode="primary",
                          start=None, end=None, date_mode="created"):
     """Prepare course volume trend data for clientside rendering.
 
@@ -1975,8 +1932,7 @@ def _prepare_volume_data(dff, agg, slice_by="", date_col="PlanCreationDate", c2b
                     "color": DEPARTMENT_COLORS.get(dept, CHART_COLORWAY[0]),
                 })
         elif slice_by == "diagnosis" and c2b and "DiagnosisCodes" in dff.columns:
-            dff["_bs"] = dff["DiagnosisCodes"].apply(lambda v: primary_category(v, c2b))
-            dff_bs = dff[dff["_bs"] != "Unknown"]
+            dff_bs = assign_diagnosis_column(dff, c2b, mode=diag_mode)
             top_bs = dff_bs["_bs"].value_counts().head(8).index.tolist()
             for i, bs in enumerate(top_bs):
                 mask = (dff_bs["_bs"] == bs).values
@@ -2044,8 +2000,7 @@ def _prepare_volume_data(dff, agg, slice_by="", date_col="PlanCreationDate", c2b
                 })
 
     elif slice_by == "diagnosis" and c2b and "DiagnosisCodes" in dff.columns:
-        dff["_bs"] = dff["DiagnosisCodes"].apply(lambda v: primary_category(v, c2b))
-        dff_bs = dff[dff["_bs"] != "Unknown"]
+        dff_bs = assign_diagnosis_column(dff, c2b, mode=diag_mode)
         top_bs = dff_bs["_bs"].value_counts().head(8).index.tolist()
         for i, bs in enumerate(top_bs):
             subset = dff_bs[dff_bs["_bs"] == bs]
@@ -2074,7 +2029,8 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
                               status, session_range, c2b,
                               techniques=None, date_mode="created",
                               mode="prior", period_type="calendar",
-                              slice_by="site", max_prior=5):
+                              slice_by="site", max_prior=5,
+                              diag_mode="primary"):
     """Prepare cumulative plan volume data for overlay chart."""
     if df_all.empty or date_col not in df_all.columns:
         return None
@@ -2121,15 +2077,13 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             counts = sub.groupby("TreatingPhysician").size()
             return {(k.split(",")[0] if "," in k else k): v for k, v in counts.items()}
         elif sb == "diagnosis" and c2b and "DiagnosisCodes" in sub.columns:
-            sub = sub.copy()
-            sub["_bs"] = sub["DiagnosisCodes"].apply(lambda v: primary_category(v, c2b))
-            sub = sub[sub["_bs"] != "Unknown"]
+            sub = assign_diagnosis_column(sub, c2b, mode=diag_mode)
             return sub.groupby("_bs").size().to_dict()
         return {}
 
     # Apply filters to full dataset
     dff_all = _apply_filters(df_all, departments, physician, diagnosis_cats, status, session_range, c2b,
-                             techniques=techniques)
+                             techniques=techniques, diag_mode=diag_mode)
 
     n_days = period_days
     start_norm = start.normalize()
@@ -2280,9 +2234,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
                 })
 
         elif slice_by == "diagnosis" and c2b and "DiagnosisCodes" in dff_period.columns:
-            dff_p = dff_period.copy()
-            dff_p["_bs"] = dff_p["DiagnosisCodes"].apply(lambda v: primary_category(v, c2b))
-            dff_p = dff_p[dff_p["_bs"] != "Unknown"]
+            dff_p = assign_diagnosis_column(dff_period, c2b, mode=diag_mode)
             top = dff_p["_bs"].value_counts().head(8).index.tolist()
             for i, bs in enumerate(top):
                 sub = dff_p[dff_p["_bs"] == bs]
@@ -2342,8 +2294,10 @@ def _is_effectively_completed(df):
 # ---------------------------------------------------------------------------
 
 def _apply_filters(df, departments, physician, diagnosis_cats, status, session_range, c2b,
-                   techniques=None):
+                   techniques=None, diag_mode="primary"):
     """Apply dimension filters (not date) to a dataframe."""
+    from utils.diagnosis_categories import filter_by_diagnosis
+
     if df.empty:
         return df
 
@@ -2353,11 +2307,8 @@ def _apply_filters(df, departments, physician, diagnosis_cats, status, session_r
     if physician and "TreatingPhysician" in df.columns:
         df = df[df["TreatingPhysician"] == physician]
 
-    if diagnosis_cats and c2b and "DiagnosisCodes" in df.columns:
-        mask = df["DiagnosisCodes"].apply(
-            lambda v: bool(get_categories_for_codes(v, c2b) & set(diagnosis_cats))
-        )
-        df = df[mask]
+    if diagnosis_cats:
+        df = filter_by_diagnosis(df, diagnosis_cats, c2b, mode=diag_mode)
 
     if techniques and "TreatmentTechnique" in df.columns:
         tech_set = set(techniques)
@@ -2481,8 +2432,8 @@ _TABLE_FIELDS = [
 # ---------------------------------------------------------------------------
 
 def _load_and_filter_plans(slider_val, departments, physician, diagnosis_cats,
-                           techniques, status, session_range, date_mode,
-                           date_preset, session_engaged):
+                           diag_mode, techniques, status, session_range,
+                           date_mode, date_preset, session_engaged):
     """Load plans data, filter, and return shared context.
 
     Returns a dict with keys: df_all, dff, dff_prior, dff_all_no_date,
@@ -2548,9 +2499,10 @@ def _load_and_filter_plans(slider_val, departments, physician, diagnosis_cats,
     # Only apply session filter when the user has engaged the slider
     active_session_range = session_range if session_engaged else None
 
+    diag_mode = diag_mode or "primary"
     # Apply dimension filters
     dff = _apply_filters(df, departments, physician, diagnosis_cats, status, active_session_range, c2b,
-                         techniques=techniques)
+                         techniques=techniques, diag_mode=diag_mode)
 
     if dff.empty:
         return None
@@ -2578,11 +2530,11 @@ def _load_and_filter_plans(slider_val, departments, physician, diagnosis_cats,
             df_prior = df_all[df_all[date_col].notna()]
             df_prior = df_prior[(df_prior[date_col] >= prior_start) & (df_prior[date_col] <= prior_end)]
         dff_prior = _apply_filters(df_prior, departments, physician, diagnosis_cats, status, active_session_range, c2b,
-                                   techniques=techniques)
+                                   techniques=techniques, diag_mode=diag_mode)
 
     # All data with dimension filters but no date or status filter (for active census)
     dff_all_no_date = _apply_filters(df_all, departments, physician, diagnosis_cats, "all", active_session_range, c2b,
-                                     techniques=techniques)
+                                     techniques=techniques, diag_mode=diag_mode)
 
     # Completed subset
     eff_completed = _is_effectively_completed(dff)
@@ -2598,6 +2550,7 @@ def _load_and_filter_plans(slider_val, departments, physician, diagnosis_cats,
         "date_mode": date_mode, "departments": departments,
         "session_min_data": session_min_data, "session_max_data": session_max_data,
         "active_session_range": session_range if session_engaged else None,
+        "diag_mode": diag_mode,
     }
 
 
@@ -2607,7 +2560,8 @@ _PLANS_FILTER_INPUTS = [
     Input("plans-date-slider", "value"),
     Input("plans-filter-department", "value"),
     Input("plans-filter-physician", "value"),
-    Input("plans-filter-diagnosis", "value"),
+    Input("plans-diag-store", "data"),
+    Input("plans-diag-mode", "data"),
     Input("plans-filter-technique", "value"),
     Input("plans-filter-status", "value"),
     Input("plans-session-slider", "value"),
@@ -2618,14 +2572,14 @@ _PLANS_FILTER_INPUTS = [
 
 
 def _unpack_plans_filter_args(args):
-    """Unpack the 11 common filter args into a dict for _load_and_filter_plans."""
-    (_n, slider_val, departments, physician, diagnosis_cats,
+    """Unpack the 12 common filter args into a dict for _load_and_filter_plans."""
+    (_n, slider_val, departments, physician, diagnosis_cats, diag_mode,
      techniques, status, session_range, date_mode, date_preset,
-     session_engaged) = args[:11]
+     session_engaged) = args[:12]
     return dict(
         slider_val=slider_val, departments=departments, physician=physician,
-        diagnosis_cats=diagnosis_cats, techniques=techniques, status=status,
-        session_range=session_range, date_mode=date_mode,
+        diagnosis_cats=diagnosis_cats, diag_mode=diag_mode, techniques=techniques,
+        status=status, session_range=session_range, date_mode=date_mode,
         date_preset=date_preset, session_engaged=session_engaged,
     )
 
@@ -2927,13 +2881,14 @@ def _update_plans_kpis(*args):
 )
 def _update_plans_volume(*args):
     ctx = _unpack_plans_filter_args(args)
-    agg, volume_slice = args[11], args[12]
+    agg, volume_slice = args[12], args[13]
     data = _load_and_filter_plans(**ctx)
     if data is None:
         return None
     return _prepare_volume_data(
         data["dff"], agg, volume_slice, date_col=data["date_col"],
-        c2b=data["c2b"], start=data["start"], end=data["end"],
+        c2b=data["c2b"], diag_mode=data.get("diag_mode", "primary"),
+        start=data["start"], end=data["end"],
         date_mode=data["date_mode"],
     )
 
@@ -2952,7 +2907,7 @@ def _update_plans_volume(*args):
 )
 def _update_plans_cumulative(*args):
     ctx = _unpack_plans_filter_args(args)
-    cumul_mode, cumul_period_type, cumul_slice = args[11], args[12], args[13]
+    cumul_mode, cumul_period_type, cumul_slice = args[12], args[13], args[14]
     data = _load_and_filter_plans(**ctx)
     if data is None:
         return None
@@ -2964,7 +2919,7 @@ def _update_plans_cumulative(*args):
         mode=cumul_mode or "prior",
         period_type=cumul_period_type or "calendar",
         slice_by=cumul_slice or "site",
-        max_prior=5,
+        max_prior=5, diag_mode=ctx.get("diag_mode", "primary"),
     )
 
 
@@ -3000,6 +2955,7 @@ def _update_plans_session_trend(*args):
     return _prepare_session_trend_data(
         data["dff"], data["date_col"], data["c2b"],
         start=data["start"], end=data["end"],
+        diag_mode=data.get("diag_mode", "primary"),
     )
 
 
@@ -3073,6 +3029,7 @@ def _update_plans_quit_trend(*args):
     return _prepare_quit_trend_data(
         data["completed_df"], "LastTreatmentDate", data["c2b"],
         start=data["start"], end=data["end"],
+        diag_mode=data.get("diag_mode", "primary"),
     )
 
 
@@ -3551,12 +3508,7 @@ def _update_technique_dist(data, mode, agg, smooth, chart_type):
 clientside_callback(
     """function(n) {
         if (!n) return window.dash_clientside.no_update;
-        var gridApi = window.dash_ag_grid
-            ? window.dash_ag_grid['plans-detail-table']
-            : null;
-        if (gridApi && gridApi.api) {
-            gridApi.api.exportDataAsCsv({fileName: 'plans_detail.csv'});
-        }
+        gridExportCsv('plans-detail-table', 'plans_detail.csv');
         return window.dash_clientside.no_update;
     }""",
     Output("plans-table-export", "n_clicks"),

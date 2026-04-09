@@ -12,12 +12,17 @@ def month_idx(year, month):
 
 
 def idx_to_date(idx, end_of_month=False):
-    """Convert integer index back to pd.Timestamp."""
+    """Convert integer index back to pd.Timestamp.
+
+    When *end_of_month* is True the result is capped at today so that
+    the current month never extends into the future (e.g. "YTD" shows
+    Apr 8 instead of Apr 30).
+    """
     year = BASE_YEAR + idx // 12
     month = idx % 12 + 1
     ts = pd.Timestamp(year, month, 1)
     if end_of_month:
-        ts = ts + pd.offsets.MonthEnd(0)
+        ts = min(ts + pd.offsets.MonthEnd(0), pd.Timestamp.today().normalize())
     return ts
 
 

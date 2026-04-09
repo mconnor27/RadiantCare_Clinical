@@ -21,10 +21,16 @@ window.dash_clientside.hoursRibbon = {
      */
     smoothChartWithType: function(rawData, smoothVal, chartType) {
         if (!rawData || !rawData.pastSeries) {
-            // Return empty figure
+            // Return empty figure with stable layout to prevent container collapse
             return {
                 data: [],
                 layout: {
+                    uirevision: "hours-timeseries",
+                    plot_bgcolor: "#FFFFFF",
+                    paper_bgcolor: "#FFFFFF",
+                    margin: {l: 36, r: 8, t: 8, b: 32, pad: 0},
+                    xaxis: {visible: false},
+                    yaxis: {visible: false},
                     annotations: [{
                         text: "No operating hours data available",
                         xref: "paper", yref: "paper",
@@ -54,12 +60,63 @@ window.dash_clientside.hoursRibbon = {
         var skipDownsample = rawData._skipDownsample || false;
         var maxPoints = skipDownsample ? 999999 : 500;
 
+        // Build a set of holiday date strings for gap insertion
+        var holidaySet = {};
+        if (rawData.holidays) {
+            for (var hi = 0; hi < rawData.holidays.length; hi++) {
+                holidaySet[rawData.holidays[hi].split("T")[0]] = true;
+            }
+        }
+
+        // Insert null gaps for weekends and holidays so Plotly breaks
+        // lines and fills naturally (no rangebreaks needed).
+        function insertGaps(dates, startH, endH) {
+            if (!dates || dates.length < 2) return {dates: dates, startHours: startH, endHours: endH};
+            var dataMap = {};
+            for (var gi = 0; gi < dates.length; gi++) {
+                dataMap[dates[gi].split("T")[0]] = {s: startH[gi], e: endH[gi]};
+            }
+            var first = new Date(dates[0].split("T")[0] + "T12:00:00");
+            var last = new Date(dates[dates.length - 1].split("T")[0] + "T12:00:00");
+            var outD = [], outS = [], outE = [];
+            for (var d = new Date(first); d <= last; d.setDate(d.getDate() + 1)) {
+                var iso = d.toISOString().split("T")[0];
+                var dow = d.getUTCDay(); // 0=Sun, 6=Sat — use UTC to match ISO date
+                if (dow === 0 || dow === 6 || holidaySet[iso]) {
+                    // Insert null gap for non-business days
+                    outD.push(iso + "T00:00:00");
+                    outS.push(null);
+                    outE.push(null);
+                } else if (dataMap[iso]) {
+                    outD.push(iso + "T00:00:00");
+                    outS.push(dataMap[iso].s);
+                    outE.push(dataMap[iso].e);
+                } else {
+                    // Weekday with no data — also a gap
+                    outD.push(iso + "T00:00:00");
+                    outS.push(null);
+                    outE.push(null);
+                }
+            }
+            return {dates: outD, startHours: outS, endHours: outE};
+        }
+
         // Process past series
         for (var i = 0; i < rawData.pastSeries.length; i++) {
             var s = rawData.pastSeries[i];
-            var dates = s.dates;
-            var startHours = s.startHours.slice();
-            var endHours = s.endHours.slice();
+            var dates, startHours, endHours;
+            if (chartType === "bar") {
+                // Bars get null gaps for weekends/holidays so they don't span non-working days
+                var gapped = insertGaps(s.dates, s.startHours.slice(), s.endHours.slice());
+                dates = gapped.dates;
+                startHours = gapped.startHours;
+                endHours = gapped.endHours;
+            } else {
+                // Ribbon/line: continuous across weekends (tonexty can't handle null gaps)
+                dates = s.dates;
+                startHours = s.startHours.slice();
+                endHours = s.endHours.slice();
+            }
 
             // Downsample if needed
             var step = dates.length > maxPoints ? Math.ceil(dates.length / maxPoints) : 1;
@@ -69,13 +126,17 @@ window.dash_clientside.hoursRibbon = {
                 endHours = downsampleAvg(endHours, step);
             }
 
-            // Apply smoothing after downsampling
-            if (smoothVal > 0) {
+            // Keep raw values for hover text (always show actuals)
+            var rawStart = startHours.slice();
+            var rawEnd = endHours.slice();
+
+            // Apply smoothing after downsampling (skip for bar charts)
+            if (smoothVal > 0 && chartType !== "bar") {
                 startHours = rollingAvg(startHours, windowSize);
                 endHours = rollingAvg(endHours, windowSize);
             }
 
-            // Store end point for connecting to future (use downsampled values)
+            // Store end point for connecting to future (use smoothed values)
             if (dates.length > 0) {
                 pastEndPoints[s.name] = {
                     date: dates[dates.length - 1],
@@ -84,13 +145,13 @@ window.dash_clientside.hoursRibbon = {
                 };
             }
 
-            // Build hover text (use downsampled dates)
+            // Build hover text from raw (unsmoothed) values
             var hoverText = [];
             for (var j = 0; j < dates.length; j++) {
                 var d = new Date(dates[j]);
                 var dateStr = d.toLocaleDateString("en-US", {month: "short", day: "numeric"});
                 hoverText.push("<b>" + s.name + "</b><br>" + dateStr + ": " +
-                    hourToTimeStr(startHours[j]) + " - " + hourToTimeStr(endHours[j]));
+                    hourToTimeStr(rawStart[j]) + " - " + hourToTimeStr(rawEnd[j]));
             }
 
             var color = s.color;
@@ -98,27 +159,23 @@ window.dash_clientside.hoursRibbon = {
 
             if (chartType === "bar") {
                 // Floating bar chart: bars span from startHours to endHours
+                // Use date x-values directly (not categorical) to avoid date parsing issues
                 var durations = [];
                 var baseHours = [];
                 for (var j = 0; j < startHours.length; j++) {
                     durations.push(endHours[j] - startHours[j]);
                     baseHours.push(startHours[j]);
                 }
-                // Format dates for categorical axis (filter to valid dates)
-                var barData = formatDatesForBars(dates);
-                var filteredDurations = filterByIndices(durations, barData.validIndices);
-                var filteredBase = filterByIndices(baseHours, barData.validIndices);
-                var filteredHoverText = filterByIndices(hoverText, barData.validIndices);
                 traces.push({
-                    x: barData.labels,
-                    y: filteredDurations,
-                    base: filteredBase,  // Floating bars start at startHours
+                    x: dates,
+                    y: durations,
+                    base: baseHours,
                     name: s.name,
                     type: "bar",
-                    marker: {color: color, opacity: 0.7, line: {width: 0}},
+                    marker: {color: hexToRgba(color, 0.7), line: {color: "rgba(255,255,255,0.6)", width: 0.5}},
                     hovertemplate: "%{text}<extra></extra>",
-                    text: filteredHoverText,
-                    textposition: "none"  // Hide text annotations
+                    text: hoverText,
+                    textposition: "none"
                 });
             } else if (chartType === "line") {
                 // Line chart: show start and end times as separate lines
@@ -129,7 +186,8 @@ window.dash_clientside.hoursRibbon = {
                     mode: "lines",
                     line: {color: color, width: 2},
                     text: hoverText,
-                    hovertemplate: "%{text}<extra></extra>"
+                    hovertemplate: "%{text}<extra></extra>",
+                    connectgaps: true
                 });
                 traces.push({
                     x: dates,
@@ -138,21 +196,23 @@ window.dash_clientside.hoursRibbon = {
                     mode: "lines",
                     line: {color: color, width: 2, dash: "dash"},
                     showlegend: false,
-                    hoverinfo: "skip"
+                    hoverinfo: "skip",
+                    connectgaps: true
                 });
             } else {
                 // Ribbon (band) chart - default
-                // Upper bound trace (end hours) - invisible for fill
+                // Upper bound (end hours) - invisible anchor for tonexty fill
                 traces.push({
                     x: dates,
                     y: endHours,
                     mode: "lines",
                     line: {width: 0},
                     showlegend: false,
-                    hoverinfo: "skip"
+                    hoverinfo: "skip",
+                    connectgaps: true
                 });
 
-                // Lower bound trace (start hours) with fill to previous
+                // Lower bound (start hours) with fill to previous trace
                 traces.push({
                     x: dates,
                     y: startHours,
@@ -163,7 +223,8 @@ window.dash_clientside.hoursRibbon = {
                     name: s.name,
                     showlegend: true,
                     text: hoverText,
-                    hovertemplate: "%{text}<extra></extra>"
+                    hovertemplate: "%{text}<extra></extra>",
+                    connectgaps: true
                 });
 
                 // Edge line - top (end hours)
@@ -173,7 +234,8 @@ window.dash_clientside.hoursRibbon = {
                     mode: "lines",
                     line: {color: color, width: 1.5},
                     showlegend: false,
-                    hoverinfo: "skip"
+                    hoverinfo: "skip",
+                    connectgaps: true
                 });
 
                 // Edge line - bottom (start hours)
@@ -183,19 +245,27 @@ window.dash_clientside.hoursRibbon = {
                     mode: "lines",
                     line: {color: color, width: 1.5},
                     showlegend: false,
-                    hoverinfo: "skip"
+                    hoverinfo: "skip",
+                    connectgaps: true
                 });
             }
         }
 
-        // Process future series (lighter fill for ribbon, lighter opacity bars for bar)
-        if (chartType === "ribbon" || chartType === "bar") {
+        // Process future series (lighter fill for ribbon, lighter opacity bars, dotted lines)
+        if (chartType === "ribbon" || chartType === "bar" || chartType === "line") {
             for (var i = 0; i < rawData.futureSeries.length; i++) {
                 var s = rawData.futureSeries[i];
-                // No smoothing for future data, but still downsample if large
-                var dates = s.dates;
-                var startHours = s.startHours.slice();
-                var endHours = s.endHours.slice();
+                var dates, startHours, endHours;
+                if (chartType === "bar") {
+                    var futGapped = insertGaps(s.dates, s.startHours.slice(), s.endHours.slice());
+                    dates = futGapped.dates;
+                    startHours = futGapped.startHours;
+                    endHours = futGapped.endHours;
+                } else {
+                    dates = s.dates;
+                    startHours = s.startHours.slice();
+                    endHours = s.endHours.slice();
+                }
 
                 var step = dates.length > maxPoints ? Math.ceil(dates.length / maxPoints) : 1;
                 if (step > 1) {
@@ -218,29 +288,73 @@ window.dash_clientside.hoursRibbon = {
                 var color = s.color;
 
                 if (chartType === "bar") {
-                    // Floating bar chart for future data (lighter opacity)
+                    // Floating bar chart for future data (pre-computed rgba to avoid flash)
                     var durations = [];
                     var baseHours = [];
                     for (var j = 0; j < startHours.length; j++) {
                         durations.push(endHours[j] - startHours[j]);
                         baseHours.push(startHours[j]);
                     }
-                    var barData = formatDatesForBars(dates);
-                    var filteredDurations = filterByIndices(durations, barData.validIndices);
-                    var filteredBase = filterByIndices(baseHours, barData.validIndices);
-                    var filteredHoverText = filterByIndices(hoverText, barData.validIndices);
                     traces.push({
-                        x: barData.labels,
-                        y: filteredDurations,
-                        base: filteredBase,
+                        x: dates,
+                        y: durations,
+                        base: baseHours,
                         name: s.name + " (scheduled)",
                         type: "bar",
-                        marker: {color: color, opacity: 0.35, line: {width: 0}},
+                        marker: {color: hexToRgba(color, 0.35), line: {color: "rgba(255,255,255,0.6)", width: 0.5}},
                         hovertemplate: "%{text}<extra></extra>",
-                        text: filteredHoverText,
+                        text: hoverText,
                         textposition: "none",
                         showlegend: false
                     });
+                } else if (chartType === "line") {
+                    // Line chart for future data (dotted, connects to past end)
+                    var pastEnd = pastEndPoints[s.name];
+                    var hasConn = false;
+                    if (pastEnd && dates.length > 0) {
+                        dates.unshift(pastEnd.date);
+                        startHours.unshift(pastEnd.start);
+                        endHours.unshift(pastEnd.end);
+                        hasConn = true;
+                    }
+
+                    // Future start line (dotted)
+                    traces.push({
+                        x: dates,
+                        y: startHours,
+                        name: s.name + " (scheduled)",
+                        mode: "lines",
+                        line: {color: color, width: 1.5, dash: "dot"},
+                        showlegend: false,
+                        hoverinfo: "skip",
+                        connectgaps: true
+                    });
+
+                    // Future end line (dotted)
+                    traces.push({
+                        x: dates,
+                        y: endHours,
+                        mode: "lines",
+                        line: {color: color, width: 1.5, dash: "dot"},
+                        showlegend: false,
+                        hoverinfo: "skip",
+                        connectgaps: true
+                    });
+
+                    // Hover-only trace for future points (excludes connection point)
+                    var hoverDates = hasConn ? dates.slice(1) : dates;
+                    var hoverY = hasConn ? startHours.slice(1) : startHours;
+                    if (hoverDates.length > 0) {
+                        traces.push({
+                            x: hoverDates,
+                            y: hoverY,
+                            mode: "lines",
+                            line: {width: 0},
+                            showlegend: false,
+                            text: hoverText,
+                            hovertemplate: "%{text}<extra></extra>"
+                        });
+                    }
                 } else {
                     // Ribbon chart - prepend past end point to connect visually
                     var pastEnd = pastEndPoints[s.name];
@@ -254,17 +368,18 @@ window.dash_clientside.hoursRibbon = {
 
                     var fillColor = hexToRgba(color, futureFillOpacity);
 
-                    // Upper bound trace (fill anchor, no hover)
+                    // Upper bound (fill anchor)
                     traces.push({
                         x: dates,
                         y: endHours,
                         mode: "lines",
                         line: {width: 0},
                         showlegend: false,
-                        hoverinfo: "skip"
+                        hoverinfo: "skip",
+                        connectgaps: true
                     });
 
-                    // Lower bound trace with lighter fill (no hover — separate trace handles it)
+                    // Lower bound with fill
                     traces.push({
                         x: dates,
                         y: startHours,
@@ -274,7 +389,8 @@ window.dash_clientside.hoursRibbon = {
                         fillcolor: fillColor,
                         name: s.name + " (scheduled)",
                         showlegend: false,
-                        hoverinfo: "skip"
+                        hoverinfo: "skip",
+                        connectgaps: true
                     });
 
                     // Hover-only trace for future points (excludes connection point)
@@ -343,44 +459,46 @@ window.dash_clientside.hoursRibbon = {
             font: {family: "Inter, system-ui, sans-serif", size: 11},
             plot_bgcolor: "#FFFFFF",
             paper_bgcolor: "#FFFFFF",
-            margin: {l: 36, r: 8, t: 8, b: 32, pad: 0, autoexpand: false},
+            margin: {l: 36, r: 8, t: 8, b: 32, pad: 0},
             showlegend: false,
             hovermode: "x unified",
             transition: {duration: 0},
-            xaxis: {
-                type: "date",
-                side: "bottom",
-                showgrid: false,
-                automargin: false,
-                ticklabelposition: "outside bottom",
-                tickmode: "auto",
-                tickvals: null,
-                ticktext: null,
-                nticks: null,
-                dtick: null,
-                categoryorder: null,
-                categoryarray: null
-            },
             yaxis: {
                 range: [yAxis.min, yAxis.max],
                 tickvals: yAxis.tickvals,
                 ticktext: yAxis.ticktext,
                 gridcolor: "#E5E7EB",
-                automargin: false
+                automargin: true
             },
             shapes: shapes
         };
 
-        // Add barmode for overlapping bars (categorical x-axis for no gaps)
+        layout.xaxis = {
+            type: "date",
+            side: "bottom",
+            showgrid: false,
+            automargin: true,
+            ticklabelposition: "outside bottom",
+            tickmode: "auto"
+        };
+
         if (chartType === "bar") {
+            // Rangebreaks collapse weekend/holiday gaps on the date axis.
+            // Safe for bars (no tonexty fill issues).
+            var rangebreaks = [{bounds: ["sat", "mon"]}];
+            if (rawData.holidays && rawData.holidays.length > 0) {
+                for (var hi = 0; hi < rawData.holidays.length; hi++) {
+                    var hd = rawData.holidays[hi].split("T")[0];
+                    var nextDay = new Date(hd + "T12:00:00");
+                    nextDay.setDate(nextDay.getDate() + 1);
+                    var ndStr = nextDay.toISOString().split("T")[0];
+                    rangebreaks.push({values: [hd + " 00:00:00", ndStr + " 00:00:00"]});
+                }
+            }
+            layout.xaxis.rangebreaks = rangebreaks;
             layout.barmode = "overlay";
-            layout.bargap = 0.15;  // Small gap to distinguish from ribbon chart
+            layout.bargap = 0.15;
             layout.bargroupgap = 0;
-            layout.xaxis.type = "category";
-            layout.xaxis.side = "bottom";
-            layout.xaxis.ticklabelposition = "outside bottom";
-            layout.xaxis.tickangle = 0;  // Horizontal labels
-            layout.xaxis.nticks = 8;  // Sparse labels
         }
 
         return {
@@ -487,7 +605,7 @@ window.dash_clientside.hoursRibbon = {
         // and timeseries modes to prevent cross-mode layout carryover.
         var chartEl = document.getElementById('home-chart-hours')
                    || document.getElementById('ops-chart-hours');
-        var modeKey = (rangeDays === "thisweek") ? "week" : "timeseries";
+        var modeKey = (rangeDays === "thisweek") ? "week" : (chartType === "bar" ? "bar" : "timeseries");
         var modeStateKey = "_hoursLastMode_" + (chartEl ? chartEl.id : "default");
         var prevMode = window[modeStateKey];
         if (chartEl && prevMode && prevMode !== modeKey) {

@@ -34,7 +34,7 @@ def chart_card(
     sub_header=None,
     show_grouping=True,
     show_prior_periods=False,
-    prior_periods_default=5,
+    prior_periods_default=3,
 ):
     """Build a chart card with standardized Paper, Graph, LoadingOverlay, and settings.
 

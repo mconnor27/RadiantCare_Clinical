@@ -33,18 +33,21 @@ def chart_settings_button(
     # Chart type selector
     if chart_types:
         panel_children.append(
-            dmc.Stack(
-                gap=4,
-                children=[
-                    dmc.Text("Chart Type", size="xs", fw=500, c="#6B7280"),
-                    dmc.SegmentedControl(
-                        id=f"{chart_id}-settings-type",
-                        data=chart_types,
-                        value=chart_types[0]["value"],
-                        size="xs",
-                        fullWidth=True,
-                    ),
-                ],
+            html.Div(
+                id=f"{chart_id}-settings-type-wrap",
+                children=dmc.Stack(
+                    gap=4,
+                    children=[
+                        dmc.Text("Chart Type", size="xs", fw=500, c="#6B7280"),
+                        dmc.SegmentedControl(
+                            id=f"{chart_id}-settings-type",
+                            data=chart_types,
+                            value=chart_types[0]["value"],
+                            size="xs",
+                            fullWidth=True,
+                        ),
+                    ],
+                ),
             )
         )
         # Stacked/Grouped toggle — visible only for area and bar chart types

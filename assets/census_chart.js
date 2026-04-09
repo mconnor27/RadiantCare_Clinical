@@ -169,7 +169,7 @@ window.dash_clientside.census = {
                     customdata: filteredRaw,
                     name: s.name,
                     type: "bar",
-                    marker: {color: s.color, line: {width: 0}},
+                    marker: {color: s.color, line: {color: "rgba(255,255,255,0.6)", width: 0.5}},
                     hoverinfo: "skip"
                 };
             } else if (chartType === "line") {
@@ -274,7 +274,7 @@ window.dash_clientside.census = {
                         customdata: filteredFutureY,
                         name: s.name + " (scheduled)",
                         type: "bar",
-                        marker: {color: s.color, opacity: 0.4, line: {width: 0}},
+                        marker: {color: s.color, opacity: 0.4, line: {color: "rgba(255,255,255,0.6)", width: 0.5}},
                         showlegend: false,
                         hoverinfo: "skip"
                     };
@@ -452,24 +452,22 @@ window.dash_clientside.census = {
         // Add barmode for bar charts
         if (chartType === "bar") {
             layout.barmode = stacked ? "stack" : "group";
-            // Tighten gaps as bar count increases to keep bars visible
+            // Scale gaps by bar count, then bump up for coarser aggregation
             var nBars = barData.labels.length + (futureDates ? formatDatesForBars(futureDates).labels.length : 0);
-            if (stacked) {
-                if (nBars > 80) {
-                    layout.bargap = 0;
-                } else if (nBars > 40) {
-                    layout.bargap = 0.08;
-                } else {
-                    layout.bargap = 0.15;
-                }
-                layout.bargroupgap = 0;
+            var baseGap;
+            if (nBars > 80) {
+                baseGap = 0;
+            } else if (nBars > 40) {
+                baseGap = 0.08;
             } else {
-                // Grouped: minimize gaps so bars fill available space.
-                // Also hide (visible:false) empty-data traces so Plotly
-                // doesn't allocate bar width to invisible series.
-                layout.bargap = 0;
-                layout.bargroupgap = 0;
+                baseGap = 0.15;
             }
+            // Coarser aggregation → wider gaps (fewer bars = more room)
+            if (aggLevel === "M" && baseGap < 0.2) baseGap = Math.max(baseGap, 0.2);
+            if (aggLevel === "Y" && baseGap < 0.25) baseGap = Math.max(baseGap, 0.25);
+            if (aggLevel === "W" && baseGap < 0.15) baseGap = 0.15;
+            layout.bargap = baseGap;
+            layout.bargroupgap = stacked ? 0 : 0;
             layout.xaxis.type = "category";
             layout.xaxis.tickangle = 0;
             // Scale tick count to bar density — labels are already abbreviated
@@ -515,7 +513,11 @@ window.dash_clientside.census = {
                 }
             }
         }
-        if (yMaxSCWT > 0) {
+        if (rawData.yRange) {
+            // Explicit fixed range takes precedence (e.g., [0, 100] for percentages)
+            layout.yaxis.range = rawData.yRange;
+            layout.yaxis.autorange = false;
+        } else if (yMaxSCWT > 0) {
             var headroom = (rawData.showBarTotals && chartType === "bar") ? 1.13 : 1.1;
             layout.yaxis.range = [0, Math.ceil(yMaxSCWT * headroom)];
             layout.yaxis.autorange = false;
@@ -647,8 +649,11 @@ window.dash_clientside.census = {
             fig.layout.xaxis.autorange = true;
         }
 
-        // Set dynamic y-axis range with 10% headroom
-        if (yMax > 0) {
+        // Set dynamic y-axis range with 10% headroom (skip if explicit range set)
+        if (rawData.yRange) {
+            fig.layout.yaxis.range = rawData.yRange;
+            fig.layout.yaxis.autorange = false;
+        } else if (yMax > 0) {
             fig.layout.yaxis.range = [0, Math.ceil(yMax * 1.1)];
             fig.layout.yaxis.autorange = false;
         }

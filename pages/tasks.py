@@ -17,12 +17,13 @@ from config.settings import (
 from components.chart_card import chart_card, register_chart_callbacks
 from components.kpi_card import kpi_card, kpi_placeholder
 from utils.charts import apply_default_layout, empty_figure, color_for_index
+from utils.tables import sanitize_for_grid
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, SLIDER_MARKS,
     preset_to_slider_val,
 )
+from components.diagnosis_filter import diagnosis_accordion, register_diagnosis_callbacks
 from utils.diagnosis_categories import (
-    CATEGORIES as BODY_SYSTEMS,
     build_code_to_category,
     get_categories_for_codes,
     primary_category,
@@ -229,50 +230,7 @@ def _build_tasks_filter_bar():
                         ],
                         style={"position": "relative", "display": "inline-block"},
                     ),
-                    # Diagnosis dropdown
-                    html.Div(
-                        children=[
-                            html.Div(
-                                children=[
-                                    dmc.Button(
-                                        "Diagnosis",
-                                        id="tasks-diagnosis-trigger",
-                                        variant="default",
-                                        size="sm",
-                                        rightSection=DashIconify(icon="mdi:chevron-down", width=14),
-                                    ),
-                                    dmc.ActionIcon(
-                                        DashIconify(icon="mdi:close-circle", width=18),
-                                        id="tasks-diagnosis-clear",
-                                        variant="subtle",
-                                        color="gray",
-                                        size="sm",
-                                        className="wf-filter-clear-btn",
-                                    ),
-                                ],
-                                style={"position": "relative", "display": "inline-block"},
-                            ),
-                            dmc.Paper(
-                                dmc.ChipGroup(
-                                    children=[
-                                        dmc.Chip(bs, value=bs, size="xs", variant="filled")
-                                        for bs in BODY_SYSTEMS
-                                    ],
-                                    id="tasks-filter-diagnosis",
-                                    multiple=True,
-                                    value=[],
-                                ),
-                                id="tasks-diagnosis-panel",
-                                p="xs",
-                                shadow="md",
-                                withBorder=True,
-                                radius="md",
-                                className="wf-chip-dropdown",
-                                style={"display": "none"},
-                            ),
-                        ],
-                        style={"position": "relative", "display": "inline-block"},
-                    ),
+                    diagnosis_accordion("tasks"),
                     # Task Type dropdown
                     html.Div(
                         children=[
@@ -763,8 +721,11 @@ layout = dmc.Stack(
                     ],
                     show_smooth=True,
                     show_prior_periods=True,
-                    smooth_max=50,
-                    smooth_default=0,
+                    smooth_min=0,
+                    smooth_max=1,
+                    smooth_step=0.05,
+                    smooth_default=0.1,
+                    prior_periods_default=3,
                     paper_padding="md",
                     extra_controls=[
                         dmc.SegmentedControl(
@@ -947,6 +908,9 @@ layout = dmc.Stack(
     ],
 )
 
+# Register reusable diagnosis accordion callbacks
+register_diagnosis_callbacks("tasks")
+
 
 # ---------------------------------------------------------------------------
 # Helper: Date Filter
@@ -1048,15 +1012,6 @@ def _register_tasks_filter_callbacks():
     )
     clientside_callback(
         "function(vals) {"
-        "  if (!vals || vals.length === 0) return 'Diagnosis';"
-        "  if (vals.length === 1) return vals[0];"
-        "  return vals.length + ' selected';"
-        "}",
-        Output("tasks-diagnosis-trigger", "children"),
-        Input("tasks-filter-diagnosis", "value"),
-    )
-    clientside_callback(
-        "function(vals) {"
         "  if (!vals || vals.length === 0) return 'Task Type';"
         "  if (vals.length === 1) return vals[0];"
         "  return vals.length + ' selected';"
@@ -1073,11 +1028,6 @@ def _register_tasks_filter_callbacks():
     )
     clientside_callback(
         """function(vals) { return vals && vals.length > 0 ? {"display": "inline-flex"} : {"display": "none"}; }""",
-        Output("tasks-diagnosis-clear", "style"),
-        Input("tasks-filter-diagnosis", "value"),
-    )
-    clientside_callback(
-        """function(vals) { return vals && vals.length > 0 ? {"display": "inline-flex"} : {"display": "none"}; }""",
         Output("tasks-tasktype-clear", "style"),
         Input("tasks-filter-type", "value"),
     )
@@ -1087,12 +1037,6 @@ def _register_tasks_filter_callbacks():
         """function(n) { return null; }""",
         Output("tasks-filter-physician", "value", allow_duplicate=True),
         Input("tasks-physician-clear", "n_clicks"),
-        prevent_initial_call=True,
-    )
-    clientside_callback(
-        """function(n) { return []; }""",
-        Output("tasks-filter-diagnosis", "value", allow_duplicate=True),
-        Input("tasks-diagnosis-clear", "n_clicks"),
         prevent_initial_call=True,
     )
     clientside_callback(
@@ -1176,10 +1120,11 @@ clientside_callback(
     Input("tasks-interval", "n_intervals"),
     Input("tasks-date-slider", "value"),
     Input("tasks-filter-type", "value"),
-    Input("tasks-filter-diagnosis", "value"),
+    Input("tasks-diag-store", "data"),
+    Input("tasks-diag-mode", "data"),
     Input("tasks-filter-status", "value"),
 )
-def _populate_physician_chips(_n, slider_val, task_types, diagnosis_cats, status):
+def _populate_physician_chips(_n, slider_val, task_types, diagnosis_cats, diag_mode, status):
     """Populate physician filter with MDs that appear in the filtered data."""
     from data.loader import load_tasks, load_diagnosis
 
@@ -1212,11 +1157,8 @@ def _populate_physician_chips(_n, slider_val, task_types, diagnosis_cats, status
             diag_df = None
         c2b = build_code_to_category(diag_df)
         if c2b:
-            bs_set = set(diagnosis_cats)
-            row_bs = tasks["DiagnosisCodes"].apply(
-                lambda s: get_categories_for_codes(s, c2b) if pd.notna(s) else set()
-            )
-            tasks = tasks[row_bs.apply(lambda cats: bool(cats & bs_set))]
+            from utils.diagnosis_categories import filter_by_diagnosis
+            tasks = filter_by_diagnosis(tasks, diagnosis_cats, c2b, mode=diag_mode or "primary")
 
     is_comp = _task_is_completed(tasks)
     if status == "open":
@@ -1244,7 +1186,8 @@ def _populate_physician_chips(_n, slider_val, task_types, diagnosis_cats, status
 # ---------------------------------------------------------------------------
 
 def _load_and_filter_tasks(slider_val, physician, task_types, diagnosis_cats,
-                           status, use_business_hours, max_days_cap, date_preset):
+                           diag_mode, status, use_business_hours, max_days_cap,
+                           date_preset):
     """Load tasks data, apply all dimension/date/status filters.
 
     Returns a dict with shared dataframes and metadata, or None if empty.
@@ -1297,12 +1240,9 @@ def _load_and_filter_tasks(slider_val, physician, task_types, diagnosis_cats,
         diag_df = None
     c2b = build_code_to_category(diag_df)
 
-    if diagnosis_cats and "DiagnosisCodes" in df_base.columns and c2b:
-        bs_set = set(diagnosis_cats)
-        row_bs = df_base["DiagnosisCodes"].apply(
-            lambda s: get_categories_for_codes(s, c2b) if pd.notna(s) else set()
-        )
-        df_base = df_base[row_bs.apply(lambda cats: bool(cats & bs_set))]
+    if diagnosis_cats:
+        from utils.diagnosis_categories import filter_by_diagnosis
+        df_base = filter_by_diagnosis(df_base, diagnosis_cats, c2b, mode=diag_mode or "primary")
 
     # Status filter — use TaskStatus column
     is_completed_base = _task_is_completed(df_base)
@@ -1320,12 +1260,9 @@ def _load_and_filter_tasks(slider_val, physician, task_types, diagnosis_cats,
         ]
     if physician and "ResolvedMD" in df_prior_base.columns:
         df_prior_base = df_prior_base[df_prior_base["ResolvedMD"] == physician]
-    if diagnosis_cats and "DiagnosisCodes" in df_prior_base.columns and c2b:
-        bs_set = set(diagnosis_cats)
-        row_bs_prior = df_prior_base["DiagnosisCodes"].apply(
-            lambda s: get_categories_for_codes(s, c2b) if pd.notna(s) else set()
-        )
-        df_prior_base = df_prior_base[row_bs_prior.apply(lambda cats: bool(cats & bs_set))]
+    if diagnosis_cats:
+        from utils.diagnosis_categories import filter_by_diagnosis
+        df_prior_base = filter_by_diagnosis(df_prior_base, diagnosis_cats, c2b, mode=diag_mode or "primary")
 
     # --- Apply task-type filter for chart/table frames ---
     df = df_base.copy()
@@ -1393,7 +1330,8 @@ _TASKS_FILTER_INPUTS = [
     Input("tasks-filter-date-preset", "value"),
     Input("tasks-filter-physician", "value"),
     Input("tasks-filter-type", "value"),
-    Input("tasks-filter-diagnosis", "value"),
+    Input("tasks-diag-store", "data"),
+    Input("tasks-diag-mode", "data"),
     Input("tasks-filter-status", "value"),
     Input("tasks-date-slider", "value"),
     Input("tasks-business-hours-switch", "checked"),
@@ -1402,12 +1340,12 @@ _TASKS_FILTER_INPUTS = [
 
 
 def _unpack_tasks_filter_args(args):
-    """Unpack the 9 common filter args into kwargs for _load_and_filter_tasks."""
-    (_n, date_preset, physician, task_types, diagnosis_cats,
-     status, slider_val, use_business_hours, max_days_cap) = args[:9]
+    """Unpack the 10 common filter args into kwargs for _load_and_filter_tasks."""
+    (_n, date_preset, physician, task_types, diagnosis_cats, diag_mode,
+     status, slider_val, use_business_hours, max_days_cap) = args[:10]
     return dict(
         slider_val=slider_val, physician=physician, task_types=task_types,
-        diagnosis_cats=diagnosis_cats, status=status,
+        diagnosis_cats=diagnosis_cats, diag_mode=diag_mode, status=status,
         use_business_hours=use_business_hours, max_days_cap=max_days_cap,
         date_preset=date_preset,
     )
@@ -2213,7 +2151,7 @@ def _build_table(df, is_completed):
     table_df = df.head(200).copy()
     for c in table_df.select_dtypes(include=["datetime64"]).columns:
         table_df[c] = table_df[c].dt.strftime("%m/%d/%Y %H:%M")
-    table_df = table_df.fillna("\u2014")
+    table_df = sanitize_for_grid(table_df)
 
     return dag.AgGrid(
         id="tasks-detail-grid",
@@ -2376,4 +2314,24 @@ for _sid in ["tasks-volume-slice", "tasks-hist-slice", "tasks-time-slice", "task
         _SLICE_CLASS_JS,
         Output(_sid, "className"),
         Input(_sid, "value"),
+    )
+
+_HIDE_STACK_JS = """function(sliceVal, chartType) {
+    var single = !sliceVal || sliceVal === "total" || sliceVal === "";
+    var noStack = chartType === "line";
+    return (single || noStack) ? {"display": "none"} : {};
+}"""
+
+for _slice_id, _settings_id in [
+    ("tasks-volume-slice", "tasks-volume"),
+    ("tasks-cumulative-slice", "tasks-cumulative"),
+    ("tasks-time-slice", "tasks-time-trend"),
+    ("tasks-sla-slice", "tasks-sla"),
+]:
+    clientside_callback(
+        _HIDE_STACK_JS,
+        Output(f"{_settings_id}-settings-stack-wrap", "style", allow_duplicate=True),
+        Input(_slice_id, "value"),
+        Input(f"{_settings_id}-settings-type", "value"),
+        prevent_initial_call=True,
     )

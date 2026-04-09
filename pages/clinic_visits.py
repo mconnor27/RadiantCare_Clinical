@@ -15,12 +15,14 @@ from config.settings import (
     CHART_PAPER_HEIGHT_SM, PRIOR_PERIOD_COLORS,
 )
 from components.filter_bar import department_chips
+from components.diagnosis_filter import diagnosis_accordion, register_diagnosis_callbacks
 from components.kpi_card import kpi_card, kpi_placeholder
 from components.chart_card import chart_card, register_chart_callbacks
 from components.chart_settings import chart_settings_popover
 from components.detail_table import detail_table
 from components.outlier_panel import outlier_panel, register_outlier_callbacks
 from utils.charts import apply_default_layout, empty_figure, dept_color
+from utils.tables import sanitize_for_grid
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, DEFAULT_SLIDER, SLIDER_MARKS,
     preset_to_slider_val,
@@ -46,7 +48,6 @@ _ACTIVITY_TO_CATEGORY = {
 }
 
 from utils.diagnosis_categories import (
-    CATEGORIES as BODY_SYSTEMS,
     build_code_to_category,
     get_categories_for_codes,
     primary_category,
@@ -235,50 +236,8 @@ def _build_cv_filter_bar():
                         ],
                         style={"position": "relative", "display": "inline-block"},
                     ),
-                    # Diagnosis dropdown
-                    html.Div(
-                        children=[
-                            html.Div(
-                                children=[
-                                    dmc.Button(
-                                        "Diagnosis",
-                                        id="cv-body-system-trigger",
-                                        variant="default",
-                                        size="sm",
-                                        rightSection=DashIconify(icon="mdi:chevron-down", width=14),
-                                    ),
-                                    dmc.ActionIcon(
-                                        DashIconify(icon="mdi:close-circle", width=18),
-                                        id="cv-body-system-clear",
-                                        variant="subtle",
-                                        color="gray",
-                                        size="sm",
-                                        className="wf-filter-clear-btn",
-                                    ),
-                                ],
-                                style={"position": "relative", "display": "inline-block"},
-                            ),
-                            dmc.Paper(
-                                dmc.ChipGroup(
-                                    children=[
-                                        dmc.Chip(bs, value=bs, size="xs", variant="filled")
-                                        for bs in BODY_SYSTEMS
-                                    ],
-                                    id="cv-filter-body-system",
-                                    multiple=True,
-                                    value=[],
-                                ),
-                                id="cv-body-system-panel",
-                                p="xs",
-                                shadow="md",
-                                withBorder=True,
-                                radius="md",
-                                className="wf-chip-dropdown",
-                                style={"display": "none"},
-                            ),
-                        ],
-                        style={"position": "relative", "display": "inline-block"},
-                    ),
+                    # Diagnosis accordion filter
+                    diagnosis_accordion("cv"),
                     # Visit Category (from ActivityName mapping)
                     html.Div(
                         children=[
@@ -368,6 +327,11 @@ def _build_cv_filter_bar():
                         size="xs",
                         checked=False,
                     ),
+                    # Outlier caps
+                    outlier_panel("cv", transitions=[
+                        ("Booking Lead Time", _LEAD_MAX),
+                        ("Consult \u2192 Sim", _DAYS_TO_SIM_MAX),
+                    ]),
                     # Smoothing
                     dmc.Group(
                         children=[
@@ -387,11 +351,6 @@ def _build_cv_filter_bar():
                         gap=6,
                         align="center",
                     ),
-                    # Outlier caps
-                    outlier_panel("cv", transitions=[
-                        ("Booking Lead Time", _LEAD_MAX),
-                        ("Consult \u2192 Sim", _DAYS_TO_SIM_MAX),
-                    ]),
                 ],
                 gap="md",
                 wrap="wrap",
@@ -487,7 +446,28 @@ layout = dmc.Stack(
             className="page-sticky-header",
             children=[
                 dmc.Title("Clinic Visits", order=2, className="page-title", style={"margin": 0, "textAlign": "center"}),
-                _build_cv_filter_bar(),
+                html.Div(
+                    style={"position": "relative"},
+                    children=[
+                        _build_cv_filter_bar(),
+                        html.Div(
+                            id="cv-grid-filter-badge",
+                            children=dmc.Tooltip(
+                                label="Table column filters are active — charts reflect the filtered subset",
+                                position="left", withArrow=True, multiline=True, w=220,
+                                children=dmc.Badge(
+                                    "Table Filtered",
+                                    color="red", variant="filled", size="md",
+                                    leftSection=DashIconify(icon="mdi:filter", width=14),
+                                ),
+                            ),
+                            style={
+                                "position": "absolute", "top": -12, "right": 8,
+                                "zIndex": 10, "display": "none", "cursor": "pointer",
+                            },
+                        ),
+                    ],
+                ),
             ],
         ),
 
@@ -562,7 +542,8 @@ layout = dmc.Stack(
                     smooth_min=0,
                     smooth_max=1,
                     smooth_step=0.05,
-                    smooth_default=0.15,
+                    smooth_default=0.1,
+                    prior_periods_default=3,
                     slider_label="Smoothing",
                     paper_padding="md",
                     extra_controls=[
@@ -657,8 +638,8 @@ layout = dmc.Stack(
                     "Consult \u2192 Sim Conversion Rate",
                     settings_id="cv-conversion",
                     chart_types=[
-                        {"value": "line", "label": "Line"},
                         {"value": "area", "label": "Area"},
+                        {"value": "line", "label": "Line"},
                         {"value": "bar", "label": "Bar"},
                     ],
                     show_smooth=True,
@@ -878,7 +859,22 @@ layout = dmc.Stack(
         ]),
 
         # Detail table — full width, collapsible
-        detail_table("cv-detail-grid", title="Visit Details", export_id="cv-table-export"),
+        detail_table(
+            "cv-detail-grid",
+            title="Visit Details",
+            export_id="cv-table-export",
+            extra_controls=[
+                dmc.Button(
+                    "Clear Filters",
+                    id="cv-table-clear-filters",
+                    size="compact-xs",
+                    variant="light",
+                    color="red",
+                    leftSection=DashIconify(icon="mdi:filter-remove", width=14),
+                    style={"display": "none"},
+                ),
+            ],
+        ),
 
         dcc.Interval(id="cv-interval", interval=300_000, n_intervals=0),
 
@@ -893,6 +889,7 @@ layout = dmc.Stack(
         dcc.Store(id="cv-cancel-settings-stack", data="stacked"),
         dcc.Store(id="cv-store-kpi-sparklines"),
         dcc.Store(id="cv-filter-options"),
+        dcc.Store(id="cv-table-filter-rows"),  # filtered row indices from grid
         html.Div(id="cv-filter-options-applier", style={"display": "none"}),
     ],
 )
@@ -1018,17 +1015,18 @@ def _get_body_systems_for_rows(df, c2b):
 
 
 def _apply_cv_filters(df, departments, physician, body_systems, visit_type,
-                       status, inpatient, c2b, classified_type=None, skip=None):
+                       status, inpatient, c2b, classified_type=None, skip=None,
+                       diag_mode="primary"):
     """Apply all dimension filters except the one named by `skip`."""
+    from utils.diagnosis_categories import filter_by_diagnosis
+
     d = df
     if skip != "department" and departments and "Department" in d.columns:
         d = d[d["Department"].isin(departments)]
     if skip != "physician" and physician and "AppointmentPhysician" in d.columns:
         d = d[d["AppointmentPhysician"].isin(physician)]
-    if skip != "body_system" and body_systems and "DiagnosisCodes" in d.columns and c2b:
-        bs_set = set(body_systems)
-        row_bs = _get_body_systems_for_rows(d, c2b)
-        d = d[row_bs.apply(lambda s: bool(s & bs_set))]
+    if skip != "body_system" and body_systems:
+        d = filter_by_diagnosis(d, body_systems, c2b, mode=diag_mode)
     if skip != "visit_type" and visit_type and visit_type != "All" and "VisitCategory" in d.columns:
         d = d[d["VisitCategory"] == visit_type]
     if skip != "classified_type" and classified_type and classified_type != "All" and "VisitType" in d.columns:
@@ -1054,24 +1052,27 @@ def _apply_cv_filters(df, departments, physician, body_systems, visit_type,
 
 def _compute_cv_available_options(df, departments, physician, body_systems,
                                    visit_type, status, inpatient, c2b,
-                                   classified_type=None):
+                                   classified_type=None, diag_mode="primary"):
     """Cross-filter: for each dimension, apply all OTHER filters and return available values."""
     # Department options
     d_nd = _apply_cv_filters(df, departments, physician, body_systems,
                               visit_type, status, inpatient, c2b,
-                              classified_type=classified_type, skip="department")
+                              classified_type=classified_type, skip="department",
+                              diag_mode=diag_mode)
     dept_opts = sorted(d_nd["Department"].dropna().unique().tolist()) if "Department" in d_nd.columns else []
 
     # Physician options
     d_np = _apply_cv_filters(df, departments, physician, body_systems,
                               visit_type, status, inpatient, c2b,
-                              classified_type=classified_type, skip="physician")
+                              classified_type=classified_type, skip="physician",
+                              diag_mode=diag_mode)
     phys_opts = sorted(d_np["AppointmentPhysician"].dropna().unique().tolist()) if "AppointmentPhysician" in d_np.columns else []
 
     # Body system options
     d_nb = _apply_cv_filters(df, departments, physician, body_systems,
                               visit_type, status, inpatient, c2b,
-                              classified_type=classified_type, skip="body_system")
+                              classified_type=classified_type, skip="body_system",
+                              diag_mode=diag_mode)
     bs_opts = []
     if c2b and "DiagnosisCodes" in d_nb.columns:
         all_bs = set()
@@ -1172,26 +1173,12 @@ def _register_cv_filter_callbacks():
         Output("cv-physician-trigger", "children"),
         Input("cv-filter-physician", "value"),
     )
-    clientside_callback(
-        """function(vals) {
-            if (!vals || vals.length === 0) return "Diagnosis";
-            if (vals.length === 1) return vals[0];
-            return vals.length + " selected";
-        }""",
-        Output("cv-body-system-trigger", "children"),
-        Input("cv-filter-body-system", "value"),
-    )
 
     # --- Clear-button visibility ---
     clientside_callback(
         """function(vals) { return vals && vals.length > 0 ? {"display": "inline-flex"} : {"display": "none"}; }""",
         Output("cv-physician-clear", "style"),
         Input("cv-filter-physician", "value"),
-    )
-    clientside_callback(
-        """function(vals) { return vals && vals.length > 0 ? {"display": "inline-flex"} : {"display": "none"}; }""",
-        Output("cv-body-system-clear", "style"),
-        Input("cv-filter-body-system", "value"),
     )
 
     # --- Clear-button actions ---
@@ -1201,17 +1188,12 @@ def _register_cv_filter_callbacks():
         Input("cv-physician-clear", "n_clicks"),
         prevent_initial_call=True,
     )
-    clientside_callback(
-        """function(n) { return []; }""",
-        Output("cv-filter-body-system", "value", allow_duplicate=True),
-        Input("cv-body-system-clear", "n_clicks"),
-        prevent_initial_call=True,
-    )
 
 
 
 # Register filter callbacks
 _register_cv_filter_callbacks()
+register_diagnosis_callbacks("cv")
 
 
 # ---------------------------------------------------------------------------
@@ -1271,9 +1253,41 @@ def _cv_trend(curr, prior, invert=False):
     return f"{abs(pct):.0f}%", direction
 
 
+_cv_enriched_cache = {"key": None, "df": None, "c2b": None}
+
+
+def _get_enriched_cv():
+    """Return (df, c2b) with VisitType/VisitCategory classified. Cached."""
+    from data.loader import load_clinic_visits, load_diagnosis
+
+    raw = load_clinic_visits()
+    key = id(raw)
+    if _cv_enriched_cache["key"] == key and _cv_enriched_cache["df"] is not None:
+        return _cv_enriched_cache["df"], _cv_enriched_cache["c2b"]
+
+    df = raw.copy()
+    if "ActivityName" in df.columns:
+        df["VisitType"] = df.apply(_classify_visit_type, axis=1)
+        df["VisitCategory"] = df["ActivityName"].map(_ACTIVITY_TO_CATEGORY).fillna("Other")
+    else:
+        df["VisitType"] = "Other"
+        df["VisitCategory"] = "Other"
+
+    try:
+        diag_df = load_diagnosis()
+    except Exception:
+        diag_df = None
+    c2b = _build_diag_code_to_body_system(diag_df)
+
+    _cv_enriched_cache["key"] = key
+    _cv_enriched_cache["df"] = df
+    _cv_enriched_cache["c2b"] = c2b
+    return df, c2b
+
+
 def _load_and_filter_cv(slider_val, departments, physician, body_systems,
-                         visit_type, classified_type, status, inpatient,
-                         weekend_only, date_preset, outlier_enabled,
+                         diag_mode, visit_type, classified_type, status,
+                         inpatient, weekend_only, date_preset, outlier_enabled,
                          outlier_cap_0, outlier_cap_1):
     """Load clinic visits data, classify, filter, and return shared context.
 
@@ -1291,27 +1305,12 @@ def _load_and_filter_cv(slider_val, departments, physician, body_systems,
         days_to_sim_max = outlier_cap_1 or _DAYS_TO_SIM_MAX
 
     try:
-        df = load_clinic_visits().copy()
+        df, c2b = _get_enriched_cv()
     except Exception:
         return None
 
     if df.empty:
         return None
-
-    # Classify visit types
-    if "ActivityName" in df.columns:
-        df["VisitType"] = df.apply(_classify_visit_type, axis=1)
-        df["VisitCategory"] = df["ActivityName"].map(_ACTIVITY_TO_CATEGORY).fillna("Other")
-    else:
-        df["VisitType"] = "Other"
-        df["VisitCategory"] = "Other"
-
-    # Diagnosis lookup
-    try:
-        diag_df = load_diagnosis()
-    except Exception:
-        diag_df = None
-    c2b = _build_diag_code_to_body_system(diag_df)
 
     # Date range from slider
     start, end = _get_date_range(slider_val, None)
@@ -1340,21 +1339,21 @@ def _load_and_filter_cv(slider_val, departments, physician, body_systems,
     filter_options = _compute_cv_available_options(
         df, departments, physician, body_systems,
         visit_type, status, inpatient, c2b,
-        classified_type=classified_type,
+        classified_type=classified_type, diag_mode=diag_mode,
     )
 
     # Apply dimension filters
     dff = _apply_cv_filters(
         df, departments, physician, body_systems,
         visit_type, status, inpatient, c2b,
-        classified_type=classified_type,
+        classified_type=classified_type, diag_mode=diag_mode,
     )
 
     # Cancel rate needs all-status filtered frame
     dff_all_status = _apply_cv_filters(
         df, departments, physician, body_systems,
         visit_type, "All", inpatient, c2b,
-        classified_type=classified_type,
+        classified_type=classified_type, diag_mode=diag_mode,
     )
 
     # Prior-period comparison
@@ -1370,7 +1369,7 @@ def _load_and_filter_cv(slider_val, departments, physician, body_systems,
         dff_prior = _apply_cv_filters(
             df_prior, departments, physician, body_systems,
             visit_type, status, inpatient, c2b,
-            classified_type=classified_type,
+            classified_type=classified_type, diag_mode=diag_mode,
         )
 
     return {
@@ -1379,7 +1378,7 @@ def _load_and_filter_cv(slider_val, departments, physician, body_systems,
         "start": start, "end": end, "date_preset": date_preset,
         "trend_label": trend_label, "lead_max": lead_max,
         "days_to_sim_max": days_to_sim_max, "filter_options": filter_options,
-        "departments": departments,
+        "departments": departments, "diag_mode": diag_mode or "primary",
     }
 
 
@@ -1389,7 +1388,8 @@ _CV_FILTER_INPUTS = [
     Input("cv-date-slider", "value"),
     Input("cv-filter-department", "value"),
     Input("cv-filter-physician", "value"),
-    Input("cv-filter-body-system", "value"),
+    Input("cv-diag-store", "data"),
+    Input("cv-diag-mode", "data"),
     Input("cv-filter-visit-type", "value"),
     Input("cv-filter-classified-type", "value"),
     Input("cv-filter-status", "value"),
@@ -1403,14 +1403,14 @@ _CV_FILTER_INPUTS = [
 
 
 def _unpack_filter_args(args):
-    """Unpack the 14 common filter args into a dict for _load_and_filter_cv."""
-    (_n, slider_val, departments, physician, body_systems,
+    """Unpack the 15 common filter args into a dict for _load_and_filter_cv."""
+    (_n, slider_val, departments, physician, body_systems, diag_mode,
      visit_type, classified_type, status, inpatient,
      weekend_only, date_preset, outlier_enabled,
-     outlier_cap_0, outlier_cap_1) = args[:14]
+     outlier_cap_0, outlier_cap_1) = args[:15]
     return dict(
         slider_val=slider_val, departments=departments, physician=physician,
-        body_systems=body_systems, visit_type=visit_type,
+        body_systems=body_systems, diag_mode=diag_mode, visit_type=visit_type,
         classified_type=classified_type, status=status, inpatient=inpatient,
         weekend_only=weekend_only, date_preset=date_preset,
         outlier_enabled=outlier_enabled, outlier_cap_0=outlier_cap_0,
@@ -1418,8 +1418,69 @@ def _unpack_filter_args(args):
     )
 
 
+def _apply_grid_row_filter(dff, grid_rows):
+    """Filter dff to only rows matching the grid's visible row indices.
+
+    grid_rows: list of _row_idx values from virtualRowData, or None if no filter.
+    Returns the (possibly filtered) DataFrame.
+    """
+    if grid_rows is None or dff is None or dff.empty:
+        return dff
+    idx_set = set(int(i) for i in grid_rows)
+    return dff.loc[dff.index.isin(idx_set)].reset_index(drop=True)
+
+
+_GRID_DIM_COLS = ["Department", "AppointmentPhysician", "VisitType", "PatientFullName"]
+
+
+def _apply_grid_row_filter_all_status(dff, dff_all_status, grid_rows):
+    """Apply grid row filter to dff_all_status via dimension column matching.
+
+    The grid shows dff (status-filtered) rows.  dff_all_status includes all
+    statuses, so a direct index match would exclude cancelled/no-show rows.
+    Instead, identify the unique dimension values in the grid-filtered dff
+    subset and apply them to dff_all_status.
+    """
+    if grid_rows is None or dff is None or dff.empty:
+        return dff_all_status
+    if dff_all_status is None or dff_all_status.empty:
+        return dff_all_status
+    filtered = _apply_grid_row_filter(dff, grid_rows)
+    if filtered.empty:
+        return dff_all_status.iloc[:0]
+    mask = pd.Series(True, index=dff_all_status.index)
+    for col in _GRID_DIM_COLS:
+        if col in filtered.columns and col in dff_all_status.columns:
+            vals = set(filtered[col].dropna().unique())
+            if vals:
+                mask &= dff_all_status[col].isin(vals) | dff_all_status[col].isna()
+    return dff_all_status[mask]
+
+
 # ---------------------------------------------------------------------------
-# Callback 1: KPIs + Sparklines + Filter Options + Detail Table
+# Callback 1A: Detail Table + Filter Options
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("cv-detail-grid", "rowData"),
+    Output("cv-detail-grid", "columnDefs"),
+    Output("cv-filter-options", "data"),
+    *_CV_FILTER_INPUTS,
+)
+def _update_cv_table(*args):
+    ctx = _unpack_filter_args(args)
+    data = _load_and_filter_cv(**ctx)
+    if data is None:
+        return [], [], None
+    dff = data["dff"]
+    if dff.empty:
+        return [], [], data["filter_options"]
+    row_data, col_defs = _build_detail_table(dff, data["c2b"])
+    return row_data, col_defs, data["filter_options"]
+
+
+# ---------------------------------------------------------------------------
+# Callback 1B: KPIs + Sparklines (responds to grid filter)
 # ---------------------------------------------------------------------------
 
 @callback(
@@ -1430,23 +1491,22 @@ def _unpack_filter_args(args):
     Output("cv-kpi-sim-conversion", "children"),
     Output("cv-kpi-days-to-sim", "children"),
     Output("cv-store-kpi-sparklines", "data"),
-    Output("cv-filter-options", "data"),
-    Output("cv-detail-grid", "rowData"),
-    Output("cv-detail-grid", "columnDefs"),
     *_CV_FILTER_INPUTS,
+    Input("cv-table-filter-rows", "data"),
 )
 def _update_cv_kpis(*args):
     ctx = _unpack_filter_args(args)
+    grid_rows = args[15]
     data = _load_and_filter_cv(**ctx)
 
     na_kpi = kpi_card("--", "N/A")
-    empty_kpis = (na_kpi,) * 6 + ({}, None, [], [])
+    empty_kpis = (na_kpi,) * 6 + ({},)
     if data is None:
         return empty_kpis
 
-    dff = data["dff"]
+    dff = _apply_grid_row_filter(data["dff"], grid_rows)
     if dff.empty:
-        return (na_kpi,) * 6 + ({}, data["filter_options"], [], [])
+        return empty_kpis
 
     dff_prior = data["dff_prior"]
     trend_label = data["trend_label"]
@@ -1554,7 +1614,7 @@ def _update_cv_kpis(*args):
         dmc.Group(gap=2, children=[
             DashIconify(icon="mdi:information-outline", width=16, color="#9CA3AF", style={"cursor": "help"}),
         ]),
-        label=f"Median booking lead time. Excludes values >{lead_max} days to filter purposeful waits and delays.",
+        label=f"Retrospective: median days from booking to visit for the selected date range. Excludes >{lead_max}d. Lower = shorter booking horizon.",
         position="top", withArrow=True, multiline=True, w=240,
     )
     kpi_lead = kpi_card(
@@ -1660,7 +1720,7 @@ def _update_cv_kpis(*args):
 
     _days_sim_info = dmc.Tooltip(
         DashIconify(icon="mdi:information-outline", width=16, color="#9CA3AF", style={"cursor": "help"}),
-        label=f"Median consult-to-sim interval. Excludes values >{days_to_sim_max} days to filter purposeful waits and delays.",
+        label=f"Retrospective: median days from consult to first simulation. Excludes >{days_to_sim_max}d. Lower = faster throughput.",
         position="top", withArrow=True, multiline=True, w=240,
     )
     kpi_days_sim = kpi_card(
@@ -1669,12 +1729,9 @@ def _update_cv_kpis(*args):
         header_control=_days_sim_info,
     )
 
-    row_data, col_defs = _build_detail_table(dff, c2b)
-
     return (
         kpi_total, kpi_consults, kpi_followups, kpi_lead, kpi_sim_conv, kpi_days_sim,
-        sparkline_data, data["filter_options"],
-        row_data, col_defs,
+        sparkline_data,
     )
 
 
@@ -1687,15 +1744,19 @@ def _update_cv_kpis(*args):
     *_CV_FILTER_INPUTS,
     Input("cv-volume-agg", "value"),
     Input("cv-volume-slice", "value"),
+    Input("cv-table-filter-rows", "data"),
     running=[(Output("cv-chart-volume-loading", "visible"), True, False)],
 )
 def _update_cv_volume(*args):
     ctx = _unpack_filter_args(args)
-    agg, volume_slice = args[14], args[15]
+    agg, volume_slice, grid_rows = args[15], args[16], args[17]
     data = _load_and_filter_cv(**ctx)
     if data is None or data["dff"].empty:
         return None
-    return _prepare_volume_data(data["dff"], agg, volume_slice, c2b=data["c2b"])
+    dff = _apply_grid_row_filter(data["dff"], grid_rows)
+    if dff.empty:
+        return None
+    return _prepare_volume_data(dff, agg, volume_slice, c2b=data["c2b"])
 
 
 # ---------------------------------------------------------------------------
@@ -1707,15 +1768,19 @@ def _update_cv_volume(*args):
     *_CV_FILTER_INPUTS,
     Input("cv-lead-agg", "value"),
     Input("cv-lead-slice", "value"),
+    Input("cv-table-filter-rows", "data"),
     running=[(Output("cv-chart-lead-time-loading", "visible"), True, False)],
 )
 def _update_cv_lead(*args):
     ctx = _unpack_filter_args(args)
-    lead_agg, lead_slice = args[14], args[15]
+    lead_agg, lead_slice, grid_rows = args[15], args[16], args[17]
     data = _load_and_filter_cv(**ctx)
     if data is None or data["dff"].empty:
         return None
-    return _prepare_lead_data(data["dff"], data["departments"], lead_agg, lead_slice)
+    dff = _apply_grid_row_filter(data["dff"], grid_rows)
+    if dff.empty:
+        return None
+    return _prepare_lead_data(dff, data["departments"], lead_agg, lead_slice)
 
 
 # ---------------------------------------------------------------------------
@@ -1727,15 +1792,19 @@ def _update_cv_lead(*args):
     *_CV_FILTER_INPUTS,
     Input("cv-conversion-agg", "value"),
     Input("cv-conversion-slice", "value"),
+    Input("cv-table-filter-rows", "data"),
     running=[(Output("cv-chart-conversion-loading", "visible"), True, False)],
 )
 def _update_cv_conversion(*args):
     ctx = _unpack_filter_args(args)
-    conv_agg, conv_slice = args[14], args[15]
+    conv_agg, conv_slice, grid_rows = args[15], args[16], args[17]
     data = _load_and_filter_cv(**ctx)
     if data is None or data["dff"].empty:
         return None
-    return _prepare_conversion_data(data["dff"], data["departments"], conv_agg, conv_slice)
+    dff = _apply_grid_row_filter(data["dff"], grid_rows)
+    if dff.empty:
+        return None
+    return _prepare_conversion_data(dff, data["departments"], conv_agg, conv_slice)
 
 
 # ---------------------------------------------------------------------------
@@ -1748,22 +1817,26 @@ def _update_cv_conversion(*args):
     Input("cv-cumulative-mode", "value"),
     Input("cv-cumulative-period-type", "value"),
     Input("cv-cumulative-slice", "value"),
+    Input("cv-table-filter-rows", "data"),
     running=[(Output("cv-chart-cumulative-loading", "visible"), True, False)],
 )
 def _update_cv_cumulative(*args):
     ctx = _unpack_filter_args(args)
-    cumul_mode, cumul_period_type, cumul_slice = args[14], args[15], args[16]
+    cumul_mode, cumul_period_type, cumul_slice, grid_rows = args[15], args[16], args[17], args[18]
     data = _load_and_filter_cv(**ctx)
     if data is None:
         return None
+    df_all = _apply_grid_row_filter(data["df_all"], grid_rows)
+    if df_all is None or df_all.empty:
+        return None
     return _prepare_cumulative_data(
-        data["df_all"], data["start"], data["end"], data["date_preset"],
+        df_all, data["start"], data["end"], data["date_preset"],
         data["departments"], ctx["physician"], ctx["body_systems"],
         ctx["visit_type"], ctx["status"], ctx["inpatient"], data["c2b"],
         ctx["classified_type"], mode=cumul_mode or "prior",
         period_type=cumul_period_type or "calendar",
         slice_by=cumul_slice or "category",
-        max_prior=5,
+        max_prior=5, diag_mode=data.get("diag_mode", "primary"),
     )
 
 
@@ -1776,15 +1849,19 @@ def _update_cv_cumulative(*args):
     *_CV_FILTER_INPUTS,
     Input("cv-cancel-agg", "value"),
     Input("cv-cancel-slice", "value"),
+    Input("cv-table-filter-rows", "data"),
     running=[(Output("cv-chart-cancel-rate-loading", "visible"), True, False)],
 )
 def _update_cv_cancel(*args):
     ctx = _unpack_filter_args(args)
-    cancel_agg, cancel_slice = args[14], args[15]
+    cancel_agg, cancel_slice, grid_rows = args[15], args[16], args[17]
     data = _load_and_filter_cv(**ctx)
     if data is None or data["dff_all_status"].empty:
         return None
-    return _prepare_cancel_data(data["dff_all_status"], cancel_agg, cancel_slice)
+    dff_all = _apply_grid_row_filter_all_status(data["dff"], data["dff_all_status"], grid_rows)
+    if dff_all.empty:
+        return None
+    return _prepare_cancel_data(dff_all, cancel_agg, cancel_slice)
 
 
 # ---------------------------------------------------------------------------
@@ -1801,6 +1878,7 @@ def _update_cv_cancel(*args):
     Input("cv-billing-group", "value"),
     Input("cv-billing-slice", "value"),
     Input("cv-billing-mode", "value"),
+    Input("cv-table-filter-rows", "data"),
     running=[
         (Output("cv-diagnosis-loading", "visible"), True, False),
         (Output("cv-billing-loading", "visible"), True, False),
@@ -1809,14 +1887,17 @@ def _update_cv_cancel(*args):
 def _update_cv_diag_billing(*args):
     ctx = _unpack_filter_args(args)
     (diagnosis_slice, diagnosis_mode, diagnosis_compare,
-     billing_group, billing_slice, billing_mode) = args[14:20]
+     billing_group, billing_slice, billing_mode) = args[15:21]
+    grid_rows = args[21]
     data = _load_and_filter_cv(**ctx)
 
     empty = empty_figure()
     if data is None or data["dff"].empty:
         return empty, empty
 
-    dff = data["dff"]
+    dff = _apply_grid_row_filter(data["dff"], grid_rows)
+    if dff.empty:
+        return empty, empty
     dff_prior = data["dff_prior"]
     c2b = data["c2b"]
     start, end = data["start"], data["end"]
@@ -1838,6 +1919,7 @@ def _update_cv_diag_billing(*args):
         mode=diagnosis_mode or "count",
         prior_df=_diag_prior_df,
         period_labels=_diag_period_labels,
+        diag_mode=data.get("diag_mode", "primary"),
     )
     fig_billing = _build_billing_mix(
         dff, group=billing_group or "new",
@@ -1861,6 +1943,25 @@ for _sid in ["cv-volume-slice", "cv-lead-slice", "cv-conversion-slice", "cv-canc
         _SLICE_CLASS_JS,
         Output(_sid, "className"),
         Input(_sid, "value"),
+    )
+
+# Hide stacked/grouped toggle when slice is Total (single series)
+_HIDE_STACK_JS = """function(sliceVal, chartType) {
+    var single = !sliceVal || sliceVal === "total" || sliceVal === "";
+    var noStack = chartType === "line";
+    return (single || noStack) ? {"display": "none"} : {};
+}"""
+
+for _slice_id, _settings_id in [
+    ("cv-volume-slice", "cv-volume"),
+    ("cv-cumulative-slice", "cv-cumulative"),
+]:
+    clientside_callback(
+        _HIDE_STACK_JS,
+        Output(f"{_settings_id}-settings-stack-wrap", "style", allow_duplicate=True),
+        Input(_slice_id, "value"),
+        Input(f"{_settings_id}-settings-type", "value"),
+        prevent_initial_call=True,
     )
 
 # Hide diagnosis slice control when "vs Prior" is active (prior ignores slicing)
@@ -2465,7 +2566,7 @@ def _prepare_conversion_data(dff, departments, agg="M", slice_by="site"):
                     "color": CHART_COLORWAY[i % len(CHART_COLORWAY)],
                 })
 
-    return {"dates": dates, "series": series, "height": 350, "yTitle": "Conversion Rate (%)", "stacked": False, "hideLegend": len(series) <= 1}
+    return {"dates": dates, "series": series, "height": 350, "yTitle": "Conversion Rate (%)", "yRange": [0, 102], "stacked": False, "hideLegend": len(series) <= 1}
 
 
 def _prepare_cumulative_data(df_all, start, end, date_preset,
@@ -2473,7 +2574,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
                               visit_type, status, inpatient, c2b,
                               classified_type, mode="prior",
                               period_type="calendar", slice_by="category",
-                              max_prior=5):
+                              max_prior=5, diag_mode="primary"):
     """Prepare cumulative visit volume data for overlay chart.
 
     mode="prior": Current period cumulative + up to 5 prior equivalent periods (gray lines).
@@ -2538,7 +2639,13 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             return {(k.split(",")[0] if "," in k else k): v for k, v in counts.items()}
         elif slice_by == "diagnosis" and c2b and "DiagnosisCodes" in sub.columns:
             sub = sub.copy()
-            sub["_bs"] = sub["DiagnosisCodes"].apply(lambda v: primary_category(v, c2b))
+            if diag_mode == "all":
+                sub["_bs_list"] = sub["DiagnosisCodes"].apply(
+                    lambda v: list(get_categories_for_codes(v, c2b)) if pd.notna(v) else []
+                )
+                sub = sub.explode("_bs_list").rename(columns={"_bs_list": "_bs"})
+            else:
+                sub["_bs"] = sub["DiagnosisCodes"].apply(lambda v: primary_category(v, c2b))
             sub = sub[sub["_bs"] != "Unknown"]
             return sub.groupby("_bs").size().to_dict()
         return {}
@@ -2547,7 +2654,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
     dff_all = _apply_cv_filters(
         df_all, departments, physician, body_systems,
         visit_type, status, inpatient, c2b,
-        classified_type=classified_type,
+        classified_type=classified_type, diag_mode=diag_mode,
     )
 
     # Use numeric day indices as x-values (0, 1, 2, ...) to avoid duplicate category issue.
@@ -2850,13 +2957,15 @@ def _prepare_cancel_data(dff_all, agg="M", slice_by="type"):
     return {"dates": dates, "series": series, "height": 320, "yTitle": "Cancellation Rate (%)", "stacked": False, "hideLegend": len(series) <= 1}
 
 
-def _build_diagnosis_mix(dff, c2b=None, slice_by="", mode="count", prior_df=None, period_labels=None):
+def _build_diagnosis_mix(dff, c2b=None, slice_by="", mode="count", prior_df=None,
+                          period_labels=None, diag_mode="primary"):
     """Horizontal bar chart of visits by body system (via diagnosis lookup).
 
     slice_by: "" for total, or "category"/"type"/"physician"/"site" for stacked bars.
     mode: "count" (absolute) or "pct" (% of total visits).
     prior_df: if provided, show paired current/prior bars (ignores slice_by).
     period_labels: tuple (current_label, prior_label) with date range strings for tooltips.
+    diag_mode: "primary" assigns first code's category; "all" explodes by all categories.
     """
     if dff.empty:
         return empty_figure("Diagnosis data unavailable")
@@ -2866,7 +2975,13 @@ def _build_diagnosis_mix(dff, c2b=None, slice_by="", mode="count", prior_df=None
         return empty_figure("Diagnosis data unavailable")
 
     work = dff.copy()
-    work["_bs"] = work["DiagnosisCodes"].apply(lambda v: primary_category(v, c2b))
+    if diag_mode == "all":
+        work["_bs_list"] = work["DiagnosisCodes"].apply(
+            lambda v: list(get_categories_for_codes(v, c2b)) if pd.notna(v) else []
+        )
+        work = work.explode("_bs_list").rename(columns={"_bs_list": "_bs"})
+    else:
+        work["_bs"] = work["DiagnosisCodes"].apply(lambda v: primary_category(v, c2b))
     work = work[work["_bs"] != "Unknown"]
 
     if work.empty:
@@ -2886,7 +3001,13 @@ def _build_diagnosis_mix(dff, c2b=None, slice_by="", mode="count", prior_df=None
     # --- Prior-period comparison mode ---
     if prior_df is not None and not prior_df.empty and "DiagnosisCodes" in prior_df.columns:
         prior_work = prior_df.copy()
-        prior_work["_bs"] = prior_work["DiagnosisCodes"].apply(lambda v: primary_category(v, c2b))
+        if diag_mode == "all":
+            prior_work["_bs_list"] = prior_work["DiagnosisCodes"].apply(
+                lambda v: list(get_categories_for_codes(v, c2b)) if pd.notna(v) else []
+            )
+            prior_work = prior_work.explode("_bs_list").rename(columns={"_bs_list": "_bs"})
+        else:
+            prior_work["_bs"] = prior_work["DiagnosisCodes"].apply(lambda v: primary_category(v, c2b))
         prior_work = prior_work[prior_work["_bs"] != "Unknown"]
         # Use same body system order as current period
         prior_work = prior_work[prior_work["_bs"].isin(top_bs_names)]
@@ -2953,8 +3074,7 @@ def _build_diagnosis_mix(dff, c2b=None, slice_by="", mode="count", prior_df=None
             orientation="h",
             marker_color=CHART_COLORWAY[0],
             showlegend=False,
-            text=text, textposition="outside", textfont=dict(size=12),
-            cliponaxis=False,
+            text=text, textposition="auto", textangle=0,
             hovertemplate=hover,
         ))
     else:
@@ -3200,8 +3320,8 @@ def _build_detail_table(dff, c2b=None):
         )
 
     col_header_map = {
-        "PatientFullName": "Patient",
         "ScheduledDateTime": "Scheduled",
+        "PatientFullName": "Patient",
         "Department": "Department",
         "AppointmentPhysician": "Physician",
         "VisitType": "Visit Type",
@@ -3219,12 +3339,12 @@ def _build_detail_table(dff, c2b=None):
         return [], []
 
     table_df = dff[display_cols].copy()
+    table_df["_row_idx"] = dff.index
     if "ScheduledDateTime" in table_df.columns:
         table_df = table_df.sort_values("ScheduledDateTime", ascending=False)
-    table_df = table_df.head(500)
     for c in table_df.select_dtypes(include=["datetime64"]).columns:
         table_df[c] = table_df[c].dt.strftime("%m/%d/%Y %I:%M %p")
-    table_df = table_df.fillna("--")
+    table_df = sanitize_for_grid(table_df)
 
     col_defs = []
     for c in display_cols:
@@ -3232,6 +3352,7 @@ def _build_detail_table(dff, c2b=None):
         if c == "ScheduledDateTime":
             cd["sort"] = "desc"
         col_defs.append(cd)
+    col_defs.append({"field": "_row_idx", "hide": True})
 
     return table_df.to_dict("records"), col_defs
 
@@ -3239,11 +3360,76 @@ def _build_detail_table(dff, c2b=None):
 clientside_callback(
     """function(n) {
         if (!n) return window.dash_clientside.no_update;
-        var gridApi = window.dash_ag_grid && window.dash_ag_grid['cv-detail-grid'];
-        if (gridApi && gridApi.api) gridApi.api.exportDataAsCsv({fileName: 'clinic_visits.csv'});
+        gridExportCsv('cv-detail-grid', 'clinic_visits.csv');
         return window.dash_clientside.no_update;
     }""",
     Output("cv-table-export", "n_clicks"),
     Input("cv-table-export", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+# Grid-filter → chart sync: extract _row_idx from virtualRowData, toggle badge.
+clientside_callback(
+    """function(virtual, rowData, prev) {
+        var nu = window.dash_clientside.no_update;
+        var base = {"position": "absolute", "top": -12, "right": 8, "zIndex": 10, "cursor": "pointer"};
+        var hidden = Object.assign({}, base, {"display": "none"});
+        var btnHide = {"display": "none"};
+        if (!rowData || !rowData.length || !virtual) {
+            return prev == null ? [nu, nu, nu] : [null, hidden, btnHide];
+        }
+        if (virtual.length >= rowData.length) {
+            return prev == null ? [nu, nu, nu] : [null, hidden, btnHide];
+        }
+        var idxs = [];
+        for (var i = 0; i < virtual.length; i++) {
+            if (virtual[i]._row_idx != null) idxs.push(virtual[i]._row_idx);
+        }
+        idxs.sort(function(a, b) { return a - b; });
+        if (!idxs.length) {
+            return prev == null ? [nu, nu, nu] : [null, hidden, btnHide];
+        }
+        if (prev && prev.length === idxs.length) {
+            var same = true;
+            for (var j = 0; j < idxs.length; j++) {
+                if (prev[j] !== idxs[j]) { same = false; break; }
+            }
+            if (same) return [nu, nu, nu];
+        }
+        return [idxs, base, {}];
+    }""",
+    Output("cv-table-filter-rows", "data"),
+    Output("cv-grid-filter-badge", "style"),
+    Output("cv-table-clear-filters", "style"),
+    Input("cv-detail-grid", "virtualRowData"),
+    State("cv-detail-grid", "rowData"),
+    State("cv-table-filter-rows", "data"),
+    prevent_initial_call=True,
+)
+
+
+# Clear Filters button — reset grid filterModel
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        return {};
+    }""",
+    Output("cv-detail-grid", "filterModel"),
+    Input("cv-table-clear-filters", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+# Badge click → scroll to the detail table
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        var el = document.getElementById('cv-detail-grid');
+        if (el) el.scrollIntoView({behavior: 'smooth', block: 'start'});
+        return window.dash_clientside.no_update;
+    }""",
+    Output("cv-grid-filter-badge", "n_clicks"),
+    Input("cv-grid-filter-badge", "n_clicks"),
     prevent_initial_call=True,
 )

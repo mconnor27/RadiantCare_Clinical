@@ -20,6 +20,7 @@ from components.kpi_card import kpi_card, kpi_placeholder
 from components.chart_card import chart_card, register_chart_callbacks
 from components.detail_table import detail_table
 from utils.charts import apply_default_layout, empty_figure, dept_color
+from utils.tables import sanitize_for_grid
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, DEFAULT_SLIDER, SLIDER_MARKS,
     preset_to_slider_val,
@@ -381,8 +382,11 @@ layout = dmc.Stack(
                     ],
                     show_smooth=True,
                     show_prior_periods=True,
-                    smooth_max=50,
-                    smooth_default=0,
+                    smooth_min=0,
+                    smooth_max=1,
+                    smooth_step=0.05,
+                    smooth_default=0.1,
+                    prior_periods_default=3,
                     paper_padding="md",
                     extra_controls=[
                         dmc.SegmentedControl(
@@ -583,6 +587,24 @@ clientside_callback(
     Output(f"{PAGE_ID}-cumul-slice", "className"),
     Input(f"{PAGE_ID}-cumul-slice", "value"),
 )
+
+_HIDE_STACK_JS = """function(sliceVal, chartType) {
+    var single = !sliceVal || sliceVal === "total" || sliceVal === "";
+    var noStack = chartType === "line";
+    return (single || noStack) ? {"display": "none"} : {};
+}"""
+
+for _slice_id, _settings_id in [
+    (f"{PAGE_ID}-trend-slice", f"{PAGE_ID}-trend"),
+    (f"{PAGE_ID}-cumul-slice", f"{PAGE_ID}-cumul"),
+]:
+    clientside_callback(
+        _HIDE_STACK_JS,
+        Output(f"{_settings_id}-settings-stack-wrap", "style", allow_duplicate=True),
+        Input(_slice_id, "value"),
+        Input(f"{_settings_id}-settings-type", "value"),
+        prevent_initial_call=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1106,11 +1128,10 @@ def _build_tab_grid_data(dff):
     """Build AG Grid column defs and row data for a category tab."""
     cols = [
         {"field": "PatientFullName", "headerName": "Patient", "minWidth": 160},
-        {"field": "ScheduledDateTime", "headerName": "Date", "minWidth": 120,
-         "valueFormatter": {"function": "d3.timeFormat('%m/%d/%Y')(new Date(params.value))"}},
+        {"field": "ScheduledDateTime", "headerName": "Date", "minWidth": 120},
         {"field": "AppointmentPhysician", "headerName": "Physician", "minWidth": 130},
-        {"field": "DaysFromCreatedToAppt", "headerName": "Lead (days)", "minWidth": 90, "type": "numericColumn"},
-        {"field": "DurationMinutes", "headerName": "Duration (min)", "minWidth": 100, "type": "numericColumn"},
+        {"field": "DaysFromCreatedToAppt", "headerName": "Lead (days)", "minWidth": 90},
+        {"field": "DurationMinutes", "headerName": "Duration (min)", "minWidth": 100},
         {"field": "ActivityStatus", "headerName": "Status", "minWidth": 110},
         {"field": "Department", "headerName": "Dept", "minWidth": 90},
         {"field": "ReferringPhysician", "headerName": "Referring MD", "minWidth": 130},
@@ -1120,7 +1141,8 @@ def _build_tab_grid_data(dff):
     display_cols = [c["field"] for c in cols if c["field"] in dff.columns]
     rows = dff[display_cols].copy()
     if "ScheduledDateTime" in rows.columns:
-        rows["ScheduledDateTime"] = rows["ScheduledDateTime"].dt.strftime("%Y-%m-%dT%H:%M:%S")
+        rows["ScheduledDateTime"] = rows["ScheduledDateTime"].dt.strftime("%m/%d/%Y")
+    rows = sanitize_for_grid(rows)
     return cols, rows.to_dict("records")
 
 
@@ -1534,10 +1556,7 @@ def _register_export_callbacks():
         clientside_callback(
             """function(n) {
                 if (!n) return window.dash_clientside.no_update;
-                var grid = document.querySelector('#""" + f"{PAGE_ID}-tab-grid-{cat_key}" + """');
-                if (grid && grid.gridApi) {
-                    grid.gridApi.exportDataAsCsv({fileName: '""" + cat_name.replace(" ", "_") + """_procedures.csv'});
-                }
+                gridExportCsv('""" + f"{PAGE_ID}-tab-grid-{cat_key}" + """', '""" + cat_name.replace(" ", "_") + """_procedures.csv');
                 return window.dash_clientside.no_update;
             }""",
             Output(f"{PAGE_ID}-tab-export-{cat_key}", "n_clicks"),

@@ -22,6 +22,7 @@ from components.kpi_card import kpi_card, kpi_placeholder, create_sparkline
 from components.chart_card import chart_card, register_chart_callbacks
 from components.outlier_panel import outlier_panel, register_outlier_callbacks
 from utils.charts import apply_default_layout, empty_figure, dept_color, color_for_index
+from utils.tables import sanitize_for_grid
 from utils.diagnosis_categories import (
     build_code_to_category, CATEGORIES as BODY_SYSTEMS,
     SUBCATEGORIES as DIAG_SUBCATEGORIES, ALL_SUBCATEGORIES,
@@ -837,7 +838,7 @@ layout = dmc.Stack(
                                                  "cellRenderer": "ReferralCountLink",
                                                  "type": "numericColumn"},
                                             ],
-                                            defaultColDef={"sortable": True, "resizable": True},
+                                            defaultColDef={"sortable": True, "resizable": True, "valueFormatter": {"function": "params.value == null || params.value === '' ? '–' : params.value"}},
                                             dashGridOptions={
                                                 "rowHeight": 32,
                                                 "headerHeight": 32,
@@ -900,7 +901,7 @@ layout = dmc.Stack(
                                          "editable": True,
                                          "cellStyle": {"textAlign": "center"}},
                                     ],
-                                    defaultColDef={"sortable": True, "resizable": True},
+                                    defaultColDef={"sortable": True, "resizable": True, "valueFormatter": {"function": "params.value == null || params.value === '' ? '–' : params.value"}},
                                     dashGridOptions={
                                         "pagination": True,
                                         "paginationPageSize": 50,
@@ -951,7 +952,8 @@ layout = dmc.Stack(
                                                  "type": "numericColumn"},
                                             ],
                                             defaultColDef={"sortable": True, "resizable": True,
-                                                           "filter": True, "floatingFilter": True},
+                                                           "filter": True, "floatingFilter": True,
+                                                           "valueFormatter": {"function": "params.value == null || params.value === '' ? '–' : params.value"}},
                                             dashGridOptions={
                                                 "rowHeight": 30,
                                                 "headerHeight": 30,
@@ -1002,7 +1004,7 @@ layout = dmc.Stack(
                                          "cellRenderer": "InstitutionDelete",
                                          "cellStyle": {"textAlign": "center"}},
                                     ],
-                                    defaultColDef={"sortable": True, "resizable": True},
+                                    defaultColDef={"sortable": True, "resizable": True, "valueFormatter": {"function": "params.value == null || params.value === '' ? '–' : params.value"}},
                                     dashGridOptions={
                                         "pagination": True,
                                         "paginationPageSize": 25,
@@ -1106,7 +1108,7 @@ layout = dmc.Stack(
                                          "cellDataType": "boolean", "editable": True,
                                          "cellStyle": {"textAlign": "center"}},
                                     ],
-                                    defaultColDef={"sortable": True, "resizable": True},
+                                    defaultColDef={"sortable": True, "resizable": True, "valueFormatter": {"function": "params.value == null || params.value === '' ? '–' : params.value"}},
                                     dashGridOptions={
                                         "pagination": True,
                                         "paginationPageSize": 50,
@@ -1149,7 +1151,8 @@ layout = dmc.Stack(
                                                 {"field": "Status", "headerName": "Status", "flex": 0.6},
                                             ],
                                             defaultColDef={"sortable": True, "resizable": True,
-                                                           "filter": True, "floatingFilter": True},
+                                                           "filter": True, "floatingFilter": True,
+                                                           "valueFormatter": {"function": "params.value == null || params.value === '' ? '–' : params.value"}},
                                             dashGridOptions={
                                                 "rowHeight": 30, "headerHeight": 30,
                                                 "floatingFiltersHeight": 28,
@@ -1275,7 +1278,7 @@ layout = dmc.Stack(
                         {"field": "patients", "headerName": "Pts", "flex": 0.3,
                          "type": "numericColumn"},
                     ],
-                    defaultColDef={"sortable": True, "resizable": True},
+                    defaultColDef={"sortable": True, "resizable": True, "valueFormatter": {"function": "params.value == null || params.value === '' ? '–' : params.value"}},
                     dashGridOptions={
                         "rowHeight": 36,
                         "headerHeight": 36,
@@ -2051,6 +2054,7 @@ def _build_detail_table(df):
     available = {k: v for k, v in display_cols.items() if k in df.columns}
     table_df = df[list(available.keys())].rename(columns=available)
     table_df = table_df.sort_values("Created", ascending=False, na_position="last")
+    table_df = sanitize_for_grid(table_df)
 
     column_defs = []
     widths = {

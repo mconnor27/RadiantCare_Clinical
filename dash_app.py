@@ -354,4 +354,5 @@ def _prioritize_page_datasets(pathname):
 if __name__ == "__main__":
     app.run(debug=True, port=8050, host="localhost",
             dev_tools_hot_reload=True,
-            dev_tools_hot_reload_interval=1.0)
+            dev_tools_hot_reload_interval=1.0,
+            threaded=True)

@@ -1145,11 +1145,11 @@ def update_kpis(*args):
 
     kpi_consult_lead = _lead_card(
         cv_lead, "Consult Lead", "consult_lead", "ops-spark-consult-lead", CHART_COLORWAY[1],
-        "Median booking lead for future-scheduled consults (excludes >30d). Trend and sparkline show lead at time of creation.",
+        "Forward-looking: median days from booking to appointment for consults not yet occurred. Excludes >30d. Trend and sparkline track by booking creation date.",
     )
     kpi_sim_lead = _lead_card(
         sim_lead, "Sim Lead", "sim_lead", "ops-spark-sim-lead", CHART_COLORWAY[2],
-        "Median booking lead for future-scheduled sims (excludes >21d). Trend and sparkline show lead at time of creation.",
+        "Forward-looking: median days from booking to appointment for sims not yet occurred. Excludes >21d. Trend and sparkline track by booking creation date.",
     )
 
     # ── 6. New Starts — future 7d value, past trend/sparkline ────────
@@ -1994,7 +1994,7 @@ def update_table(*args):
             actual_end = row.get("LastActualEnd", "")
 
             # Calculate duration (prefer actual, fallback to scheduled for future dates)
-            duration = ""
+            duration = None
             try:
                 # Use actual times if available, otherwise use scheduled times
                 start_time = actual_start if (actual_start and not pd.isna(actual_start)) else sched_start
@@ -2013,7 +2013,7 @@ def update_table(*args):
             # Format time strings, ensuring NaN/empty values show as blank
             def format_time(time_val):
                 if pd.isna(time_val) or not time_val or str(time_val).strip() == "":
-                    return ""
+                    return None
                 return str(time_val)[:5]
 
             # Minute columns from Daily Volume
@@ -2024,7 +2024,7 @@ def update_table(*args):
 
             def fmt_min(v):
                 if pd.isna(v) or v is None:
-                    return ""
+                    return None
                 return int(round(v))
 
             # Treatment data fields
@@ -2050,10 +2050,10 @@ def update_table(*args):
                 "Date": date_str,
                 "Location": dept,
                 "Appts": appts,
-                "Completed": completed or "",
-                "Patients": unique_pts or "",
-                "Plans": unique_plans or "",
-                "New Starts": new_starts,
+                "Completed": completed or None,
+                "Patients": unique_pts or None,
+                "Plans": unique_plans or None,
+                "New Starts": new_starts or None,
                 "Sched Start": format_time(sched_start),
                 "Sched End": format_time(sched_end),
                 "Actual Start": format_time(actual_start),
@@ -2085,10 +2085,7 @@ register_chart_callbacks([("ops-volume", "ops-chart-volume", "ops-store-volume")
 clientside_callback(
     """function(n) {
         if (!n) return window.dash_clientside.no_update;
-        var gridApi = window.dash_ag_grid['ops-table'];
-        if (gridApi && gridApi.api) {
-            gridApi.api.exportDataAsCsv({fileName: 'daily_detail.csv'});
-        }
+        gridExportCsv('ops-table', 'daily_detail.csv');
         return window.dash_clientside.no_update;
     }""",
     Output("ops-table-export", "n_clicks"),

@@ -600,6 +600,29 @@ def get_categories_for_codes(codes_str: str, c2c: dict[str, str]) -> set[str]:
     return cats
 
 
+def build_code_to_subcategory(diag_lookup: pd.DataFrame | None = None) -> dict[str, str]:
+    """Build a ``{DiagnosisCode: subcategory}`` dict from the DB."""
+    from data.reviews_db import get_all_diagnosis_overrides
+    overrides = get_all_diagnosis_overrides()
+    return {
+        code: ov["subcategory"]
+        for code, ov in overrides.items()
+        if ov.get("subcategory")
+    }
+
+
+def get_subcategories_for_codes(codes_str: str, c2s: dict[str, str]) -> set[str]:
+    """Return the set of subcategories for a comma-separated codes string."""
+    if not codes_str or not c2s:
+        return set()
+    subs = set()
+    for code in str(codes_str).split(","):
+        sub = c2s.get(code.strip(), "")
+        if sub:
+            subs.add(sub)
+    return subs
+
+
 def primary_category(codes_str: str, c2c: dict[str, str]) -> str:
     """Return the first matching category for a comma-separated codes string.
 
@@ -612,6 +635,66 @@ def primary_category(codes_str: str, c2c: dict[str, str]) -> str:
         if cat:
             return cat
     return "Unknown"
+
+
+def assign_diagnosis_column(
+    df: pd.DataFrame,
+    c2c: dict[str, str],
+    mode: str = "primary",
+    codes_col: str = "DiagnosisCodes",
+    target_col: str = "_bs",
+) -> pd.DataFrame:
+    """Add a diagnosis category column and optionally explode rows.
+
+    Parameters
+    ----------
+    mode : ``"primary"`` — assign only the first code's category (one row per row).
+           ``"all"`` — explode so each code's category gets its own row.
+
+    Returns a **copy** with the new *target_col*.  Rows with ``"Unknown"``
+    or empty categories are dropped.
+    """
+    if codes_col not in df.columns or not c2c:
+        return df.copy().assign(**{target_col: "Unknown"})
+
+    out = df.copy()
+    if mode == "all":
+        out["_diag_cats_list"] = out[codes_col].apply(
+            lambda v: list(get_categories_for_codes(v, c2c)) if pd.notna(v) else []
+        )
+        out = out.explode("_diag_cats_list").rename(columns={"_diag_cats_list": target_col})
+    else:
+        out[target_col] = out[codes_col].apply(lambda v: primary_category(v, c2c))
+    out = out[out[target_col].notna() & (out[target_col] != "") & (out[target_col] != "Unknown")]
+    return out
+
+
+def filter_by_diagnosis(
+    df: pd.DataFrame,
+    selected_cats: list[str],
+    c2c: dict[str, str],
+    mode: str = "primary",
+    codes_col: str = "DiagnosisCodes",
+) -> pd.DataFrame:
+    """Filter *df* to rows matching *selected_cats* using the given mode.
+
+    Parameters
+    ----------
+    mode : ``"primary"`` — match only the first code's category.
+           ``"all"`` — match if any code's category is in *selected_cats*.
+    """
+    if not selected_cats or codes_col not in df.columns or not c2c:
+        return df
+    cat_set = set(selected_cats)
+    if mode == "primary":
+        mask = df[codes_col].apply(
+            lambda v: primary_category(v, c2c) in cat_set
+        )
+    else:
+        mask = df[codes_col].apply(
+            lambda v: bool(get_categories_for_codes(v, c2c) & cat_set)
+        )
+    return df[mask]
 
 
 def get_subcategory(code: str) -> str:

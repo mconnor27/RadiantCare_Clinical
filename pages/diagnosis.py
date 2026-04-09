@@ -644,7 +644,8 @@ layout = dmc.Stack(
                          "cellDataType": "boolean", "editable": True,
                          "cellStyle": {"textAlign": "center"}},
                     ],
-                    defaultColDef={"sortable": True, "resizable": True},
+                    defaultColDef={"sortable": True, "resizable": True,
+                                   "valueFormatter": {"function": "params.value == null || params.value === '' ? '–' : params.value"}},
                     dashGridOptions={
                         "pagination": True,
                         "paginationPageSize": 50,
@@ -687,7 +688,8 @@ layout = dmc.Stack(
                                 {"field": "Department", "headerName": "Dept", "flex": 0.5},
                             ],
                             defaultColDef={"sortable": True, "resizable": True,
-                                           "filter": True, "floatingFilter": True},
+                                           "filter": True, "floatingFilter": True,
+                                           "valueFormatter": {"function": "params.value == null || params.value === '' ? '–' : params.value"}},
                             dashGridOptions={
                                 "rowHeight": 30, "headerHeight": 30,
                                 "floatingFiltersHeight": 28,

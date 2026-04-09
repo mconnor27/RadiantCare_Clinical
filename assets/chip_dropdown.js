@@ -21,6 +21,10 @@
         findPairs().forEach(function(p) {
             if (p[1] !== exceptPanel) p[1].style.display = "none";
         });
+        // Also close any open subcategory side panels
+        document.querySelectorAll(".wf-subcat-panel").forEach(function(sp) {
+            if (sp !== exceptPanel) sp.style.display = "none";
+        });
     }
 
     var _clearInProgress = false;
@@ -35,12 +39,12 @@
             // Find the sibling chip-dropdown panel and deselect all checked chips
             var wrapper = clearBtn.closest("[style*='inline-block']");
             if (wrapper) {
-                var panel = wrapper.querySelector(".wf-chip-dropdown");
-                if (panel) {
+                // Clear both category and subcategory panels
+                wrapper.querySelectorAll(".wf-chip-dropdown, .wf-subcat-panel").forEach(function(panel) {
                     panel.querySelectorAll("input[type='radio']:checked, input[type='checkbox']:checked").forEach(function(inp) {
                         inp.click();  // deselect via native click so React state updates
                     });
-                }
+                });
             }
             // Re-dispatch so Dash sees the n_clicks increment (with guard to avoid loop)
             _clearInProgress = true;
@@ -65,6 +69,11 @@
         // Check if click is inside an open panel (keep it open)
         for (var j = 0; j < pairs.length; j++) {
             if (pairs[j][1].contains(e.target)) return;
+        }
+        // Also check subcategory side panels
+        var subcatPanels = document.querySelectorAll(".wf-subcat-panel");
+        for (var k = 0; k < subcatPanels.length; k++) {
+            if (subcatPanels[k].contains(e.target)) return;
         }
         // Click outside — close all
         closeAll();
@@ -91,7 +100,8 @@ window.dash_clientside.filterSync = {
             {groupId: prefix + "-filter-department", key: "departments"},
             {groupId: prefix + "-filter-physician",  key: "physicians"},
             {groupId: prefix + "-filter-technique",  key: "techniques"},
-            {groupId: prefix + "-filter-body-system", key: "bodySystems"}
+            // bodySystems: categories are now accordion items, not chips — no cross-filter needed
+            {groupId: prefix + "-filter-subcategory", key: "subcategories"}
         ];
 
         configs.forEach(function(cfg) {

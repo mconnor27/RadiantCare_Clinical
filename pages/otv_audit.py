@@ -18,6 +18,7 @@ from components.filter_bar import department_chips
 from components.kpi_card import kpi_card, kpi_placeholder
 from components.chart_card import chart_card, register_chart_callbacks
 from utils.charts import apply_default_layout, empty_figure
+from utils.tables import sanitize_for_grid
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, SLIDER_MARKS,
     preset_to_slider_val,
@@ -715,10 +716,7 @@ def update_otv_audit(_n, slider_val, date_preset, departments, exclude_incomplet
     _FALLBACK_WRVU = {"77427": 3.37, "77431": 1.76, "77432": 7.72, "77435": 11.57}
     _FALLBACK_MP = {"77427": 0.26, "77431": 0.14, "77432": 0.61, "77435": 0.92}
     _FALLBACK_FAC_TOTAL = {"77427": 5.85, "77431": 3.19, "77432": 12.70, "77435": 19.20}
-    # Non-facility total RVU (2026 CMS PFS) — for freestanding sites
-    _NONFAC_TOTAL = {"77427": 9.25, "77431": 4.71, "77432": 20.06, "77435": 29.94}
-    # Aberdeen is freestanding (bill global); Lacey & Centralia are hospital-based
-    _FREESTANDING_DEPTS = {"Aberdeen"}
+    # All sites: physician group earns pro fees only (wRVU + MP_RVU)
 
     def _classify_mgmt_cpt(row):
         """Determine the management CPT code for a course."""
@@ -744,8 +742,6 @@ def update_otv_audit(_n, slider_val, date_preset, departments, exclude_incomplet
         missed = (tf["AllowedOTVs"] - actual).clip(lower=0)
         cpt_codes = tf.apply(_classify_mgmt_cpt, axis=1)
         years = tf[date_col].dt.year if date_col in tf.columns else pd.Series(2026, index=tf.index)
-        is_freestanding = tf["Department"].isin(_FREESTANDING_DEPTS) if "Department" in tf.columns else pd.Series(False, index=tf.index)
-
         wrvu_total = 0.0
         dollar_total = 0.0
         for code in ["77427", "77431", "77432", "77435"]:
@@ -759,17 +755,12 @@ def update_otv_audit(_n, slider_val, date_preset, departments, exclude_incomplet
                 row_wrvu = pd.Series(_FALLBACK_WRVU[code], index=tf.index[mask])
             wrvu_total += (missed[mask] * row_wrvu).sum()
 
-            # Dollars: freestanding gets NonFac_Total, hospital gets wRVU + MP
-            fs = is_freestanding[mask]
+            # Dollars: pro fees only at all sites — (wRVU + MP) × CF
             if code in _rvu_by_code and not _rvu_by_code[code].empty:
                 row_mp = years[mask].map(_mp_by_code.get(code, pd.Series(dtype=float))).fillna(_FALLBACK_MP[code])
             else:
                 row_mp = pd.Series(_FALLBACK_MP[code], index=tf.index[mask])
-            # Hospital-based: (wRVU + MP) × CF
-            hosp_dollars = missed[mask] * (row_wrvu + row_mp) * _MEDICARE_CF
-            # Freestanding: NonFac_Total × CF (use 2026 flat value)
-            free_dollars = missed[mask] * _NONFAC_TOTAL[code] * _MEDICARE_CF
-            dollar_total += hosp_dollars[~fs].sum() + free_dollars[fs].sum()
+            dollar_total += (missed[mask] * (row_wrvu + row_mp) * _MEDICARE_CF).sum()
 
         return wrvu_total, dollar_total
 
@@ -1176,7 +1167,7 @@ def _build_table(df, result_filter="all", course_status="all"):
     for c in ["FirstTreatmentDate", "LastTreatmentDate"]:
         if c in table_df.columns and pd.api.types.is_datetime64_any_dtype(table_df[c]):
             table_df[c] = table_df[c].dt.strftime("%m/%d/%Y")
-    table_df = table_df.fillna("--")
+    table_df = sanitize_for_grid(table_df)
 
     return dag.AgGrid(
         id="otv-detail-grid",

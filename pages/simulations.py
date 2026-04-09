@@ -12,23 +12,26 @@ from datetime import timedelta
 
 from config.settings import (
     DEPARTMENTS, DEPARTMENT_COLORS, CHART_COLORWAY,
-    CHART_PAPER_HEIGHT_SM, PRIMARY, FONT_FAMILY, PRIOR_PERIOD_COLORS,
+    CHART_PAPER_HEIGHT, CHART_PAPER_HEIGHT_SM, PRIMARY, FONT_FAMILY, PRIOR_PERIOD_COLORS,
 )
 from components.filter_bar import department_chips
+from components.outlier_panel import outlier_panel, register_outlier_callbacks
 from components.kpi_card import kpi_card, kpi_placeholder
 from components.chart_card import chart_card, register_chart_callbacks
+from components.diagnosis_filter import diagnosis_accordion, register_diagnosis_callbacks
 from components.detail_table import detail_table
 from components.chart_settings import chart_settings_popover
 from utils.charts import apply_default_layout, empty_figure
+from utils.tables import sanitize_for_grid
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, SLIDER_MARKS,
     preset_to_slider_val,
 )
+from utils.holidays import get_holidays
 from utils.diagnosis_categories import (
-    CATEGORIES as BODY_SYSTEMS,
+    assign_diagnosis_column,
     build_code_to_category,
     get_categories_for_codes,
-    primary_category,
 )
 
 dash.register_page(__name__, path="/simulations", name="Simulations", order=4)
@@ -39,6 +42,9 @@ PAGE_ID = "sim"
 # Constants
 # ---------------------------------------------------------------------------
 _DEFAULT_DATE_PRESET = "ytd" if pd.Timestamp.now().month > 1 else "3mo"
+_CAP_LEAD = 30          # outlier cap: consult → sim (days)
+_CAP_TIME_TO_TX = 60    # outlier cap: sim → treatment (days)
+_CAP_LEAD_TIME = 30     # outlier cap: lead time / booked → sim (days)
 
 # Sim types to exclude from filter and charts
 _SIM_TYPE_EXCLUDE = frozenset({"HOLD SIM TIME", "MD Needed in Sim"})
@@ -295,50 +301,7 @@ def _build_sim_filter_bar():
                         ],
                         style={"position": "relative", "display": "inline-block"},
                     ),
-                    # Body Site dropdown
-                    html.Div(
-                        children=[
-                            html.Div(
-                                children=[
-                                    dmc.Button(
-                                        "Diagnosis",
-                                        id="sim-bodysite-trigger",
-                                        variant="default",
-                                        size="sm",
-                                        rightSection=DashIconify(icon="mdi:chevron-down", width=14),
-                                    ),
-                                    dmc.ActionIcon(
-                                        DashIconify(icon="mdi:close-circle", width=18),
-                                        id="sim-bodysite-clear",
-                                        variant="subtle",
-                                        color="gray",
-                                        size="sm",
-                                        className="wf-filter-clear-btn",
-                                    ),
-                                ],
-                                style={"position": "relative", "display": "inline-block"},
-                            ),
-                            dmc.Paper(
-                                dmc.ChipGroup(
-                                    children=[
-                                        dmc.Chip(bs, value=bs, size="xs", variant="filled")
-                                        for bs in BODY_SYSTEMS
-                                    ],
-                                    id="sim-filter-bodysite",
-                                    multiple=True,
-                                    value=[],
-                                ),
-                                id="sim-bodysite-panel",
-                                p="xs",
-                                shadow="md",
-                                withBorder=True,
-                                radius="md",
-                                className="wf-chip-dropdown",
-                                style={"display": "none"},
-                            ),
-                        ],
-                        style={"position": "relative", "display": "inline-block"},
-                    ),
+                    diagnosis_accordion("sim"),
                     # Scope: All / Initial
                     dmc.SegmentedControl(
                         id="sim-volume-scope",
@@ -363,6 +326,11 @@ def _build_sim_filter_bar():
                         size="xs",
                         checked=False,
                     ),
+                    outlier_panel(PAGE_ID, transitions=[
+                        ("Consult \u2192 Sim", _CAP_LEAD),
+                        ("Sim \u2192 Treatment", _CAP_TIME_TO_TX),
+                        ("Lead Time", _CAP_LEAD_TIME),
+                    ]),
                     # Smoothing
                     dmc.Group(
                         children=[
@@ -474,17 +442,39 @@ layout = dmc.Stack(
             className="page-sticky-header",
             children=[
                 dmc.Title("Simulations", order=2, className="page-title", style={"margin": 0, "textAlign": "center"}),
-                _build_sim_filter_bar(),
+                html.Div(
+                    style={"position": "relative"},
+                    children=[
+                        _build_sim_filter_bar(),
+                        html.Div(
+                            id="sim-grid-filter-badge",
+                            children=dmc.Tooltip(
+                                label="Table column filters are active — charts reflect the filtered subset",
+                                position="left", withArrow=True, multiline=True, w=220,
+                                children=dmc.Badge(
+                                    "Table Filtered",
+                                    color="red", variant="filled", size="md",
+                                    leftSection=DashIconify(icon="mdi:filter", width=14),
+                                ),
+                            ),
+                            style={
+                                "position": "absolute", "top": -12, "right": 8,
+                                "zIndex": 10, "display": "none", "cursor": "pointer",
+                            },
+                        ),
+                    ],
+                ),
             ],
         ),
 
-        # KPI row — 5 cards with sparklines
+        # KPI row — 6 cards with sparklines
         dmc.Grid(id="sim-kpi-row", gutter="md", children=[
-            dmc.GridCol(kpi_placeholder(), id="sim-kpi-total", span={"base": 6, "md": 2.4}),
-            dmc.GridCol(kpi_placeholder(), id="sim-kpi-initial", span={"base": 6, "md": 2.4}),
-            dmc.GridCol(kpi_placeholder(), id="sim-kpi-lead", span={"base": 6, "md": 2.4}),
-            dmc.GridCol(kpi_placeholder(), id="sim-kpi-time-to-tx", span={"base": 6, "md": 2.4}),
-            dmc.GridCol(kpi_placeholder(), id="sim-kpi-resim", span={"base": 6, "md": 2.4}),
+            dmc.GridCol(kpi_placeholder(), id="sim-kpi-total", span={"base": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id="sim-kpi-initial", span={"base": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id="sim-kpi-lead", span={"base": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id="sim-kpi-consult-sim", span={"base": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id="sim-kpi-time-to-tx", span={"base": 6, "md": 2}),
+            dmc.GridCol(kpi_placeholder(), id="sim-kpi-resim", span={"base": 6, "md": 2}),
         ]),
 
         # Row 1: Volume Trend + Cumulative Volume (CV-style)
@@ -495,9 +485,9 @@ layout = dmc.Stack(
                     "Simulation Volume Trend",
                     settings_id="sim-volume",
                     chart_types=[
+                        {"value": "bar", "label": "Bar"},
                         {"value": "line", "label": "Line"},
                         {"value": "area", "label": "Area"},
-                        {"value": "bar", "label": "Bar"},
                     ],
                     show_smooth=True,
                     smooth_max=12,
@@ -515,7 +505,7 @@ layout = dmc.Stack(
                                 {"value": "machine", "label": "Machine"},
                                 {"value": "bodysite", "label": "Dx"},
                             ],
-                            value="",
+                            value="scope",
                             size="xs",
                         ),
                     ],
@@ -546,8 +536,11 @@ layout = dmc.Stack(
                     ],
                     show_smooth=True,
                     show_prior_periods=True,
-                    smooth_max=50,
-                    smooth_default=0,
+                    smooth_min=0,
+                    smooth_max=1,
+                    smooth_step=0.05,
+                    smooth_default=0.1,
+                    prior_periods_default=3,
                     paper_padding="md",
                     extra_controls=[
                         dmc.SegmentedControl(
@@ -609,10 +602,10 @@ layout = dmc.Stack(
                         dmc.SegmentedControl(
                             id="sim-timing-metric",
                             data=[
-                                {"value": "consult_sim", "label": "Consult → Sim"},
+                                {"value": "consult_sim", "label": "Consult \u2192 Sim"},
                                 {"value": "lead_time", "label": "Lead Time"},
                             ],
-                            value="consult_sim",
+                            value="lead_time",
                             size="xs",
                         ),
                         dmc.SegmentedControl(
@@ -638,7 +631,7 @@ layout = dmc.Stack(
                                 {"value": "M", "label": "Monthly"},
                                 {"value": "Y", "label": "Yearly"},
                             ],
-                            value="M",
+                            value="W",
                             size="xs",
                         ),
                     ],
@@ -663,24 +656,34 @@ layout = dmc.Stack(
                                 chart_settings_popover(
                                     "sim-ribbon",
                                     chart_types=[
+                                        {"value": "bar", "label": "Bar"},
                                         {"value": "ribbon", "label": "Ribbon"},
                                         {"value": "line", "label": "Line"},
                                     ],
                                     show_smooth=True,
                                     smooth_max=14,
                                     smooth_default=3,
+                                    show_grouping=False,
                                 ),
                             ],
                         ),
                         dmc.Box(
                             pos="relative",
+                            style={"flex": "1", "minHeight": 0},
                             children=[
-                                dmc.LoadingOverlay(id="sim-ribbon-loading", visible=False, loaderProps={"type": "dots", "color": "#7C2A83"}),
-                                dcc.Graph(id="sim-chart-ribbon", config={"displayModeBar": False}),
+                                dmc.Box(
+                                    style={"position": "absolute", "top": 0, "left": 0, "right": 0, "bottom": 0},
+                                    children=[
+                                        dmc.LoadingOverlay(id="sim-ribbon-loading", visible=False, loaderProps={"type": "dots", "color": "#7C2A83"}),
+                                        dcc.Graph(id="sim-chart-ribbon", config={"displayModeBar": False}, responsive=True, style={"height": "100%", "width": "100%"}),
+                                    ],
+                                ),
                             ],
                         ),
                     ],
-                    p="md", radius="md", shadow="xs", withBorder=True,
+                    p="md", pb=8, radius="md", shadow="xs", withBorder=True,
+                    h=CHART_PAPER_HEIGHT,
+                    style={"display": "flex", "flexDirection": "column"},
                 ),
                 span={"base": 12, "md": 6},
             ),
@@ -856,7 +859,22 @@ layout = dmc.Stack(
         ]),
 
         # Detail table — full width, collapsible
-        detail_table("sim-detail-grid", title="Simulation Detail", export_id="sim-table-export"),
+        detail_table(
+            "sim-detail-grid",
+            title="Simulation Detail",
+            export_id="sim-table-export",
+            extra_controls=[
+                dmc.Button(
+                    "Clear Filters",
+                    id="sim-table-clear-filters",
+                    size="compact-xs",
+                    variant="light",
+                    color="red",
+                    leftSection=DashIconify(icon="mdi:filter-remove", width=14),
+                    style={"display": "none"},
+                ),
+            ],
+        ),
 
         dcc.Interval(id="sim-interval", interval=300_000, n_intervals=0),
 
@@ -868,6 +886,7 @@ layout = dmc.Stack(
         dcc.Store(id="sim-store-kpi-sparklines"),
         dcc.Store(id="sim-store-resim-scope", data="resim"),
         dcc.Store(id="sim-store-cancel"),
+        dcc.Store(id="sim-table-filter-rows"),  # filtered row indices from grid
     ],
 )
 
@@ -1040,31 +1059,16 @@ def _register_sim_filter_callbacks():
         prevent_initial_call=True,
     )
 
-    # --- Body Site filter ---
-    clientside_callback(
-        "function(vals) {"
-        "  if (!vals || vals.length === 0) return 'Diagnosis';"
-        "  if (vals.length === 1) return vals[0];"
-        "  return vals.length + ' selected';"
-        "}",
-        Output("sim-bodysite-trigger", "children"),
-        Input("sim-filter-bodysite", "value"),
-    )
-    clientside_callback(
-        """function(vals) { return vals && vals.length > 0 ? {"display": "inline-flex"} : {"display": "none"}; }""",
-        Output("sim-bodysite-clear", "style"),
-        Input("sim-filter-bodysite", "value"),
-    )
-    clientside_callback(
-        """function(n) { return []; }""",
-        Output("sim-filter-bodysite", "value", allow_duplicate=True),
-        Input("sim-bodysite-clear", "n_clicks"),
-        prevent_initial_call=True,
-    )
 
 
 # Register filter callbacks
 _register_sim_filter_callbacks()
+
+# Register diagnosis accordion callbacks
+register_diagnosis_callbacks("sim")
+
+# Register outlier panel callbacks
+register_outlier_callbacks(PAGE_ID, n_transitions=3, defaults=[_CAP_LEAD, _CAP_TIME_TO_TX, _CAP_LEAD_TIME])
 
 
 # ---------------------------------------------------------------------------
@@ -1159,8 +1163,8 @@ def _dedup_patient_day(src):
 
 
 def _load_and_filter_sim(slider_val, departments, physician, sim_types,
-                          machines, body_sites, volume_scope, inpatient,
-                          weekend_only, date_preset):
+                          machines, body_sites, diag_mode, volume_scope,
+                          inpatient, weekend_only, date_preset):
     """Load simulations data, apply filters. Returns dict or None."""
     from data.loader import load_simulations, load_diagnosis
 
@@ -1190,12 +1194,9 @@ def _load_and_filter_sim(slider_val, departments, physician, sim_types,
         diag_df = None
     c2b = build_code_to_category(diag_df)
 
-    if body_sites and "DiagnosisCodes" in df.columns and c2b:
-        bs_set = set(body_sites)
-        row_bs = df["DiagnosisCodes"].apply(
-            lambda s: get_categories_for_codes(s, c2b) if pd.notna(s) else set()
-        )
-        df = df[row_bs.apply(lambda cats: bool(cats & bs_set))]
+    if body_sites:
+        from utils.diagnosis_categories import filter_by_diagnosis
+        df = filter_by_diagnosis(df, body_sites, c2b, mode=diag_mode or "primary")
 
     if volume_scope == "initial" and "ActivityName" in df.columns:
         df = df[df["ActivityName"].apply(_is_initial_sim)]
@@ -1237,6 +1238,7 @@ def _load_and_filter_sim(slider_val, departments, physician, sim_types,
         "start": start, "end": end, "date_preset": date_preset,
         "departments": departments, "physician": physician,
         "sim_types": sim_types, "ps": ps, "pe": pe,
+        "diag_mode": diag_mode or "primary",
     }
 
 
@@ -1248,7 +1250,8 @@ _SIM_FILTER_INPUTS = [
     Input("sim-filter-physician", "value"),
     Input("sim-filter-simtype", "value"),
     Input("sim-filter-machine", "value"),
-    Input("sim-filter-bodysite", "value"),
+    Input("sim-diag-store", "data"),
+    Input("sim-diag-mode", "data"),
     Input("sim-volume-scope", "value"),
     Input("sim-inpatient-switch", "checked"),
     Input("sim-weekend-switch", "checked"),
@@ -1257,47 +1260,119 @@ _SIM_FILTER_INPUTS = [
 
 
 def _unpack_sim_filter_args(args):
-    """Unpack the 11 common filter args into kwargs for _load_and_filter_sim."""
+    """Unpack the 12 common filter args into kwargs for _load_and_filter_sim."""
     (_n, slider_val, departments, physician, sim_types,
-     machines, body_sites, volume_scope, inpatient,
-     weekend_only, date_preset) = args[:11]
+     machines, body_sites, diag_mode, volume_scope, inpatient,
+     weekend_only, date_preset) = args[:12]
     return dict(
         slider_val=slider_val, departments=departments, physician=physician,
         sim_types=sim_types, machines=machines, body_sites=body_sites,
-        volume_scope=volume_scope, inpatient=inpatient,
+        diag_mode=diag_mode, volume_scope=volume_scope, inpatient=inpatient,
         weekend_only=weekend_only, date_preset=date_preset,
     )
 
 
+def _apply_grid_row_filter(df, grid_rows):
+    """Filter df to only rows matching the grid's visible row indices.
+
+    grid_rows: list of _row_idx values from virtualRowData, or None if no filter.
+    Returns the (possibly filtered) DataFrame.
+    """
+    if grid_rows is None or df is None or df.empty:
+        return df
+    idx_set = set(int(i) for i in grid_rows)
+    return df.loc[df.index.isin(idx_set)].reset_index(drop=True)
+
+
+_GRID_DIM_COLS = ["Department", "SupervisingPhysician", "ActivityName", "PatientFullName"]
+
+
+def _apply_grid_row_filter_all_status(df, df_all_status, grid_rows):
+    """Apply grid row filter to df_all_status via dimension column matching.
+
+    The grid shows completed sims; df_all_status includes all statuses.
+    Match on dimension columns so cancelled sims for the same cohort are kept.
+    """
+    if grid_rows is None or df is None or df.empty:
+        return df_all_status
+    if df_all_status is None or df_all_status.empty:
+        return df_all_status
+    filtered = _apply_grid_row_filter(df, grid_rows)
+    if filtered.empty:
+        return df_all_status.iloc[:0]
+    mask = pd.Series(True, index=df_all_status.index)
+    for col in _GRID_DIM_COLS:
+        if col in filtered.columns and col in df_all_status.columns:
+            vals = set(filtered[col].dropna().unique())
+            if vals:
+                mask &= df_all_status[col].isin(vals) | df_all_status[col].isna()
+    return df_all_status[mask]
+
+
 # ---------------------------------------------------------------------------
-# Callback 1: KPIs + Sparklines + Detail Table
+# Callback 1A: Detail Table
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("sim-detail-grid", "rowData"),
+    Output("sim-detail-grid", "columnDefs"),
+    *_SIM_FILTER_INPUTS,
+)
+def _update_sim_table(*args):
+    ctx = _unpack_sim_filter_args(args)
+    data = _load_and_filter_sim(**ctx)
+    if data is None:
+        return [], []
+    df = data["df"]
+    if df.empty:
+        return [], []
+    return _build_detail_table(df)
+
+
+# ---------------------------------------------------------------------------
+# Callback 1B: KPIs + Sparklines (responds to grid filter)
 # ---------------------------------------------------------------------------
 
 @callback(
     Output("sim-kpi-total", "children"),
     Output("sim-kpi-initial", "children"),
     Output("sim-kpi-lead", "children"),
+    Output("sim-kpi-consult-sim", "children"),
     Output("sim-kpi-time-to-tx", "children"),
     Output("sim-kpi-resim", "children"),
-    Output("sim-detail-grid", "rowData"),
-    Output("sim-detail-grid", "columnDefs"),
     Output("sim-store-kpi-sparklines", "data"),
     *_SIM_FILTER_INPUTS,
     Input("sim-store-resim-scope", "data"),
+    Input("sim-outlier-enabled", "data"),
+    Input("sim-outlier-cap-0", "value"),
+    Input("sim-outlier-cap-1", "value"),
+    Input("sim-outlier-cap-2", "value"),
+    Input("sim-table-filter-rows", "data"),
 )
 def _update_sim_kpis(*args):
     ctx = _unpack_sim_filter_args(args)
-    resim_scope = args[11] or "resim"
+    resim_scope = args[12] or "resim"
+    outlier_enabled = args[13]
+    cap_lead_raw, cap_tx_raw, cap_lt_raw = args[14], args[15], args[16]
+    grid_rows = args[17]
+    if not outlier_enabled:
+        cap_lead, cap_time_to_tx, cap_lead_time = 365, 365, 365
+    else:
+        cap_lead = cap_lead_raw or _CAP_LEAD
+        cap_time_to_tx = cap_tx_raw or _CAP_TIME_TO_TX
+        cap_lead_time = cap_lt_raw or _CAP_LEAD_TIME
     data = _load_and_filter_sim(**ctx)
 
     na_card = kpi_card("--", "N/A")
-    empty_kpis = (na_card,) * 5 + ([], [], {})
+    empty_kpis = (na_card,) * 6 + ({},)
     if data is None:
         return empty_kpis
 
-    dfu = data["dfu"]
+    df = _apply_grid_row_filter(data["df"], grid_rows)
+    if df.empty:
+        return empty_kpis
+    dfu = _dedup_patient_day(df)
     dfu_all = data["dfu_all"]
-    df = data["df"]
     df_all = data["df_all"]
     start, end = data["start"], data["end"]
     date_preset = data["date_preset"]
@@ -1326,12 +1401,14 @@ def _update_sim_kpis(*args):
             return None
         return {"labels": [d.isoformat() for d in grp.index], "values": grp.tolist()}
 
-    def _median_spark_raw(sub_df, col, date_col="ScheduledDateTime"):
+    def _median_spark_raw(sub_df, col, date_col="ScheduledDateTime", cap=None):
         if sub_df.empty or col not in sub_df.columns or date_col not in sub_df.columns:
             return None
         temp = sub_df[[date_col, col]].copy()
         temp[col] = pd.to_numeric(temp[col], errors="coerce")
         temp = temp.dropna()
+        if cap is not None:
+            temp = temp[(temp[col] >= 0) & (temp[col] <= cap)]
         if temp.empty:
             return None
         temp["_sp"] = _spark_bucket(temp[date_col])
@@ -1340,9 +1417,11 @@ def _update_sim_kpis(*args):
             return None
         return {"labels": [d.isoformat() for d in grp.index], "values": grp.tolist()}
 
-    def _median_days(col):
+    def _median_days(col, cap=None):
         if col in dfu.columns:
             vals = pd.to_numeric(dfu[col], errors="coerce").dropna()
+            if cap is not None:
+                vals = vals[(vals >= 0) & (vals <= cap)]
             if len(vals) > 0:
                 return vals.median()
         return None
@@ -1393,44 +1472,86 @@ def _update_sim_kpis(*args):
         trend_direction=it_dir, accent_color=CHART_COLORWAY[1], sparkline_id="sim-spark-initial",
     )
 
-    # 3. Lead Time (Consult-to-Sim)
-    cs_median = _median_days("DaysFromClinicExamToSimulation")
-    cs_spark = _median_spark_raw(dfu, "DaysFromClinicExamToSimulation")
-    if cs_spark:
-        sparkline_data["lead"] = {**cs_spark, "color": CHART_COLORWAY[2], "hover_fmt": "%{x|%b %d}: %{customdata:.0f} days<extra></extra>"}
+    # 3. Lead Time (Booked-to-Sim)
+    lt_median = _median_days("DaysFromCreatedToAppt", cap=cap_lead_time)
+    lt_spark = _median_spark_raw(dfu, "DaysFromCreatedToAppt", cap=cap_lead_time)
+    if lt_spark:
+        sparkline_data["lead"] = {**lt_spark, "color": CHART_COLORWAY[2], "hover_fmt": "%{x|%b %d}: %{customdata:.0f} days<extra></extra>"}
 
-    if ps is not None and "DaysFromClinicExamToSimulation" in dfu_all.columns:
-        prior_lead_data = dfu_all[(dfu_all["ScheduledDateTime"] >= ps) & (dfu_all["ScheduledDateTime"] <= pe)]
-        prior_lead_vals = pd.to_numeric(prior_lead_data["DaysFromClinicExamToSimulation"], errors="coerce").dropna()
-        prior_lead = prior_lead_vals.median() if len(prior_lead_vals) > 0 else None
+    if ps is not None and "DaysFromCreatedToAppt" in dfu_all.columns:
+        prior_lt_data = dfu_all[(dfu_all["ScheduledDateTime"] >= ps) & (dfu_all["ScheduledDateTime"] <= pe)]
+        prior_lt_vals = pd.to_numeric(prior_lt_data["DaysFromCreatedToAppt"], errors="coerce").dropna()
+        prior_lt_vals = prior_lt_vals[(prior_lt_vals >= 0) & (prior_lt_vals <= cap_lead_time)]
+        prior_lt = prior_lt_vals.median() if len(prior_lt_vals) > 0 else None
     else:
-        prior_lead = None
-    lt_pct, lt_dir, lt_pv = _sim_trend(cs_median, prior_lead, invert=True) if cs_median else (None, None, None)
+        prior_lt = None
+    lt_pct, lt_dir, lt_pv = _sim_trend(lt_median, prior_lt, invert=True) if lt_median else (None, None, None)
+    _lead_info = dmc.Tooltip(
+        DashIconify(icon="mdi:information-outline", width=16, color="#9CA3AF", style={"cursor": "help"}),
+        label=f"Median days from booking creation to simulation. Outlier cap ({cap_lead_time}d). Lower = shorter scheduling horizon.",
+        position="top", withArrow=True, multiline=True, w=240,
+    )
     kpi_lead_card = kpi_card(
-        f"Lead Time ({period_label})", f"{cs_median:.0f}" if cs_median else "N/A",
-        value_detail="days" if cs_median else None,
+        f"Lead Time ({period_label})", f"{lt_median:.0f}" if lt_median else "N/A",
+        value_detail="days" if lt_median else None,
         trend_text=f"{lt_pct} {trend_label} ({lt_pv:.0f}d)" if lt_pct else None,
         trend_direction=lt_dir, accent_color=CHART_COLORWAY[2], sparkline_id="sim-spark-lead",
+        header_control=_lead_info,
+    )
+
+    # 3b. Consult → Sim
+    cs_median = _median_days("DaysFromClinicExamToSimulation", cap=cap_lead)
+    cs_spark = _median_spark_raw(dfu, "DaysFromClinicExamToSimulation", cap=cap_lead)
+    if cs_spark:
+        sparkline_data["consult_sim"] = {**cs_spark, "color": CHART_COLORWAY[5] if len(CHART_COLORWAY) > 5 else "#FF9800", "hover_fmt": "%{x|%b %d}: %{customdata:.0f} days<extra></extra>"}
+
+    if ps is not None and "DaysFromClinicExamToSimulation" in dfu_all.columns:
+        prior_cs_data = dfu_all[(dfu_all["ScheduledDateTime"] >= ps) & (dfu_all["ScheduledDateTime"] <= pe)]
+        prior_cs_vals = pd.to_numeric(prior_cs_data["DaysFromClinicExamToSimulation"], errors="coerce").dropna()
+        prior_cs_vals = prior_cs_vals[(prior_cs_vals >= 0) & (prior_cs_vals <= cap_lead)]
+        prior_cs = prior_cs_vals.median() if len(prior_cs_vals) > 0 else None
+    else:
+        prior_cs = None
+    cs_pct, cs_dir, cs_pv = _sim_trend(cs_median, prior_cs, invert=True) if cs_median else (None, None, None)
+    _cs_info = dmc.Tooltip(
+        DashIconify(icon="mdi:information-outline", width=16, color="#9CA3AF", style={"cursor": "help"}),
+        label=f"Median days from consult to simulation. Outlier cap ({cap_lead}d) applies. Lower = faster throughput.",
+        position="top", withArrow=True, multiline=True, w=240,
+    )
+    kpi_consult_sim_card = kpi_card(
+        f"Consult \u2192 Sim ({period_label})", f"{cs_median:.0f}" if cs_median else "N/A",
+        value_detail="days" if cs_median else None,
+        trend_text=f"{cs_pct} {trend_label} ({cs_pv:.0f}d)" if cs_pct else None,
+        trend_direction=cs_dir, accent_color=CHART_COLORWAY[5] if len(CHART_COLORWAY) > 5 else "#FF9800",
+        sparkline_id="sim-spark-consult-sim",
+        header_control=_cs_info,
     )
 
     # 4. Time to Treatment (Sim-to-Treatment)
-    st_median = _median_days("DaysFromSimToTreatment")
-    st_spark = _median_spark_raw(dfu, "DaysFromSimToTreatment")
+    st_median = _median_days("DaysFromSimToTreatment", cap=cap_time_to_tx)
+    st_spark = _median_spark_raw(dfu, "DaysFromSimToTreatment", cap=cap_time_to_tx)
     if st_spark:
         sparkline_data["time_to_tx"] = {**st_spark, "color": CHART_COLORWAY[3], "hover_fmt": "%{x|%b %d}: %{customdata:.0f} days<extra></extra>"}
 
     if ps is not None and "DaysFromSimToTreatment" in dfu_all.columns:
         prior_tx_data = dfu_all[(dfu_all["ScheduledDateTime"] >= ps) & (dfu_all["ScheduledDateTime"] <= pe)]
         prior_tx_vals = pd.to_numeric(prior_tx_data["DaysFromSimToTreatment"], errors="coerce").dropna()
+        prior_tx_vals = prior_tx_vals[(prior_tx_vals >= 0) & (prior_tx_vals <= cap_time_to_tx)]
         prior_tx = prior_tx_vals.median() if len(prior_tx_vals) > 0 else None
     else:
         prior_tx = None
     st_pct, st_dir, st_pv = _sim_trend(st_median, prior_tx, invert=True) if st_median else (None, None, None)
+    _tx_info = dmc.Tooltip(
+        DashIconify(icon="mdi:information-outline", width=16, color="#9CA3AF", style={"cursor": "help"}),
+        label=f"Median days from simulation to first treatment. Outlier cap ({cap_time_to_tx}d) applies to this metric. Lower = faster throughput.",
+        position="top", withArrow=True, multiline=True, w=240,
+    )
     kpi_time_to_tx_card = kpi_card(
         f"Time to Treatment ({period_label})", f"{st_median:.0f}" if st_median else "N/A",
         value_detail="days" if st_median else None,
         trend_text=f"{st_pct} {trend_label} ({st_pv:.0f}d)" if st_pct else None,
         trend_direction=st_dir, accent_color=CHART_COLORWAY[3], sparkline_id="sim-spark-time-to-tx",
+        header_control=_tx_info,
     )
 
     # 5. Re-Sim Rate
@@ -1481,11 +1602,9 @@ def _update_sim_kpis(*args):
         sparkline_id="sim-spark-resim", header_control=_resim_scope_toggle(resim_scope),
     )
 
-    row_data, col_defs = _build_detail_table(df)
-
     return (
-        kpi_total_card, kpi_initial_card, kpi_lead_card, kpi_time_to_tx_card, kpi_resim_card,
-        row_data, col_defs, sparkline_data,
+        kpi_total_card, kpi_initial_card, kpi_lead_card, kpi_consult_sim_card,
+        kpi_time_to_tx_card, kpi_resim_card, sparkline_data,
     )
 
 
@@ -1498,15 +1617,19 @@ def _update_sim_kpis(*args):
     *_SIM_FILTER_INPUTS,
     Input("sim-volume-agg", "value"),
     Input("sim-volume-slice", "value"),
+    Input("sim-table-filter-rows", "data"),
     running=[(Output("sim-chart-volume-loading", "visible"), True, False)],
 )
 def _update_sim_volume(*args):
     ctx = _unpack_sim_filter_args(args)
-    agg, volume_slice = args[11], args[12]
+    agg, volume_slice, grid_rows = args[12], args[13], args[14]
     data = _load_and_filter_sim(**ctx)
     if data is None:
         return None
-    return _prepare_volume_data(data["dfu"], agg, slice_by=volume_slice or "", c2b=data["c2b"])
+    dfu = _dedup_patient_day(_apply_grid_row_filter(data["df"], grid_rows))
+    if dfu.empty:
+        return None
+    return _prepare_volume_data(dfu, agg, slice_by=volume_slice or "", c2b=data["c2b"], diag_mode=data.get("diag_mode", "primary"))
 
 
 # ---------------------------------------------------------------------------
@@ -1519,17 +1642,36 @@ def _update_sim_volume(*args):
     Input("sim-timing-metric", "value"),
     Input("sim-timing-agg", "value"),
     Input("sim-timing-slice", "value"),
+    Input("sim-outlier-enabled", "data"),
+    Input("sim-outlier-cap-0", "value"),
+    Input("sim-outlier-cap-1", "value"),
+    Input("sim-table-filter-rows", "data"),
     running=[(Output("sim-chart-timing-loading", "visible"), True, False)],
 )
 def _update_sim_timing(*args):
     ctx = _unpack_sim_filter_args(args)
-    timing_metric, timing_agg, timing_slice = args[11], args[12], args[13]
+    timing_metric, timing_agg, timing_slice = args[12], args[13], args[14]
+    outlier_enabled = args[15]
+    cap_lead_raw, cap_tx_raw = args[16], args[17]
+    grid_rows = args[18]
+    if not outlier_enabled:
+        cap_lead, cap_tx = 365, 365
+    else:
+        cap_lead = cap_lead_raw or _CAP_LEAD
+        cap_tx = cap_tx_raw or _CAP_TIME_TO_TX
+    # Pick the appropriate cap based on which metric is selected
+    metric = timing_metric or "consult_sim"
+    cap = cap_lead if metric == "consult_sim" else cap_tx
     data = _load_and_filter_sim(**ctx)
     if data is None:
         return None
+    dfu = _dedup_patient_day(_apply_grid_row_filter(data["df"], grid_rows))
+    if dfu.empty:
+        return None
     return _prepare_timing_data(
-        data["dfu"], metric=timing_metric or "consult_sim",
+        dfu, metric=metric,
         agg=timing_agg or "M", slice_by=timing_slice or "", c2b=data["c2b"],
+        cap=cap, diag_mode=data.get("diag_mode", "primary"),
     )
 
 
@@ -1543,21 +1685,27 @@ def _update_sim_timing(*args):
     Input("sim-cumulative-mode", "value"),
     Input("sim-cumulative-period-type", "value"),
     Input("sim-cumulative-slice", "value"),
+    Input("sim-table-filter-rows", "data"),
     running=[(Output("sim-chart-cumulative-loading", "visible"), True, False)],
 )
 def _update_sim_cumulative(*args):
     ctx = _unpack_sim_filter_args(args)
-    cumul_mode, cumul_period_type, cumul_slice = args[11], args[12], args[13]
+    cumul_mode, cumul_period_type, cumul_slice = args[12], args[13], args[14]
+    grid_rows = args[15]
     data = _load_and_filter_sim(**ctx)
     if data is None:
         return None
+    dfu_all = _dedup_patient_day(_apply_grid_row_filter(data["df_all"], grid_rows))
+    if dfu_all.empty:
+        return None
     return _prepare_cumulative_data(
-        data["dfu_all"], data["start"], data["end"], data["date_preset"],
+        dfu_all, data["start"], data["end"], data["date_preset"],
         data["departments"], data["physician"], data["sim_types"],
         mode=cumul_mode or "prior",
         period_type=cumul_period_type or "calendar",
         slice_by=cumul_slice or "dept",
         c2b=data["c2b"], max_prior=5,
+        diag_mode=data.get("diag_mode", "primary"),
     )
 
 
@@ -1570,15 +1718,19 @@ def _update_sim_cumulative(*args):
     *_SIM_FILTER_INPUTS,
     Input("sim-cancel-agg", "value"),
     Input("sim-cancel-slice", "value"),
+    Input("sim-table-filter-rows", "data"),
     running=[(Output("sim-chart-cancel-rate-loading", "visible"), True, False)],
 )
 def _update_sim_cancel(*args):
     ctx = _unpack_sim_filter_args(args)
-    cancel_agg, cancel_slice = args[11], args[12]
+    cancel_agg, cancel_slice, grid_rows = args[12], args[13], args[14]
     data = _load_and_filter_sim(**ctx)
     if data is None:
         return None
-    return _prepare_cancel_data(data["df_all_status"], data["start"], data["end"], cancel_agg, cancel_slice)
+    df_all = _apply_grid_row_filter_all_status(data["df"], data["df_all_status"], grid_rows)
+    if df_all.empty:
+        return None
+    return _prepare_cancel_data(df_all, data["start"], data["end"], cancel_agg, cancel_slice)
 
 
 # ---------------------------------------------------------------------------
@@ -1594,6 +1746,7 @@ def _update_sim_cancel(*args):
     Input("sim-diagnosis-mode", "value"),
     Input("sim-billing-slice", "value"),
     Input("sim-billing-mode", "value"),
+    Input("sim-table-filter-rows", "data"),
     running=[
         (Output("sim-diagnosis-loading", "visible"), True, False),
         (Output("sim-billing-loading", "visible"), True, False),
@@ -1601,15 +1754,18 @@ def _update_sim_cancel(*args):
 )
 def _update_sim_diag_billing(*args):
     ctx = _unpack_sim_filter_args(args)
-    diagnosis_compare, diagnosis_slice, diagnosis_mode = args[11], args[12], args[13]
-    billing_slice, billing_mode = args[14], args[15]
+    diagnosis_compare, diagnosis_slice, diagnosis_mode = args[12], args[13], args[14]
+    billing_slice, billing_mode = args[15], args[16]
+    grid_rows = args[17]
     data = _load_and_filter_sim(**ctx)
 
     empty = empty_figure()
     if data is None:
         return empty, empty
 
-    dfu = data["dfu"]
+    dfu = _dedup_patient_day(_apply_grid_row_filter(data["df"], grid_rows))
+    if dfu.empty:
+        return empty, empty
     dfu_all = data["dfu_all"]
     c2b = data["c2b"]
     date_preset = data["date_preset"]
@@ -1627,6 +1783,7 @@ def _update_sim_diag_billing(*args):
         dfu, c2b=c2b, slice_by=diagnosis_slice or "",
         mode=diagnosis_mode or "count",
         prior_df=_diag_prior_df, period_labels=_diag_period_labels,
+        diag_mode=data.get("diag_mode", "primary"),
     )
     fig_billing = _build_sim_billing_mix(
         dfu, slice_by=billing_slice or "", mode=billing_mode or "count",
@@ -1725,6 +1882,27 @@ for _sid in ["sim-volume-slice", "sim-timing-slice", "sim-cancel-slice", "sim-cu
         Input(_sid, "value"),
     )
 
+# Hide stacked/grouped toggle when slice is Total (single series)
+_HIDE_STACK_JS = """function(sliceVal, chartType) {
+    var single = !sliceVal || sliceVal === "total" || sliceVal === "";
+    var noStack = chartType === "line";
+    return (single || noStack) ? {"display": "none"} : {};
+}"""
+
+for _slice_id, _settings_id in [
+    ("sim-volume-slice", "sim-volume"),
+    ("sim-timing-slice", "sim-timing"),
+    ("sim-cancel-slice", "sim-cancel"),
+    ("sim-cumulative-slice", "sim-cumulative"),
+]:
+    clientside_callback(
+        _HIDE_STACK_JS,
+        Output(f"{_settings_id}-settings-stack-wrap", "style", allow_duplicate=True),
+        Input(_slice_id, "value"),
+        Input(f"{_settings_id}-settings-type", "value"),
+        prevent_initial_call=True,
+    )
+
 
 # ---------------------------------------------------------------------------
 # Clientside callbacks for KPI sparklines
@@ -1734,6 +1912,7 @@ for _func, _out_id in [
     ("smoothSpTotal", "sim-spark-total"),
     ("smoothSpInitial", "sim-spark-initial"),
     ("smoothSpLead", "sim-spark-lead"),
+    ("smoothSpConsultSim", "sim-spark-consult-sim"),
     ("smoothSpTimeTx", "sim-spark-time-to-tx"),
     ("smoothSpResim", "sim-spark-resim"),
 ]:
@@ -1800,6 +1979,17 @@ def update_ribbon(_n, ribbon_machine, slider_val):
 def toggle_ribbon_settings(n, style):
     if not n: return style
     return {"display": "block"} if (style or {}).get("display") == "none" else {"display": "none"}
+
+# Hide smoothing slider when ribbon chart is in bar mode
+clientside_callback(
+    """function(chartType) {
+        return chartType === "bar"
+            ? {"display": "none"}
+            : {"display": ""};
+    }""",
+    Output("sim-ribbon-settings-smooth-wrap", "style"),
+    Input("sim-ribbon-settings-type", "value"),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1914,7 +2104,7 @@ def _is_initial_sim(activity_name):
     return "initial" in low or "stereotactic simulation" in low
 
 
-def _prepare_volume_data(df, agg, slice_by="", c2b=None):
+def _prepare_volume_data(df, agg, slice_by="", c2b=None, diag_mode="primary"):
     """Prepare volume trend data for clientside rendering.
 
     slice_by: "" (total), "scope", "type", "physician", "dept", "machine", "bodysite"
@@ -2009,10 +2199,8 @@ def _prepare_volume_data(df, agg, slice_by="", c2b=None):
 
     elif slice_by == "bodysite":
         if "DiagnosisCodes" in df.columns and c2b:
-            df["_bs"] = df["DiagnosisCodes"].apply(lambda v: primary_category(v, c2b))
+            df = assign_diagnosis_column(df, c2b, mode=diag_mode)
             for i, bs in enumerate(sorted(df["_bs"].dropna().unique())):
-                if bs == "Unknown":
-                    continue
                 subset = df[df["_bs"] == bs]
                 counts = subset.groupby("period").size().reindex(all_periods, fill_value=0)
                 series.append({
@@ -2034,7 +2222,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
                               departments, physician, sim_types,
                               mode="prior",
                               period_type="calendar", slice_by="dept",
-                              c2b=None, max_prior=5):
+                              c2b=None, max_prior=5, diag_mode="primary"):
     """Prepare cumulative simulation volume data for overlay chart.
 
     mode="prior": Current period cumulative + up to 5 prior equivalent periods.
@@ -2096,9 +2284,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
                 result["Other"] = int(other_count)
             return result
         elif sb == "bodysite" and "DiagnosisCodes" in sub.columns and c2b:
-            sub_bs = sub.copy()
-            sub_bs["_bs"] = sub_bs["DiagnosisCodes"].apply(lambda v: primary_category(v, c2b))
-            sub_bs = sub_bs[sub_bs["_bs"] != "Unknown"]
+            sub_bs = assign_diagnosis_column(sub, c2b, mode=diag_mode)
             return sub_bs.groupby("_bs").size().to_dict() if not sub_bs.empty else {}
         return {}
 
@@ -2296,9 +2482,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             })
 
     elif slice_by == "bodysite" and "DiagnosisCodes" in dff_period.columns and c2b:
-        dff_period_bs = dff_period.copy()
-        dff_period_bs["_bs"] = dff_period_bs["DiagnosisCodes"].apply(lambda v: primary_category(v, c2b))
-        dff_period_bs = dff_period_bs[dff_period_bs["_bs"] != "Unknown"]
+        dff_period_bs = assign_diagnosis_column(dff_period, c2b, mode=diag_mode)
         for i, bs in enumerate(sorted(dff_period_bs["_bs"].dropna().unique())):
             sub = dff_period_bs[dff_period_bs["_bs"] == bs]
             daily = sub.groupby(sub["ScheduledDateTime"].dt.normalize()).size()
@@ -2321,21 +2505,22 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
     }
 
 
-def _prepare_timing_data(df, metric="consult_sim", agg="M", slice_by="", c2b=None):
+def _prepare_timing_data(df, metric="consult_sim", agg="M", slice_by="", c2b=None, cap=None, diag_mode="primary"):
     """Prepare timing interval data for clientside rendering.
 
     metric: "consult_sim" (DaysFromClinicExamToSimulation) or
             "lead_time" (DaysFromCreatedToAppt — booked-to-happened).
     agg: "W", "M", or "Y".
     slice_by: "" (total), "scope", "type", "dept", "physician", "machine", "bodysite".
+    cap: optional outlier cap in days.
     """
     col_map = {
         "consult_sim": "DaysFromClinicExamToSimulation",
         "lead_time": "DaysFromCreatedToAppt",
     }
     title_map = {
-        "consult_sim": "Consult → Sim",
-        "lead_time": "Lead Time (Booked → Sim)",
+        "consult_sim": "Consult \u2192 Sim",
+        "lead_time": "Lead Time (Booked \u2192 Sim)",
     }
     value_col = col_map.get(metric, col_map["consult_sim"])
 
@@ -2345,6 +2530,8 @@ def _prepare_timing_data(df, metric="consult_sim", agg="M", slice_by="", c2b=Non
     df = df.copy()
     df["_val"] = pd.to_numeric(df[value_col], errors="coerce")
     df = df.dropna(subset=["_val"])
+    if cap is not None:
+        df = df[(df["_val"] >= 0) & (df["_val"] <= cap)]
     if df.empty:
         return None
 
@@ -2423,10 +2610,8 @@ def _prepare_timing_data(df, metric="consult_sim", agg="M", slice_by="", c2b=Non
             })
 
     elif slice_by == "bodysite" and "DiagnosisCodes" in df.columns and c2b:
-        df["_bs"] = df["DiagnosisCodes"].apply(lambda v: primary_category(v, c2b))
+        df = assign_diagnosis_column(df, c2b, mode=diag_mode)
         for i, bs in enumerate(sorted(df["_bs"].dropna().unique())):
-            if bs == "Unknown":
-                continue
             sub = df[df["_bs"] == bs]
             medians = sub.groupby("period")["_val"].median().reindex(all_periods)
             values = [v if pd.notna(v) else None for v in medians.tolist()]
@@ -2468,8 +2653,9 @@ def _prepare_ribbon_data(df):
     else:
         df["EndHour"] = df["TimeHour"]
 
-    # Filter to weekdays only
-    df = df[df["Date"].dt.weekday < 5]
+    # Filter to weekdays and exclude holidays
+    holidays = get_holidays()
+    df = df[(df["Date"].dt.weekday < 5) & (~df["Date"].dt.normalize().isin(holidays))]
 
     daily = df.groupby("Date").agg(
         earliest_start=("TimeHour", "min"),
@@ -2506,6 +2692,10 @@ def _prepare_ribbon_data(df):
         else:
             ticktext.append(f"{h - 12}pm")
 
+    # Pass holiday dates for rangebreaks
+    holiday_strs = sorted([h.isoformat() for h in holidays
+                           if daily["Date"].min() <= h <= daily["Date"].max()])
+
     return {
         "pastSeries": series,
         "futureSeries": [],
@@ -2516,6 +2706,7 @@ def _prepare_ribbon_data(df):
             "ticktext": ticktext,
         },
         "today": pd.Timestamp.now().normalize().isoformat(),
+        "holidays": holiday_strs,
     }
 
 
@@ -2611,7 +2802,7 @@ def _prepare_cancel_data(dff_all, start, end, agg="M", slice_by=""):
 
 
 def _build_diagnosis_mix(dff, c2b=None, slice_by="", mode="count",
-                          prior_df=None, period_labels=None):
+                          prior_df=None, period_labels=None, diag_mode="primary"):
     """Horizontal bar chart of simulations by body system (via diagnosis lookup).
 
     slice_by: "" for total, "scope"/"physician"/"dept"/"machine" for stacked bars.
@@ -2625,9 +2816,7 @@ def _build_diagnosis_mix(dff, c2b=None, slice_by="", mode="count",
     if not (c2b and "DiagnosisCodes" in dff.columns):
         return empty_figure("Diagnosis data unavailable")
 
-    work = dff.copy()
-    work["_bs"] = work["DiagnosisCodes"].apply(lambda v: primary_category(v, c2b))
-    work = work[work["_bs"] != "Unknown"]
+    work = assign_diagnosis_column(dff, c2b, mode=diag_mode)
 
     if work.empty:
         return empty_figure("No diagnosis data")
@@ -2643,9 +2832,7 @@ def _build_diagnosis_mix(dff, c2b=None, slice_by="", mode="count",
 
     # --- Prior-period comparison mode ---
     if prior_df is not None and not prior_df.empty and "DiagnosisCodes" in prior_df.columns:
-        prior_work = prior_df.copy()
-        prior_work["_bs"] = prior_work["DiagnosisCodes"].apply(lambda v: primary_category(v, c2b))
-        prior_work = prior_work[prior_work["_bs"] != "Unknown"]
+        prior_work = assign_diagnosis_column(prior_df, c2b, mode=diag_mode)
         prior_work = prior_work[prior_work["_bs"].isin(top_bs_names)]
         total_prior = len(prior_work)
 
@@ -2703,7 +2890,7 @@ def _build_diagnosis_mix(dff, c2b=None, slice_by="", mode="count",
         fig.add_trace(go.Bar(
             x=list(vals), y=[str(b) for b in bs_order], orientation="h",
             marker_color=CHART_COLORWAY[0], showlegend=False,
-            text=text, textposition="auto", hovertemplate=hover,
+            text=text, textposition="auto", textangle=0, hovertemplate=hover,
         ))
     else:
         if slice_by == "scope" and "ActivityName" in work.columns:
@@ -2918,8 +3105,8 @@ def _build_sim_billing_mix(dff, slice_by="", mode="count"):
 def _build_detail_table(df):
     """Build AG Grid table data and column definitions."""
     display_cols = [
-        "ScheduledDateTime", "Department", "SupervisingPhysician",
-        "ActivityName", "Duration", "PatientFullName",
+        "ScheduledDateTime", "PatientFullName", "Department",
+        "SupervisingPhysician", "ActivityName", "Duration",
         "DaysFromClinicExamToSimulation", "DaysFromSimToTreatment",
         "DaysFromClinicExamToTreatment",
     ]
@@ -2929,7 +3116,8 @@ def _build_detail_table(df):
     if not available_cols:
         return [], []
 
-    table_df = df[available_cols].head(200).copy()
+    table_df = df[available_cols].copy()
+    table_df["_row_idx"] = df.index
 
     # Apply display names for sim types
     if "ActivityName" in table_df.columns:
@@ -2938,7 +3126,7 @@ def _build_detail_table(df):
     for c in table_df.select_dtypes(include=["datetime64"]).columns:
         table_df[c] = table_df[c].dt.strftime("%m/%d/%Y %I:%M %p")
 
-    table_df = table_df.fillna("\u2014")
+    table_df = sanitize_for_grid(table_df)
 
     header_map = {
         "ScheduledDateTime": "Scheduled",
@@ -2952,7 +3140,13 @@ def _build_detail_table(df):
         "DaysFromClinicExamToTreatment": "Consult\u2192Tx (days)",
     }
 
-    col_defs = [{"field": c, "headerName": header_map.get(c, c)} for c in available_cols]
+    col_defs = []
+    for c in available_cols:
+        d = {"field": c, "headerName": header_map.get(c, c)}
+        if c == "ScheduledDateTime":
+            d["sort"] = "desc"
+        col_defs.append(d)
+    col_defs.append({"field": "_row_idx", "hide": True})
 
     return table_df.to_dict("records"), col_defs
 
@@ -2964,11 +3158,76 @@ def _build_detail_table(df):
 clientside_callback(
     """function(n) {
         if (!n) return window.dash_clientside.no_update;
-        var gridApi = window.dash_ag_grid && window.dash_ag_grid['sim-detail-grid'];
-        if (gridApi && gridApi.api) gridApi.api.exportDataAsCsv({fileName: 'simulations.csv'});
+        gridExportCsv('sim-detail-grid', 'simulations.csv');
         return window.dash_clientside.no_update;
     }""",
     Output("sim-table-export", "n_clicks"),
     Input("sim-table-export", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+# Grid-filter → chart sync: extract _row_idx from virtualRowData, toggle badge.
+clientside_callback(
+    """function(virtual, rowData, prev) {
+        var nu = window.dash_clientside.no_update;
+        var base = {"position": "absolute", "top": -12, "right": 8, "zIndex": 10, "cursor": "pointer"};
+        var hidden = Object.assign({}, base, {"display": "none"});
+        var btnHide = {"display": "none"};
+        if (!rowData || !rowData.length || !virtual) {
+            return prev == null ? [nu, nu, nu] : [null, hidden, btnHide];
+        }
+        if (virtual.length >= rowData.length) {
+            return prev == null ? [nu, nu, nu] : [null, hidden, btnHide];
+        }
+        var idxs = [];
+        for (var i = 0; i < virtual.length; i++) {
+            if (virtual[i]._row_idx != null) idxs.push(virtual[i]._row_idx);
+        }
+        idxs.sort(function(a, b) { return a - b; });
+        if (!idxs.length) {
+            return prev == null ? [nu, nu, nu] : [null, hidden, btnHide];
+        }
+        if (prev && prev.length === idxs.length) {
+            var same = true;
+            for (var j = 0; j < idxs.length; j++) {
+                if (prev[j] !== idxs[j]) { same = false; break; }
+            }
+            if (same) return [nu, nu, nu];
+        }
+        return [idxs, base, {}];
+    }""",
+    Output("sim-table-filter-rows", "data"),
+    Output("sim-grid-filter-badge", "style"),
+    Output("sim-table-clear-filters", "style"),
+    Input("sim-detail-grid", "virtualRowData"),
+    State("sim-detail-grid", "rowData"),
+    State("sim-table-filter-rows", "data"),
+    prevent_initial_call=True,
+)
+
+
+# Clear Filters button — reset grid filterModel
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        return {};
+    }""",
+    Output("sim-detail-grid", "filterModel"),
+    Input("sim-table-clear-filters", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+# Badge click → scroll to the detail table
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        var el = document.getElementById('sim-detail-grid');
+        if (el) el.scrollIntoView({behavior: 'smooth', block: 'start'});
+        return window.dash_clientside.no_update;
+    }""",
+    Output("sim-grid-filter-badge", "n_clicks"),
+    Input("sim-grid-filter-badge", "n_clicks"),
     prevent_initial_call=True,
 )

@@ -205,6 +205,27 @@ def register_hours_ribbon_callbacks(prefix):
         prevent_initial_call=True,
     )
 
+    # Hide chart type selector in Week mode (calendar view ignores chart type)
+    clientside_callback(
+        """function(rangeDays) {
+            return rangeDays === "thisweek"
+                ? {display: "none"} : {display: "block"};
+        }""",
+        Output(f"{prefix}-hours-settings-type-wrap", "style"),
+        Input(f"{prefix}-hours-range", "value"),
+    )
+
+    # Hide smoothing slider in Week mode or Bar mode (neither uses smoothing)
+    clientside_callback(
+        """function(rangeDays, chartType) {
+            var hide = (rangeDays === "thisweek") || (chartType === "bar");
+            return hide ? {display: "none"} : {display: "block"};
+        }""",
+        Output(f"{prefix}-hours-settings-smooth-wrap", "style"),
+        Input(f"{prefix}-hours-range", "value"),
+        Input(f"{prefix}-hours-settings-type", "value"),
+    )
+
     # Smoothing slider max based on range
     @callback(
         Output(f"{prefix}-hours-settings-smooth", "max"),

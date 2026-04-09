@@ -169,6 +169,7 @@ DEFAULT_COLUMN_DEFS = {
     "resizable": True,
     "floatingFilter": False,
     "suppressHeaderMenuButton": True,
+    "valueFormatter": {"function": "params.value == null || params.value === '' ? '–' : params.value"},
 }
 
 DEFAULT_GRID_OPTIONS = {

@@ -721,19 +721,19 @@ def _build_detail_table(df):
     records = []
     for _, row in tdf.iterrows():
         records.append({
-            "Date": row["DowntimeDate"].strftime("%Y-%m-%d") if pd.notna(row["DowntimeDate"]) else "",
-            "Machine": row.get("Machine", ""),
-            "Site": row.get("Site", ""),
-            "Start": str(row.get("GapStartTime", ""))[:8] if pd.notna(row.get("GapStartTime")) else "",
-            "End": str(row.get("GapEndTime", ""))[:8] if pd.notna(row.get("GapEndTime")) else "",
-            "Minutes": int(row["GapMinutes"]) if pd.notna(row.get("GapMinutes")) else None,
-            "Type": row.get("DowntimeType") or row.get("GapClassification", ""),
-            "Confidence": row.get("LocalConfidence") or row.get("DowntimeConfidence", ""),
-            "Cancellations": int(row["CancelledInGap"]) if pd.notna(row.get("CancelledInGap")) else 0,
-            "Errors": int(row["MachineErrorsNearGap"]) if pd.notna(row.get("MachineErrorsNearGap")) else 0,
-            "Reroute": str(row["RerouteMachine"]) if pd.notna(row.get("RerouteMachine")) else "",
-            "PrevPatient": str(row.get("PrevPatientName", "")) if pd.notna(row.get("PrevPatientName")) else "",
-            "NextPatient": str(row.get("NextPatientName", "")) if pd.notna(row.get("NextPatientName")) else "",
+            "Date": row["DowntimeDate"].strftime("%Y-%m-%d") if pd.notna(row["DowntimeDate"]) else "--",
+            "Machine": row.get("Machine") or "--",
+            "Site": row.get("Site") or "--",
+            "Start": str(row.get("GapStartTime", ""))[:8] if pd.notna(row.get("GapStartTime")) else "--",
+            "End": str(row.get("GapEndTime", ""))[:8] if pd.notna(row.get("GapEndTime")) else "--",
+            "Minutes": str(int(row["GapMinutes"])) if pd.notna(row.get("GapMinutes")) else "--",
+            "Type": row.get("DowntimeType") or row.get("GapClassification") or "--",
+            "Confidence": row.get("LocalConfidence") or row.get("DowntimeConfidence") or "--",
+            "Cancellations": str(int(row["CancelledInGap"])) if pd.notna(row.get("CancelledInGap")) else "0",
+            "Errors": str(int(row["MachineErrorsNearGap"])) if pd.notna(row.get("MachineErrorsNearGap")) else "0",
+            "Reroute": str(row["RerouteMachine"]) if pd.notna(row.get("RerouteMachine")) else "--",
+            "PrevPatient": str(row.get("PrevPatientName", "")) if pd.notna(row.get("PrevPatientName")) else "--",
+            "NextPatient": str(row.get("NextPatientName", "")) if pd.notna(row.get("NextPatientName")) else "--",
         })
     return records
 

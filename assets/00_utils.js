@@ -367,6 +367,22 @@ window.dash_clientside.chartExport = {
 };
 
 // ---------------------------------------------------------------------------
+// AG Grid CSV Export — null/blank stays empty in CSV (display uses valueFormatter)
+// ---------------------------------------------------------------------------
+
+function gridExportCsv(gridId, fileName) {
+    var api = window.dash_ag_grid && window.dash_ag_grid.getApi(gridId);
+    if (!api) return;
+    api.exportDataAsCsv({
+        fileName: fileName,
+        processCellCallback: function(params) {
+            var v = params.value;
+            return (v == null || v === "") ? "" : v;
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------
 // Click Outside to Close Settings Panels
 // ---------------------------------------------------------------------------
 

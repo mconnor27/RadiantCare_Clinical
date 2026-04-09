@@ -2,7 +2,7 @@
 
 import dash
 import dash_mantine_components as dmc
-from dash import callback, Input, Output, State, dcc, html, clientside_callback, ClientsideFunction
+from dash import callback, Input, Output, State, ALL, dcc, html, clientside_callback, ClientsideFunction
 from dash_iconify import DashIconify
 import dash_ag_grid as dag
 import pandas as pd
@@ -10,7 +10,12 @@ import numpy as np
 from datetime import timedelta
 
 from config.settings import CHART_COLORWAY, DEFAULT_GRAPH_CONFIG, DEFAULT_LAYOUT, FONT_FAMILY, PRIMARY
-from utils.diagnosis_categories import build_code_to_category, get_categories_for_codes
+from utils.tables import sanitize_for_grid
+from utils.diagnosis_categories import (
+    build_code_to_category, build_code_to_subcategory,
+    get_categories_for_codes, get_subcategories_for_codes,
+    CATEGORIES, SUBCATEGORIES,
+)
 from components.filter_bar import department_chips
 from components.chart_card import register_chart_callbacks
 from components.chart_settings import chart_settings_popover
@@ -159,6 +164,8 @@ _A_ID_MAP = {
     "filter-physician": "workflow-filter-physician",
     "filter-technique": "workflow-filter-technique",
     "filter-body-system": "workflow-filter-body-system",
+    "filter-subcategory": "workflow-filter-subcategory",
+    "diag-accordion": "workflow-diag-accordion",
     "filter-date-preset": "workflow-filter-date-preset",
     "filter-daterange": "workflow-filter-daterange",
     "loopback-switch": "wf-sankey-loopback-switch",
@@ -286,7 +293,7 @@ def _build_filter_bar(prefix, label=None):
                         ],
                         style={"position": "relative", "display": "inline-block"},
                     ),
-                    # Diagnosis
+                    # Diagnosis: checkbox per category + expand for subcategories
                     html.Div(
                         children=[
                             html.Div(
@@ -309,29 +316,62 @@ def _build_filter_bar(prefix, label=None):
                                 ],
                                 style={"position": "relative", "display": "inline-block"},
                             ),
+                            # Hidden store for selected categories
+                            dcc.Store(id=_id(prefix, "filter-body-system"), data=[]),
                             dmc.Paper(
-                                dmc.ChipGroup(
-                                    children=[
-                                        dmc.Chip(bs, value=bs, size="xs", variant="filled")
-                                        for bs in [
-                                            "Breast", "Central Nervous System",
-                                            "Digestive System", "Endocrine",
-                                            "Genitourinary", "Gynecological",
-                                            "Head & Neck", "Hematology", "Lymphomas",
-                                            "Misc.", "Musculoskeletal", "Opthalmic",
-                                            "Skin", "Thoracic",
-                                        ]
-                                    ],
-                                    id=_id(prefix, "filter-body-system"),
-                                    multiple=True,
-                                    value=[],
-                                ),
+                                children=[
+                                    html.Div(
+                                        children=[
+                                            dmc.ChipGroup(
+                                                children=[
+                                                    dmc.Accordion(
+                                                        children=[
+                                                            dmc.AccordionItem(
+                                                                children=[
+                                                                    html.Div(
+                                                                        children=[
+                                                                            dmc.Checkbox(
+                                                                                id={"type": f"diag-cat-{prefix}", "index": i},
+                                                                                size="xs",
+                                                                                className="wf-diag-cat-check",
+                                                                            ),
+                                                                            dmc.AccordionControl(cat),
+                                                                        ],
+                                                                        className="wf-diag-cat-row",
+                                                                    ),
+                                                                    dmc.AccordionPanel(
+                                                                        html.Div(
+                                                                            [dmc.Chip(s, value=s, size="xs", variant="outline")
+                                                                             for s in SUBCATEGORIES.get(cat, [])],
+                                                                            className="wf-subcat-chip-list",
+                                                                        ),
+                                                                    ),
+                                                                ],
+                                                                value=cat,
+                                                            )
+                                                            for i, cat in enumerate(CATEGORIES)
+                                                        ],
+                                                        multiple=True,
+                                                        id=_id(prefix, "diag-accordion"),
+                                                        value=[],
+                                                        variant="contained",
+                                                        chevronPosition="right",
+                                                    ),
+                                                ],
+                                                id=_id(prefix, "filter-subcategory"),
+                                                multiple=True,
+                                                value=[],
+                                            ),
+                                        ],
+                                        className="wf-diag-scroll",
+                                    ),
+                                ],
                                 id=_id(prefix, "body-system-panel"),
                                 p="xs",
                                 shadow="md",
                                 withBorder=True,
                                 radius="md",
-                                className="wf-chip-dropdown",
+                                className="wf-chip-dropdown wf-diag-panel",
                                 style={"display": "none"},
                             ),
                         ],
@@ -564,7 +604,26 @@ layout = dmc.Stack(
                 # Dataset A filter bar
                 html.Div(
                     id="wf-a-filter-container",
-                    children=[_build_filter_bar("wf", "A")],
+                    style={"position": "relative"},
+                    children=[
+                        _build_filter_bar("wf", "A"),
+                        html.Div(
+                            id="wf-grid-filter-badge",
+                            children=dmc.Tooltip(
+                                label="Table column filters are active — charts reflect the filtered subset",
+                                position="left", withArrow=True, multiline=True, w=220,
+                                children=dmc.Badge(
+                                    "Table Filtered",
+                                    color="red", variant="filled", size="md",
+                                    leftSection=DashIconify(icon="mdi:filter", width=14),
+                                ),
+                            ),
+                            style={
+                                "position": "absolute", "top": -12, "right": 8,
+                                "zIndex": 10, "display": "none", "cursor": "pointer",
+                            },
+                        ),
+                    ],
                 ),
                 # Dataset B filter bar (hidden by default)
                 html.Div(
@@ -649,7 +708,7 @@ layout = dmc.Stack(
                                         smooth_min=0.5,
                                         smooth_max=10,
                                         smooth_step=0.5,
-                                        smooth_default=3,
+                                        smooth_default=1,
                                         show_grouping=False,
                                         slider_label="Kernel Bandwidth",
                                     ),
@@ -776,7 +835,23 @@ layout = dmc.Stack(
         html.Div(
             id="wf-table-container",
             children=[
-                detail_table("wf-detail-grid", title="Patient Pipeline Detail", export_id="wf-table-export"),
+                detail_table(
+                    "wf-detail-grid",
+                    title="Patient Pipeline Detail",
+                    export_id="wf-table-export",
+                    accordion_id="wf-detail-accordion",
+                    extra_controls=[
+                        dmc.Button(
+                            "Clear Filters",
+                            id="wf-table-clear-filters",
+                            size="compact-xs",
+                            variant="light",
+                            color="red",
+                            leftSection=DashIconify(icon="mdi:filter-remove", width=14),
+                            style={"display": "none"},
+                        ),
+                    ],
+                ),
             ],
         ),
 
@@ -790,6 +865,7 @@ layout = dmc.Stack(
         dcc.Store(id="wf-store-selected-flow"),
         dcc.Store(id="wf-outlier-enabled", data=True),
         dcc.Store(id="wf-filter-options"),
+        dcc.Store(id="wf-table-filter-rows"),  # filtered row indices from grid
         html.Div(id="wf-filter-options-applier", style={"display": "none"}),
 
         # Compare mode
@@ -1287,13 +1363,19 @@ def _register_filter_callbacks(prefix):
         Input(_id(prefix, "filter-technique"), "value"),
     )
     clientside_callback(
-        """function(vals) {
-            if (!vals || vals.length === 0) return "Diagnosis";
-            if (vals.length === 1) return vals[0];
-            return vals.length + " selected";
+        """function(cats, subs) {
+            var total = (cats ? cats.length : 0) + (subs ? subs.length : 0);
+            if (total === 0) return "Diagnosis";
+            if (subs && subs.length > 0) {
+                if (subs.length === 1) return subs[0];
+                return subs.length + " subsites";
+            }
+            if (cats.length === 1) return cats[0];
+            return cats.length + " selected";
         }""",
         Output(_id(prefix, "body-system-trigger"), "children"),
-        Input(_id(prefix, "filter-body-system"), "value"),
+        Input(_id(prefix, "filter-body-system"), "data"),
+        Input(_id(prefix, "filter-subcategory"), "value"),
     )
 
     # --- Clear-button visibility ---
@@ -1308,9 +1390,13 @@ def _register_filter_callbacks(prefix):
         Input(_id(prefix, "filter-technique"), "value"),
     )
     clientside_callback(
-        """function(vals) { return vals && vals.length > 0 ? {"display": "inline-flex"} : {"display": "none"}; }""",
+        """function(cats, subs) {
+            var has = (cats && cats.length > 0) || (subs && subs.length > 0);
+            return has ? {"display": "inline-flex"} : {"display": "none"};
+        }""",
         Output(_id(prefix, "body-system-clear"), "style"),
-        Input(_id(prefix, "filter-body-system"), "value"),
+        Input(_id(prefix, "filter-body-system"), "data"),
+        Input(_id(prefix, "filter-subcategory"), "value"),
     )
 
     # --- Clear-button actions ---
@@ -1326,12 +1412,57 @@ def _register_filter_callbacks(prefix):
         Input(_id(prefix, "technique-clear"), "n_clicks"),
         prevent_initial_call=True,
     )
+    # --- Checkbox → Store sync (category selection) ---
+    _cat_type = f"diag-cat-{prefix}"
+    _n_cats = len(CATEGORIES)
+
+    @callback(
+        Output(_id(prefix, "filter-body-system"), "data"),
+        Input({"type": _cat_type, "index": ALL}, "checked"),
+        prevent_initial_call=True,
+    )
+    def _sync_cat_checkboxes(checked_list):
+        return [cat for cat, c in zip(CATEGORIES, checked_list) if c]
+
+    # --- Clear-button: reset store + subcategories + accordion + checkboxes ---
+    _cat_check_outputs = [
+        Output({"type": _cat_type, "index": i}, "checked", allow_duplicate=True)
+        for i in range(_n_cats)
+    ]
     clientside_callback(
-        """function(n) { return []; }""",
-        Output(_id(prefix, "filter-body-system"), "value", allow_duplicate=True),
+        f"""function(n) {{
+            var r = [[], [], []];
+            for (var i = 0; i < {_n_cats}; i++) r.push(false);
+            return r;
+        }}""",
+        Output(_id(prefix, "filter-body-system"), "data", allow_duplicate=True),
+        Output(_id(prefix, "filter-subcategory"), "value", allow_duplicate=True),
+        Output(_id(prefix, "diag-accordion"), "value", allow_duplicate=True),
+        *_cat_check_outputs,
         Input(_id(prefix, "body-system-clear"), "n_clicks"),
         prevent_initial_call=True,
     )
+
+    # --- Prune subcategory selections when categories change ---
+    _subcat_id = _id(prefix, "filter-subcategory")
+    _body_sys_id = _id(prefix, "filter-body-system")
+
+    @callback(
+        Output(_subcat_id, "value", allow_duplicate=True),
+        Input(_body_sys_id, "data"),
+        State(_subcat_id, "value"),
+        prevent_initial_call=True,
+    )
+    def _prune_subcategories(selected_cats, current_subs):
+        if not selected_cats:
+            return []
+        valid = set()
+        for cat in selected_cats:
+            valid.update(SUBCATEGORIES.get(cat, []))
+        kept = [s for s in (current_subs or []) if s in valid]
+        if kept == (current_subs or []):
+            return dash.no_update
+        return kept
 
     # --- Outlier caps ---
     outlier_enabled_id = _id(prefix, "outlier-enabled") if prefix != "wf" else "wf-outlier-enabled"
@@ -1419,7 +1550,7 @@ _register_filter_callbacks("wf-b")
 # ---------------------------------------------------------------------------
 
 def _apply_dimension_filter(wf, departments, physician, techniques, body_systems,
-                            courses_df, diag_lookup, skip=None):
+                            subcategories, courses_df, diag_lookup, skip=None):
     """Apply all dimension filters EXCEPT the one named by `skip`."""
     d = wf
     if skip != "department" and departments and "Department" in d.columns:
@@ -1437,28 +1568,36 @@ def _apply_dimension_filter(wf, departments, physician, techniques, body_systems
     if skip != "body_system" and body_systems and "DiagnosisCodes" in d.columns and diag_lookup is not None:
         c2c = build_code_to_category(diag_lookup)
         if c2c:
-            bs = set(body_systems)
             cd = (d[["UniqueRowID", "DiagnosisCodes"]]
                   .dropna(subset=["DiagnosisCodes"])
                   .drop_duplicates("UniqueRowID"))
-            mm = cd["DiagnosisCodes"].apply(
-                lambda s: bool(bs & get_categories_for_codes(s, c2c))
-            )
+            # If subcategories selected, filter by those; otherwise by category
+            if subcategories:
+                c2s = build_code_to_subcategory()
+                ss = set(subcategories)
+                mm = cd["DiagnosisCodes"].apply(
+                    lambda s: bool(ss & get_subcategories_for_codes(s, c2s))
+                )
+            else:
+                bs = set(body_systems)
+                mm = cd["DiagnosisCodes"].apply(
+                    lambda s: bool(bs & get_categories_for_codes(s, c2c))
+                )
             d = d[d["UniqueRowID"].isin(set(cd.loc[mm, "UniqueRowID"]))]
     return d
 
 
 def _compute_available_options(wf_base, departments, physician, techniques, body_systems,
-                               courses_df, diag_lookup):
+                               subcategories, courses_df, diag_lookup):
     """Cross-filter: for each dimension, apply all OTHER filters and return available values."""
     # Department options
     wf_nd = _apply_dimension_filter(wf_base, departments, physician, techniques, body_systems,
-                                    courses_df, diag_lookup, skip="department")
+                                    subcategories, courses_df, diag_lookup, skip="department")
     dept_opts = sorted(wf_nd["Department"].dropna().unique().tolist()) if "Department" in wf_nd.columns else []
 
     # Physician options (from Exam rows only)
     wf_np = _apply_dimension_filter(wf_base, departments, physician, techniques, body_systems,
-                                    courses_df, diag_lookup, skip="physician")
+                                    subcategories, courses_df, diag_lookup, skip="physician")
     if "StageName" in wf_np.columns:
         phys_src = wf_np[wf_np["StageName"] == "Exam"]
     else:
@@ -1468,7 +1607,7 @@ def _compute_available_options(wf_base, departments, physician, techniques, body
     # Technique options
     tech_opts = []
     wf_nt = _apply_dimension_filter(wf_base, departments, physician, techniques, body_systems,
-                                    courses_df, diag_lookup, skip="technique")
+                                    subcategories, courses_df, diag_lookup, skip="technique")
     if courses_df is not None and "DimCourseID" in wf_nt.columns:
         tc = "TreatmentTechniques"
         if tc in courses_df.columns:
@@ -1479,10 +1618,11 @@ def _compute_available_options(wf_base, departments, physician, techniques, body
                 all_t.update(t.strip() for t in str(val).split(","))
             tech_opts = sorted(all_t)
 
-    # Body system options
+    # Body system + subcategory options
     bs_opts = []
+    sub_opts = []
     wf_nb = _apply_dimension_filter(wf_base, departments, physician, techniques, body_systems,
-                                    courses_df, diag_lookup, skip="body_system")
+                                    subcategories, courses_df, diag_lookup, skip="body_system")
     if diag_lookup is not None and "DiagnosisCodes" in wf_nb.columns:
         c2c = build_code_to_category(diag_lookup)
         if c2c:
@@ -1490,15 +1630,20 @@ def _compute_available_options(wf_base, departments, physician, techniques, body
                   .dropna(subset=["DiagnosisCodes"])
                   .drop_duplicates("UniqueRowID"))
             all_bs = set()
+            all_subs = set()
+            c2s = build_code_to_subcategory()
             for val in cd["DiagnosisCodes"].dropna():
                 all_bs.update(get_categories_for_codes(val, c2c))
+                all_subs.update(get_subcategories_for_codes(val, c2s))
             bs_opts = sorted(all_bs)
+            sub_opts = sorted(all_subs)
 
     return {
         "departments": dept_opts,
         "physicians": phys_opts,
         "techniques": tech_opts,
         "bodySystems": bs_opts,
+        "subcategories": sub_opts,
     }
 
 
@@ -1510,8 +1655,9 @@ _EXCLUDED_MODALITIES = frozenset({"BRACHYTHERAPY", "PLUVICTO"})
 
 
 def _load_and_filter_wf(slider_val, departments, physician, techniques,
-                        body_systems, show_loopbacks, use_business_days,
-                        inpatient_only, outlier_enabled, caps):
+                        body_systems, subcategories=None, show_loopbacks=False,
+                        use_business_days=False, inpatient_only=False,
+                        outlier_enabled=True, caps=None):
     """Load workflow data, apply all filters, pivot to courses.
 
     Returns a dict with keys: pivot, wf_full, filter_options, bdays, start, end.
@@ -1609,13 +1755,13 @@ def _load_and_filter_wf(slider_val, departments, physician, techniques,
     # Cross-filter: compute available options for each dimension
     filter_options = _compute_available_options(
         wf, departments, physician, techniques, body_systems,
-        courses_df, diag_df,
+        subcategories, courses_df, diag_df,
     )
 
     # Apply dimension filters
     wf = _apply_dimension_filter(
         wf, departments, physician, techniques, body_systems,
-        courses_df, diag_df,
+        subcategories, courses_df, diag_df,
     )
 
     if wf.empty:
@@ -1717,6 +1863,18 @@ def _load_and_filter_wf(slider_val, departments, physician, techniques,
     }
 
 
+def _apply_grid_row_filter(pivot, grid_rows):
+    """Filter pivot to only rows matching the grid's visible row indices.
+
+    grid_rows: list of _row_idx values from virtualRowData, or None if no filter.
+    Returns the (possibly filtered) pivot DataFrame.
+    """
+    if grid_rows is None or pivot is None or pivot.empty:
+        return pivot
+    idx_set = set(int(i) for i in grid_rows)
+    return pivot.loc[pivot.index.isin(idx_set)].reset_index(drop=True)
+
+
 # Common filter inputs shared by all split callbacks — Dataset A
 _WF_FILTER_INPUTS = [
     Input("wf-interval", "n_intervals"),
@@ -1724,7 +1882,8 @@ _WF_FILTER_INPUTS = [
     Input("wf-date-slider", "value"),
     Input("workflow-filter-physician", "value"),
     Input("workflow-filter-technique", "value"),
-    Input("workflow-filter-body-system", "value"),
+    Input("workflow-filter-body-system", "data"),
+    Input("workflow-filter-subcategory", "value"),
     Input("wf-sankey-loopback-switch", "checked"),
     Input("wf-business-days-switch", "checked"),
     Input("wf-inpatient-switch", "checked"),
@@ -1738,13 +1897,14 @@ _WF_FILTER_INPUTS = [
 
 
 def _unpack_wf_filter_args(args):
-    """Unpack the 15 common filter args into kwargs for _load_and_filter_wf."""
+    """Unpack the 16 common filter args into kwargs for _load_and_filter_wf."""
     (_n, departments, slider_val, physician, techniques, body_systems,
-     show_loopbacks, use_business_days, inpatient_only,
-     outlier_enabled, cap0, cap1, cap2, cap3, cap4) = args[:15]
+     subcategories, show_loopbacks, use_business_days, inpatient_only,
+     outlier_enabled, cap0, cap1, cap2, cap3, cap4) = args[:16]
     return dict(
         slider_val=slider_val, departments=departments, physician=physician,
         techniques=techniques, body_systems=body_systems,
+        subcategories=subcategories,
         show_loopbacks=show_loopbacks, use_business_days=use_business_days,
         inpatient_only=inpatient_only, outlier_enabled=outlier_enabled,
         caps=[cap0, cap1, cap2, cap3, cap4],
@@ -1759,7 +1919,8 @@ _WF_B_FILTER_INPUTS = [
     Input(_id("wf-b", "date-slider"), "value"),
     Input("wf-b-filter-physician", "value"),
     Input("wf-b-filter-technique", "value"),
-    Input("wf-b-filter-body-system", "value"),
+    Input("wf-b-filter-body-system", "data"),
+    Input("wf-b-filter-subcategory", "value"),
     Input(_id("wf-b", "loopback-switch"), "checked"),
     Input(_id("wf-b", "business-days-switch"), "checked"),
     Input(_id("wf-b", "inpatient-switch"), "checked"),
@@ -1773,14 +1934,15 @@ _WF_B_FILTER_INPUTS = [
 
 
 def _unpack_wf_b_filter_args(args):
-    """Unpack the 16 common filter args for Dataset B into kwargs."""
+    """Unpack the 17 common filter args for Dataset B into kwargs."""
     (compare_mode, _n, departments, slider_val, physician, techniques,
-     body_systems, show_loopbacks, use_business_days, inpatient_only,
-     outlier_enabled, cap0, cap1, cap2, cap3, cap4) = args[:16]
+     body_systems, subcategories, show_loopbacks, use_business_days,
+     inpatient_only, outlier_enabled, cap0, cap1, cap2, cap3, cap4) = args[:17]
     return dict(
         compare_mode=compare_mode,
         slider_val=slider_val, departments=departments, physician=physician,
         techniques=techniques, body_systems=body_systems,
+        subcategories=subcategories,
         show_loopbacks=show_loopbacks, use_business_days=use_business_days,
         inpatient_only=inpatient_only, outlier_enabled=outlier_enabled,
         caps=[cap0, cap1, cap2, cap3, cap4],
@@ -1816,16 +1978,21 @@ def _update_wf_table_and_filters(*args):
     Output("wf-store-sankey", "data"),
     *_WF_FILTER_INPUTS,
     Input("wf-agg-toggle", "value"),
+    Input("wf-table-filter-rows", "data"),
     running=[(Output("wf-sankey-loading", "visible"), True, False)],
 )
 def _update_wf_sankey(*args):
     ctx = _unpack_wf_filter_args(args)
-    agg_func = args[15]
+    agg_func = args[16]
+    grid_rows = args[17]
     data = _load_and_filter_wf(**ctx)
     if data is None or data["pivot"] is None:
         return None
+    pivot = _apply_grid_row_filter(data["pivot"], grid_rows)
+    if pivot.empty:
+        return None
     agg = agg_func or "median"
-    return _compute_flow_data(data["pivot"], data["wf_full"], data["bdays"], agg)
+    return _compute_flow_data(pivot, data["wf_full"], data["bdays"], agg)
 
 
 # ---------------------------------------------------------------------------
@@ -1836,16 +2003,21 @@ def _update_wf_sankey(*args):
     Output("wf-store-flow-details", "data"),
     *_WF_FILTER_INPUTS,
     Input("wf-agg-toggle", "value"),
+    Input("wf-table-filter-rows", "data"),
     running=[(Output("wf-dist-loading", "visible"), True, False)],
 )
 def _update_wf_flow_details(*args):
     ctx = _unpack_wf_filter_args(args)
-    agg_func = args[15]
+    agg_func = args[16]
+    grid_rows = args[17]
     data = _load_and_filter_wf(**ctx)
     if data is None or data["pivot"] is None:
         return None
+    pivot = _apply_grid_row_filter(data["pivot"], grid_rows)
+    if pivot.empty:
+        return None
     agg = agg_func or "median"
-    return _compute_flow_details(data["pivot"], data["wf_full"], data["bdays"], agg)
+    return _compute_flow_details(pivot, data["wf_full"], data["bdays"], agg)
 
 
 # ---------------------------------------------------------------------------
@@ -1856,16 +2028,21 @@ def _update_wf_flow_details(*args):
     Output("wf-store-trend", "data"),
     *_WF_FILTER_INPUTS,
     Input("wf-agg-toggle", "value"),
+    Input("wf-table-filter-rows", "data"),
     running=[(Output("wf-trend-loading", "visible"), True, False)],
 )
 def _update_wf_trend(*args):
     ctx = _unpack_wf_filter_args(args)
-    agg_func = args[15]
+    agg_func = args[16]
+    grid_rows = args[17]
     data = _load_and_filter_wf(**ctx)
     if data is None or data["pivot"] is None:
         return None
+    pivot = _apply_grid_row_filter(data["pivot"], grid_rows)
+    if pivot.empty:
+        return None
     agg = agg_func or "median"
-    return _prepare_trend_data(data["pivot"], data["bdays"], agg)
+    return _prepare_trend_data(pivot, data["bdays"], agg)
 
 
 # ---------------------------------------------------------------------------
@@ -1956,7 +2133,7 @@ def _update_wfb_sankey(*args):
     compare_mode = ctx.pop("compare_mode")
     if not compare_mode:
         return None
-    agg_func = args[16]
+    agg_func = args[17]
     data = _load_and_filter_wf(**ctx)
     if data is None or data["pivot"] is None:
         return None
@@ -1978,7 +2155,7 @@ def _update_wfb_flow_details(*args):
     compare_mode = ctx.pop("compare_mode")
     if not compare_mode:
         return None
-    agg_func = args[16]
+    agg_func = args[17]
     data = _load_and_filter_wf(**ctx)
     if data is None or data["pivot"] is None:
         return None
@@ -2000,7 +2177,7 @@ def _update_wfb_trend(*args):
     compare_mode = ctx.pop("compare_mode")
     if not compare_mode:
         return None
-    agg_func = args[16]
+    agg_func = args[17]
     data = _load_and_filter_wf(**ctx)
     if data is None or data["pivot"] is None:
         return None
@@ -2388,10 +2565,10 @@ def _prepare_trend_data(pivot, use_business_days=False, agg_func="median"):
 def _build_table_data(pivot, use_business_days=False):
     """Build table row data and column definitions from pivoted course data."""
     col_map = {
+        "Exam": "Consult",
         "PatientName": "Patient",
         "Department": "Dept",
         "TreatingPhysician": "Physician",
-        "Exam": "Consult",
         "Simulation": "Sim",
         "days_to_sim": "Days to Sim",
         "Draw": "Draw",
@@ -2418,17 +2595,28 @@ def _build_table_data(pivot, use_business_days=False):
             lambda x: "Complete" if pd.notna(x) else "In Progress"
         )
 
+    # Include row index so grid filters can map back to the pivot
+    table["_row_idx"] = table.index
+
     # Select available columns
-    available = [c for c in col_map if c in table.columns]
-    if not available:
+    available = [c for c in col_map if c in table.columns] + ["_row_idx"]
+    if len(available) <= 1:
         return [], []
 
-    table = table[available].head(200).copy()
+    table = table[available].copy()
     for c in table.select_dtypes(include=["datetime64", "datetime64[ns]"]).columns:
         table[c] = table[c].dt.strftime("%m/%d/%Y")
-    table = table.fillna("—")
+    table = sanitize_for_grid(table)
 
-    col_defs = [{"field": c, "headerName": col_map.get(c, c)} for c in available]
+    col_defs = []
+    for c in available:
+        if c == "_row_idx":
+            col_defs.append({"field": "_row_idx", "hide": True})
+            continue
+        d = {"field": c, "headerName": col_map.get(c, c)}
+        if c == "Exam":
+            d["sort"] = "desc"
+        col_defs.append(d)
     return table.to_dict("records"), col_defs
 
 
@@ -2450,11 +2638,77 @@ clientside_callback(
 clientside_callback(
     """function(n) {
         if (!n) return window.dash_clientside.no_update;
-        var gridApi = window.dash_ag_grid && window.dash_ag_grid['wf-detail-grid'];
-        if (gridApi && gridApi.api) gridApi.api.exportDataAsCsv({fileName: 'pipeline_detail.csv'});
+        gridExportCsv('wf-detail-grid', 'pipeline_detail.csv');
         return window.dash_clientside.no_update;
     }""",
     Output("wf-table-export", "n_clicks"),
     Input("wf-table-export", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+# Grid-filter → chart sync: extract _row_idx from virtualRowData, toggle badge.
+# Uses State on current store to avoid spurious updates from sorts/pagination.
+clientside_callback(
+    """function(virtual, rowData, prev) {
+        var nu = window.dash_clientside.no_update;
+        var base = {"position": "absolute", "top": -12, "right": 8, "zIndex": 10, "cursor": "pointer"};
+        var hidden = Object.assign({}, base, {"display": "none"});
+        var btnHide = {"display": "none"};
+        if (!rowData || !rowData.length || !virtual) {
+            return prev == null ? [nu, nu, nu] : [null, hidden, btnHide];
+        }
+        if (virtual.length >= rowData.length) {
+            return prev == null ? [nu, nu, nu] : [null, hidden, btnHide];
+        }
+        var idxs = [];
+        for (var i = 0; i < virtual.length; i++) {
+            if (virtual[i]._row_idx != null) idxs.push(virtual[i]._row_idx);
+        }
+        idxs.sort(function(a, b) { return a - b; });
+        if (!idxs.length) {
+            return prev == null ? [nu, nu, nu] : [null, hidden, btnHide];
+        }
+        if (prev && prev.length === idxs.length) {
+            var same = true;
+            for (var j = 0; j < idxs.length; j++) {
+                if (prev[j] !== idxs[j]) { same = false; break; }
+            }
+            if (same) return [nu, nu, nu];
+        }
+        return [idxs, base, {}];
+    }""",
+    Output("wf-table-filter-rows", "data"),
+    Output("wf-grid-filter-badge", "style"),
+    Output("wf-table-clear-filters", "style"),
+    Input("wf-detail-grid", "virtualRowData"),
+    State("wf-detail-grid", "rowData"),
+    State("wf-table-filter-rows", "data"),
+    prevent_initial_call=True,
+)
+
+
+# Clear Filters button — reset grid filterModel
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        return {};
+    }""",
+    Output("wf-detail-grid", "filterModel"),
+    Input("wf-table-clear-filters", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+# Badge click → scroll to the detail table
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        var el = document.getElementById('wf-table-container');
+        if (el) el.scrollIntoView({behavior: 'smooth', block: 'start'});
+        return window.dash_clientside.no_update;
+    }""",
+    Output("wf-grid-filter-badge", "n_clicks"),
+    Input("wf-grid-filter-badge", "n_clicks"),
     prevent_initial_call=True,
 )

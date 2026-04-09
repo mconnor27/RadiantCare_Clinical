@@ -155,6 +155,9 @@ window.dash_clientside.sparklines = {
     smoothSpLead: function(data, smoothPct) {
         return buildSparkline(data, smoothPct, "lead");
     },
+    smoothSpConsultSim: function(data, smoothPct) {
+        return buildSparkline(data, smoothPct, "consult_sim");
+    },
     smoothSpTimeTx: function(data, smoothPct) {
         return buildSparkline(data, smoothPct, "time_to_tx");
     },

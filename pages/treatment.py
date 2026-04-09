@@ -1332,12 +1332,7 @@ clientside_callback(
 clientside_callback(
     """function(n) {
         if (!n) return window.dash_clientside.no_update;
-        var gridApi = window.dash_ag_grid
-            ? window.dash_ag_grid['tx-detail-grid']
-            : null;
-        if (gridApi && gridApi.api) {
-            gridApi.api.exportDataAsCsv({fileName: 'treatment_sessions.csv'});
-        }
+        gridExportCsv('tx-detail-grid', 'treatment_sessions.csv');
         return window.dash_clientside.no_update;
     }""",
     Output("tx-detail-export", "n_clicks"),

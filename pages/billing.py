@@ -37,8 +37,8 @@ _DEFAULT_DATE_PRESET = "12mo"
 # CMS Conversion Factor (Medicare PFS) — update annually
 _CMS_CF = {2024: 33.29, 2025: 32.35, 2026: 32.35}
 _CMS_CF_DEFAULT = 32.35
-# Freestanding sites bill global; hospital-based bill pro only
-_FREESTANDING_SITES = {"Aberdeen"}
+# All sites: physician group bills pro fees only (wRVU + MP_RVU)
+# Aberdeen is freestanding but group still earns pro component only
 
 
 # ---------------------------------------------------------------------------
@@ -337,50 +337,76 @@ def _broad_payor(name):
 
 
 def _merge_rvu(df, rvu):
-    """Add wRVU, MP_RVU, Fac_PE_RVU, and Fac_Total_RVU columns to billing dataframe."""
+    """Add RVU columns for both physician group and facility components.
+
+    CodeType-independent: uses Fac_Total_RVU from the CMS RVU table to
+    derive each entity's share.  This avoids component-level data quality
+    issues (e.g. bad MP values in older CMS years).
+
+    Columns added:
+      wRVU          — physician work component
+      Pro_Total_RVU — physician group total (from 26 row; fallback global − TC)
+      TC_Total_RVU  — facility total (from TC row; 0 if no TC variant)
+      Fac_Total_RVU — global total RVU (for reference / fee schedule comparison)
+    """
     if df.empty:
         df["wRVU"] = 0.0
-        df["MP_RVU"] = 0.0
-        df["Fac_PE_RVU"] = 0.0
+        df["Pro_Total_RVU"] = 0.0
+        df["TC_Total_RVU"] = 0.0
         df["Fac_Total_RVU"] = 0.0
         return df
 
     df = df.copy()
     df["_base"] = df["ProcedureCode"].apply(_strip_modifier)
-    # Map CodeType → RVU modifier
-    mod_map = {"Global": "", "Technical": "TC", "Professional": "26"}
-    df["_mod"] = df["CodeType"].map(mod_map).fillna("")
     df["_yr"] = df["DateOfService"].dt.year
 
-    # Build lookup dicts from RVU table
+    # Build lookup dicts keyed by HCPCS|MOD|Year
     rvu_key = rvu["HCPCS"] + "|" + rvu["MOD"] + "|" + rvu["Year"].astype(str)
     wrvu_dict = dict(zip(rvu_key, rvu["wRVU"]))
     total_dict = dict(zip(rvu_key, rvu["Fac_Total_RVU"]))
-    mp_dict = dict(zip(rvu_key, rvu["MP_RVU"]))
-    fac_pe_dict = dict(zip(rvu_key, rvu["Fac_PE_RVU"]))
 
-    # Exact match
-    exact_key = df["_base"] + "|" + df["_mod"] + "|" + df["_yr"].astype(str)
-    df["wRVU"] = exact_key.map(wrvu_dict)
-    df["Fac_Total_RVU"] = exact_key.map(total_dict)
-    df["MP_RVU"] = exact_key.map(mp_dict)
-    df["Fac_PE_RVU"] = exact_key.map(fac_pe_dict)
+    yr_str = df["_yr"].astype(str)
+    pro_key = df["_base"] + "|26|" + yr_str
+    global_key = df["_base"] + "||" + yr_str
+    tc_key = df["_base"] + "|TC|" + yr_str
 
-    # Fallback to Global for unmatched
-    mask = df["wRVU"].isna()
-    if mask.any():
-        global_key = df.loc[mask, "_base"] + "||" + df.loc[mask, "_yr"].astype(str)
-        df.loc[mask, "wRVU"] = global_key.map(wrvu_dict)
-        df.loc[mask, "Fac_Total_RVU"] = global_key.map(total_dict)
-        df.loc[mask, "MP_RVU"] = global_key.map(mp_dict)
-        df.loc[mask, "Fac_PE_RVU"] = global_key.map(fac_pe_dict)
-
+    # --- wRVU: from 26 row, fallback to global (same value either way) ---
+    df["wRVU"] = pro_key.map(wrvu_dict)
+    miss_w = df["wRVU"].isna()
+    if miss_w.any():
+        df.loc[miss_w, "wRVU"] = global_key[miss_w].map(wrvu_dict)
     df["wRVU"] = df["wRVU"].fillna(0)
-    df["MP_RVU"] = df["MP_RVU"].fillna(0)
-    df["Fac_PE_RVU"] = df["Fac_PE_RVU"].fillna(0)
+
+    # --- Global total for deriving components ---
+    g_total = global_key.map(total_dict).fillna(0)
+
+    # --- Physician group total: 26 row's Fac_Total when available ---
+    df["Pro_Total_RVU"] = pro_key.map(total_dict)
+    miss_p = df["Pro_Total_RVU"].isna()
+    if miss_p.any():
+        # No 26 row: physician gets global total only if there's physician work
+        has_work = df.loc[miss_p, "wRVU"] > 0
+        df.loc[miss_p & has_work, "Pro_Total_RVU"] = g_total[miss_p & has_work]
+        df.loc[miss_p & ~has_work, "Pro_Total_RVU"] = 0
+    df["Pro_Total_RVU"] = df["Pro_Total_RVU"].clip(lower=0)
+
+    # --- Facility total: TC row when available, otherwise global − pro ---
+    tc_direct = tc_key.map(total_dict)
+    has_tc = tc_direct.notna()
+    df["TC_Total_RVU"] = 0.0
+    df.loc[has_tc, "TC_Total_RVU"] = tc_direct[has_tc]
+    df.loc[~has_tc, "TC_Total_RVU"] = (
+        g_total[~has_tc] - df.loc[~has_tc, "Pro_Total_RVU"]
+    ).clip(lower=0)
+
+    # --- Global total for reference ---
+    df["Fac_Total_RVU"] = global_key.map(total_dict)
+    miss_g = df["Fac_Total_RVU"].isna()
+    if miss_g.any():
+        df.loc[miss_g, "Fac_Total_RVU"] = pro_key[miss_g].map(total_dict)
     df["Fac_Total_RVU"] = df["Fac_Total_RVU"].fillna(0)
 
-    df.drop(columns=["_base", "_mod", "_yr"], inplace=True)
+    df.drop(columns=["_base", "_yr"], inplace=True)
     return df
 
 
@@ -759,8 +785,8 @@ def _get_enriched_billing():
         df = _merge_rvu(df, rvu)
     else:
         df["wRVU"] = 0.0
-        df["MP_RVU"] = 0.0
-        df["Fac_PE_RVU"] = 0.0
+        df["Pro_Total_RVU"] = 0.0
+        df["TC_Total_RVU"] = 0.0
         df["Fac_Total_RVU"] = 0.0
 
     # Merge payor info once during enrichment (avoids 50ms merge per callback)
@@ -1092,6 +1118,7 @@ layout = dmc.Stack(
                         chart_types=_CUM_CHART_TYPES,
                         show_smooth=False,
                         show_prior_periods=True,
+                        prior_periods_default=3,
                         paper_padding="md",
                         extra_controls=[
                             dmc.SegmentedControl(
@@ -1153,6 +1180,7 @@ layout = dmc.Stack(
                         chart_types=_CUM_CHART_TYPES,
                         show_smooth=False,
                         show_prior_periods=True,
+                        prior_periods_default=3,
                         paper_padding="md",
                         extra_controls=[
                             dmc.SegmentedControl(
@@ -1335,6 +1363,7 @@ layout = dmc.Stack(
                         "resizable": True,
                         "filter": "agTextColumnFilter",
                         "floatingFilter": True,
+                        "valueFormatter": {"function": "params.value == null || params.value === '' ? '–' : params.value"},
                     },
                     dashGridOptions={
                         "animateRows": True,
@@ -1417,7 +1446,8 @@ layout = dmc.Stack(
                                         {"field": "notes", "headerName": "Notes",
                                          "flex": 2, "editable": True, "tooltipField": "notes"},
                                     ],
-                                    defaultColDef={"sortable": True, "resizable": True},
+                                    defaultColDef={"sortable": True, "resizable": True,
+                                                   "valueFormatter": {"function": "params.value == null || params.value === '' ? '–' : params.value"}},
                                     dashGridOptions={
                                         "rowHeight": 32,
                                         "headerHeight": 32,
@@ -1490,7 +1520,8 @@ layout = dmc.Stack(
                                         {"field": "product", "headerName": "Product", "flex": 0.5,
                                          "filter": "agTextColumnFilter", "floatingFilter": True},
                                     ],
-                                    defaultColDef={"sortable": True, "resizable": True},
+                                    defaultColDef={"sortable": True, "resizable": True,
+                                                   "valueFormatter": {"function": "params.value == null || params.value === '' ? '–' : params.value"}},
                                     dashGridOptions={
                                         "rowHeight": 30, "headerHeight": 30,
                                         "floatingFiltersHeight": 28,
@@ -1576,19 +1607,10 @@ clientside_callback(
 
 
 # ---------------------------------------------------------------------------
-# Main Server Callback
+# Shared filter helper + input list
 # ---------------------------------------------------------------------------
 
-@callback(
-    Output(f"{PAGE_ID}-kpi-row", "children"),
-    Output(f"{PAGE_ID}-dollar-row", "children"),
-    # Store outputs (5 — cumulative stores handled by separate callback)
-    Output(f"{PAGE_ID}-store-kpi-sparklines", "data"),
-    Output(f"{PAGE_ID}-store-volume", "data"),
-    Output(f"{PAGE_ID}-store-rvu", "data"),
-    Output(f"{PAGE_ID}-store-payor-event", "data"),
-    Output(f"{PAGE_ID}-store-payor-patient", "data"),
-    # Inputs
+_BILLING_FILTER_INPUTS = [
     Input(f"{PAGE_ID}-interval", "n_intervals"),
     Input(f"{PAGE_ID}-filter-daterange", "start_date"),
     Input(f"{PAGE_ID}-filter-daterange", "end_date"),
@@ -1601,49 +1623,41 @@ clientside_callback(
     Input(f"{PAGE_ID}-filter-reviewed", "data"),
     Input(f"{PAGE_ID}-filter-exported", "data"),
     Input(f"{PAGE_ID}-filter-date-preset", "value"),
-    running=[
-        (Output(f"{PAGE_ID}-chart-vol-trend-loading", "visible"), True, False),
-        (Output(f"{PAGE_ID}-chart-rvu-trend-loading", "visible"), True, False),
-        (Output(f"{PAGE_ID}-chart-payor-event-loading", "visible"), True, False),
-        (Output(f"{PAGE_ID}-chart-payor-patient-loading", "visible"), True, False),
-    ],
-)
-def update_billing(_n, start_date, end_date, departments, physician,
-                   physician_role, codetype, charge_status, categories,
-                   reviewed_filter, exported_filter, date_preset):
-    """Master callback: KPIs, sparklines, volume, RVU, payor stores."""
-    from data.loader import load_patients
+]
 
-    empty_stores = [None] * 5
 
+def _unpack_billing_filter_args(args):
+    """Unpack the 12 common filter args into kwargs for _load_and_filter_billing."""
+    (_n, start_date, end_date, departments, physician,
+     physician_role, codetype, charge_status, categories,
+     reviewed_filter, exported_filter, date_preset) = args[:12]
+    return dict(
+        start_date=start_date, end_date=end_date, departments=departments,
+        physician=physician, physician_role=physician_role, codetype=codetype,
+        charge_status=charge_status, categories=categories,
+        reviewed_filter=reviewed_filter, exported_filter=exported_filter,
+        date_preset=date_preset,
+    )
+
+
+def _load_and_filter_billing(start_date=None, end_date=None, departments=None,
+                             physician=None, physician_role=None, codetype=None,
+                             charge_status=None, categories=None,
+                             reviewed_filter=None, exported_filter=None,
+                             date_preset=None):
+    """Load enriched billing, apply date range + dimension filters.
+
+    Returns dict with keys: df, bf, bf_prior, start, end, date_preset, df_all,
+    physician_role. Returns None if data is empty.
+    """
     try:
         df = _get_enriched_billing()
     except Exception:
-        return [], [], *empty_stores
+        return None
     if df.empty or "DateOfService" not in df.columns:
-        return [], [], *empty_stores
+        return None
 
-    try:
-        patients = load_patients()
-    except Exception:
-        patients = pd.DataFrame()
-
-    # Payor join
-    if not patients.empty and "PatientId" in df.columns and "PatientId" in patients.columns:
-        ins_cols = ["PatientId", "PrimaryInsurance"]
-        ins_cols = [c for c in ins_cols if c in patients.columns]
-        if "PrimaryInsurance" in patients.columns:
-            df = df.merge(
-                patients[ins_cols].drop_duplicates("PatientId"),
-                on="PatientId", how="left",
-            )
-    if "PrimaryInsurance" not in df.columns:
-        df["PrimaryInsurance"] = "Unknown"
-    df["PrimaryInsurance"] = df["PrimaryInsurance"].fillna("Unknown")
-
-    # ------------------------------------------------------------------
     # Date range
-    # ------------------------------------------------------------------
     last_date = df["DateOfService"].dt.normalize().max()
     earliest_date = df["DateOfService"].dt.normalize().min()
 
@@ -1654,10 +1668,7 @@ def update_billing(_n, start_date, end_date, departments, physician,
         start = _preset_start(last_date, date_preset or "12mo", earliest_date)
         end = last_date
 
-    # ------------------------------------------------------------------
-    # Apply filters
-    # ------------------------------------------------------------------
-    # Build a reusable non-date dimension mask
+    # Non-date dimension mask builder (closes over df and filter args)
     def _dim_mask(base_mask):
         m = base_mask
         if departments and "Department" in df.columns:
@@ -1685,16 +1696,48 @@ def update_billing(_n, start_date, end_date, departments, physician,
     df_all = df.loc[_dim_mask(pd.Series(True, index=df.index))]
 
     # Prior period for trend comparison
-    p_start, p_end = _prior_range(start, end, date_preset or "12mo")
+    _dp = date_preset or "12mo"
+    p_start, p_end = _prior_range(start, end, _dp)
     prior_mask = _dim_mask((df["DateOfService"] >= p_start) & (df["DateOfService"] <= p_end))
     bf_prior = df.loc[prior_mask]
 
-    # ------------------------------------------------------------------
+    return {
+        "df": df,
+        "bf": bf,
+        "bf_prior": bf_prior,
+        "df_all": df_all,
+        "start": start,
+        "end": end,
+        "date_preset": _dp,
+        "physician_role": physician_role,
+        "categories": categories,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Callback 1: KPIs + Sparklines + Dollar Row
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output(f"{PAGE_ID}-kpi-row", "children"),
+    Output(f"{PAGE_ID}-dollar-row", "children"),
+    Output(f"{PAGE_ID}-store-kpi-sparklines", "data"),
+    *_BILLING_FILTER_INPUTS,
+)
+def _update_billing_kpis(*args):
+    """KPIs, sparklines, and dollar estimate row."""
+    ctx = _unpack_billing_filter_args(args)
+    data = _load_and_filter_billing(**ctx)
+    if data is None:
+        return [], [], {}
+
+    bf = data["bf"]
+    bf_prior = data["bf_prior"]
+    start, end = data["start"], data["end"]
+
     # KPIs + sparklines
-    # ------------------------------------------------------------------
     sparkline_data = {}
-    kpi_children = []  # GridCol-wrapped cards (only non-zero categories)
-    active_cats = []
+    kpi_children = []
 
     for cat in CATEGORY_NAMES:
         slug = CATEGORY_SLUGS[cat]
@@ -1702,7 +1745,6 @@ def update_billing(_n, start_date, end_date, departments, physician,
         curr_count = len(bf[bf["Category"] == cat])
         if curr_count == 0:
             continue
-        active_cats.append(cat)
         prior_count = len(bf_prior[bf_prior["Category"] == cat])
         trend, direction = _trend_text(curr_count, prior_count)
         card = kpi_card(
@@ -1739,23 +1781,72 @@ def update_billing(_n, start_date, end_date, departments, physician,
             )
         kpi_children = wrapped
 
-    # ------------------------------------------------------------------
-    # Volume + RVU stores (category × department × physician × W/M/Y)
-    # ------------------------------------------------------------------
-    dept_names = [d for d in DEPARTMENTS if d in bf["Department"].unique()] if "Department" in bf.columns else []
+    # Dollar estimate row
+    def _dollar_card(label, amount, color=NEUTRAL["text_primary"]):
+        return dmc.Paper(
+            dmc.Group(
+                gap="xs", align="center",
+                children=[
+                    dmc.Text(label, size="xs", c=NEUTRAL["text_secondary"], fw=500),
+                    dmc.Text(
+                        f"${amount:,.0f}",
+                        size="sm", fw=700, c=color,
+                    ),
+                ],
+            ),
+            px="md", py=6, radius="md", shadow="xs", withBorder=True,
+            style={"flex": "1 1 0", "minWidth": "140px"},
+        )
 
-    # Physician names for MD slice (use the role column)
+    cf = bf["DateOfService"].dt.year.map(_CMS_CF).fillna(_CMS_CF_DEFAULT) if not bf.empty else pd.Series(dtype=float)
+
+    # Group revenue: Pro_Total (from 26 row) × CF — includes wRVU + pro PE + pro MP
+    group_dollars = (bf["Pro_Total_RVU"] * cf).sum() if not bf.empty else 0
+
+    # Hospital revenue: TC_Total (from TC row) × CF — 0 for codes with no TC variant
+    hosp_dollars = (bf["TC_Total_RVU"] * cf).sum() if not bf.empty else 0
+
+    total_dollars = group_dollars + hosp_dollars
+
+    dollar_children = [
+        _dollar_card("Est. Group Revenue", group_dollars, PRIMARY),
+        _dollar_card("Est. Hospital Revenue", hosp_dollars),
+        _dollar_card("Est. All-In Total", total_dollars, SEMANTIC_COLORS["success"]),
+    ]
+
+    return kpi_children, dollar_children, sparkline_data
+
+
+# ---------------------------------------------------------------------------
+# Callback 2: Volume Store
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output(f"{PAGE_ID}-store-volume", "data"),
+    *_BILLING_FILTER_INPUTS,
+    running=[(Output(f"{PAGE_ID}-chart-vol-trend-loading", "visible"), True, False)],
+)
+def _update_billing_volume(*args):
+    ctx = _unpack_billing_filter_args(args)
+    data = _load_and_filter_billing(**ctx)
+    if data is None:
+        return None
+
+    bf = data["bf"]
+    start, end = data["start"], data["end"]
+    physician_role = data["physician_role"]
+    categories = data["categories"]
+
+    dept_names = [d for d in DEPARTMENTS if d in bf["Department"].unique()] if "Department" in bf.columns else []
     _role_col = "AttendingPhysician" if physician_role == "attending" else "SupervisingPhysician"
     if _role_col in bf.columns:
         phys_names = sorted(bf[_role_col].dropna().unique())
         phys_colors = {p: CHART_COLORWAY[i % len(CHART_COLORWAY)] for i, p in enumerate(phys_names)}
     else:
         phys_names, phys_colors = [], {}
-
     active_cat_names = [c for c in CATEGORY_NAMES if c in bf["Category"].unique()]
 
     def _build_all_aggs(group_col, group_names, group_colors, value_col=None, y_title="Count"):
-        """Build W/M/Y variants for one slice dimension."""
         out = {}
         for freq in ("W", "M", "Y"):
             out[freq] = _build_census_data(
@@ -1774,6 +1865,54 @@ def update_billing(_n, start_date, end_date, departments, physician,
                                       y_title="Billing Events"),
     }
 
+    if categories and len(categories) == 1:
+        cpt_codes = sorted(bf["_base_code"].dropna().unique())
+        cpt_colors = {c: CHART_COLORWAY[i % len(CHART_COLORWAY)] for i, c in enumerate(cpt_codes)}
+        volume_store["cpt"] = _build_all_aggs("_base_code", cpt_codes, cpt_colors,
+                                               y_title="Billing Events")
+
+    return volume_store
+
+
+# ---------------------------------------------------------------------------
+# Callback 3: RVU Store
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output(f"{PAGE_ID}-store-rvu", "data"),
+    *_BILLING_FILTER_INPUTS,
+    running=[(Output(f"{PAGE_ID}-chart-rvu-trend-loading", "visible"), True, False)],
+)
+def _update_billing_rvu(*args):
+    ctx = _unpack_billing_filter_args(args)
+    data = _load_and_filter_billing(**ctx)
+    if data is None:
+        return None
+
+    bf = data["bf"]
+    start, end = data["start"], data["end"]
+    physician_role = data["physician_role"]
+    categories = data["categories"]
+
+    dept_names = [d for d in DEPARTMENTS if d in bf["Department"].unique()] if "Department" in bf.columns else []
+    _role_col = "AttendingPhysician" if physician_role == "attending" else "SupervisingPhysician"
+    if _role_col in bf.columns:
+        phys_names = sorted(bf[_role_col].dropna().unique())
+        phys_colors = {p: CHART_COLORWAY[i % len(CHART_COLORWAY)] for i, p in enumerate(phys_names)}
+    else:
+        phys_names, phys_colors = [], {}
+    active_cat_names = [c for c in CATEGORY_NAMES if c in bf["Category"].unique()]
+
+    def _build_all_aggs(group_col, group_names, group_colors, value_col=None, y_title="Count"):
+        out = {}
+        for freq in ("W", "M", "Y"):
+            out[freq] = _build_census_data(
+                bf, "DateOfService", start, end,
+                group_col, group_names, group_colors,
+                value_col=value_col, y_title=y_title, freq=freq,
+            )
+        return out
+
     rvu_store = {
         "category": _build_all_aggs("Category", active_cat_names, CATEGORY_COLORS,
                                      value_col="wRVU", y_title="wRVU"),
@@ -1783,22 +1922,46 @@ def update_billing(_n, start_date, end_date, departments, physician,
                                       value_col="wRVU", y_title="wRVU"),
     }
 
-    # CPT-code breakdown (only meaningful when exactly 1 category is selected)
     if categories and len(categories) == 1:
         cpt_codes = sorted(bf["_base_code"].dropna().unique())
         cpt_colors = {c: CHART_COLORWAY[i % len(CHART_COLORWAY)] for i, c in enumerate(cpt_codes)}
-        volume_store["cpt"] = _build_all_aggs("_base_code", cpt_codes, cpt_colors,
-                                               y_title="Billing Events")
         rvu_store["cpt"] = _build_all_aggs("_base_code", cpt_codes, cpt_colors,
                                             value_col="wRVU", y_title="wRVU")
 
-    # Cumulative stores
-    # ------------------------------------------------------------------
-    # Payor stores
-    # ------------------------------------------------------------------
+    return rvu_store
+
+
+# ---------------------------------------------------------------------------
+# Callback 4: Payor Stores
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output(f"{PAGE_ID}-store-payor-event", "data"),
+    Output(f"{PAGE_ID}-store-payor-patient", "data"),
+    *_BILLING_FILTER_INPUTS,
+    running=[
+        (Output(f"{PAGE_ID}-chart-payor-event-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-chart-payor-patient-loading", "visible"), True, False),
+    ],
+)
+def _update_billing_payor(*args):
+    ctx = _unpack_billing_filter_args(args)
+    data = _load_and_filter_billing(**ctx)
+    if data is None:
+        empty = {"actual": {"labels": [], "values": [], "colors": []},
+                 "broad": {"labels": [], "values": [], "colors": []}}
+        return empty, empty
+
+    bf = data["bf"]
     payor_event = _build_payor_data(bf, "PrimaryInsurance")
 
     # Per-patient: unique patients in filtered billing data
+    from data.loader import load_patients
+    try:
+        patients = load_patients()
+    except Exception:
+        patients = pd.DataFrame()
+
     if not patients.empty and "PatientId" in bf.columns:
         pat_ids = bf["PatientId"].unique()
         pat_sub = patients[patients["PatientId"].isin(pat_ids)].copy()
@@ -1810,73 +1973,7 @@ def update_billing(_n, start_date, end_date, departments, physician,
     else:
         payor_patient = _build_payor_data(pd.DataFrame(), "PrimaryInsurance")
 
-    # ------------------------------------------------------------------
-    # Dollar estimate row
-    # ------------------------------------------------------------------
-    # Professional: (wRVU + MP_RVU) × CF for all sites
-    # Facility: Fac_PE_RVU × CF — hospital-based sites only (Lacey, Centralia)
-    # For freestanding (Aberdeen): pro group gets full Fac_Total_RVU × CF
-    def _dollar_card(label, amount, color=NEUTRAL["text_primary"]):
-        return dmc.Paper(
-            dmc.Group(
-                gap="xs", align="center",
-                children=[
-                    dmc.Text(label, size="xs", c=NEUTRAL["text_secondary"], fw=500),
-                    dmc.Text(
-                        f"${amount:,.0f}",
-                        size="sm", fw=700, c=color,
-                    ),
-                ],
-            ),
-            px="md", py=6, radius="md", shadow="xs", withBorder=True,
-            style={"flex": "1 1 0", "minWidth": "140px"},
-        )
-
-    cf = bf["DateOfService"].dt.year.map(_CMS_CF).fillna(_CMS_CF_DEFAULT)
-    has_dept = "Department" in bf.columns
-    has_ct = "CodeType" in bf.columns
-
-    if has_dept:
-        freestanding = bf["Department"].isin(_FREESTANDING_SITES)
-    else:
-        freestanding = pd.Series(False, index=bf.index)
-    hosp_based = ~freestanding
-
-    if has_ct:
-        is_group = bf["CodeType"].isin(["Professional", "Global"])
-        is_tech = bf["CodeType"] == "Technical"
-    else:
-        is_group = pd.Series(True, index=bf.index)
-        is_tech = pd.Series(False, index=bf.index)
-
-    # Group revenue:
-    #   Hospital-based Pro/Global: (wRVU + MP) × CF (facility PE goes to hospital)
-    #   Freestanding Pro/Global: Fac_Total × CF (group keeps everything)
-    hb_group = is_group & hosp_based
-    fs_group = is_group & freestanding
-    group_dollars = (
-        ((bf.loc[hb_group, "wRVU"] + bf.loc[hb_group, "MP_RVU"]) * cf.loc[hb_group]).sum()
-        + (bf.loc[fs_group, "Fac_Total_RVU"] * cf.loc[fs_group]).sum()
-    )
-
-    # Hospital revenue:
-    #   All Technical rows: Fac_Total × CF
-    #   Hospital-based Pro/Global: Fac_PE × CF (hospital keeps facility component)
-    hosp_dollars = (
-        (bf.loc[is_tech, "Fac_Total_RVU"] * cf.loc[is_tech]).sum()
-        + (bf.loc[hb_group, "Fac_PE_RVU"] * cf.loc[hb_group]).sum()
-    )
-
-    total_dollars = group_dollars + hosp_dollars
-
-    dollar_children = [
-        _dollar_card("Est. Group Revenue", group_dollars, PRIMARY),
-        _dollar_card("Est. Hospital Revenue", hosp_dollars),
-        _dollar_card("Est. All-In Total", total_dollars, SEMANTIC_COLORS["success"]),
-    ]
-
-    return (kpi_children, dollar_children, sparkline_data, volume_store,
-            rvu_store, payor_event, payor_patient)
+    return payor_event, payor_patient
 
 
 # ---------------------------------------------------------------------------
@@ -1886,18 +1983,7 @@ def update_billing(_n, start_date, end_date, departments, physician,
 @callback(
     Output(f"{PAGE_ID}-store-volume-cum", "data"),
     Output(f"{PAGE_ID}-store-rvu-cum", "data"),
-    Input(f"{PAGE_ID}-interval", "n_intervals"),
-    Input(f"{PAGE_ID}-filter-daterange", "start_date"),
-    Input(f"{PAGE_ID}-filter-daterange", "end_date"),
-    Input(f"{PAGE_ID}-filter-department", "value"),
-    Input(f"{PAGE_ID}-filter-physician", "value"),
-    Input(f"{PAGE_ID}-filter-physician-role", "value"),
-    Input(f"{PAGE_ID}-filter-codetype", "value"),
-    Input(f"{PAGE_ID}-filter-charge-status", "value"),
-    Input(f"{PAGE_ID}-filter-category", "value"),
-    Input(f"{PAGE_ID}-filter-reviewed", "data"),
-    Input(f"{PAGE_ID}-filter-exported", "data"),
-    Input(f"{PAGE_ID}-filter-date-preset", "value"),
+    *_BILLING_FILTER_INPUTS,
     Input(f"{PAGE_ID}-volcum-mode", "value"),
     Input(f"{PAGE_ID}-volcum-period-type", "value"),
     Input(f"{PAGE_ID}-volcum-slice", "value"),
@@ -1911,50 +1997,21 @@ def update_billing(_n, start_date, end_date, departments, physician,
         (Output(f"{PAGE_ID}-chart-rvu-cum-loading", "visible"), True, False),
     ],
 )
-def update_cumulative(_n, start_date, end_date, departments, physician,
-                      physician_role, codetype, charge_status, categories,
-                      reviewed_filter, exported_filter, date_preset,
-                      volcum_mode, volcum_period_type, volcum_slice,
-                      volcum_prior_periods,
-                      rvucum_mode, rvucum_period_type, rvucum_slice,
-                      rvucum_prior_periods):
+def update_cumulative(*args):
     """Cumulative stores only — separate callback so toggle changes are fast."""
-    try:
-        df = _get_enriched_billing()
-    except Exception:
-        return None, None
-    if df.empty or "DateOfService" not in df.columns:
+    ctx = _unpack_billing_filter_args(args)
+    (volcum_mode, volcum_period_type, volcum_slice, volcum_prior_periods,
+     rvucum_mode, rvucum_period_type, rvucum_slice, rvucum_prior_periods) = args[12:20]
+
+    data = _load_and_filter_billing(**ctx)
+    if data is None:
         return None, None
 
-    # Date range
-    last_date = df["DateOfService"].dt.normalize().max()
-    earliest_date = df["DateOfService"].dt.normalize().min()
-    if start_date and end_date:
-        start = pd.Timestamp(start_date)
-        end = pd.Timestamp(end_date)
-    else:
-        start = _preset_start(last_date, date_preset or "12mo", earliest_date)
-        end = last_date
-
-    # Non-date filters (all-time dataset for prior period lookback)
-    mask = pd.Series(True, index=df.index)
-    if departments and "Department" in df.columns:
-        mask &= df["Department"].isin(departments)
-    if physician:
-        rc = "AttendingPhysician" if physician_role == "attending" else "SupervisingPhysician"
-        if rc in df.columns:
-            mask &= df[rc] == physician
-    if codetype and codetype != "all" and "CodeType" in df.columns:
-        mask &= df["CodeType"] == codetype
-    if charge_status and charge_status != "all":
-        mask &= df["ChargeStatus"] == charge_status
-    if categories:
-        mask &= df["Category"].isin(categories)
-    if reviewed_filter and reviewed_filter != "all" and "Reviewed" in df.columns:
-        mask &= df["Reviewed"] == ("Yes" if reviewed_filter == "yes" else "No")
-    if exported_filter and exported_filter != "all" and "Exported" in df.columns:
-        mask &= df["Exported"] == ("Yes" if exported_filter == "yes" else "No")
-    df_all = df.loc[mask]
+    df_all = data["df_all"]
+    start, end = data["start"], data["end"]
+    physician_role = data["physician_role"]
+    categories = data["categories"]
+    _dp = data["date_preset"]
 
     # Slice configs
     _role_col = "AttendingPhysician" if physician_role == "attending" else "SupervisingPhysician"
@@ -1977,8 +2034,6 @@ def update_cumulative(_n, start_date, end_date, departments, physician,
         cpt_codes = sorted(df_all["_base_code"].dropna().unique())
         cpt_colors = {c: CHART_COLORWAY[i % len(CHART_COLORWAY)] for i, c in enumerate(cpt_codes)}
         _slice_cfgs["cpt"] = ("_base_code", cpt_codes, cpt_colors)
-
-    _dp = date_preset or "12mo"
 
     vol_cum = _build_cumulative(
         df_all, "DateOfService", start, end, _dp,

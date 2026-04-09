@@ -1149,6 +1149,11 @@ def update_kpis(_n, date_preset, departments, sims_scope,
                 "color": CHART_COLORWAY[4],
                 "hover_fmt": "%{x|%b %d}: %{y:.0f} days<extra></extra>",
             }
+            _consult_info = dmc.Tooltip(
+                DashIconify(icon="mdi:information-outline", width=16, color="#9CA3AF", style={"cursor": "help"}),
+                label=f"Median days from booking to consult, anchored on booking date. Excludes >{cap_consult}d. Lower = shorter booking horizon.",
+                position="top", withArrow=True, multiline=True, w=240,
+            )
             kpi_consult_lead = kpi_card(
                 f"Consult Lead Time ({period_label})", f"{curr_med:.0f}",
                 value_detail="days",
@@ -1156,6 +1161,7 @@ def update_kpis(_n, date_preset, departments, sims_scope,
                 trend_direction=t_dir,
                 accent_color=CHART_COLORWAY[4],
                 sparkline_id="home-spark-consult-lead",
+                header_control=_consult_info,
             )
         else:
             kpi_consult_lead = kpi_card("Consult Lead Time", "N/A")
@@ -1182,6 +1188,11 @@ def update_kpis(_n, date_preset, departments, sims_scope,
                 "color": CHART_COLORWAY[3],
                 "hover_fmt": "%{x|%b %d}: %{y:.0f} days<extra></extra>",
             }
+            _sim_lead_info = dmc.Tooltip(
+                DashIconify(icon="mdi:information-outline", width=16, color="#9CA3AF", style={"cursor": "help"}),
+                label=f"Median days from booking to simulation, anchored on booking date. Excludes >{cap_sim}d. Lower = shorter booking horizon.",
+                position="top", withArrow=True, multiline=True, w=240,
+            )
             kpi_sim_lead = kpi_card(
                 f"Sim Lead Time ({period_label})", f"{curr_med:.0f}",
                 value_detail="days",
@@ -1189,6 +1200,7 @@ def update_kpis(_n, date_preset, departments, sims_scope,
                 trend_direction=t_dir,
                 accent_color=CHART_COLORWAY[3],
                 sparkline_id="home-spark-sim-lead",
+                header_control=_sim_lead_info,
             )
         else:
             kpi_sim_lead = kpi_card("Sim Lead Time", "N/A")

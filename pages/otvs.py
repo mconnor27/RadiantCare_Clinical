@@ -21,12 +21,13 @@ from components.chart_card import chart_card, register_chart_callbacks
 from components.detail_table import detail_table
 from components.chart_settings import chart_settings_popover
 from utils.charts import apply_default_layout, empty_figure
+from utils.tables import sanitize_for_grid
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, SLIDER_MARKS,
     preset_to_slider_val,
 )
+from components.diagnosis_filter import diagnosis_accordion, register_diagnosis_callbacks
 from utils.diagnosis_categories import (
-    CATEGORIES as BODY_SYSTEMS,
     build_code_to_category,
     get_categories_for_codes,
     primary_category,
@@ -136,49 +137,7 @@ def _build_otvs_filter_bar():
                         style={"position": "relative", "display": "inline-block"},
                     ),
                     # Diagnosis dropdown
-                    html.Div(
-                        children=[
-                            html.Div(
-                                children=[
-                                    dmc.Button(
-                                        "Diagnosis",
-                                        id=f"{PAGE_ID}-diagnosis-trigger",
-                                        variant="default",
-                                        size="sm",
-                                        rightSection=DashIconify(icon="mdi:chevron-down", width=14),
-                                    ),
-                                    dmc.ActionIcon(
-                                        DashIconify(icon="mdi:close-circle", width=18),
-                                        id=f"{PAGE_ID}-diagnosis-clear",
-                                        variant="subtle",
-                                        color="gray",
-                                        size="sm",
-                                        className="wf-filter-clear-btn",
-                                    ),
-                                ],
-                                style={"position": "relative", "display": "inline-block"},
-                            ),
-                            dmc.Paper(
-                                dmc.ChipGroup(
-                                    children=[
-                                        dmc.Chip(bs, value=bs, size="xs", variant="filled")
-                                        for bs in BODY_SYSTEMS
-                                    ],
-                                    id=f"{PAGE_ID}-filter-diagnosis",
-                                    multiple=True,
-                                    value=[],
-                                ),
-                                id=f"{PAGE_ID}-diagnosis-panel",
-                                p="xs",
-                                shadow="md",
-                                withBorder=True,
-                                radius="md",
-                                className="wf-chip-dropdown",
-                                style={"display": "none"},
-                            ),
-                        ],
-                        style={"position": "relative", "display": "inline-block"},
-                    ),
+                    diagnosis_accordion(PAGE_ID),
                     # Smoothing
                     dmc.Group(
                         children=[
@@ -361,8 +320,11 @@ layout = dmc.Stack(
                     ],
                     show_smooth=True,
                     show_prior_periods=True,
-                    smooth_max=50,
-                    smooth_default=0,
+                    smooth_min=0,
+                    smooth_max=1,
+                    smooth_step=0.05,
+                    smooth_default=0.1,
+                    prior_periods_default=3,
                     paper_padding="md",
                     extra_controls=[
                         dmc.SegmentedControl(
@@ -623,16 +585,6 @@ def _register_otvs_filter_callbacks():
         Output(f"{PAGE_ID}-performing-trigger", "children"),
         Input(f"{PAGE_ID}-filter-performing", "value"),
     )
-    clientside_callback(
-        "function(vals) {"
-        "  if (!vals || vals.length === 0) return 'Diagnosis';"
-        "  if (vals.length === 1) return vals[0];"
-        "  return vals.length + ' selected';"
-        "}",
-        Output(f"{PAGE_ID}-diagnosis-trigger", "children"),
-        Input(f"{PAGE_ID}-filter-diagnosis", "value"),
-    )
-
     # --- Clear-button visibility ---
     clientside_callback(
         """function(val) { return val ? {"display": "inline-flex"} : {"display": "none"}; }""",
@@ -644,12 +596,6 @@ def _register_otvs_filter_callbacks():
         Output(f"{PAGE_ID}-performing-clear", "style"),
         Input(f"{PAGE_ID}-filter-performing", "value"),
     )
-    clientside_callback(
-        """function(vals) { return vals && vals.length > 0 ? {"display": "inline-flex"} : {"display": "none"}; }""",
-        Output(f"{PAGE_ID}-diagnosis-clear", "style"),
-        Input(f"{PAGE_ID}-filter-diagnosis", "value"),
-    )
-
     # --- Clear-button actions ---
     clientside_callback(
         """function(n) { return null; }""",
@@ -663,16 +609,12 @@ def _register_otvs_filter_callbacks():
         Input(f"{PAGE_ID}-performing-clear", "n_clicks"),
         prevent_initial_call=True,
     )
-    clientside_callback(
-        """function(n) { return []; }""",
-        Output(f"{PAGE_ID}-filter-diagnosis", "value", allow_duplicate=True),
-        Input(f"{PAGE_ID}-diagnosis-clear", "n_clicks"),
-        prevent_initial_call=True,
-    )
-
 
 # Register filter callbacks
 _register_otvs_filter_callbacks()
+
+# Register reusable diagnosis accordion callbacks
+register_diagnosis_callbacks(PAGE_ID)
 
 
 # ---------------------------------------------------------------------------
@@ -756,7 +698,7 @@ def _trend(curr, prior, invert=False):
 
 
 def _load_and_filter_otvs(slider_val, departments, treating_md, performing_md,
-                           body_sites, date_preset):
+                           body_sites, diag_mode, date_preset):
     """Load weekly visits data, apply filters. Returns dict or None."""
     from data.loader import load_weekly_visits, load_diagnosis
 
@@ -788,12 +730,9 @@ def _load_and_filter_otvs(slider_val, departments, treating_md, performing_md,
         diag_df = None
     c2b = build_code_to_category(diag_df)
 
-    if body_sites and "DiagnosisCodes" in df.columns and c2b:
-        bs_set = set(body_sites)
-        row_bs = df["DiagnosisCodes"].apply(
-            lambda s: get_categories_for_codes(s, c2b) if pd.notna(s) else set()
-        )
-        df = df[row_bs.apply(lambda cats: bool(cats & bs_set))]
+    if body_sites:
+        from utils.diagnosis_categories import filter_by_diagnosis
+        df = filter_by_diagnosis(df, body_sites, c2b, mode=diag_mode or "primary")
 
     if df.empty:
         return None
@@ -825,19 +764,20 @@ _OTVS_FILTER_INPUTS = [
     Input(f"{PAGE_ID}-filter-department", "value"),
     Input(f"{PAGE_ID}-filter-treating", "value"),
     Input(f"{PAGE_ID}-filter-performing", "value"),
-    Input(f"{PAGE_ID}-filter-diagnosis", "value"),
+    Input(f"{PAGE_ID}-diag-store", "data"),
+    Input(f"{PAGE_ID}-diag-mode", "data"),
     Input(f"{PAGE_ID}-filter-date-preset", "value"),
 ]
 
 
 def _unpack_otvs_filter_args(args):
-    """Unpack the 7 common filter args into kwargs for _load_and_filter_otvs."""
+    """Unpack the 8 common filter args into kwargs for _load_and_filter_otvs."""
     (_n, slider_val, departments, treating_md, performing_md,
-     body_sites, date_preset) = args[:7]
+     body_sites, diag_mode, date_preset) = args[:8]
     return dict(
         slider_val=slider_val, departments=departments,
         treating_md=treating_md, performing_md=performing_md,
-        body_sites=body_sites, date_preset=date_preset,
+        body_sites=body_sites, diag_mode=diag_mode, date_preset=date_preset,
     )
 
 
@@ -1080,7 +1020,7 @@ def _update_otvs_kpis(*args):
 )
 def _update_otvs_volume(*args):
     ctx = _unpack_otvs_filter_args(args)
-    agg, volume_slice = args[7], args[8]
+    agg, volume_slice = args[8], args[9]
     data = _load_and_filter_otvs(**ctx)
     if data is None:
         return None
@@ -1101,7 +1041,7 @@ def _update_otvs_volume(*args):
 )
 def _update_otvs_cumulative(*args):
     ctx = _unpack_otvs_filter_args(args)
-    cumul_mode, cumul_period_type, cumul_slice = args[7], args[8], args[9]
+    cumul_mode, cumul_period_type, cumul_slice = args[8], args[9], args[10]
     data = _load_and_filter_otvs(**ctx)
     if data is None:
         return None
@@ -1144,7 +1084,7 @@ def _update_otvs_coverage(*args):
 )
 def _update_otvs_billing(*args):
     ctx = _unpack_otvs_filter_args(args)
-    billing_slice, billing_mode = args[7], args[8]
+    billing_slice, billing_mode = args[8], args[9]
     data = _load_and_filter_otvs(**ctx)
     if data is None:
         return empty_figure()
@@ -1206,6 +1146,24 @@ for _sid in [f"{PAGE_ID}-volume-slice", f"{PAGE_ID}-cumulative-slice"]:
         _SLICE_CLASS_JS,
         Output(_sid, "className"),
         Input(_sid, "value"),
+    )
+
+_HIDE_STACK_JS = """function(sliceVal, chartType) {
+    var single = !sliceVal || sliceVal === "total" || sliceVal === "";
+    var noStack = chartType === "line";
+    return (single || noStack) ? {"display": "none"} : {};
+}"""
+
+for _slice_id, _settings_id in [
+    (f"{PAGE_ID}-volume-slice", f"{PAGE_ID}-volume"),
+    (f"{PAGE_ID}-cumulative-slice", f"{PAGE_ID}-cumulative"),
+]:
+    clientside_callback(
+        _HIDE_STACK_JS,
+        Output(f"{_settings_id}-settings-stack-wrap", "style", allow_duplicate=True),
+        Input(_slice_id, "value"),
+        Input(f"{_settings_id}-settings-type", "value"),
+        prevent_initial_call=True,
     )
 
 
@@ -1828,7 +1786,7 @@ def _build_detail_table(df):
     for c in table_df.select_dtypes(include=["datetime64"]).columns:
         table_df[c] = table_df[c].dt.strftime("%m/%d/%Y %I:%M %p")
 
-    table_df = table_df.fillna("\u2014")
+    table_df = sanitize_for_grid(table_df)
 
     col_labels = {
         "AppointmentDateTime": "Date",

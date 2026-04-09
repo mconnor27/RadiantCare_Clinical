@@ -565,6 +565,58 @@ body {
     color: #FF9800;
 }
 
+/* Diagnosis panel */
+.wf-diag-panel {
+    width: 380px;
+}
+.wf-diag-scroll {
+    max-height: 70vh;
+    overflow-y: auto;
+}
+/* Checkbox + AccordionControl row */
+.wf-diag-cat-row {
+    display: flex;
+    align-items: center;
+}
+.wf-diag-cat-check {
+    flex-shrink: 0;
+    padding-left: 8px;
+}
+.wf-diag-cat-row .mantine-Accordion-control {
+    flex: 1;
+    min-width: 0;
+}
+/* Compact accordion rows */
+.wf-diag-panel .mantine-Accordion-control {
+    padding: 0 8px !important;
+    min-height: unset !important;
+}
+.wf-diag-panel .mantine-Accordion-label {
+    font-size: 12.5px;
+    padding: 3px 0 !important;
+}
+.wf-diag-panel .mantine-Accordion-chevron {
+    width: 14px;
+    min-width: 14px;
+}
+.wf-diag-panel .mantine-Accordion-item {
+    border-color: var(--mantine-color-gray-2);
+}
+/* Checked category row highlight */
+.wf-diag-cat-row:has(.mantine-Checkbox-input:checked) + .mantine-Accordion-panel,
+.wf-diag-cat-row:has(.mantine-Checkbox-input:checked) {
+    background: rgba(124, 42, 131, 0.05);
+}
+/* Subcategory chip area inside accordion */
+.wf-diag-panel .mantine-Accordion-content {
+    padding: 3px 8px 5px;
+}
+.wf-subcat-chip-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
 /* Filter bar left borders */
 .wf-filter-bar-a { border-left: 3px solid #2196F3; }
 .wf-filter-bar-b { border-left: 3px solid #FF9800; }

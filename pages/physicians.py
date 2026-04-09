@@ -17,6 +17,7 @@ from config.settings import (
 from components.chart_settings import chart_settings_popover
 from components.kpi_card import kpi_card, kpi_placeholder
 from utils.charts import apply_default_layout, empty_figure, color_for_index
+from utils.tables import sanitize_for_grid
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, DEFAULT_SLIDER, SLIDER_MARKS,
     preset_to_slider_val,
@@ -1237,7 +1238,7 @@ def _build_schedule_table(df):
     table_df = deduped.head(200).copy()
     if "Date" in table_df.columns:
         table_df["Date"] = table_df["Date"].dt.strftime("%Y-%m-%d")
-    table_df = table_df.fillna("—")
+    table_df = sanitize_for_grid(table_df)
 
     return dag.AgGrid(
         id=f"{PAGE_ID}-detail-grid",
