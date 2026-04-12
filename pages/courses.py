@@ -330,7 +330,28 @@ layout = dmc.Stack(
             children=[
                 dmc.Title("Courses", order=2, className="page-title",
                           style={"margin": 0, "textAlign": "center"}),
-                _build_courses_filter_bar(),
+                html.Div(
+                    style={"position": "relative"},
+                    children=[
+                        _build_courses_filter_bar(),
+                        html.Div(
+                            id="courses-grid-filter-badge",
+                            children=dmc.Tooltip(
+                                label="Table column filters are active — charts reflect the filtered subset",
+                                position="left", withArrow=True, multiline=True, w=220,
+                                children=dmc.Badge(
+                                    "Table Filtered",
+                                    color="red", variant="filled", size="md",
+                                    leftSection=DashIconify(icon="mdi:filter", width=14),
+                                ),
+                            ),
+                            style={
+                                "position": "absolute", "top": -12, "right": 8,
+                                "zIndex": 10, "display": "none", "cursor": "pointer",
+                            },
+                        ),
+                    ],
+                ),
             ],
         ),
 
@@ -452,6 +473,17 @@ layout = dmc.Stack(
             title="Course Details",
             export_id="courses-table-export",
             column_size="autoSize",
+            extra_controls=[
+                dmc.Button(
+                    "Clear Filters",
+                    id="courses-table-clear-filters",
+                    size="compact-xs",
+                    variant="light",
+                    color="red",
+                    leftSection=DashIconify(icon="mdi:filter-remove", width=14),
+                    style={"display": "none"},
+                ),
+            ],
         ),
 
         # Stores for clientside rendering
@@ -465,6 +497,7 @@ layout = dmc.Stack(
         dcc.Store(id="courses-store-technique-dist"),
         dcc.Store(id="courses-store-quit-trend"),
         dcc.Store(id="courses-store-interruption"),
+        dcc.Store(id="courses-table-filter-rows"),  # filtered row indices from grid
 
         # Interval for periodic refresh
         dcc.Interval(id="courses-interval", interval=300_000, n_intervals=0),
@@ -2057,7 +2090,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
                               techniques=None, date_mode="started",
                               mode="prior", period_type="calendar",
                               slice_by="site", max_prior=10,
-                              diag_mode="primary"):
+                              diag_mode="primary", physician_role="treating"):
     """Prepare cumulative course volume data for overlay chart."""
     if df_all.empty or date_col not in df_all.columns:
         return None
@@ -2122,7 +2155,8 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
 
     # Apply filters to full dataset
     dff_all = _apply_filters(df_all, departments, physician, diagnosis_cats, status, frac_range, c2b,
-                             inpatient=inpatient, techniques=techniques, diag_mode=diag_mode)
+                             inpatient=inpatient, techniques=techniques, diag_mode=diag_mode,
+                             physician_role=physician_role)
 
     n_days = period_days
     start_norm = start.normalize()
@@ -2315,6 +2349,14 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
 _INACTIVITY_THRESHOLD_DAYS = 90
 
 
+def _apply_grid_row_filter(dff, grid_rows):
+    """Filter dff to only rows matching the grid's visible row indices."""
+    if grid_rows is None or dff is None or dff.empty:
+        return dff
+    idx_set = set(int(i) for i in grid_rows)
+    return dff.loc[dff.index.isin(idx_set)].reset_index(drop=True)
+
+
 def _is_effectively_completed(df):
     """Return a boolean Series: True if a course is effectively completed.
 
@@ -2503,7 +2545,8 @@ def _load_and_filter_courses(slider_val, departments, physician, diagnosis_cats,
 
     diag_mode = diag_mode or "primary"
     dff = _apply_filters(df, departments, physician, diagnosis_cats, status, active_frac_range, c2b,
-                         inpatient=inpatient, techniques=techniques, diag_mode=diag_mode)
+                         inpatient=inpatient, techniques=techniques, diag_mode=diag_mode,
+                         physician_role=physician_role)
 
     if dff.empty:
         return None
@@ -2531,10 +2574,12 @@ def _load_and_filter_courses(slider_val, departments, physician, diagnosis_cats,
             df_prior = df_all[df_all[date_col].notna()]
             df_prior = df_prior[(df_prior[date_col] >= prior_start) & (df_prior[date_col] <= prior_end)]
         dff_prior = _apply_filters(df_prior, departments, physician, diagnosis_cats, status, active_frac_range, c2b,
-                                   inpatient=inpatient, techniques=techniques, diag_mode=diag_mode)
+                                   inpatient=inpatient, techniques=techniques, diag_mode=diag_mode,
+                                   physician_role=physician_role)
 
     dff_all_no_date = _apply_filters(df_all, departments, physician, diagnosis_cats, "all", active_frac_range, c2b,
-                                     inpatient=inpatient, techniques=techniques, diag_mode=diag_mode)
+                                     inpatient=inpatient, techniques=techniques, diag_mode=diag_mode,
+                                     physician_role=physician_role)
 
     return {
         "df": df, "df_all": df_all, "dff": dff,
@@ -2544,7 +2589,7 @@ def _load_and_filter_courses(slider_val, departments, physician, diagnosis_cats,
         "departments": departments, "physician": physician,
         "diagnosis_cats": diagnosis_cats, "techniques": techniques,
         "status": status, "active_frac_range": active_frac_range,
-        "inpatient": inpatient, "diag_mode": diag_mode,
+        "inpatient": inpatient, "diag_mode": diag_mode, "physician_role": physician_role,
         "trend_label": trend_label, "prior_start": prior_start, "prior_end": prior_end,
         "frac_min_data": frac_min_data, "frac_max_data": frac_max_data,
     }
@@ -2607,9 +2652,11 @@ def _unpack_courses_filter_args(args):
     Output("courses-fraction-slider", "min"),
     Output("courses-fraction-slider", "max"),
     *_COURSES_FILTER_INPUTS,
+    Input("courses-table-filter-rows", "data"),
 )
 def _update_courses_kpis(*args):
     ctx = _unpack_courses_filter_args(args)
+    grid_rows = args[len(_COURSES_FILTER_INPUTS)]
     data = _load_and_filter_courses(**ctx)
 
     na_kpi = kpi_card("--", "N/A")
@@ -2618,7 +2665,15 @@ def _update_courses_kpis(*args):
     if data is None:
         return empty_kpis
 
-    dff = data["dff"]
+    # Check if triggered by grid filter — skip table/chart-children rebuild
+    triggered_by_grid = (
+        dash.callback_context.triggered
+        and len(dash.callback_context.triggered) == 1
+        and dash.callback_context.triggered[0]["prop_id"] == "courses-table-filter-rows.data"
+    )
+
+    dff_full = data["dff"]
+    dff = _apply_grid_row_filter(dff_full, grid_rows)
     dff_prior = data["dff_prior"]
     dff_all_no_date = data["dff_all_no_date"]
     date_col = data["date_col"]
@@ -3422,65 +3477,74 @@ def _update_courses_kpis(*args):
     chart_children.append(dmc.Grid(gutter=16, align="stretch", children=row3a_charts))
 
     # ------------------------------------------------------------------
-    # Detail Table (AG Grid)
+    # Detail Table (AG Grid) — skip rebuild when only grid filter changed
     # ------------------------------------------------------------------
-    table_df = dff.copy()
+    if triggered_by_grid:
+        records = dash.no_update
+        column_defs = dash.no_update
+        chart_children = dash.no_update
+        frac_min_data = dash.no_update
+        frac_max_data = dash.no_update
+    else:
+        table_df = dff_full.copy()
 
-    # Computed status
-    table_df["_Status"] = "Active"
-    eff_comp_mask = _is_effectively_completed(table_df)
-    table_df.loc[eff_comp_mask, "_Status"] = "Completed"
+        # Computed status
+        table_df["_Status"] = "Active"
+        eff_comp_mask = _is_effectively_completed(table_df)
+        table_df.loc[eff_comp_mask, "_Status"] = "Completed"
 
-    # Format dates
-    for dc in ["LastTreatmentDate", "FirstTreatmentDate", "CourseStartDate"]:
-        if dc in table_df.columns:
-            table_df[dc] = table_df[dc].dt.strftime("%Y-%m-%d")
+        # Format dates
+        for dc in ["LastTreatmentDate", "FirstTreatmentDate", "CourseStartDate"]:
+            if dc in table_df.columns:
+                table_df[dc] = table_df[dc].dt.strftime("%Y-%m-%d")
 
-    # Deduplicate techniques
-    if "TreatmentTechniques" in table_df.columns:
-        table_df["TreatmentTechniques"] = table_df["TreatmentTechniques"].apply(
-            lambda v: ", ".join(dict.fromkeys(s.strip() for s in str(v).split(",") if s.strip()))
-            if pd.notna(v) else v
-        )
+        # Deduplicate techniques
+        if "TreatmentTechniques" in table_df.columns:
+            table_df["TreatmentTechniques"] = table_df["TreatmentTechniques"].apply(
+                lambda v: ", ".join(dict.fromkeys(s.strip() for s in str(v).split(",") if s.strip()))
+                if pd.notna(v) else v
+            )
 
-    # Deduplicate prescription sites
-    if "PrescriptionSites" in table_df.columns:
-        table_df["PrescriptionSites"] = table_df["PrescriptionSites"].apply(
-            lambda v: "; ".join(dict.fromkeys(s.strip() for s in str(v).split(";") if s.strip()))
-            if pd.notna(v) else v
-        )
+        # Deduplicate prescription sites
+        if "PrescriptionSites" in table_df.columns:
+            table_df["PrescriptionSites"] = table_df["PrescriptionSites"].apply(
+                lambda v: "; ".join(dict.fromkeys(s.strip() for s in str(v).split(";") if s.strip()))
+                if pd.notna(v) else v
+            )
 
-    table_cols = [
-        "LastTreatmentDate", "FirstTreatmentDate", "CourseStartDate",
-        "PatientFullName", "Department", "Machines",
-        "CourseId", "PlanNames", "_Status",
-        "TreatingPhysician", "ConsultPhysician",
-        "TreatmentTechniques",
-        "FractionsPrescribed", "FractionsDelivered", "TreatmentDurationDays",
-    ]
-    available_cols = [c for c in table_cols if c in table_df.columns]
-    table_df = table_df[available_cols]
+        table_cols = [
+            "LastTreatmentDate", "FirstTreatmentDate", "CourseStartDate",
+            "PatientFullName", "Department", "Machines",
+            "CourseId", "PlanNames", "_Status",
+            "TreatingPhysician", "ConsultPhysician",
+            "TreatmentTechniques",
+            "FractionsPrescribed", "FractionsDelivered", "TreatmentDurationDays",
+        ]
+        available_cols = [c for c in table_cols if c in table_df.columns]
+        table_df = table_df[available_cols]
+        table_df["_row_idx"] = dff_full.index
 
-    records = table_df.to_dict("records")
+        records = table_df.to_dict("records")
 
-    column_defs = [
-        {"field": "LastTreatmentDate", "headerName": "Last Tx", "minWidth": 120, "sort": "desc"},
-        {"field": "FirstTreatmentDate", "headerName": "First Tx", "minWidth": 120},
-        {"field": "CourseStartDate", "headerName": "Start Date", "minWidth": 120},
-        {"field": "PatientFullName", "headerName": "Patient", "width": 170},
-        {"field": "Department", "headerName": "Department", "width": 110},
-        {"field": "Machines", "headerName": "Machines", "width": 140},
-        {"field": "CourseId", "headerName": "Course ID", "width": 110},
-        {"field": "PlanNames", "headerName": "Plans", "width": 160},
-        {"field": "_Status", "headerName": "Status", "width": 100},
-        {"field": "TreatingPhysician", "headerName": "Treating MD", "width": 140},
-        {"field": "ConsultPhysician", "headerName": "Consult MD", "width": 140},
-        {"field": "TreatmentTechniques", "headerName": "Techniques", "width": 150},
-        {"field": "FractionsPrescribed", "headerName": "Fx Rx", "width": 80, "type": "numericColumn"},
-        {"field": "FractionsDelivered", "headerName": "Fx Del", "width": 80, "type": "numericColumn"},
-        {"field": "TreatmentDurationDays", "headerName": "Duration (d)", "width": 100, "type": "numericColumn"},
-    ]
-    column_defs = [cd for cd in column_defs if cd["field"] in available_cols]
+        column_defs = [
+            {"field": "LastTreatmentDate", "headerName": "Last Tx", "maxWidth": 110, "sort": "desc"},
+            {"field": "FirstTreatmentDate", "headerName": "First Tx", "maxWidth": 110},
+            {"field": "CourseStartDate", "headerName": "Start Date", "maxWidth": 110},
+            {"field": "PatientFullName", "headerName": "Patient", "width": 170},
+            {"field": "Department", "headerName": "Department", "width": 110},
+            {"field": "Machines", "headerName": "Machines", "width": 140},
+            {"field": "CourseId", "headerName": "Course ID", "width": 110},
+            {"field": "PlanNames", "headerName": "Plans", "width": 160},
+            {"field": "_Status", "headerName": "Status", "width": 100},
+            {"field": "TreatingPhysician", "headerName": "Treating MD", "width": 140},
+            {"field": "ConsultPhysician", "headerName": "Consult MD", "width": 140},
+            {"field": "TreatmentTechniques", "headerName": "Techniques", "width": 150},
+            {"field": "FractionsPrescribed", "headerName": "Fx Rx", "width": 80, "type": "numericColumn"},
+            {"field": "FractionsDelivered", "headerName": "Fx Del", "width": 80, "type": "numericColumn"},
+            {"field": "TreatmentDurationDays", "headerName": "Duration (d)", "width": 100, "type": "numericColumn"},
+        ]
+        column_defs = [cd for cd in column_defs if cd["field"] in available_cols]
+        column_defs.append({"field": "_row_idx", "hide": True})
 
     return (
         kpi_active, kpi_started, kpi_completed, kpi_median_frac, kpi_median_dur, kpi_multiplan,
@@ -3500,17 +3564,22 @@ def _update_courses_kpis(*args):
     *_COURSES_FILTER_INPUTS,
     Input("courses-volume-agg", "value"),
     Input("courses-volume-slice", "value"),
+    Input("courses-table-filter-rows", "data"),
     running=[(Output("courses-chart-volume-loading", "visible"), True, False)],
 )
 def _update_courses_volume(*args):
     ctx = _unpack_courses_filter_args(args)
-    agg = args[13]
-    volume_slice = args[14]
+    agg = args[14]
+    volume_slice = args[15]
+    grid_rows = args[16]
     data = _load_and_filter_courses(**ctx)
     if data is None:
         return None
+    dff = _apply_grid_row_filter(data["dff"], grid_rows)
+    if dff is None or dff.empty:
+        return None
     return _prepare_volume_data(
-        data["dff"], agg, volume_slice or "", date_col=data["date_col"],
+        dff, agg, volume_slice or "", date_col=data["date_col"],
         c2b=data["c2b"], start=data["start"], end=data["end"],
         date_mode=data["date_mode"], diag_mode=data.get("diag_mode", "primary"),
     )
@@ -3526,18 +3595,23 @@ def _update_courses_volume(*args):
     Input("courses-cumulative-mode", "value"),
     Input("courses-cumulative-period-type", "value"),
     Input("courses-cumulative-slice", "value"),
+    Input("courses-table-filter-rows", "data"),
     running=[(Output("courses-chart-cumulative-loading", "visible"), True, False)],
 )
 def _update_courses_cumulative(*args):
     ctx = _unpack_courses_filter_args(args)
-    cumul_mode = args[13]
-    cumul_period_type = args[14]
-    cumul_slice = args[15]
+    cumul_mode = args[14]
+    cumul_period_type = args[15]
+    cumul_slice = args[16]
+    grid_rows = args[17]
     data = _load_and_filter_courses(**ctx)
     if data is None:
         return None
+    df_all = _apply_grid_row_filter(data["df_all"], grid_rows)
+    if df_all is None or df_all.empty:
+        return None
     return _prepare_cumulative_data(
-        data["df_all"], data["start"], data["end"], data["date_preset"],
+        df_all, data["start"], data["end"], data["date_preset"],
         data["date_col"], data["departments"], data["physician"],
         data["diagnosis_cats"], data["status"], data["active_frac_range"],
         data["c2b"], inpatient=data["inpatient"],
@@ -3546,6 +3620,7 @@ def _update_courses_cumulative(*args):
         period_type=cumul_period_type or "calendar",
         slice_by=cumul_slice or "site",
         max_prior=10, diag_mode=data.get("diag_mode", "primary"),
+        physician_role=data.get("physician_role", "treating"),
     )
 
 
@@ -3554,11 +3629,14 @@ def _update_courses_cumulative(*args):
 # ---------------------------------------------------------------------------
 
 clientside_callback(
-    ClientsideFunction(namespace="census", function_name="smoothChartWithType"),
+    """function(rawData, smoothPct, chartType, stackVal, currentFig) {
+        return window.dash_clientside.census.smoothChartWithType(rawData, smoothPct, chartType, currentFig, stackVal);
+    }""",
     Output("courses-chart-volume", "figure"),
     Input("courses-store-volume", "data"),
     Input("courses-volume-settings-smooth", "value"),
     Input("courses-volume-settings-type", "value"),
+    Input("courses-volume-settings-stack", "value"),
     State("courses-chart-volume", "figure"),
 )
 
@@ -4008,6 +4086,7 @@ def _update_complexity_facets(data, agg, mode, smooth, chart_type):
         height=560,
         showlegend=False,
         margin=dict(l=48, r=16, t=32, b=40),
+        hovermode="x",
     )
     return fig
 
@@ -4139,5 +4218,71 @@ clientside_callback(
     }""",
     Output("courses-table-export", "n_clicks"),
     Input("courses-table-export", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+# Grid-filter → chart sync: extract _row_idx from virtualRowData, toggle badge.
+clientside_callback(
+    """function(virtual, rowData, prev) {
+        var nu = window.dash_clientside.no_update;
+        var base = {"position": "absolute", "top": -12, "right": 8, "zIndex": 10, "cursor": "pointer"};
+        var hidden = Object.assign({}, base, {"display": "none"});
+        var btnHide = {"display": "none"};
+        if (!rowData || !rowData.length || !virtual) {
+            return prev == null ? [nu, nu, nu] : [null, hidden, btnHide];
+        }
+        if (virtual.length >= rowData.length) {
+            return prev == null ? [nu, nu, nu] : [null, hidden, btnHide];
+        }
+        var idxs = [];
+        for (var i = 0; i < virtual.length; i++) {
+            if (virtual[i]._row_idx != null) idxs.push(virtual[i]._row_idx);
+        }
+        idxs.sort(function(a, b) { return a - b; });
+        if (!idxs.length) {
+            return prev == null ? [nu, nu, nu] : [null, hidden, btnHide];
+        }
+        if (prev && prev.length === idxs.length) {
+            var same = true;
+            for (var j = 0; j < idxs.length; j++) {
+                if (prev[j] !== idxs[j]) { same = false; break; }
+            }
+            if (same) return [nu, nu, nu];
+        }
+        return [idxs, base, {}];
+    }""",
+    Output("courses-table-filter-rows", "data"),
+    Output("courses-grid-filter-badge", "style"),
+    Output("courses-table-clear-filters", "style"),
+    Input("courses-detail-grid", "virtualRowData"),
+    State("courses-detail-grid", "rowData"),
+    State("courses-table-filter-rows", "data"),
+    prevent_initial_call=True,
+)
+
+
+# Clear Filters button — reset grid filterModel
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        return {};
+    }""",
+    Output("courses-detail-grid", "filterModel"),
+    Input("courses-table-clear-filters", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+# Badge click → scroll to the detail table
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        var el = document.getElementById('courses-detail-grid');
+        if (el) el.scrollIntoView({behavior: 'smooth', block: 'start'});
+        return window.dash_clientside.no_update;
+    }""",
+    Output("courses-grid-filter-badge", "n_clicks"),
+    Input("courses-grid-filter-badge", "n_clicks"),
     prevent_initial_call=True,
 )
