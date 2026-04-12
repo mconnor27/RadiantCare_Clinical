@@ -20,6 +20,8 @@ def detail_table(
     extra_controls: list | None = None,
     height: int | None = None,
     accordion_id: str | None = None,
+    column_size: str = "responsiveSizeToFit",
+    column_size_options: dict | None = None,
 ):
     """Return a collapsible Accordion containing an AG Grid detail table.
 
@@ -73,7 +75,8 @@ def detail_table(
                             columnDefs=[],
                             rowData=[],
                             defaultColDef=DEFAULT_COLUMN_DEFS,
-                            columnSize="responsiveSizeToFit",
+                            columnSize=column_size,
+                            **({"columnSizeOptions": column_size_options} if column_size_options else {}),
                             dashGridOptions={
                                 **DEFAULT_GRID_OPTIONS,
                                 "domLayout": "normal",

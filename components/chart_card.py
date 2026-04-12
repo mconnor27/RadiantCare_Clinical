@@ -14,6 +14,7 @@ def chart_card(
     chart_id: str,
     title: str,
     chart_types=None,
+    chart_type_default=None,
     show_smooth=True,
     smooth_min=0,
     smooth_max=40,
@@ -35,6 +36,7 @@ def chart_card(
     show_grouping=True,
     show_prior_periods=False,
     prior_periods_default=3,
+    extra_settings=None,
 ):
     """Build a chart card with standardized Paper, Graph, LoadingOverlay, and settings.
 
@@ -76,6 +78,7 @@ def chart_card(
             chart_settings_popover(
                 sid,
                 chart_types=chart_types,
+                chart_type_default=chart_type_default,
                 show_smooth=show_smooth,
                 smooth_min=smooth_min,
                 smooth_max=smooth_max,
@@ -85,6 +88,7 @@ def chart_card(
                 slider_label=slider_label,
                 show_prior_periods=show_prior_periods,
                 prior_periods_default=prior_periods_default,
+                extra_settings=extra_settings,
             )
         )
 

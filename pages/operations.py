@@ -1587,7 +1587,7 @@ def update_heatmap(*args):
             zmin=0, zmax=machine_zmax,
             text=text_machines,
             texttemplate="%{text}",
-            textfont={"size": 9},
+            textfont={"size": 9, "color": "white"},
             hovertemplate="<b>%{y}</b><br>%{customdata}: %{z:.0f} appts<extra></extra>",
             showscale=False,
         ), row=1, col=1)

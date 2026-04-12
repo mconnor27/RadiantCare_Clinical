@@ -934,7 +934,7 @@ window.dash_clientside.machinesDowntime = {
             } else if (isArea) {
                 trace.type = "scatter"; trace.mode = "lines";
                 trace.fill = "tozeroy"; trace.line = {color: "#7C2A83", width: 1.5};
-                trace.fillcolor = hexToRgba("#7C2A83", 0.3);
+                trace.fillcolor = hexToRgba("#7C2A83", 0.15);
             } else {
                 trace.type = "scatter"; trace.mode = "lines+markers";
                 trace.line = {color: "#7C2A83", width: 2}; trace.marker = {size: 4};

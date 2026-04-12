@@ -520,6 +520,7 @@ def load_tasks():
     df = _normalize_columns(df, {"PatientName": "PatientFullName"})
     df = _parse_dates(df, [
         "StartDateTime", "DueDateTime", "CompletedDateTime",
+        "PriorStepBaseline",
         "DrawCreationDateTime", "SimulationDateTime",
         "SimScheduledEndDateTime", "SimActualEndDateTime",
     ])

@@ -8,6 +8,7 @@ from dash import html
 def chart_settings_button(
     chart_id: str,
     chart_types: list[dict] | None = None,
+    chart_type_default: str | None = None,
     show_smooth: bool = True,
     smooth_min: float = 0,
     smooth_max: float = 50,
@@ -17,6 +18,7 @@ def chart_settings_button(
     slider_label: str = "Smoothing",
     show_prior_periods: bool = False,
     prior_periods_default: int = 3,
+    extra_settings: list | None = None,
 ):
     """Create a settings gear icon with small dropdown panel.
 
@@ -42,7 +44,7 @@ def chart_settings_button(
                         dmc.SegmentedControl(
                             id=f"{chart_id}-settings-type",
                             data=chart_types,
-                            value=chart_types[0]["value"],
+                            value=chart_type_default or chart_types[0]["value"],
                             size="xs",
                             fullWidth=True,
                         ),
@@ -124,6 +126,10 @@ def chart_settings_button(
                 ),
             )
         )
+
+    # Extra custom settings
+    if extra_settings:
+        panel_children.extend(extra_settings)
 
     # Export button
     panel_children.append(

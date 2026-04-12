@@ -1077,7 +1077,7 @@ def _update_age_dist(data, mode, group, bandwidth_pct):
                     x=x_grid, y=kde(x_grid),
                     mode="lines", fill="tozeroy",
                     line=dict(color=PRIMARY, width=2),
-                    fillcolor="rgba(124, 42, 131, 0.2)",
+                    fillcolor="rgba(124, 42, 131, 0.15)",
                     hovertemplate="Age: %{x:.0f}<br>Density: %{y:.4f}<extra></extra>",
                 ))
             except Exception:
@@ -1086,7 +1086,7 @@ def _update_age_dist(data, mode, group, bandwidth_pct):
                         x=data["kde_x"], y=data["kde_y"],
                         mode="lines", fill="tozeroy",
                         line=dict(color=PRIMARY, width=2),
-                        fillcolor="rgba(124, 42, 131, 0.2)",
+                        fillcolor="rgba(124, 42, 131, 0.15)",
                         hovertemplate="Age: %{x:.0f}<br>Density: %{y:.4f}<extra></extra>",
                     ))
         y_title = "Density"

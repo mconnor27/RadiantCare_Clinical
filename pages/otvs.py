@@ -15,7 +15,7 @@ from config.settings import (
     SEMANTIC_COLORS, CHART_COLORWAY,
     CHART_PAPER_HEIGHT_SM, PRIOR_PERIOD_COLORS,
 )
-from components.filter_bar import department_chips
+from components.filter_bar import department_chips, physician_short_name
 from components.kpi_card import kpi_card, kpi_placeholder
 from components.chart_card import chart_card, register_chart_callbacks
 from components.detail_table import detail_table
@@ -138,6 +138,13 @@ def _build_otvs_filter_bar():
                     ),
                     # Diagnosis dropdown
                     diagnosis_accordion(PAGE_ID),
+                    # Inpatient toggle
+                    dmc.Switch(
+                        id=f"{PAGE_ID}-filter-inpatient",
+                        label="Inpatient",
+                        size="xs",
+                        checked=False,
+                    ),
                     # Smoothing
                     dmc.Group(
                         children=[
@@ -250,7 +257,28 @@ layout = dmc.Stack(
             children=[
                 dmc.Title("OTVs", order=2, className="page-title",
                           style={"margin": 0, "textAlign": "center"}),
-                _build_otvs_filter_bar(),
+                html.Div(
+                    style={"position": "relative"},
+                    children=[
+                        _build_otvs_filter_bar(),
+                        html.Div(
+                            id=f"{PAGE_ID}-grid-filter-badge",
+                            children=dmc.Tooltip(
+                                label="Table column filters are active",
+                                position="left", withArrow=True, multiline=True, w=220,
+                                children=dmc.Badge(
+                                    "Table Filtered",
+                                    color="red", variant="filled", size="md",
+                                    leftSection=DashIconify(icon="mdi:filter", width=14),
+                                ),
+                            ),
+                            style={
+                                "position": "absolute", "top": -12, "right": 8,
+                                "zIndex": 10, "display": "none", "cursor": "pointer",
+                            },
+                        ),
+                    ],
+                ),
             ],
         ),
 
@@ -272,9 +300,9 @@ layout = dmc.Stack(
                     "Weekly Check Volume Trend",
                     settings_id=f"{PAGE_ID}-volume",
                     chart_types=[
+                        {"value": "bar", "label": "Bar"},
                         {"value": "line", "label": "Line"},
                         {"value": "area", "label": "Area"},
-                        {"value": "bar", "label": "Bar"},
                     ],
                     show_smooth=True,
                     smooth_max=12,
@@ -289,7 +317,7 @@ layout = dmc.Stack(
                                 {"value": "performing", "label": "Completing MD"},
                                 {"value": "dept", "label": "Site"},
                             ],
-                            value="",
+                            value="performing",
                             size="xs",
                         ),
                     ],
@@ -348,12 +376,11 @@ layout = dmc.Stack(
                         dmc.SegmentedControl(
                             id=f"{PAGE_ID}-cumulative-slice",
                             data=[
-                                {"value": "total", "label": "Total"},
                                 {"value": "treating", "label": "Treating MD"},
                                 {"value": "performing", "label": "Completing MD"},
                                 {"value": "dept", "label": "Site"},
                             ],
-                            value="total",
+                            value="treating",
                             size="xs",
                             style={"display": "none"},
                         ),
@@ -466,8 +493,23 @@ layout = dmc.Stack(
         ]),
 
         # Detail table — full width, collapsible
-        detail_table(f"{PAGE_ID}-detail-grid", title="Weekly Visit Detail",
-                     export_id=f"{PAGE_ID}-table-export"),
+        detail_table(
+            f"{PAGE_ID}-detail-grid",
+            title="Weekly Visit Detail",
+            export_id=f"{PAGE_ID}-table-export",
+            accordion_id=f"{PAGE_ID}-detail-accordion",
+            extra_controls=[
+                dmc.Button(
+                    "Clear Filters",
+                    id=f"{PAGE_ID}-table-clear-filters",
+                    size="compact-xs",
+                    variant="light",
+                    color="red",
+                    leftSection=DashIconify(icon="mdi:filter-remove", width=14),
+                    style={"display": "none"},
+                ),
+            ],
+        ),
 
         dcc.Interval(id=f"{PAGE_ID}-interval", interval=300_000, n_intervals=0),
 
@@ -624,21 +666,52 @@ register_diagnosis_callbacks(PAGE_ID)
     Output(f"{PAGE_ID}-filter-treating", "children"),
     Output(f"{PAGE_ID}-filter-performing", "children"),
     Input(f"{PAGE_ID}-interval", "n_intervals"),
+    Input(f"{PAGE_ID}-date-slider", "value"),
+    Input(f"{PAGE_ID}-filter-department", "value"),
+    Input(f"{PAGE_ID}-diag-store", "data"),
+    Input(f"{PAGE_ID}-diag-mode", "data"),
+    Input(f"{PAGE_ID}-filter-inpatient", "checked"),
 )
-def _populate_otv_physician_chips(_n):
-    from data.loader import load_weekly_visits
+def _populate_otv_physician_chips(_n, slider_val, departments, body_sites, diag_mode, inpatient_only):
+    from data.loader import load_weekly_visits, load_diagnosis
     try:
         df = load_weekly_visits()
     except Exception:
         return [], []
-    from components.filter_bar import physician_options, physician_short_name
+
+    # Filter to completed OTVs only
+    if "ActivityStatus" in df.columns:
+        df = df[df["ActivityStatus"].isin(["Completed", "Manually Completed"])]
+
+    if inpatient_only and "InPatientFlag" in df.columns:
+        df = df[df["InPatientFlag"] == "Yes"]
+
+    # Apply same dimension filters so MD lists reflect filtered data
+    if departments and "Department" in df.columns:
+        df = df[df["Department"].isin(departments)]
+
+    if slider_val and len(slider_val) == 2:
+        start, end = _get_date_range(slider_val)
+        date_col = "AppointmentDateTime"
+        if date_col in df.columns:
+            df = df[(df[date_col] >= start) & (df[date_col] <= end)]
+
+    if body_sites:
+        try:
+            diag_df = load_diagnosis()
+        except Exception:
+            diag_df = None
+        c2b = build_code_to_category(diag_df)
+        from utils.diagnosis_categories import filter_by_diagnosis
+        df = filter_by_diagnosis(df, body_sites, c2b, mode=diag_mode or "primary")
 
     def _chips(col):
         if col not in df.columns:
             return []
+        mds = sorted(df[col].dropna().unique())
         return [
-            dmc.Chip(physician_short_name(opt["label"]), value=opt["value"], size="xs", variant="filled")
-            for opt in physician_options(df[col])
+            dmc.Chip(physician_short_name(md), value=md, size="xs", variant="filled")
+            for md in mds
         ]
 
     return _chips("TreatingPhysician"), _chips("AppointmentPhysician")
@@ -698,7 +771,8 @@ def _trend(curr, prior, invert=False):
 
 
 def _load_and_filter_otvs(slider_val, departments, treating_md, performing_md,
-                           body_sites, diag_mode, date_preset):
+                           body_sites, diag_mode, date_preset,
+                           inpatient_only=False):
     """Load weekly visits data, apply filters. Returns dict or None."""
     from data.loader import load_weekly_visits, load_diagnosis
 
@@ -712,6 +786,14 @@ def _load_and_filter_otvs(slider_val, departments, treating_md, performing_md,
     date_col = "AppointmentDateTime"
     if date_col not in df.columns:
         return None
+
+    # Filter to completed OTVs only
+    if "ActivityStatus" in df.columns:
+        df = df[df["ActivityStatus"].isin(["Completed", "Manually Completed"])]
+
+    # Inpatient filter
+    if inpatient_only and "InPatientFlag" in df.columns:
+        df = df[df["InPatientFlag"] == "Yes"]
 
     # --- Dimension filters ---
     if departments and "Department" in df.columns:
@@ -767,17 +849,19 @@ _OTVS_FILTER_INPUTS = [
     Input(f"{PAGE_ID}-diag-store", "data"),
     Input(f"{PAGE_ID}-diag-mode", "data"),
     Input(f"{PAGE_ID}-filter-date-preset", "value"),
+    Input(f"{PAGE_ID}-filter-inpatient", "checked"),
 ]
 
 
 def _unpack_otvs_filter_args(args):
-    """Unpack the 8 common filter args into kwargs for _load_and_filter_otvs."""
+    """Unpack the 9 common filter args into kwargs for _load_and_filter_otvs."""
     (_n, slider_val, departments, treating_md, performing_md,
-     body_sites, diag_mode, date_preset) = args[:8]
+     body_sites, diag_mode, date_preset, inpatient_only) = args[:9]
     return dict(
         slider_val=slider_val, departments=departments,
         treating_md=treating_md, performing_md=performing_md,
         body_sites=body_sites, diag_mode=diag_mode, date_preset=date_preset,
+        inpatient_only=inpatient_only,
     )
 
 
@@ -1020,7 +1104,7 @@ def _update_otvs_kpis(*args):
 )
 def _update_otvs_volume(*args):
     ctx = _unpack_otvs_filter_args(args)
-    agg, volume_slice = args[8], args[9]
+    agg, volume_slice = args[9], args[10]
     data = _load_and_filter_otvs(**ctx)
     if data is None:
         return None
@@ -1041,7 +1125,7 @@ def _update_otvs_volume(*args):
 )
 def _update_otvs_cumulative(*args):
     ctx = _unpack_otvs_filter_args(args)
-    cumul_mode, cumul_period_type, cumul_slice = args[8], args[9], args[10]
+    cumul_mode, cumul_period_type, cumul_slice = args[9], args[10], args[11]
     data = _load_and_filter_otvs(**ctx)
     if data is None:
         return None
@@ -1050,7 +1134,7 @@ def _update_otvs_cumulative(*args):
         mode=cumul_mode or "prior",
         period_type=cumul_period_type or "calendar",
         slice_by=cumul_slice or "dept",
-        max_prior=5,
+        max_prior=10,
     )
 
 
@@ -1084,7 +1168,7 @@ def _update_otvs_coverage(*args):
 )
 def _update_otvs_billing(*args):
     ctx = _unpack_otvs_filter_args(args)
-    billing_slice, billing_mode = args[8], args[9]
+    billing_slice, billing_mode = args[9], args[10]
     data = _load_and_filter_otvs(**ctx)
     if data is None:
         return empty_figure()
@@ -1096,22 +1180,26 @@ def _update_otvs_billing(*args):
 # ---------------------------------------------------------------------------
 
 clientside_callback(
-    ClientsideFunction(namespace="census", function_name="smoothChartWithType"),
+    """function(rawData, smoothPct, chartType, stackVal, currentFig) {
+        return window.dash_clientside.census.smoothChartWithType(rawData, smoothPct, chartType, currentFig, stackVal);
+    }""",
     Output(f"{PAGE_ID}-chart-volume", "figure"),
     Input(f"{PAGE_ID}-store-volume", "data"),
     Input(f"{PAGE_ID}-volume-settings-smooth", "value"),
     Input(f"{PAGE_ID}-volume-settings-type", "value"),
+    Input(f"{PAGE_ID}-volume-settings-stack", "value"),
     State(f"{PAGE_ID}-chart-volume", "figure"),
 )
 
 clientside_callback(
-    """function(rawData, smoothPct, chartType, maxPrior, currentFig) {
-        return window.dash_clientside.cumulative.renderCumulative(rawData, smoothPct, chartType, currentFig, null, maxPrior);
+    """function(rawData, smoothPct, chartType, stackVal, maxPrior, currentFig) {
+        return window.dash_clientside.cumulative.renderCumulative(rawData, smoothPct, chartType, currentFig, stackVal, maxPrior);
     }""",
     Output(f"{PAGE_ID}-chart-cumulative", "figure"),
     Input(f"{PAGE_ID}-store-cumulative", "data"),
     Input(f"{PAGE_ID}-cumulative-settings-smooth", "value"),
     Input(f"{PAGE_ID}-cumulative-settings-type", "value"),
+    Input(f"{PAGE_ID}-cumulative-settings-stack", "value"),
     Input(f"{PAGE_ID}-cumulative-settings-prior-periods", "value"),
     State(f"{PAGE_ID}-chart-cumulative", "figure"),
 )
@@ -1130,10 +1218,52 @@ clientside_callback(
     Input(f"{PAGE_ID}-cumulative-mode", "value"),
 )
 
+# Disable Calendar when period > 1 year; cap prior-periods slider to available data
+clientside_callback(
+    """function(storeData, currentPtValue) {
+        return window.dash_clientside.cumulative.updatePriorControls(storeData, currentPtValue);
+    }""",
+    Output(f"{PAGE_ID}-cumulative-period-type", "data"),
+    Output(f"{PAGE_ID}-cumulative-period-type", "value", allow_duplicate=True),
+    Output(f"{PAGE_ID}-cumulative-settings-prior-periods", "max"),
+    Output(f"{PAGE_ID}-cumulative-settings-prior-periods", "marks"),
+    Input(f"{PAGE_ID}-store-cumulative", "data"),
+    State(f"{PAGE_ID}-cumulative-period-type", "value"),
+    prevent_initial_call=True,
+)
+
+# Hide "Total" slice option in line/area mode (only useful for bar)
+_OTVS_CUMUL_SLICE_ALL = [
+    {"value": "total", "label": "Total"},
+    {"value": "treating", "label": "Treating MD"},
+    {"value": "performing", "label": "Completing MD"},
+    {"value": "dept", "label": "Site"},
+]
+_OTVS_CUMUL_SLICE_NO_TOTAL = [o for o in _OTVS_CUMUL_SLICE_ALL if o["value"] != "total"]
+
+clientside_callback(
+    """function(chartType, sliceVal) {
+        var all = %s;
+        var noTotal = %s;
+        if (chartType === "bar") {
+            return [all, window.dash_clientside.no_update];
+        }
+        var newVal = (sliceVal === "total") ? "treating" : window.dash_clientside.no_update;
+        return [noTotal, newVal];
+    }""" % (str(_OTVS_CUMUL_SLICE_ALL).replace("'", '"'), str(_OTVS_CUMUL_SLICE_NO_TOTAL).replace("'", '"')),
+    Output(f"{PAGE_ID}-cumulative-slice", "data"),
+    Output(f"{PAGE_ID}-cumulative-slice", "value", allow_duplicate=True),
+    Input(f"{PAGE_ID}-cumulative-settings-type", "value"),
+    State(f"{PAGE_ID}-cumulative-slice", "value"),
+    prevent_initial_call=True,
+)
+
 # Register chart_card settings callbacks
 register_chart_callbacks([
     (f"{PAGE_ID}-volume", f"{PAGE_ID}-chart-volume"),
-    (f"{PAGE_ID}-cumulative", f"{PAGE_ID}-chart-cumulative"),
+    {"sid": f"{PAGE_ID}-cumulative", "gid": f"{PAGE_ID}-chart-cumulative", "show_grouping": False},
+    (f"{PAGE_ID}-coverage", f"{PAGE_ID}-chart-coverage"),
+    (f"{PAGE_ID}-billing", f"{PAGE_ID}-chart-billing"),
 ])
 
 # Slice-by dim styling
@@ -1141,7 +1271,7 @@ _SLICE_CLASS_JS = """function(val) {
     return (val && val !== "total") ? "slice-group-active" : "slice-total-active";
 }"""
 
-for _sid in [f"{PAGE_ID}-volume-slice", f"{PAGE_ID}-cumulative-slice"]:
+for _sid in [f"{PAGE_ID}-volume-slice", f"{PAGE_ID}-cumulative-slice", f"{PAGE_ID}-billing-slice"]:
     clientside_callback(
         _SLICE_CLASS_JS,
         Output(_sid, "className"),
@@ -1156,15 +1286,30 @@ _HIDE_STACK_JS = """function(sliceVal, chartType) {
 
 for _slice_id, _settings_id in [
     (f"{PAGE_ID}-volume-slice", f"{PAGE_ID}-volume"),
-    (f"{PAGE_ID}-cumulative-slice", f"{PAGE_ID}-cumulative"),
 ]:
     clientside_callback(
         _HIDE_STACK_JS,
         Output(f"{_settings_id}-settings-stack-wrap", "style", allow_duplicate=True),
         Input(_slice_id, "value"),
         Input(f"{_settings_id}-settings-type", "value"),
-        prevent_initial_call=True,
+        prevent_initial_call="initial_duplicate",
     )
+
+# Cumulative chart: also hide grouping in Prior Periods mode (single dimension)
+clientside_callback(
+    """function(mode, sliceVal, chartType) {
+        var single = !sliceVal || sliceVal === "total" || sliceVal === "";
+        if (single) return {"display": "none"};
+        if (chartType === "bar") return {};
+        var isPrior = mode === "prior";
+        var noStack = chartType === "line";
+        return (isPrior || noStack) ? {"display": "none"} : {};
+    }""",
+    Output(f"{PAGE_ID}-cumulative-settings-stack-wrap", "style"),
+    Input(f"{PAGE_ID}-cumulative-mode", "value"),
+    Input(f"{PAGE_ID}-cumulative-slice", "value"),
+    Input(f"{PAGE_ID}-cumulative-settings-type", "value"),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1251,7 +1396,7 @@ def _prepare_volume_data(df, agg, slice_by=""):
                 subset = df[df[col] == phys]
                 counts = subset.groupby("period").size().reindex(all_periods, fill_value=0)
                 series.append({
-                    "name": phys.split(",")[0] if "," in phys else phys,
+                    "name": physician_short_name(phys),
                     "values": _trim_edges(counts.tolist()),
                     "color": CHART_COLORWAY[i % len(CHART_COLORWAY)],
                 })
@@ -1264,7 +1409,7 @@ def _prepare_volume_data(df, agg, slice_by=""):
                 subset = df[df[col] == phys]
                 counts = subset.groupby("period").size().reindex(all_periods, fill_value=0)
                 series.append({
-                    "name": phys.split(",")[0] if "," in phys else phys,
+                    "name": physician_short_name(phys),
                     "values": _trim_edges(counts.tolist()),
                     "color": CHART_COLORWAY[i % len(CHART_COLORWAY)],
                 })
@@ -1339,7 +1484,7 @@ def _build_day_index_ticks(start_norm, n_days, max_ticks=12):
 
 def _prepare_cumulative_data(df_all, start, end, date_preset,
                               mode="prior", period_type="calendar",
-                              slice_by="dept", max_prior=5):
+                              slice_by="dept", max_prior=10):
     """Prepare cumulative volume data for overlay chart."""
     date_col = "AppointmentDateTime"
     if df_all.empty or date_col not in df_all.columns:
@@ -1352,6 +1497,10 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
     period_days = (end - start).days + 1
     if period_days < 2:
         return None
+
+    # Force rolling when period exceeds 1 year (calendar shifts would overlap)
+    if period_days > 365 and period_type == "calendar":
+        period_type = "rolling"
 
     dff_all = df_all.copy()
     if dff_all.empty:
@@ -1378,23 +1527,23 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             return sub.groupby("Department").size().to_dict()
         elif sb == "treating" and "TreatingPhysician" in sub.columns:
             counts = sub.groupby("TreatingPhysician").size()
-            return {(k.split(",")[0] if "," in k else k): v for k, v in counts.items()}
+            return {physician_short_name(k): v for k, v in counts.items()}
         elif sb == "performing" and "AppointmentPhysician" in sub.columns:
             counts = sub.groupby("AppointmentPhysician").size()
-            return {(k.split(",")[0] if "," in k else k): v for k, v in counts.items()}
+            return {physician_short_name(k): v for k, v in counts.items()}
         return {}
 
     def _trimmed_cumsum(daily_counts):
         cumvals = daily_counts.cumsum().tolist()
         raw = daily_counts.tolist()
         first_idx = next((i for i, v in enumerate(raw) if v > 0), None)
-        last_idx = next((i for i in range(len(raw) - 1, -1, -1) if raw[i] > 0), None)
         if first_idx is None:
             return [None] * len(cumvals)
         for i in range(first_idx):
             cumvals[i] = None
+        last_idx = next((i for i in range(len(raw) - 1, -1, -1) if raw[i] > 0), first_idx)
         for i in range(last_idx + 1, len(cumvals)):
-            cumvals[i] = None
+            cumvals[i] = cumvals[last_idx]
         return cumvals
 
     n_days = period_days
@@ -1440,6 +1589,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             windows.append((_period_label(p_start, p_end), p_start, p_end))
 
     prior = []
+    last_prior_start = None
     for pi, (label, p_start, p_end) in enumerate(windows):
         vals = _cumulative_for_window(dff_all, p_start, p_end)
         if vals and any(v > 0 for v in vals):
@@ -1448,6 +1598,16 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             elif len(vals) > n_days:
                 vals = vals[:n_days]
             prior.append({"label": label, "values": vals, "color": PRIOR_PERIOD_COLORS[min(pi, len(PRIOR_PERIOD_COLORS) - 1)]})
+            last_prior_start = p_start
+
+    # Metadata for client-side control updates
+    has_partial = (last_prior_start is not None
+                   and last_prior_start.normalize() < data_min.normalize())
+    _prior_meta = {
+        "periodDays": period_days,
+        "maxAvailablePriors": len(prior),
+        "hasPartialPrior": has_partial,
+    }
 
     current_label = _period_label(start, end)
 
@@ -1501,6 +1661,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             "sliceBreakdown": slice_breakdown,
             "height": 350,
             "yTitle": "Cumulative Weekly Checks",
+            **_prior_meta,
         }
 
     # --- Slice mode ---
@@ -1528,7 +1689,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             daily = sub.groupby(sub[date_col].dt.normalize()).size()
             daily = daily.reindex(dates_range, fill_value=0)
             series.append({
-                "name": phys.split(",")[0] if "," in phys else phys,
+                "name": physician_short_name(phys),
                 "values": _trimmed_cumsum(daily),
                 "color": CHART_COLORWAY[i % len(CHART_COLORWAY)],
             })
@@ -1539,7 +1700,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             daily = sub.groupby(sub[date_col].dt.normalize()).size()
             daily = daily.reindex(dates_range, fill_value=0)
             series.append({
-                "name": phys.split(",")[0] if "," in phys else phys,
+                "name": physician_short_name(phys),
                 "values": _trimmed_cumsum(daily),
                 "color": CHART_COLORWAY[i % len(CHART_COLORWAY)],
             })
@@ -1553,6 +1714,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
         "sliceBreakdown": slice_breakdown,
         "height": 350,
         "yTitle": "Cumulative Weekly Checks",
+        **_prior_meta,
     }
 
 
@@ -1585,8 +1747,8 @@ def _build_coverage_chart(df):
 
     coverage = coverage.loc[rows, cols]
 
-    short_rows = [r.split(",")[0] for r in rows]
-    short_cols = [c.split(",")[0] for c in cols]
+    short_rows = [physician_short_name(r) for r in rows]
+    short_cols = [physician_short_name(c) for c in cols]
 
     fig = go.Figure(go.Heatmap(
         x=short_cols,
@@ -1741,7 +1903,7 @@ def _build_billing_mix(dff, slice_by="", mode="count"):
                 denom = len(dff[dff[slice_col] == grp]) if slice_col in dff.columns else len(dff)
                 vals = [round(v / denom * 100, 1) if denom else 0.0 for v in vals]
 
-            grp_name = grp.split(",")[0] if "," in str(grp) else str(grp)
+            grp_name = physician_short_name(grp) if slice_col in ("TreatingPhysician", "AppointmentPhysician") else (grp.split(",")[0] if "," in str(grp) else str(grp))
             hover = [f"<b>{d}</b><br>{grp_name}: {v:.1f}%<extra></extra>" if mode == "pct"
                      else f"<b>{d}</b><br>{grp_name}: {v:,}<extra></extra>"
                      for d, v in zip(descs, vals)]
@@ -1772,31 +1934,48 @@ def _build_billing_mix(dff, slice_by="", mode="count"):
 
 def _build_detail_table(df):
     """Build AG Grid table data and column definitions."""
+    from data.loader import load_diagnosis
+
+    table_df = df.copy()
+
+    # Add Diagnosis column from DiagnosisCodes
+    if "DiagnosisCodes" in table_df.columns:
+        try:
+            diag_df = load_diagnosis()
+        except Exception:
+            diag_df = None
+        c2b = build_code_to_category(diag_df)
+        table_df["Diagnosis"] = table_df["DiagnosisCodes"].apply(
+            lambda x: primary_category(x, c2b) if pd.notna(x) else None
+        )
+
     display_cols = [
-        "AppointmentDateTime", "Department", "TreatingPhysician",
-        "AppointmentPhysician", "ActivityName", "PatientFullName",
-        "ProcedureCodes", "DurationMinutes",
+        "AppointmentDateTime", "PatientFullName", "ActivityName",
+        "Department", "AppointmentPhysician", "TreatingPhysician",
+        "InPatientFlag", "Diagnosis", "ProcedureCodes",
     ]
-    available_cols = [c for c in display_cols if c in df.columns]
+    available_cols = [c for c in display_cols if c in table_df.columns]
     if not available_cols:
         return [], []
 
-    table_df = df[available_cols].head(200).copy()
+    table_df = table_df.sort_values("AppointmentDateTime", ascending=False) if "AppointmentDateTime" in table_df.columns else table_df
+    table_df = table_df[available_cols].head(200).copy()
 
     for c in table_df.select_dtypes(include=["datetime64"]).columns:
-        table_df[c] = table_df[c].dt.strftime("%m/%d/%Y %I:%M %p")
+        table_df[c] = table_df[c].dt.strftime("%m/%d/%Y")
 
     table_df = sanitize_for_grid(table_df)
 
     col_labels = {
         "AppointmentDateTime": "Date",
-        "Department": "Department",
-        "TreatingPhysician": "Treating MD",
-        "AppointmentPhysician": "Performing MD",
-        "ActivityName": "Activity",
         "PatientFullName": "Patient",
+        "ActivityName": "Activity",
+        "Department": "Dept",
+        "AppointmentPhysician": "Completing MD",
+        "TreatingPhysician": "Treating MD",
+        "InPatientFlag": "Inpatient",
+        "Diagnosis": "Diagnosis",
         "ProcedureCodes": "CPT",
-        "DurationMinutes": "Duration (min)",
     }
 
     col_defs = [
@@ -1806,3 +1985,64 @@ def _build_detail_table(df):
     ]
 
     return table_df.to_dict("records"), col_defs
+
+
+# ---------------------------------------------------------------------------
+# Table filter badge, clear filters, CSV export
+# ---------------------------------------------------------------------------
+
+# Badge + clear button visibility — show when ag-grid column filters are active
+clientside_callback(
+    """function(virtual, rowData) {
+        var base = {"position": "absolute", "top": -12, "right": 8, "zIndex": 10, "cursor": "pointer"};
+        var hidden = Object.assign({}, base, {"display": "none"});
+        var btnHide = {"display": "none"};
+        if (!rowData || !rowData.length || !virtual) {
+            return [hidden, btnHide];
+        }
+        if (virtual.length >= rowData.length) {
+            return [hidden, btnHide];
+        }
+        return [base, {}];
+    }""",
+    Output(f"{PAGE_ID}-grid-filter-badge", "style"),
+    Output(f"{PAGE_ID}-table-clear-filters", "style"),
+    Input(f"{PAGE_ID}-detail-grid", "virtualRowData"),
+    State(f"{PAGE_ID}-detail-grid", "rowData"),
+)
+
+# Clear filters button → reset filterModel
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        return {};
+    }""",
+    Output(f"{PAGE_ID}-detail-grid", "filterModel"),
+    Input(f"{PAGE_ID}-table-clear-filters", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+# Badge click → scroll to table
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        var el = document.getElementById('%s-detail-accordion');
+        if (el) el.scrollIntoView({behavior: 'smooth', block: 'start'});
+        return window.dash_clientside.no_update;
+    }""" % PAGE_ID,
+    Output(f"{PAGE_ID}-grid-filter-badge", "n_clicks"),
+    Input(f"{PAGE_ID}-grid-filter-badge", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+# CSV export
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        gridExportCsv('%s-detail-grid', 'otv_detail.csv');
+        return window.dash_clientside.no_update;
+    }""" % PAGE_ID,
+    Output(f"{PAGE_ID}-table-export", "n_clicks"),
+    Input(f"{PAGE_ID}-table-export", "n_clicks"),
+    prevent_initial_call=True,
+)

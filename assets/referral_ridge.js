@@ -67,9 +67,9 @@ window.dash_clientside.referralRidge = {
             // Build hover data
             var hoverDates = [];
             for (var j = 0; j < nDates; j++) {
-                var d = new Date(dates[j]);
+                var p = parseIsoDate(dates[j]);
                 var monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-                hoverDates.push(monthNames[d.getMonth()] + " " + d.getFullYear());
+                hoverDates.push(p.valid ? monthNames[p.month] + " " + p.year : dates[j]);
             }
 
             var customdata = [];
@@ -140,10 +140,10 @@ window.dash_clientside.referralRidge = {
         var tickLabels = [];
         for (var j = 0; j < nDates; j += step) {
             tickVals.push(j);
-            var d = new Date(dates[j]);
+            var p = parseIsoDate(dates[j]);
             var monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-            var yr = d.getFullYear() % 100;
-            tickLabels.push(monthNames[d.getMonth()] + " '" + (yr < 10 ? "0" + yr : yr));
+            var yr = p.valid ? p.year % 100 : 0;
+            tickLabels.push(p.valid ? monthNames[p.month] + " '" + (yr < 10 ? "0" + yr : yr) : dates[j]);
         }
 
         // Y-axis ticks

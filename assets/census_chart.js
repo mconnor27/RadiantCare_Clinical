@@ -24,6 +24,23 @@ window.dash_clientside.census = {
      */
     smoothChartWithType: function(rawData, smoothPct, chartType, currentFig, stackOverride) {
         if (!rawData || !rawData.series) {
+            if (rawData && rawData.emptyMessage) {
+                return {
+                    data: [],
+                    layout: Object.assign({}, window._defaultLayout || {}, {
+                        height: rawData.height || 320,
+                        xaxis: {visible: false},
+                        yaxis: {visible: false},
+                        annotations: [{
+                            text: rawData.emptyMessage,
+                            xref: "paper", yref: "paper",
+                            x: 0.5, y: 0.5,
+                            showarrow: false,
+                            font: {size: 14, color: "#9CA3AF"}
+                        }]
+                    })
+                };
+            }
             return window.dash_clientside.no_update;
         }
 
@@ -444,8 +461,10 @@ window.dash_clientside.census = {
             }
         };
 
-        // Suffix for y-axis on percentage charts
-        if (!stacked && rawData.yTitle && rawData.yTitle.indexOf('%') >= 0) {
+        // Suffix for y-axis on percentage charts or explicit yTickSuffix
+        if (rawData.yTickSuffix) {
+            layout.yaxis.ticksuffix = rawData.yTickSuffix;
+        } else if (!stacked && rawData.yTitle && rawData.yTitle.indexOf('%') >= 0) {
             layout.yaxis.ticksuffix = '%';
         }
 
@@ -585,9 +604,9 @@ window.dash_clientside.census = {
         }
 
         if (days > 0) {
-            startDateObj = new Date(rawData.dates[rawData.dates.length - 1].split('T')[0]);
-            startDateObj.setDate(startDateObj.getDate() - days);
-            startDate = startDateObj.toISOString().split('T')[0];
+            var _lp = parseIsoDate(rawData.dates[rawData.dates.length - 1]);
+            startDateObj = _lp.valid ? new Date(_lp.year, _lp.month, _lp.day - days) : new Date();
+            startDate = localDateToIso(startDateObj);
         }
 
         // Compute y-axis max from visible data only (using rawData for all chart types)
@@ -1044,9 +1063,9 @@ window.dash_clientside.efficiency = {
 
         for (var di = 0; di < dates.length; di++) {
             var dateStr = "";
-            var d = new Date(dates[di]);
-            if (!isNaN(d)) {
-                dateStr = monthNames[d.getMonth()] + " " + d.getDate() + ", " + d.getFullYear();
+            var _dp = parseIsoDate(dates[di]);
+            if (_dp.valid) {
+                dateStr = monthNames[_dp.month] + " " + _dp.day + ", " + _dp.year;
             }
             var parts = ["<b>" + dateStr + "</b>"];
             var maxVal = 0;
@@ -1262,12 +1281,32 @@ window.dash_clientside.cumulative = {
                 var periods = bd.periods || [];
                 var slices = bd.slices || [];
                 // Trim bar breakdown to maxPrior + 1 (current + N priors)
+                // Periods are oldest-first, so keep the LAST maxBars entries (most recent)
                 var maxBars = (maxPrior && maxPrior > 0) ? maxPrior + 1 : periods.length;
                 if (periods.length > maxBars) {
-                    periods = periods.slice(0, maxBars);
+                    var trimStart = periods.length - maxBars;
+                    periods = periods.slice(trimStart);
                     slices = slices.map(function(s) {
-                        return Object.assign({}, s, {values: s.values.slice(0, maxBars)});
+                        return Object.assign({}, s, {values: s.values.slice(trimStart)});
                     });
+                }
+                // Remove slices that have no data in the displayed periods
+                slices = slices.filter(function(s) {
+                    return s.values.some(function(v) { return v > 0; });
+                });
+                // Reassign colors from colorway based on visible slices only,
+                // so we avoid duplicate colors when the original indices had gaps.
+                // Preserve department colors (assigned by name, not index).
+                var DEPT_COLORS = {"Lacey": "#2196F3", "Centralia": "#F44336", "Aberdeen": "#4CAF50"};
+                var CW = ["#7C2A83", "#2196F3", "#F44336", "#4CAF50", "#FF9800", "#00BCD4", "#9C27B0", "#795548"];
+                var cwIdx = 0;
+                for (var ci = 0; ci < slices.length; ci++) {
+                    if (DEPT_COLORS[slices[ci].name]) {
+                        slices[ci].color = DEPT_COLORS[slices[ci].name];
+                    } else {
+                        slices[ci].color = CW[cwIdx % CW.length];
+                        cwIdx++;
+                    }
                 }
                 var barIndices = periods.map(function(_, i) { return i; });
 
@@ -1312,23 +1351,32 @@ window.dash_clientside.cumulative = {
                 }
 
                 // Dynamic y-range + annotations for totals on top
+                var isGrouped = stackVal === "grouped";
                 var yMaxBar = 0;
                 var barAnnotations = [];
                 for (var pi = 0; pi < periods.length; pi++) {
                     var colTotal = barTotalYs[pi] || 0;
-                    if (colTotal > yMaxBar) yMaxBar = colTotal;
-                    barAnnotations.push({
-                        x: pi, y: colTotal,
-                        text: "<b>" + colTotal.toLocaleString() + "</b>",
-                        showarrow: false, yshift: 8,
-                        font: {size: 11, color: "#374151", family: "Inter, system-ui, sans-serif"}
-                    });
+                    if (isGrouped) {
+                        // In grouped mode, y-max is the tallest individual slice
+                        for (var gs = 0; gs < slices.length; gs++) {
+                            var sv = (slices[gs].values[pi] || 0);
+                            if (sv > yMaxBar) yMaxBar = sv;
+                        }
+                    } else {
+                        if (colTotal > yMaxBar) yMaxBar = colTotal;
+                        barAnnotations.push({
+                            x: pi, y: colTotal,
+                            text: "<b>" + colTotal.toLocaleString() + "</b>",
+                            showarrow: false, yshift: 8,
+                            font: {size: 11, color: "#374151", family: "Inter, system-ui, sans-serif"}
+                        });
+                    }
                 }
 
                 return {
                     data: traces,
                     layout: {
-                        barmode: "stack",
+                        barmode: isGrouped ? "group" : "stack",
                         xaxis: {
                             showgrid: false, showspikes: false,
                             type: "linear",
@@ -1431,11 +1479,11 @@ window.dash_clientside.cumulative = {
             var summaryYL = [];
             var summaryHL = [];
             var monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-            var startDateMs = rawData.startDate ? new Date(rawData.startDate).getTime() : null;
+            var _sp = rawData.startDate ? parseIsoDate(rawData.startDate) : null;
             for (var di = 0; di < dayIndices.length; di++) {
                 var dateLabel = "";
-                if (startDateMs) {
-                    var dd = new Date(startDateMs + di * 86400000);
+                if (_sp && _sp.valid) {
+                    var dd = new Date(_sp.year, _sp.month, _sp.day + di);
                     dateLabel = monthNames[dd.getMonth()] + " " + dd.getDate();
                 }
                 var parts = ["<b>" + (dateLabel || "Day " + di) + "</b>"];
@@ -1610,23 +1658,31 @@ window.dash_clientside.cumulative = {
                         showlegend: false
                     });
                 }
+                var isGrouped2 = stackVal === "grouped";
                 var yMaxBar2 = 0;
                 var barAnnotations2 = [];
                 for (var pi2 = 0; pi2 < periods.length; pi2++) {
                     var ct = barTotalYs2[pi2] || 0;
-                    if (ct > yMaxBar2) yMaxBar2 = ct;
-                    barAnnotations2.push({
-                        x: pi2, y: ct,
-                        text: "<b>" + ct.toLocaleString() + "</b>",
-                        showarrow: false, yshift: 8,
-                        font: {size: 11, color: "#374151", family: "Inter, system-ui, sans-serif"}
-                    });
+                    if (isGrouped2) {
+                        for (var gs2 = 0; gs2 < slices.length; gs2++) {
+                            var sv2 = (slices[gs2].values[pi2] || 0);
+                            if (sv2 > yMaxBar2) yMaxBar2 = sv2;
+                        }
+                    } else {
+                        if (ct > yMaxBar2) yMaxBar2 = ct;
+                        barAnnotations2.push({
+                            x: pi2, y: ct,
+                            text: "<b>" + ct.toLocaleString() + "</b>",
+                            showarrow: false, yshift: 8,
+                            font: {size: 11, color: "#374151", family: "Inter, system-ui, sans-serif"}
+                        });
+                    }
                 }
 
                 return {
                     data: traces,
                     layout: {
-                        barmode: "stack",
+                        barmode: isGrouped2 ? "group" : "stack",
                         xaxis: {
                             showgrid: false, showspikes: false,
                             type: "linear",
@@ -1682,8 +1738,8 @@ window.dash_clientside.cumulative = {
             // Summary hover trace
             var sSummaryX = [], sSummaryY = [], sSummaryH = [];
             for (var di = 0; di < sliceDates.length; di++) {
-                var d2 = new Date(sliceDates[di]);
-                var dlabel = !isNaN(d2) ? monthNames2[d2.getMonth()] + " " + d2.getDate() + ", " + d2.getFullYear() : sliceDates[di];
+                var _p2 = parseIsoDate(sliceDates[di]);
+                var dlabel = _p2.valid ? monthNames2[_p2.month] + " " + _p2.day + ", " + _p2.year : sliceDates[di];
                 var pts = ["<b>" + dlabel + "</b>"];
                 var ptMax2 = 0, total2 = 0;
                 for (var sn = 0; sn < sliceSeries.length; sn++) {
@@ -1716,8 +1772,29 @@ window.dash_clientside.cumulative = {
                 if (sSummaryY[yi2] > yMaxSlice) yMaxSlice = sSummaryY[yi2];
             }
 
+            // Smart x-axis tick spacing based on date range
+            var nDays = sliceDates.length;
+            var tickFormat, dtick;
+            if (nDays <= 60) {
+                dtick = 7 * 86400000;  // weekly
+                tickFormat = "%b %d";
+            } else if (nDays <= 180) {
+                dtick = 14 * 86400000;  // biweekly
+                tickFormat = "%b %d";
+            } else if (nDays <= 730) {
+                dtick = "M1";  // monthly
+                tickFormat = "%b '%y";
+            } else if (nDays <= 1825) {
+                dtick = "M3";  // quarterly
+                tickFormat = "%b '%y";
+            } else {
+                dtick = "M12";  // yearly
+                tickFormat = "%Y";
+            }
             var effXAxis = {
-                showgrid: false, showspikes: false, nticks: 12, automargin: true,
+                type: "date", showgrid: false, showspikes: false,
+                dtick: dtick, tickformat: tickFormat,
+                tickangle: 0, automargin: true,
                 // Clear bar-mode properties (Plotly.react merges layouts)
                 categoryorder: null, categoryarray: null,
                 tickvals: null, ticktext: null
@@ -1745,5 +1822,47 @@ window.dash_clientside.cumulative = {
                 }
             };
         }
+    },
+
+    /**
+     * Update prior-period controls based on metadata in the cumulative store.
+     *
+     * Outputs (in order):
+     *   0 — period-type SegmentedControl "data" (disable Calendar when period > 365d)
+     *   1 — period-type SegmentedControl "value" (force "rolling" when Calendar disabled)
+     *   2 — prior-periods Slider "max"
+     *   3 — prior-periods Slider "marks"
+     *
+     * @param {Object} storeData  — cumulative store (must include periodDays, maxAvailablePriors)
+     * @param {string} currentPtValue — current period-type SegmentedControl value
+     */
+    updatePriorControls: function(storeData, currentPtValue) {
+        var nu = window.dash_clientside.no_update;
+        if (!storeData) return [nu, nu, nu, nu];
+
+        var periodDays     = storeData.periodDays || 0;
+        var maxAvail       = (storeData.maxAvailablePriors != null)
+                                 ? storeData.maxAvailablePriors : 5;
+        var hasPartial     = storeData.hasPartialPrior || false;
+
+        // --- Calendar / Rolling toggle ---
+        var calDisabled = periodDays > 365;
+        var ptData = [
+            {value: "calendar", label: "Calendar", disabled: calDisabled},
+            {value: "rolling",  label: "Rolling"}
+        ];
+        var ptValue = (calDisabled && currentPtValue === "calendar")
+                          ? "rolling" : nu;
+
+        // --- Prior-periods slider ---
+        // If no full priors but a partial exists, allow 1 (the partial)
+        var sliderMax = (maxAvail > 0) ? maxAvail : (hasPartial ? 1 : 1);
+        if (sliderMax > 10) sliderMax = 10;
+        var marks = [];
+        for (var i = 1; i <= sliderMax; i++) {
+            marks.push({value: i, label: String(i)});
+        }
+
+        return [ptData, ptValue, sliderMax, marks];
     }
 };

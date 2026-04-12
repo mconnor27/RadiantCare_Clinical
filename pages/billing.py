@@ -528,6 +528,10 @@ def _build_cumulative(df, date_col, start, end, date_preset,
     if period_days < 2:
         return None
 
+    # Force rolling when period exceeds 1 year (calendar shifts would overlap)
+    if period_days > 365 and period_type == "calendar":
+        period_type = "rolling"
+
     day_indices = list(range(period_days))
 
     def _daily(sub):
@@ -583,6 +587,7 @@ def _build_cumulative(df, date_col, start, end, date_preset,
             windows.append((_plabel(p_start, p_end), p_start, p_end))
 
     prior = []
+    last_prior_start = None
     for pi, (label, p_start, p_end) in enumerate(windows):
         vals = _cum_window(p_start, p_end)
         if vals and any(v > 0 for v in vals):
@@ -591,6 +596,16 @@ def _build_cumulative(df, date_col, start, end, date_preset,
             elif len(vals) > period_days:
                 vals = vals[:period_days]
             prior.append({"label": label, "values": vals, "color": PRIOR_PERIOD_COLORS[min(pi, len(PRIOR_PERIOD_COLORS) - 1)]})
+            last_prior_start = p_start
+
+    # Metadata for client-side control updates
+    has_partial = (last_prior_start is not None
+                   and last_prior_start.normalize() < data_min.normalize())
+    _prior_meta = {
+        "periodDays": period_days,
+        "maxAvailablePriors": len(prior),
+        "hasPartialPrior": has_partial,
+    }
 
     current_label = _plabel(start, end_norm)
     if len(current_vals) < period_days:
@@ -687,6 +702,7 @@ def _build_cumulative(df, date_col, start, end, date_preset,
         "sliceBreakdown": slice_breakdown,
         "series": series,
         "dates": dates,
+        **_prior_meta,
         "height": 350,
         "yTitle": y_title,
     }
@@ -2042,7 +2058,7 @@ def update_cumulative(*args):
         period_type=volcum_period_type or "calendar",
         slice_by=volcum_slice or "total",
         slice_configs=_slice_cfgs,
-        max_prior=volcum_prior_periods or 5,
+        max_prior=10,
     )
     rvu_cum = _build_cumulative(
         df_all, "DateOfService", start, end, _dp,
@@ -2051,7 +2067,7 @@ def update_cumulative(*args):
         period_type=rvucum_period_type or "calendar",
         slice_by=rvucum_slice or "total",
         slice_configs=_slice_cfgs,
-        max_prior=rvucum_prior_periods or 5,
+        max_prior=10,
     )
     return vol_cum, rvu_cum
 
@@ -2196,11 +2212,49 @@ _SLICE_CLASS_JS = """function(val) {
     return (val && val !== "total") ? "slice-group-active" : "slice-total-active";
 }"""
 
-for _sid in [f"{PAGE_ID}-volcum-slice", f"{PAGE_ID}-rvucum-slice"]:
+for _sid in [f"{PAGE_ID}-vol-slice", f"{PAGE_ID}-volcum-slice",
+              f"{PAGE_ID}-rvu-slice", f"{PAGE_ID}-rvucum-slice"]:
     clientside_callback(
         _SLICE_CLASS_JS,
         Output(_sid, "className"),
         Input(_sid, "value"),
+    )
+
+_HIDE_STACK_JS = """function(sliceVal, chartType) {
+    var single = !sliceVal || sliceVal === "total" || sliceVal === "";
+    var noStack = chartType === "line";
+    return (single || noStack) ? {"display": "none"} : {};
+}"""
+
+for _slice_id, _settings_id in [
+    (f"{PAGE_ID}-vol-slice", f"{PAGE_ID}-vol"),
+    (f"{PAGE_ID}-rvu-slice", f"{PAGE_ID}-rvu"),
+]:
+    clientside_callback(
+        _HIDE_STACK_JS,
+        Output(f"{_settings_id}-settings-stack-wrap", "style", allow_duplicate=True),
+        Input(_slice_id, "value"),
+        Input(f"{_settings_id}-settings-type", "value"),
+        prevent_initial_call="initial_duplicate",
+    )
+
+# Cumulative charts: hide stacked/grouped when Total or Prior Periods mode
+for _cum_mode, _cum_slice, _cum_settings in [
+    (f"{PAGE_ID}-volcum-mode", f"{PAGE_ID}-volcum-slice", f"{PAGE_ID}-volcum"),
+    (f"{PAGE_ID}-rvucum-mode", f"{PAGE_ID}-rvucum-slice", f"{PAGE_ID}-rvucum"),
+]:
+    clientside_callback(
+        """function(mode, sliceVal, chartType) {
+            var single = !sliceVal || sliceVal === "total" || sliceVal === "";
+            if (single) return {"display": "none"};
+            var isPrior = mode === "prior";
+            var noStack = chartType === "line";
+            return (isPrior || noStack) ? {"display": "none"} : {};
+        }""",
+        Output(f"{_cum_settings}-settings-stack-wrap", "style"),
+        Input(_cum_mode, "value"),
+        Input(_cum_slice, "value"),
+        Input(f"{_cum_settings}-settings-type", "value"),
     )
 
 
@@ -2250,6 +2304,34 @@ clientside_callback(
     Output(f"{PAGE_ID}-rvucum-period-type", "style"),
     Output(f"{PAGE_ID}-rvucum-slice", "style"),
     Input(f"{PAGE_ID}-rvucum-mode", "value"),
+)
+
+# Disable Calendar when period > 1 year; cap prior-periods slider to available data (Volume)
+clientside_callback(
+    """function(storeData, currentPtValue) {
+        return window.dash_clientside.cumulative.updatePriorControls(storeData, currentPtValue);
+    }""",
+    Output(f"{PAGE_ID}-volcum-period-type", "data"),
+    Output(f"{PAGE_ID}-volcum-period-type", "value", allow_duplicate=True),
+    Output(f"{PAGE_ID}-volcum-settings-prior-periods", "max"),
+    Output(f"{PAGE_ID}-volcum-settings-prior-periods", "marks"),
+    Input(f"{PAGE_ID}-store-volume-cum", "data"),
+    State(f"{PAGE_ID}-volcum-period-type", "value"),
+    prevent_initial_call=True,
+)
+
+# Disable Calendar when period > 1 year; cap prior-periods slider to available data (RVU)
+clientside_callback(
+    """function(storeData, currentPtValue) {
+        return window.dash_clientside.cumulative.updatePriorControls(storeData, currentPtValue);
+    }""",
+    Output(f"{PAGE_ID}-rvucum-period-type", "data"),
+    Output(f"{PAGE_ID}-rvucum-period-type", "value", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rvucum-settings-prior-periods", "max"),
+    Output(f"{PAGE_ID}-rvucum-settings-prior-periods", "marks"),
+    Input(f"{PAGE_ID}-store-rvu-cum", "data"),
+    State(f"{PAGE_ID}-rvucum-period-type", "value"),
+    prevent_initial_call=True,
 )
 
 
@@ -2344,25 +2426,52 @@ clientside_callback(
     Input(f"{PAGE_ID}-filter-daterange", "end_date"),
     Input(f"{PAGE_ID}-filter-department", "value"),
     Input(f"{PAGE_ID}-filter-physician-role", "value"),
+    Input(f"{PAGE_ID}-filter-codetype", "value"),
+    Input(f"{PAGE_ID}-filter-charge-status", "value"),
+    Input(f"{PAGE_ID}-filter-category", "value"),
+    Input(f"{PAGE_ID}-filter-reviewed", "data"),
+    Input(f"{PAGE_ID}-filter-exported", "data"),
 )
-def _populate_physicians(start_date, end_date, departments, role):
-    from data.loader import load_billing
+def _populate_physicians(start_date, end_date, departments, role,
+                         codetype, charge_status, categories,
+                         reviewed_filter, exported_filter):
     try:
-        billing = load_billing()
+        billing = _get_enriched_billing()
     except Exception:
         return []
 
     if billing.empty:
         return []
 
-    # Apply date + department filters
+    # Date filter
     if start_date and end_date:
         mask = (billing["DateOfService"] >= pd.Timestamp(start_date)) & \
                (billing["DateOfService"] <= pd.Timestamp(end_date))
         billing = billing.loc[mask]
 
+    # Department
     if departments and "Department" in billing.columns:
         billing = billing[billing["Department"].isin(departments)]
+
+    # Code type
+    if codetype and codetype != "all" and "CodeType" in billing.columns:
+        billing = billing[billing["CodeType"] == codetype]
+
+    # Charge status
+    if charge_status and charge_status != "all" and "ChargeStatus" in billing.columns:
+        billing = billing[billing["ChargeStatus"] == charge_status]
+
+    # Categories
+    if categories and "Category" in billing.columns:
+        billing = billing[billing["Category"].isin(categories)]
+
+    # Reviewed
+    if reviewed_filter and reviewed_filter != "all" and "Reviewed" in billing.columns:
+        billing = billing[billing["Reviewed"] == ("Yes" if reviewed_filter == "yes" else "No")]
+
+    # Exported
+    if exported_filter and exported_filter != "all" and "Exported" in billing.columns:
+        billing = billing[billing["Exported"] == ("Yes" if exported_filter == "yes" else "No")]
 
     # Use the selected role column
     col = "AttendingPhysician" if role == "attending" else "SupervisingPhysician"

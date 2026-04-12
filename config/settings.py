@@ -100,6 +100,15 @@ MACHINE_MAP = {
 # Reverse lookup: machine name → department
 MACHINE_DEPT = {m: dept for dept, machines in MACHINE_MAP.items() for m in machines}
 
+# Per-machine colors — Lacey machines get distinct blues, others match dept color
+MACHINE_COLORS = {
+    "TrueBeamNorth": "#1565C0",  # dark blue
+    "21EX": "#42A5F5",           # light blue
+    "6EX": "#90CAF9",            # pale blue (retired)
+    "21iX_CEN": "#F44336",       # red (Centralia)
+    "21iX_AB": "#4CAF50",        # green (Aberdeen)
+}
+
 # Retired machines — kept in MACHINE_MAP for historical data mapping,
 # but excluded from forward-looking views (heatmaps, schedules).
 RETIRED_MACHINES = {"6EX"}
@@ -161,6 +170,23 @@ DEFAULT_LAYOUT = dict(
 )
 
 # ---------------------------------------------------------------------------
+# Outlier caps (days) — shared across workflow, tasks, simulations, etc.
+# Workflow inter-stage gaps and task completion caps use the same values
+# so that filtering is consistent across pages.
+# ---------------------------------------------------------------------------
+OUTLIER_CAPS = {
+    # Workflow inter-stage gaps
+    "consult_to_sim": 21,
+    "sim_to_contour": 8,       # ≈ Draw Volumes task
+    "contour_to_plan": 8,      # ≈ Contour Review task
+    "plan_to_review": 5,       # planning step (no direct task)
+    "review_to_tx": 8,         # ≈ Review Plan task
+    # Task-specific (where task ≠ workflow gap)
+    "draw_srs": 7,             # Draw Volumes (SRS) — fewer cases, tighter cap
+}
+OUTLIER_SLIDER_MAX = 30        # max slider value (days) for task outlier panels
+
+# ---------------------------------------------------------------------------
 # AG Grid defaults
 # ---------------------------------------------------------------------------
 DEFAULT_COLUMN_DEFS = {
@@ -183,7 +209,7 @@ DEFAULT_GRID_OPTIONS = {
     "suppressRowTransform": True,
 }
 
-DEFAULT_GRID_STYLE = {"fontSize": "13px", "height": "750px"}
+DEFAULT_GRID_STYLE = {"fontSize": "13px", "height": "875px"}
 
 DEFAULT_GRID_CLASS = "ag-theme-alpine compact"
 

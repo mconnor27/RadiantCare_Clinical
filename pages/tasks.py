@@ -13,8 +13,10 @@ from config.settings import (
     SEMANTIC_COLORS, NEUTRAL,
     CHART_PAPER_HEIGHT_SM, PRIOR_PERIOD_COLORS,
     DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, DEFAULT_GRID_STYLE, DEFAULT_GRID_CLASS,
+    OUTLIER_CAPS, OUTLIER_SLIDER_MAX,
 )
 from components.chart_card import chart_card, register_chart_callbacks
+from components.detail_table import detail_table
 from components.kpi_card import kpi_card, kpi_placeholder
 from utils.charts import apply_default_layout, empty_figure, color_for_index
 from utils.tables import sanitize_for_grid
@@ -23,6 +25,7 @@ from utils.date_slider import (
     preset_to_slider_val,
 )
 from components.diagnosis_filter import diagnosis_accordion, register_diagnosis_callbacks
+from components.outlier_panel import outlier_panel, register_outlier_callbacks
 from utils.diagnosis_categories import (
     build_code_to_category,
     get_categories_for_codes,
@@ -34,6 +37,13 @@ dash.register_page(__name__, path="/tasks", name="Tasks", order=5)
 PAGE_ID = "tasks"
 
 _DEFAULT_DATE_PRESET = "ytd" if pd.Timestamp.now().month > 1 else "3mo"
+
+# Outlier caps per task group (days) — derived from shared config
+_CAP_DRAW = OUTLIER_CAPS["sim_to_contour"]
+_CAP_SRS = OUTLIER_CAPS["draw_srs"]
+_CAP_CONTOUR = OUTLIER_CAPS["contour_to_plan"]
+_CAP_ISODOSE = OUTLIER_CAPS["contour_to_plan"]
+_CAP_REVIEW = OUTLIER_CAPS["plan_to_review"]
 
 
 # ---------------------------------------------------------------------------
@@ -52,6 +62,9 @@ _TASK_TYPE_GROUPS = {
     "Contour Review": [
         "Contour Review",
     ],
+    "Create Isodose Plan": [
+        "Create Isodose Plan",
+    ],
     "Review Plan": [
         "Review Plan/Chart Rounds",
         "Review Plan/Rounds",
@@ -64,7 +77,9 @@ for _grp, _raws in _TASK_TYPE_GROUPS.items():
     for _raw in _raws:
         _TASK_TYPE_TO_GROUP[_raw] = _grp
 
+# Workflow-ordered group names (clinical progression)
 _TASK_GROUP_NAMES = list(_TASK_TYPE_GROUPS.keys())
+_TASK_GROUP_ORDER = {name: i for i, name in enumerate(_TASK_GROUP_NAMES)}
 
 # KPI card groups — each shows completed / open / median time
 _KPI_GROUPS = [
@@ -74,6 +89,8 @@ _KPI_GROUPS = [
      "color": CHART_COLORWAY[4]},
     {"name": "Contour Review", "key": "contour", "task_groups": ["Contour Review"],
      "color": CHART_COLORWAY[1]},
+    {"name": "Create Isodose Plan", "key": "isodose", "task_groups": ["Create Isodose Plan"],
+     "color": CHART_COLORWAY[3]},
     {"name": "Review Plan", "key": "review", "task_groups": ["Review Plan"],
      "color": CHART_COLORWAY[2]},
 ]
@@ -81,6 +98,9 @@ for _kg in _KPI_GROUPS:
     _kg["raw_types"] = []
     for _g in _kg["task_groups"]:
         _kg["raw_types"].extend(_TASK_TYPE_GROUPS.get(_g, [_g]))
+
+# Map task group display name → KPI card color (for consistent chart colors)
+_TASK_GROUP_COLORS = {kg["name"]: kg["color"] for kg in _KPI_GROUPS}
 
 
 # ---------------------------------------------------------------------------
@@ -90,12 +110,11 @@ for _kg in _KPI_GROUPS:
 def _compute_business_minutes(df):
     """Replace MinutesToComplete with business-hours-only duration.
 
-    ARIA's MinutesToComplete is measured from the task baseline (when the
-    prior step completed) to CompletedDateTime.  The baseline can be derived
-    as CompletedDateTime - MinutesToComplete (calendar minutes).
+    Uses PriorStepBaseline (when the prior step completed) as the start
+    timestamp if available, otherwise derives it from
+    CompletedDateTime - MinutesToComplete (calendar minutes).
 
-    This function recalculates that same interval counting only 8am–5pm
-    on business days (excluding weekends and holidays).
+    Recalculates counting only 8am–5pm on business days.
     """
     if "CompletedDateTime" not in df.columns or "MinutesToComplete" not in df.columns:
         return df
@@ -105,8 +124,13 @@ def _compute_business_minutes(df):
     mask = df["CompletedDateTime"].notna() & cal_mins.notna()
     if not mask.any():
         return df
-    # Derive the real clock-start (baseline) from the calendar duration
-    baseline = df.loc[mask, "CompletedDateTime"] - pd.to_timedelta(cal_mins[mask], unit="m")
+    # Use PriorStepBaseline directly when available; fall back to derived baseline
+    if "PriorStepBaseline" in df.columns:
+        baseline = df.loc[mask, "PriorStepBaseline"].copy()
+        fallback = df.loc[mask, "CompletedDateTime"] - pd.to_timedelta(cal_mins[mask], unit="m")
+        baseline = baseline.where(baseline.notna(), fallback)
+    else:
+        baseline = df.loc[mask, "CompletedDateTime"] - pd.to_timedelta(cal_mins[mask], unit="m")
     bdays = _business_days_between(baseline, df.loc[mask, "CompletedDateTime"])
     # _business_days_between returns float business-days (1.0 = 9 hours)
     df.loc[mask, "MinutesToComplete"] = bdays * _BH_PER_DAY * 60
@@ -132,7 +156,10 @@ def _load_known_physicians():
 
 def _resolve_md(df, known_mds=None):
     """Add 'ResolvedMD' column: first MD-verified name from
-    CompletingMD → AssignedMD → TreatingPhysician cascade."""
+    CompletingMD → AssignedMD → TreatingPhysician cascade.
+
+    For 'Create Isodose Plan' tasks, uses CompletingUser (planner) instead.
+    """
     if known_mds is None:
         known_mds = _load_known_physicians()
 
@@ -151,6 +178,14 @@ def _resolve_md(df, known_mds=None):
 
     df = df.copy()
     df["ResolvedMD"] = df[candidates].apply(_pick, axis=1)
+
+    # For Isodose Plan tasks, the completer is a planner, not an MD
+    if "CompletingUser" in df.columns and "ActivityName" in df.columns:
+        iso_mask = df["ActivityName"] == "Create Isodose Plan"
+        user_vals = df.loc[iso_mask, "CompletingUser"]
+        valid = user_vals.notna() & (user_vals.astype(str).str.strip() != "") & (user_vals.astype(str).str.upper() != "NA")
+        df.loc[iso_mask & valid, "ResolvedMD"] = df.loc[iso_mask & valid, "CompletingUser"]
+
     return df
 
 
@@ -190,6 +225,7 @@ def _build_tasks_filter_bar():
                 children=[
                     # Physician dropdown
                     html.Div(
+                        id="tasks-physician-wrap",
                         children=[
                             html.Div(
                                 children=[
@@ -217,6 +253,49 @@ def _build_tasks_filter_bar():
                                     dmc.ChipGroup(
                                         children=[],
                                         id="tasks-filter-physician",
+                                        multiple=False,
+                                    ),
+                                ],
+                                p="xs",
+                                shadow="md",
+                                withBorder=True,
+                                radius="md",
+                                className="wf-chip-dropdown",
+                                style={"display": "none"},
+                            ),
+                        ],
+                        style={"position": "relative", "display": "inline-block"},
+                    ),
+                    # Planner dropdown (visible when Isodose tasks are in scope)
+                    html.Div(
+                        id="tasks-planner-wrap",
+                        children=[
+                            html.Div(
+                                children=[
+                                    dmc.Button(
+                                        "Planner",
+                                        id="tasks-planner-trigger",
+                                        variant="default",
+                                        size="sm",
+                                        rightSection=DashIconify(icon="mdi:chevron-down", width=14),
+                                    ),
+                                    dmc.ActionIcon(
+                                        DashIconify(icon="mdi:close-circle", width=18),
+                                        id="tasks-planner-clear",
+                                        variant="subtle",
+                                        color="gray",
+                                        size="sm",
+                                        className="wf-filter-clear-btn",
+                                    ),
+                                ],
+                                style={"position": "relative", "display": "inline-block"},
+                            ),
+                            dmc.Paper(
+                                id="tasks-planner-panel",
+                                children=[
+                                    dmc.ChipGroup(
+                                        children=[],
+                                        id="tasks-filter-planner",
                                         multiple=False,
                                     ),
                                 ],
@@ -291,31 +370,14 @@ def _build_tasks_filter_bar():
                         size="xs",
                         checked=False,
                     ),
-                    # Max days cap
-                    dmc.Group(
-                        children=[
-                            dmc.Text("Max", size="xs", c="#6B7280", fw=500),
-                            dmc.Slider(
-                                id="tasks-max-days-slider",
-                                min=1,
-                                max=90,
-                                step=1,
-                                value=14,
-                                size="xs",
-                                color="violet",
-                                showLabelOnHover=True,
-                                w=100,
-                                updatemode="mouseup",
-                            ),
-                            dmc.Text(
-                                "14d",
-                                id="tasks-max-days-label",
-                                size="xs", fw=600, c="#7C2A83",
-                            ),
-                        ],
-                        gap=6,
-                        align="center",
-                    ),
+                    # Outlier caps per task type
+                    outlier_panel(PAGE_ID, transitions=[
+                        ("Draw Volumes", _CAP_DRAW),
+                        ("Draw Volumes (SRS)", _CAP_SRS),
+                        ("Contour Review", _CAP_CONTOUR),
+                        ("Create Isodose Plan", _CAP_ISODOSE),
+                        ("Review Plan", _CAP_REVIEW),
+                    ], slider_max=OUTLIER_SLIDER_MAX),
                     # Smoothing
                     dmc.Group(
                         children=[
@@ -325,7 +387,7 @@ def _build_tasks_filter_bar():
                                 min=0,
                                 max=1,
                                 step=0.01,
-                                value=0.3,
+                                value=0.55,
                                 size="xs",
                                 showLabelOnHover=False,
                                 w=120,
@@ -451,8 +513,7 @@ def _task_group_kpi_card(group_name, metrics, accent_color=None, key=""):
                  c=NEUTRAL["text_primary"], lh=1.2),
     ]
     trend = _trend_el(metrics["comp_trend_text"], metrics["comp_trend_dir"])
-    if trend is not None:
-        left_children.append(trend)
+    left_children.append(trend if trend is not None else dmc.Text("\u00a0", size="xs"))
     left_children.append(
         dcc.Graph(
             id=f"tasks-spark-{key}_comp",
@@ -477,8 +538,7 @@ def _task_group_kpi_card(group_name, metrics, accent_color=None, key=""):
                  c=NEUTRAL["text_primary"], lh=1.2),
     ]
     trend_t = _trend_el(metrics["med_trend_text"], metrics["med_trend_dir"])
-    if trend_t is not None:
-        right_children.append(trend_t)
+    right_children.append(trend_t if trend_t is not None else dmc.Text("\u00a0", size="xs"))
     right_children.append(
         dcc.Graph(
             id=f"tasks-spark-{key}_time",
@@ -513,7 +573,7 @@ def _task_group_kpi_card(group_name, metrics, accent_color=None, key=""):
 
 
 def _compute_group_metrics(df_base, df_prior_base, spark_base, raw_types,
-                           spark_period="W", max_minutes=None):
+                           spark_period="W", max_minutes=None, skip_sla=False):
     """Compute KPI metrics and sparklines for one task-type group."""
     gdf = (df_base[df_base["ActivityName"].isin(raw_types)]
            if "ActivityName" in df_base.columns else df_base)
@@ -544,7 +604,11 @@ def _compute_group_metrics(df_base, df_prior_base, spark_base, raw_types,
             mins = mins[mins <= max_minutes]
         if len(mins) > 0:
             median_val = mins.median()
-            if median_val >= 60:
+            if median_val >= 36 * 60:
+                days = int(median_val // 1440)
+                rem_hrs = int((median_val % 1440) // 60)
+                median_min = f"{days}d {rem_hrs}h" if rem_hrs else f"{days}d"
+            elif median_val >= 60:
                 hrs = int(median_val // 60)
                 rem = int(median_val % 60)
                 median_min = f"{hrs}h {rem}m" if rem else f"{hrs}h"
@@ -567,19 +631,20 @@ def _compute_group_metrics(df_base, df_prior_base, spark_base, raw_types,
                     med_trend_txt = f"{abs(pct_diff):.0f}% vs prior"
 
     pct_on_time_text = None
-    comp_df = gdf[is_comp].copy()
-    if "CompletedDateTime" in comp_df.columns and "DueDateTime" in comp_df.columns:
-        valid = comp_df.dropna(subset=["CompletedDateTime", "DueDateTime"])
-        if len(valid) > 0:
-            pct_ot = (valid["CompletedDateTime"] <= valid["DueDateTime"]).mean() * 100
-            pct_on_time_text = f"{pct_ot:.0f}% on time"
-    elif "MinutesToComplete" in comp_df.columns and "MinutesAllowed" in comp_df.columns:
-        comp_df["MinutesToComplete"] = pd.to_numeric(comp_df["MinutesToComplete"], errors="coerce")
-        comp_df["MinutesAllowed"] = pd.to_numeric(comp_df["MinutesAllowed"], errors="coerce")
-        valid = comp_df.dropna(subset=["MinutesToComplete", "MinutesAllowed"])
-        if len(valid) > 0:
-            pct_ot = (valid["MinutesToComplete"] <= valid["MinutesAllowed"]).mean() * 100
-            pct_on_time_text = f"{pct_ot:.0f}% on time"
+    if not skip_sla:
+        comp_df = gdf[is_comp].copy()
+        if "CompletedDateTime" in comp_df.columns and "DueDateTime" in comp_df.columns:
+            valid = comp_df.dropna(subset=["CompletedDateTime", "DueDateTime"])
+            if len(valid) > 0:
+                pct_ot = (valid["CompletedDateTime"] <= valid["DueDateTime"]).mean() * 100
+                pct_on_time_text = f"({pct_ot:.0f}% OT)"
+        elif "MinutesToComplete" in comp_df.columns and "MinutesAllowed" in comp_df.columns:
+            comp_df["MinutesToComplete"] = pd.to_numeric(comp_df["MinutesToComplete"], errors="coerce")
+            comp_df["MinutesAllowed"] = pd.to_numeric(comp_df["MinutesAllowed"], errors="coerce")
+            valid = comp_df.dropna(subset=["MinutesToComplete", "MinutesAllowed"])
+            if len(valid) > 0:
+                pct_ot = (valid["MinutesToComplete"] <= valid["MinutesAllowed"]).mean() * 100
+                pct_on_time_text = f"({pct_ot:.0f}% OT)"
 
     spark_completed = spark_time = None
     spark_df = (spark_base[spark_base["ActivityName"].isin(raw_types)]
@@ -641,28 +706,48 @@ layout = dmc.Stack(
             className="page-sticky-header",
             children=[
                 dmc.Title("Tasks", order=2, className="page-title", style={"margin": 0, "textAlign": "center"}),
-                _build_tasks_filter_bar(),
+                html.Div(
+                    style={"position": "relative"},
+                    children=[
+                        _build_tasks_filter_bar(),
+                        html.Div(
+                            id="tasks-grid-filter-badge",
+                            children=dmc.Tooltip(
+                                label="Table column filters are active",
+                                position="left", withArrow=True, multiline=True, w=220,
+                                children=dmc.Badge(
+                                    "Table Filtered",
+                                    color="red", variant="filled", size="md",
+                                    leftSection=DashIconify(icon="mdi:filter", width=14),
+                                ),
+                            ),
+                            style={
+                                "position": "absolute", "top": -12, "right": 8,
+                                "zIndex": 10, "display": "none", "cursor": "pointer",
+                            },
+                        ),
+                    ],
+                ),
             ],
         ),
 
         # KPI row — one group card per task type (clickable to filter)
-        dmc.Grid(id="tasks-kpi-row", gutter="md", children=[
-            dmc.GridCol(html.Div(id="tasks-kpi-click-draw", n_clicks=0,
-                                 style={"cursor": "pointer"},
-                                 children=[html.Div(kpi_placeholder(), id="tasks-kpi-draw")]),
-                        span={"base": 12, "md": 3}),
-            dmc.GridCol(html.Div(id="tasks-kpi-click-srs", n_clicks=0,
-                                 style={"cursor": "pointer"},
-                                 children=[html.Div(kpi_placeholder(), id="tasks-kpi-srs")]),
-                        span={"base": 12, "md": 3}),
-            dmc.GridCol(html.Div(id="tasks-kpi-click-contour", n_clicks=0,
-                                 style={"cursor": "pointer"},
-                                 children=[html.Div(kpi_placeholder(), id="tasks-kpi-contour")]),
-                        span={"base": 12, "md": 3}),
-            dmc.GridCol(html.Div(id="tasks-kpi-click-review", n_clicks=0,
-                                 style={"cursor": "pointer"},
-                                 children=[html.Div(kpi_placeholder(), id="tasks-kpi-review")]),
-                        span={"base": 12, "md": 3}),
+        dmc.SimpleGrid(id="tasks-kpi-row", cols={"base": 1, "sm": 2, "md": 5}, spacing="md", children=[
+            html.Div(id="tasks-kpi-click-draw", n_clicks=0,
+                     style={"cursor": "pointer"},
+                     children=[html.Div(kpi_placeholder(), id="tasks-kpi-draw")]),
+            html.Div(id="tasks-kpi-click-srs", n_clicks=0,
+                     style={"cursor": "pointer"},
+                     children=[html.Div(kpi_placeholder(), id="tasks-kpi-srs")]),
+            html.Div(id="tasks-kpi-click-contour", n_clicks=0,
+                     style={"cursor": "pointer"},
+                     children=[html.Div(kpi_placeholder(), id="tasks-kpi-contour")]),
+            html.Div(id="tasks-kpi-click-isodose", n_clicks=0,
+                     style={"cursor": "pointer"},
+                     children=[html.Div(kpi_placeholder(), id="tasks-kpi-isodose")]),
+            html.Div(id="tasks-kpi-click-review", n_clicks=0,
+                     style={"cursor": "pointer"},
+                     children=[html.Div(kpi_placeholder(), id="tasks-kpi-review")]),
         ]),
 
         # Row 1: Volume Trend + Cumulative
@@ -673,9 +758,9 @@ layout = dmc.Stack(
                     "Task Volume Trend",
                     settings_id="tasks-volume",
                     chart_types=[
+                        {"value": "bar", "label": "Bar"},
                         {"value": "line", "label": "Line"},
                         {"value": "area", "label": "Area"},
-                        {"value": "bar", "label": "Bar"},
                     ],
                     show_smooth=True,
                     smooth_max=12,
@@ -688,9 +773,10 @@ layout = dmc.Stack(
                                 {"value": "", "label": "Total"},
                                 {"value": "task", "label": "Task"},
                                 {"value": "physician", "label": "MD"},
+                                {"value": "planner", "label": "Planner"},
                                 {"value": "bodysite", "label": "Dx"},
                             ],
-                            value="",
+                            value="task",
                             size="xs",
                         ),
                     ],
@@ -749,12 +835,12 @@ layout = dmc.Stack(
                         dmc.SegmentedControl(
                             id="tasks-cumulative-slice",
                             data=[
-                                {"value": "total", "label": "Total"},
                                 {"value": "task", "label": "Task"},
                                 {"value": "physician", "label": "MD"},
+                                {"value": "planner", "label": "Planner"},
                                 {"value": "bodysite", "label": "Dx"},
                             ],
-                            value="total",
+                            value="task",
                             size="xs",
                             style={"display": "none"},
                         ),
@@ -764,7 +850,7 @@ layout = dmc.Stack(
             ),
         ]),
 
-        # Row 2: Histogram + Time Trend + SLA Trend (3 across)
+        # Row 2: Histogram + Actual vs Allowed
         dmc.Grid(gutter="md", children=[
             dmc.GridCol(
                 chart_card(
@@ -777,7 +863,6 @@ layout = dmc.Stack(
                     ],
                     show_smooth=False,
                     paper_padding="md",
-                    paper_height=CHART_PAPER_HEIGHT_SM,
                     extra_controls_left=[
                         dmc.SegmentedControl(
                             id="tasks-hist-slice",
@@ -785,29 +870,80 @@ layout = dmc.Stack(
                                 {"value": "", "label": "Total"},
                                 {"value": "task", "label": "Task"},
                                 {"value": "physician", "label": "MD"},
+                                {"value": "planner", "label": "Planner"},
+                            ],
+                            value="",
+                            size="xs",
+                        ),
+                    ],
+                    extra_settings=[
+                        html.Div(
+                            id="tasks-hist-bw-wrap",
+                            children=dmc.Stack(
+                                gap=4,
+                                children=[
+                                    dmc.Text("Density Smoothing", size="xs", fw=500, c="#6B7280"),
+                                    dmc.Slider(
+                                        id="tasks-hist-bw",
+                                        min=0.02,
+                                        max=0.5,
+                                        step=0.02,
+                                        value=0.12,
+                                        size="xs",
+                                        showLabelOnHover=True,
+                                        updatemode="drag",
+                                    ),
+                                ],
+                            ),
+                            style={"display": "none"},
+                        ),
+                    ],
+                ),
+                span={"base": 12, "md": 6},
+            ),
+            dmc.GridCol(
+                chart_card(
+                    "tasks-chart-time-compare",
+                    "Actual vs Allowed Time",
+                    settings_id="tasks-time-compare",
+                    chart_types=[],
+                    show_smooth=False,
+                    paper_padding="md",
+                    extra_controls_left=[
+                        dmc.SegmentedControl(
+                            id="tasks-time-compare-slice",
+                            data=[
+                                {"value": "", "label": "Total"},
+                                {"value": "task", "label": "Task"},
+                                {"value": "physician", "label": "MD"},
+                                {"value": "planner", "label": "Planner"},
+                                {"value": "bodysite", "label": "Dx"},
                             ],
                             value="",
                             size="xs",
                         ),
                     ],
                 ),
-                span={"base": 12, "md": 4},
+                span={"base": 12, "md": 6},
             ),
+        ]),
+
+        # Row 3: Time Trend + On-Time Trend (half-width each)
+        dmc.Grid(gutter="md", children=[
             dmc.GridCol(
                 chart_card(
                     "tasks-chart-time-trend",
                     "Time to Complete Trend",
                     settings_id="tasks-time-trend",
                     chart_types=[
-                        {"value": "line", "label": "Line"},
                         {"value": "area", "label": "Area"},
+                        {"value": "line", "label": "Line"},
                         {"value": "bar", "label": "Bar"},
                     ],
                     show_smooth=True,
                     smooth_max=12,
                     smooth_default=2,
                     paper_padding="md",
-                    paper_height=CHART_PAPER_HEIGHT_SM,
                     extra_controls_left=[
                         dmc.SegmentedControl(
                             id="tasks-time-slice",
@@ -815,6 +951,7 @@ layout = dmc.Stack(
                                 {"value": "", "label": "Total"},
                                 {"value": "task", "label": "Task"},
                                 {"value": "physician", "label": "MD"},
+                                {"value": "planner", "label": "Planner"},
                                 {"value": "bodysite", "label": "Dx"},
                             ],
                             value="",
@@ -829,12 +966,12 @@ layout = dmc.Stack(
                                 {"value": "M", "label": "Monthly"},
                                 {"value": "Y", "label": "Yearly"},
                             ],
-                            value="M",
+                            value="W",
                             size="xs",
                         ),
                     ],
                 ),
-                span={"base": 12, "md": 4},
+                span={"base": 12, "md": 6},
             ),
             dmc.GridCol(
                 chart_card(
@@ -842,15 +979,14 @@ layout = dmc.Stack(
                     "On-Time Trend",
                     settings_id="tasks-sla",
                     chart_types=[
-                        {"value": "line", "label": "Line"},
                         {"value": "area", "label": "Area"},
+                        {"value": "line", "label": "Line"},
                         {"value": "bar", "label": "Bar"},
                     ],
                     show_smooth=True,
                     smooth_max=12,
                     smooth_default=0,
                     paper_padding="md",
-                    paper_height=CHART_PAPER_HEIGHT_SM,
                     extra_controls_left=[
                         dmc.SegmentedControl(
                             id="tasks-sla-slice",
@@ -858,6 +994,7 @@ layout = dmc.Stack(
                                 {"value": "", "label": "Total"},
                                 {"value": "task", "label": "Task"},
                                 {"value": "physician", "label": "MD"},
+                                {"value": "planner", "label": "Planner"},
                                 {"value": "bodysite", "label": "Dx"},
                             ],
                             value="",
@@ -877,27 +1014,32 @@ layout = dmc.Stack(
                         ),
                     ],
                 ),
-                span={"base": 12, "md": 4},
+                span={"base": 12, "md": 6},
             ),
         ]),
 
         # Detail table
-        dmc.Paper(
-            children=[
-                dmc.Group([
-                    dmc.Text("Task Detail", size="sm", fw=500, c=NEUTRAL["text_secondary"]),
-                    dmc.ActionIcon(
-                        dmc.Text("CSV", size="xs", fw=600),
-                        id="tasks-table-export",
-                        variant="subtle", color="gray", size="sm",
-                    ),
-                ], justify="space-between", mb="sm"),
-                dmc.Box(id="tasks-table-container"),
+        detail_table(
+            "tasks-detail-grid",
+            title="Task Detail",
+            export_id="tasks-table-export",
+            accordion_id="tasks-detail-accordion",
+            extra_controls=[
+                dmc.Button(
+                    "Clear Filters",
+                    id="tasks-table-clear-filters",
+                    size="compact-xs",
+                    variant="light",
+                    color="red",
+                    leftSection=DashIconify(icon="mdi:filter-remove", width=14),
+                    style={"display": "none"},
+                ),
             ],
-            p="md", radius="md", shadow="xs", withBorder=True,
         ),
 
         # Stores for clientside callbacks
+        dcc.Store(id="tasks-store-histogram"),
+        dcc.Store(id="tasks-store-time-compare"),
         dcc.Store(id="tasks-store-volume"),
         dcc.Store(id="tasks-store-cumulative"),
         dcc.Store(id="tasks-store-time-trend"),
@@ -1011,6 +1153,14 @@ def _register_tasks_filter_callbacks():
         Input("tasks-filter-physician", "value"),
     )
     clientside_callback(
+        """function(val) {
+            if (!val) return "Planner";
+            return val.split(", ")[0];
+        }""",
+        Output("tasks-planner-trigger", "children"),
+        Input("tasks-filter-planner", "value"),
+    )
+    clientside_callback(
         "function(vals) {"
         "  if (!vals || vals.length === 0) return 'Task Type';"
         "  if (vals.length === 1) return vals[0];"
@@ -1027,6 +1177,11 @@ def _register_tasks_filter_callbacks():
         Input("tasks-filter-physician", "value"),
     )
     clientside_callback(
+        """function(val) { return val ? {"display": "inline-flex"} : {"display": "none"}; }""",
+        Output("tasks-planner-clear", "style"),
+        Input("tasks-filter-planner", "value"),
+    )
+    clientside_callback(
         """function(vals) { return vals && vals.length > 0 ? {"display": "inline-flex"} : {"display": "none"}; }""",
         Output("tasks-tasktype-clear", "style"),
         Input("tasks-filter-type", "value"),
@@ -1040,9 +1195,40 @@ def _register_tasks_filter_callbacks():
         prevent_initial_call=True,
     )
     clientside_callback(
+        """function(n) { return null; }""",
+        Output("tasks-filter-planner", "value", allow_duplicate=True),
+        Input("tasks-planner-clear", "n_clicks"),
+        prevent_initial_call=True,
+    )
+    clientside_callback(
         """function(n) { return []; }""",
         Output("tasks-filter-type", "value", allow_duplicate=True),
         Input("tasks-tasktype-clear", "n_clicks"),
+        prevent_initial_call=True,
+    )
+
+    # --- Physician/Planner dropdown visibility based on task type filter ---
+    # No filter: both visible. Isodose only: planner only. Non-Isodose only: physician only.
+    _WRAP_VISIBLE = {"position": "relative", "display": "inline-block"}
+    _WRAP_HIDDEN = {"position": "relative", "display": "none"}
+    clientside_callback(
+        """function(taskTypes) {
+            var vis = {"position": "relative", "display": "inline-block"};
+            var hid = {"position": "relative", "display": "none"};
+            var none = !taskTypes || taskTypes.length === 0;
+            var hasIso = none || (taskTypes.indexOf("Create Isodose Plan") >= 0);
+            var isoOnly = taskTypes && taskTypes.length === 1 && taskTypes[0] === "Create Isodose Plan";
+            var phys = isoOnly ? hid : vis;
+            var plan = hasIso ? vis : hid;
+            var clearPhys = isoOnly ? null : window.dash_clientside.no_update;
+            var clearPlan = hasIso ? window.dash_clientside.no_update : null;
+            return [phys, plan, clearPhys, clearPlan];
+        }""",
+        Output("tasks-physician-wrap", "style"),
+        Output("tasks-planner-wrap", "style"),
+        Output("tasks-filter-physician", "value", allow_duplicate=True),
+        Output("tasks-filter-planner", "value", allow_duplicate=True),
+        Input("tasks-filter-type", "value"),
         prevent_initial_call=True,
     )
 
@@ -1050,16 +1236,13 @@ def _register_tasks_filter_callbacks():
 # Register filter callbacks
 _register_tasks_filter_callbacks()
 
-# Max-days slider label
-clientside_callback(
-    """function(v) { return v + "d"; }""",
-    Output("tasks-max-days-label", "children"),
-    Input("tasks-max-days-slider", "value"),
-)
+# Register outlier panel callbacks
+register_outlier_callbacks(PAGE_ID, n_transitions=5,
+                           defaults=[_CAP_DRAW, _CAP_SRS, _CAP_CONTOUR, _CAP_ISODOSE, _CAP_REVIEW])
 
 # KPI card click → toggle task type filter
 clientside_callback(
-    """function(n1, n2, n3, n4, currentTypes) {
+    """function(n1, n2, n3, n4, n5, currentTypes) {
         const ctx = dash_clientside.callback_context;
         if (!ctx.triggered.length) return dash_clientside.no_update;
         const tid = ctx.triggered_id;
@@ -1067,6 +1250,7 @@ clientside_callback(
             "tasks-kpi-click-draw": "Draw Volumes",
             "tasks-kpi-click-srs": "Draw Volumes (SRS)",
             "tasks-kpi-click-contour": "Contour Review",
+            "tasks-kpi-click-isodose": "Create Isodose Plan",
             "tasks-kpi-click-review": "Review Plan"
         };
         const group = map[tid];
@@ -1081,6 +1265,7 @@ clientside_callback(
     Input("tasks-kpi-click-draw", "n_clicks"),
     Input("tasks-kpi-click-srs", "n_clicks"),
     Input("tasks-kpi-click-contour", "n_clicks"),
+    Input("tasks-kpi-click-isodose", "n_clicks"),
     Input("tasks-kpi-click-review", "n_clicks"),
     State("tasks-filter-type", "value"),
     prevent_initial_call=True,
@@ -1093,9 +1278,10 @@ clientside_callback(
             "Draw Volumes": "draw",
             "Draw Volumes (SRS)": "srs",
             "Contour Review": "contour",
+            "Create Isodose Plan": "isodose",
             "Review Plan": "review"
         };
-        const keys = ["draw", "srs", "contour", "review"];
+        const keys = ["draw", "srs", "contour", "isodose", "review"];
         const selected = new Set();
         if (taskTypes && taskTypes.length > 0) {
             taskTypes.forEach(function(t) { if (map[t]) selected.add(map[t]); });
@@ -1107,6 +1293,7 @@ clientside_callback(
     Output("tasks-kpi-click-draw", "className"),
     Output("tasks-kpi-click-srs", "className"),
     Output("tasks-kpi-click-contour", "className"),
+    Output("tasks-kpi-click-isodose", "className"),
     Output("tasks-kpi-click-review", "className"),
     Input("tasks-filter-type", "value"),
 )
@@ -1136,13 +1323,11 @@ def _populate_physician_chips(_n, slider_val, task_types, diagnosis_cats, diag_m
     known_mds = _load_known_physicians()
     tasks = _resolve_md(tasks, known_mds)
 
-    # Apply non-physician filters
+    # Apply non-physician filters — strict date range for chip population
+    # (no open_eligible broadening, avoids showing retired physicians)
     start, end = _get_date_range(slider_val)
     if "StartDateTime" in tasks.columns:
-        in_range = (tasks["StartDateTime"] >= start) & (tasks["StartDateTime"] <= end)
-        is_open = ~_task_is_completed(tasks)
-        open_eligible = is_open & (tasks["StartDateTime"].isna() | (tasks["StartDateTime"] <= end))
-        tasks = tasks[in_range | open_eligible]
+        tasks = tasks[(tasks["StartDateTime"] >= start) & (tasks["StartDateTime"] <= end)]
 
     if task_types and "ActivityName" in tasks.columns:
         raw_types = []
@@ -1166,9 +1351,10 @@ def _populate_physician_chips(_n, slider_val, task_types, diagnosis_cats, diag_m
     elif status == "done":
         tasks = tasks[is_comp]
 
-    # Get unique resolved MDs in filtered data
+    # Get unique resolved MDs in filtered data — always MDs only
     from components.filter_bar import physician_short_name
     mds = sorted(tasks["ResolvedMD"].dropna().unique())
+    mds = [m for m in mds if m in known_mds]
 
     return [
         dmc.Chip(
@@ -1182,11 +1368,73 @@ def _populate_physician_chips(_n, slider_val, task_types, diagnosis_cats, diag_m
 
 
 # ---------------------------------------------------------------------------
+# Dynamic planner chip population
+# ---------------------------------------------------------------------------
+@callback(
+    Output("tasks-filter-planner", "children"),
+    Input("tasks-interval", "n_intervals"),
+    Input("tasks-date-slider", "value"),
+    Input("tasks-filter-type", "value"),
+    Input("tasks-diag-store", "data"),
+    Input("tasks-diag-mode", "data"),
+    Input("tasks-filter-status", "value"),
+)
+def _populate_planner_chips(_n, slider_val, task_types, diagnosis_cats, diag_mode, status):
+    """Populate planner filter with CompletingUser names from Isodose tasks."""
+    from data.loader import load_tasks, load_diagnosis
+
+    try:
+        tasks = load_tasks()
+    except Exception:
+        return []
+
+    known_mds = _load_known_physicians()
+
+    # Apply date filter
+    start, end = _get_date_range(slider_val)
+    if "StartDateTime" in tasks.columns:
+        tasks = tasks[(tasks["StartDateTime"] >= start) & (tasks["StartDateTime"] <= end)]
+
+    # Apply diagnosis filter
+    if diagnosis_cats and "DiagnosisCodes" in tasks.columns:
+        try:
+            diag_df = load_diagnosis()
+        except Exception:
+            diag_df = None
+        c2b = build_code_to_category(diag_df)
+        if c2b:
+            from utils.diagnosis_categories import filter_by_diagnosis
+            tasks = filter_by_diagnosis(tasks, diagnosis_cats, c2b, mode=diag_mode or "primary")
+
+    is_comp = _task_is_completed(tasks)
+    if status == "open":
+        tasks = tasks[(~is_comp) & _prior_step_complete(tasks)]
+    elif status == "done":
+        tasks = tasks[is_comp]
+
+    # Get planners: CompletingUser from Isodose tasks, excluding MDs
+    if "CompletingUser" not in tasks.columns or "ActivityName" not in tasks.columns:
+        return []
+    iso_types = _TASK_TYPE_GROUPS.get("Create Isodose Plan", [])
+    iso_tasks = tasks[tasks["ActivityName"].isin(iso_types)]
+    planners = iso_tasks["CompletingUser"].dropna().unique()
+    planners = sorted([p for p in planners
+                       if p.strip() and p.upper() != "NA" and p not in known_mds])
+
+    return [
+        dmc.Chip(p, value=p, size="xs", variant="filled")
+        for p in planners
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Shared filter helper — load data, apply filters, return dict or None
 # ---------------------------------------------------------------------------
 
-def _load_and_filter_tasks(slider_val, physician, task_types, diagnosis_cats,
-                           diag_mode, status, use_business_hours, max_days_cap,
+def _load_and_filter_tasks(slider_val, physician, planner, task_types,
+                           diagnosis_cats,
+                           diag_mode, status, use_business_hours,
+                           outlier_enabled, cap0, cap1, cap2, cap3, cap4,
                            date_preset):
     """Load tasks data, apply all dimension/date/status filters.
 
@@ -1200,6 +1448,16 @@ def _load_and_filter_tasks(slider_val, physician, task_types, diagnosis_cats,
         return None
     if tasks.empty:
         return None
+
+    # --- Recalculate elapsed time from PriorStepBaseline when available ---
+    if ("PriorStepBaseline" in tasks.columns and "CompletedDateTime" in tasks.columns
+            and "MinutesToComplete" in tasks.columns):
+        _bl_mask = tasks["PriorStepBaseline"].notna() & tasks["CompletedDateTime"].notna()
+        if _bl_mask.any():
+            tasks.loc[_bl_mask, "MinutesToComplete"] = (
+                (tasks.loc[_bl_mask, "CompletedDateTime"] - tasks.loc[_bl_mask, "PriorStepBaseline"])
+                .dt.total_seconds() / 60
+            )
 
     # --- Clean MinutesToComplete: exclude negatives always ---
     if "MinutesToComplete" in tasks.columns:
@@ -1217,8 +1475,17 @@ def _load_and_filter_tasks(slider_val, physician, task_types, diagnosis_cats,
     start, end = _get_date_range(slider_val)
     prior_start = start - (end - start)
 
-    # Max-days cap for time metrics (minutes)
-    _max_minutes = (max_days_cap or 14) * 24 * 60
+    # Per-task-group outlier caps (days → minutes)
+    if outlier_enabled:
+        _cap_minutes = {
+            "Draw Volumes": (cap0 or _CAP_DRAW) * 24 * 60,
+            "Draw Volumes (SRS)": (cap1 or _CAP_SRS) * 24 * 60,
+            "Contour Review": (cap2 or _CAP_CONTOUR) * 24 * 60,
+            "Create Isodose Plan": (cap3 or _CAP_ISODOSE) * 24 * 60,
+            "Review Plan": (cap4 or _CAP_REVIEW) * 24 * 60,
+        }
+    else:
+        _cap_minutes = {}  # no capping
 
     # Adaptive sparkline granularity
     range_months = (end.year - start.year) * 12 + (end.month - start.month) + 1
@@ -1233,6 +1500,8 @@ def _load_and_filter_tasks(slider_val, physician, task_types, diagnosis_cats,
         df_base = df_base[in_range | open_eligible]
     if physician and "ResolvedMD" in df_base.columns:
         df_base = df_base[df_base["ResolvedMD"] == physician]
+    if planner and "CompletingUser" in df_base.columns:
+        df_base = df_base[df_base["CompletingUser"] == planner]
 
     try:
         diag_df = load_diagnosis()
@@ -1260,6 +1529,8 @@ def _load_and_filter_tasks(slider_val, physician, task_types, diagnosis_cats,
         ]
     if physician and "ResolvedMD" in df_prior_base.columns:
         df_prior_base = df_prior_base[df_prior_base["ResolvedMD"] == physician]
+    if planner and "CompletingUser" in df_prior_base.columns:
+        df_prior_base = df_prior_base[df_prior_base["CompletingUser"] == planner]
     if diagnosis_cats:
         from utils.diagnosis_categories import filter_by_diagnosis
         df_prior_base = filter_by_diagnosis(df_prior_base, diagnosis_cats, c2b, mode=diag_mode or "primary")
@@ -1281,19 +1552,29 @@ def _load_and_filter_tasks(slider_val, physician, task_types, diagnosis_cats,
         df_in_range = df
     is_completed_in_range = _task_is_completed(df_in_range)
 
-    # Time-valid mask: completed + non-zero + within cap
+    # Time-valid mask: completed + non-zero + within per-group cap
     _mtc = (pd.to_numeric(df["MinutesToComplete"], errors="coerce")
             if "MinutesToComplete" in df.columns else pd.Series(dtype=float))
-    is_time_valid = is_completed & (_mtc > 0) & (_mtc <= _max_minutes)
+    if _cap_minutes and "ActivityName" in df.columns:
+        _row_cap = df["ActivityName"].map(_TASK_TYPE_TO_GROUP).map(_cap_minutes)
+        is_time_valid = is_completed & (_mtc > 0) & (_mtc <= _row_cap.fillna(np.inf))
+    else:
+        is_time_valid = is_completed & (_mtc > 0)
 
     _mtc_ir = (pd.to_numeric(df_in_range["MinutesToComplete"], errors="coerce")
                if "MinutesToComplete" in df_in_range.columns else pd.Series(dtype=float))
-    is_time_valid_in_range = is_completed_in_range & (_mtc_ir > 0) & (_mtc_ir <= _max_minutes)
+    if _cap_minutes and "ActivityName" in df_in_range.columns:
+        _row_cap_ir = df_in_range["ActivityName"].map(_TASK_TYPE_TO_GROUP).map(_cap_minutes)
+        is_time_valid_in_range = is_completed_in_range & (_mtc_ir > 0) & (_mtc_ir <= _row_cap_ir.fillna(np.inf))
+    else:
+        is_time_valid_in_range = is_completed_in_range & (_mtc_ir > 0)
 
     # Pre-date-filtered copy for cumulative prior periods
     df_all_dates = tasks.copy()
     if physician and "ResolvedMD" in df_all_dates.columns:
         df_all_dates = df_all_dates[df_all_dates["ResolvedMD"] == physician]
+    if planner and "CompletingUser" in df_all_dates.columns:
+        df_all_dates = df_all_dates[df_all_dates["CompletingUser"] == planner]
     if diagnosis_cats and "DiagnosisCodes" in df_all_dates.columns and c2b:
         bs_set = set(diagnosis_cats)
         row_bs_all = df_all_dates["DiagnosisCodes"].apply(
@@ -1333,7 +1614,7 @@ def _load_and_filter_tasks(slider_val, physician, task_types, diagnosis_cats,
         "end": end,
         "date_preset": date_preset,
         "accent": _accent,
-        "max_minutes": _max_minutes,
+        "cap_minutes": _cap_minutes,
         "spark_period": _spark_period,
     }
 
@@ -1349,18 +1630,30 @@ _TASKS_FILTER_INPUTS = [
     Input("tasks-filter-status", "value"),
     Input("tasks-date-slider", "value"),
     Input("tasks-business-hours-switch", "checked"),
-    Input("tasks-max-days-slider", "value"),
+    Input(f"{PAGE_ID}-outlier-enabled", "data"),
+    Input(f"{PAGE_ID}-outlier-cap-0", "value"),
+    Input(f"{PAGE_ID}-outlier-cap-1", "value"),
+    Input(f"{PAGE_ID}-outlier-cap-2", "value"),
+    Input(f"{PAGE_ID}-outlier-cap-3", "value"),
+    Input(f"{PAGE_ID}-outlier-cap-4", "value"),
+    Input("tasks-filter-planner", "value"),
 ]
+
+_N_FILTER_INPUTS = len(_TASKS_FILTER_INPUTS)
 
 
 def _unpack_tasks_filter_args(args):
-    """Unpack the 10 common filter args into kwargs for _load_and_filter_tasks."""
+    """Unpack the common filter args into kwargs for _load_and_filter_tasks."""
     (_n, date_preset, physician, task_types, diagnosis_cats, diag_mode,
-     status, slider_val, use_business_hours, max_days_cap) = args[:10]
+     status, slider_val, use_business_hours,
+     outlier_enabled, cap0, cap1, cap2, cap3, cap4, planner) = args[:_N_FILTER_INPUTS]
     return dict(
-        slider_val=slider_val, physician=physician, task_types=task_types,
+        slider_val=slider_val, physician=physician, planner=planner,
+        task_types=task_types,
         diagnosis_cats=diagnosis_cats, diag_mode=diag_mode, status=status,
-        use_business_hours=use_business_hours, max_days_cap=max_days_cap,
+        use_business_hours=use_business_hours,
+        outlier_enabled=outlier_enabled, cap0=cap0, cap1=cap1,
+        cap2=cap2, cap3=cap3, cap4=cap4,
         date_preset=date_preset,
     )
 
@@ -1373,8 +1666,10 @@ def _unpack_tasks_filter_args(args):
     Output("tasks-kpi-draw", "children"),
     Output("tasks-kpi-srs", "children"),
     Output("tasks-kpi-contour", "children"),
+    Output("tasks-kpi-isodose", "children"),
     Output("tasks-kpi-review", "children"),
-    Output("tasks-table-container", "children"),
+    Output("tasks-detail-grid", "rowData"),
+    Output("tasks-detail-grid", "columnDefs"),
     Output("tasks-store-kpi-sparklines", "data"),
     *_TASKS_FILTER_INPUTS,
 )
@@ -1384,23 +1679,25 @@ def _update_tasks_kpis(*args):
 
     na_card = dmc.Text("\u2014", ta="center")
     if data is None:
-        return na_card, na_card, na_card, na_card, [], {}
+        return na_card, na_card, na_card, na_card, na_card, [], [], {}
 
     df_base = data["df_base"]
     df_prior_base = data["df_prior_base"]
     df = data["df"]
     is_completed = data["is_completed"]
-    _max_minutes = data["max_minutes"]
+    _cap_minutes = data["cap_minutes"]
     _spark_period = data["spark_period"]
 
     # Build KPI group cards + sparkline store data
     group_cards = []
     sparkline_data = {}
     for kg in _KPI_GROUPS:
+        group_cap = _cap_minutes.get(kg["name"]) if _cap_minutes else None
         metrics = _compute_group_metrics(
             df_base, df_prior_base, df_base, kg["raw_types"],
             spark_period=_spark_period,
-            max_minutes=_max_minutes,
+            max_minutes=group_cap,
+            skip_sla=(kg["key"] == "isodose"),
         )
         group_cards.append(
             _task_group_kpi_card(kg["name"], metrics,
@@ -1420,9 +1717,9 @@ def _update_tasks_kpis(*args):
                 "hover_fmt": "%{x|%b %d}: %{customdata:,.0f} min<extra></extra>",
             }
 
-    table = _build_table(df, is_completed)
+    row_data, col_defs = _build_table(df, is_completed)
 
-    return (*group_cards, table, sparkline_data)
+    return (*group_cards, row_data, col_defs, sparkline_data)
 
 
 # ---------------------------------------------------------------------------
@@ -1438,7 +1735,7 @@ def _update_tasks_kpis(*args):
 )
 def _update_tasks_volume(*args):
     ctx = _unpack_tasks_filter_args(args)
-    agg, volume_slice = args[10], args[11]
+    agg, volume_slice = args[_N_FILTER_INPUTS], args[_N_FILTER_INPUTS + 1]
     data = _load_and_filter_tasks(**ctx)
     if data is None:
         return None
@@ -1462,7 +1759,7 @@ def _update_tasks_volume(*args):
 )
 def _update_tasks_cumulative(*args):
     ctx = _unpack_tasks_filter_args(args)
-    cumul_mode, cumul_period_type, cumul_slice = args[10], args[11], args[12]
+    cumul_mode, cumul_period_type, cumul_slice = args[_N_FILTER_INPUTS], args[_N_FILTER_INPUTS + 1], args[_N_FILTER_INPUTS + 2]
     data = _load_and_filter_tasks(**ctx)
     if data is None:
         return None
@@ -1473,7 +1770,7 @@ def _update_tasks_cumulative(*args):
         slice_by=cumul_slice or "task",
         c2b=data["c2b"],
         accent_color=data["accent"],
-        max_prior=5,
+        max_prior=10,
     )
 
 
@@ -1490,7 +1787,7 @@ def _update_tasks_cumulative(*args):
 )
 def _update_tasks_time_trend(*args):
     ctx = _unpack_tasks_filter_args(args)
-    time_agg, time_slice = args[10], args[11]
+    time_agg, time_slice = args[_N_FILTER_INPUTS], args[_N_FILTER_INPUTS + 1]
     data = _load_and_filter_tasks(**ctx)
     if data is None:
         return None
@@ -1514,7 +1811,7 @@ def _update_tasks_time_trend(*args):
 )
 def _update_tasks_sla(*args):
     ctx = _unpack_tasks_filter_args(args)
-    sla_agg, sla_slice = args[10], args[11]
+    sla_agg, sla_slice = args[_N_FILTER_INPUTS], args[_N_FILTER_INPUTS + 1]
     data = _load_and_filter_tasks(**ctx)
     if data is None:
         return None
@@ -1530,22 +1827,42 @@ def _update_tasks_sla(*args):
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output("tasks-chart-histogram", "figure"),
+    Output("tasks-store-histogram", "data"),
     *_TASKS_FILTER_INPUTS,
     Input("tasks-hist-slice", "value"),
-    Input("tasks-histogram-settings-type", "value"),
     running=[(Output("tasks-chart-histogram-loading", "visible"), True, False)],
 )
 def _update_tasks_histogram(*args):
     ctx = _unpack_tasks_filter_args(args)
-    hist_slice, hist_type = args[10], args[11]
+    hist_slice = args[_N_FILTER_INPUTS]
     data = _load_and_filter_tasks(**ctx)
     if data is None:
-        return empty_figure("Tasks data unavailable")
-    return _build_histogram(
+        return None
+    return _prepare_histogram_data(
         data["df_in_range"], data["is_time_valid_in_range"],
-        hist_slice or "", hist_type or "histogram",
-        data["c2b"], accent_color=data["accent"],
+        hist_slice or "", data["c2b"], accent_color=data["accent"],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Callback 7: Actual vs Allowed Time Comparison
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("tasks-store-time-compare", "data"),
+    *_TASKS_FILTER_INPUTS,
+    Input("tasks-time-compare-slice", "value"),
+    running=[(Output("tasks-chart-time-compare-loading", "visible"), True, False)],
+)
+def _update_tasks_time_compare(*args):
+    ctx = _unpack_tasks_filter_args(args)
+    tc_slice = args[_N_FILTER_INPUTS]
+    data = _load_and_filter_tasks(**ctx)
+    if data is None:
+        return None
+    return _prepare_time_compare_data(
+        data["df"], data["is_time_valid"],
+        tc_slice or "", data["c2b"], accent_color=data["accent"],
     )
 
 
@@ -1616,15 +1933,27 @@ def _slice_series(df, slice_by, period_col, all_periods, c2b, agg_func="count", 
     elif slice_by == "task" and "ActivityName" in df.columns:
         df = df.copy()
         df["_TaskGroup"] = df["ActivityName"].map(_TASK_TYPE_TO_GROUP).fillna(df["ActivityName"])
-        for i, grp in enumerate(sorted(df["_TaskGroup"].dropna().unique())):
+        groups = sorted(df["_TaskGroup"].dropna().unique(),
+                        key=lambda g: _TASK_GROUP_ORDER.get(g, 999))
+        for i, grp in enumerate(groups):
             sub = df[df["_TaskGroup"] == grp]
-            series.append(_make_series(sub, grp, CHART_COLORWAY[i % len(CHART_COLORWAY)], i))
+            color = _TASK_GROUP_COLORS.get(grp, CHART_COLORWAY[i % len(CHART_COLORWAY)])
+            series.append(_make_series(sub, grp, color, i))
 
     elif slice_by == "physician" and "ResolvedMD" in df.columns:
-        for i, md in enumerate(sorted(df["ResolvedMD"].dropna().unique())):
+        known_mds = _load_known_physicians()
+        for i, md in enumerate(sorted(m for m in df["ResolvedMD"].dropna().unique() if m in known_mds)):
             sub = df[df["ResolvedMD"] == md]
             name = md.split(",")[0] if "," in md else md
             series.append(_make_series(sub, name, CHART_COLORWAY[i % len(CHART_COLORWAY)], i))
+
+    elif slice_by == "planner" and "CompletingUser" in df.columns:
+        known_mds = _load_known_physicians()
+        planners = sorted(p for p in df["CompletingUser"].dropna().unique()
+                          if p.strip() and p.upper() != "NA" and p not in known_mds)
+        for i, p in enumerate(planners):
+            sub = df[df["CompletingUser"] == p]
+            series.append(_make_series(sub, p, CHART_COLORWAY[i % len(CHART_COLORWAY)], i))
 
     elif slice_by == "bodysite" and "DiagnosisCodes" in df.columns and c2b:
         df = df.copy()
@@ -1634,6 +1963,10 @@ def _slice_series(df, slice_by, period_col, all_periods, c2b, agg_func="count", 
                 continue
             sub = df[df["_bs"] == bs]
             series.append(_make_series(sub, bs, CHART_COLORWAY[i % len(CHART_COLORWAY)], i))
+
+    # When only one series produced and we have an accent color, use it
+    if len(series) == 1 and accent_color:
+        series[0]["color"] = accent_color
 
     return series
 
@@ -1654,6 +1987,7 @@ def _prepare_volume_data(df, agg, slice_by="", c2b=None, accent_color=None):
     return {
         "dates": dates,
         "series": series,
+        "stacked": len(series) > 1,
         "height": 350,
         "yTitle": "Tasks",
         "hideLegend": len(series) <= 1,
@@ -1663,7 +1997,7 @@ def _prepare_volume_data(df, agg, slice_by="", c2b=None, accent_color=None):
 def _prepare_cumulative_data(df_all, start, end, date_preset,
                               mode="prior", period_type="calendar",
                               slice_by="task", c2b=None, accent_color=None,
-                              max_prior=5):
+                              max_prior=10):
     """Prepare cumulative task volume data for overlay chart."""
     if df_all.empty or "StartDateTime" not in df_all.columns:
         return None
@@ -1675,6 +2009,10 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
     period_days = (end - start).days + 1
     if period_days < 2:
         return None
+
+    # Force rolling when period exceeds 1 year (calendar shifts would overlap)
+    if period_days > 365 and period_type == "calendar":
+        period_type = "rolling"
 
     dff_all = df_all.copy()
     if dff_all.empty:
@@ -1702,8 +2040,16 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             sub_c["_TaskGroup"] = sub_c["ActivityName"].map(_TASK_TYPE_TO_GROUP).fillna(sub_c["ActivityName"])
             return sub_c.groupby("_TaskGroup").size().to_dict()
         elif sb == "physician" and "ResolvedMD" in sub.columns:
-            counts = sub.groupby("ResolvedMD").size()
+            known_mds = _load_known_physicians()
+            counts = sub[sub["ResolvedMD"].isin(known_mds)].groupby("ResolvedMD").size()
             return {(k.split(",")[0] if "," in k else k): v for k, v in counts.items()}
+        elif sb == "planner" and "CompletingUser" in sub.columns:
+            known_mds = _load_known_physicians()
+            psub = sub[sub["CompletingUser"].notna()
+                       & ~sub["CompletingUser"].isin(known_mds)
+                       & (sub["CompletingUser"].str.strip() != "")
+                       & (sub["CompletingUser"].str.upper() != "NA")]
+            return psub.groupby("CompletingUser").size().to_dict() if not psub.empty else {}
         elif sb == "bodysite" and "DiagnosisCodes" in sub.columns and c2b:
             sub_bs = sub.copy()
             sub_bs["_bs"] = sub_bs["DiagnosisCodes"].apply(lambda v: primary_category(v, c2b))
@@ -1750,6 +2096,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             windows.append((_period_label(p_start, p_end), p_start, p_end))
 
     prior = []
+    last_prior_start = None
     for pi, (label, p_start, p_end) in enumerate(windows):
         vals = _cumulative_for_window(dff_all, p_start, p_end)
         if vals and any(v > 0 for v in vals):
@@ -1758,6 +2105,16 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             elif len(vals) > n_days:
                 vals = vals[:n_days]
             prior.append({"label": label, "values": vals, "color": PRIOR_PERIOD_COLORS[min(pi, len(PRIOR_PERIOD_COLORS) - 1)]})
+            last_prior_start = p_start
+
+    # Metadata for client-side control updates
+    has_partial = (last_prior_start is not None
+                   and last_prior_start.normalize() < data_min.normalize())
+    _prior_meta = {
+        "periodDays": period_days,
+        "maxAvailablePriors": len(prior),
+        "hasPartialPrior": has_partial,
+    }
 
     current_label = _period_label(start, end)
     if len(current_vals) < n_days:
@@ -1775,8 +2132,9 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
         all_slice_totals.append((wlabel, totals))
         all_slice_keys.update(totals.keys())
 
-    slice_keys_sorted = sorted(all_slice_keys)
-    slice_colors = {k: CHART_COLORWAY[i % len(CHART_COLORWAY)]
+    slice_keys_sorted = sorted(all_slice_keys,
+                               key=lambda g: _TASK_GROUP_ORDER.get(g, 999))
+    slice_colors = {k: _TASK_GROUP_COLORS.get(k, CHART_COLORWAY[i % len(CHART_COLORWAY)])
                    for i, k in enumerate(slice_keys_sorted)}
 
     breakdown_periods = [t[0] for t in reversed(all_slice_totals)]
@@ -1806,6 +2164,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             "sliceBreakdown": slice_breakdown,
             "height": 350,
             "yTitle": "Cumulative Tasks",
+            **_prior_meta,
         }
 
     # Slice mode
@@ -1817,13 +2176,13 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
         cumvals = daily_counts.cumsum().tolist()
         raw = daily_counts.tolist()
         first_idx = next((i for i, v in enumerate(raw) if v > 0), None)
-        last_idx = next((i for i in range(len(raw) - 1, -1, -1) if raw[i] > 0), None)
         if first_idx is None:
             return [None] * len(cumvals)
         for i in range(first_idx):
             cumvals[i] = None
+        last_idx = next((i for i in range(len(raw) - 1, -1, -1) if raw[i] > 0), first_idx)
         for i in range(last_idx + 1, len(cumvals)):
-            cumvals[i] = None
+            cumvals[i] = cumvals[last_idx]
         return cumvals
 
     series = []
@@ -1831,23 +2190,39 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
     if slice_by == "task" and "ActivityName" in dff_period.columns:
         dff_period = dff_period.copy()
         dff_period["_TaskGroup"] = dff_period["ActivityName"].map(_TASK_TYPE_TO_GROUP).fillna(dff_period["ActivityName"])
-        for i, grp in enumerate(sorted(dff_period["_TaskGroup"].dropna().unique())):
+        for i, grp in enumerate(sorted(dff_period["_TaskGroup"].dropna().unique(),
+                                       key=lambda g: _TASK_GROUP_ORDER.get(g, 999))):
             sub = dff_period[dff_period["_TaskGroup"] == grp]
             daily = sub.groupby(sub["StartDateTime"].dt.normalize()).size()
             daily = daily.reindex(dates_range, fill_value=0)
             series.append({
                 "name": grp,
                 "values": _trimmed_cumsum(daily),
-                "color": CHART_COLORWAY[i % len(CHART_COLORWAY)],
+                "color": _TASK_GROUP_COLORS.get(grp, CHART_COLORWAY[i % len(CHART_COLORWAY)]),
             })
 
     elif slice_by == "physician" and "ResolvedMD" in dff_period.columns:
-        for i, md in enumerate(sorted(dff_period["ResolvedMD"].dropna().unique())):
+        known_mds = _load_known_physicians()
+        for i, md in enumerate(sorted(m for m in dff_period["ResolvedMD"].dropna().unique() if m in known_mds)):
             sub = dff_period[dff_period["ResolvedMD"] == md]
             daily = sub.groupby(sub["StartDateTime"].dt.normalize()).size()
             daily = daily.reindex(dates_range, fill_value=0)
             series.append({
                 "name": md.split(",")[0] if "," in md else md,
+                "values": _trimmed_cumsum(daily),
+                "color": CHART_COLORWAY[i % len(CHART_COLORWAY)],
+            })
+
+    elif slice_by == "planner" and "CompletingUser" in dff_period.columns:
+        known_mds = _load_known_physicians()
+        planners = sorted(p for p in dff_period["CompletingUser"].dropna().unique()
+                          if p.strip() and p.upper() != "NA" and p not in known_mds)
+        for i, p in enumerate(planners):
+            sub = dff_period[dff_period["CompletingUser"] == p]
+            daily = sub.groupby(sub["StartDateTime"].dt.normalize()).size()
+            daily = daily.reindex(dates_range, fill_value=0)
+            series.append({
+                "name": p,
                 "values": _trimmed_cumsum(daily),
                 "color": CHART_COLORWAY[i % len(CHART_COLORWAY)],
             })
@@ -1875,6 +2250,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
         "sliceBreakdown": slice_breakdown,
         "height": 350,
         "yTitle": "Cumulative Tasks",
+        **_prior_meta,
     }
 
 
@@ -1901,11 +2277,27 @@ def _prepare_time_trend_data(df, is_completed, agg="M", slice_by="", c2b=None, a
     if not series:
         return None
 
+    # Auto-detect display unit from the data values
+    all_vals = [v for s in series for v in s["values"] if v is not None]
+    min_val = min(all_vals) if all_vals else 0
+    if min_val >= 1440:  # smallest value > 24h → show days
+        scale, y_title, tick_suffix = 1 / 1440, "Median Time", "d"
+    elif min_val >= 60 or (all_vals and max(all_vals) >= 120):
+        scale, y_title, tick_suffix = 1 / 60, "Median Time", "h"
+    else:
+        scale, y_title, tick_suffix = 1, "Median Time", "m"
+
+    if scale != 1:
+        for s in series:
+            s["values"] = [v * scale if v is not None else None for v in s["values"]]
+
     return {
         "dates": dates,
         "series": series,
-        "height": 320,
-        "yTitle": "Median Minutes",
+        "stacked": len(series) > 1,
+        "height": 350,
+        "yTitle": y_title,
+        "yTickSuffix": tick_suffix,
         "hideLegend": len(series) <= 1,
     }
 
@@ -1917,11 +2309,21 @@ def _prepare_sla_data(df, is_completed, agg="W", slice_by="", c2b=None, accent_c
         return None
 
     completed = df[is_completed].copy()
+    # Exclude Isodose tasks — ARIA SLA data for planning tasks is unreliable
+    iso_only = False
+    if "ActivityName" in completed.columns:
+        iso_types = _TASK_TYPE_GROUPS.get("Create Isodose Plan", [])
+        pre_exclude = len(completed)
+        completed = completed[~completed["ActivityName"].isin(iso_types)]
+        if pre_exclude > 0 and completed.empty:
+            iso_only = True
     completed["MinutesToComplete"] = pd.to_numeric(completed["MinutesToComplete"], errors="coerce")
     completed["MinutesAllowed"] = pd.to_numeric(completed["MinutesAllowed"], errors="coerce")
     completed = completed.dropna(subset=["MinutesToComplete", "MinutesAllowed"])
     if completed.empty:
-        return None
+        if iso_only:
+            return {"emptyMessage": "Allowed-time data not available for Isodose tasks\n(ARIA due-date data is unreliable)", "height": 320}
+        return {"emptyMessage": "No allowed-time data available for this selection", "height": 320}
 
     period_code = "Y" if agg == "Y" else agg
     completed["period"] = completed["StartDateTime"].dt.to_period(period_code).dt.to_timestamp()
@@ -1948,15 +2350,25 @@ def _prepare_sla_data(df, is_completed, agg="W", slice_by="", c2b=None, accent_c
     elif slice_by == "task" and "ActivityName" in completed.columns:
         completed = completed.copy()
         completed["_TaskGroup"] = completed["ActivityName"].map(_TASK_TYPE_TO_GROUP).fillna(completed["ActivityName"])
-        for i, grp in enumerate(sorted(completed["_TaskGroup"].dropna().unique())):
+        for i, grp in enumerate(sorted(completed["_TaskGroup"].dropna().unique(),
+                                        key=lambda g: _TASK_GROUP_ORDER.get(g, 999))):
             sub = completed[completed["_TaskGroup"] == grp]
-            series.append(_sla_for_subset(sub, grp, CHART_COLORWAY[i % len(CHART_COLORWAY)]))
+            series.append(_sla_for_subset(sub, grp, _TASK_GROUP_COLORS.get(grp, CHART_COLORWAY[i % len(CHART_COLORWAY)])))
 
     elif slice_by == "physician" and "ResolvedMD" in completed.columns:
-        for i, md in enumerate(sorted(completed["ResolvedMD"].dropna().unique())):
+        known_mds = _load_known_physicians()
+        for i, md in enumerate(sorted(m for m in completed["ResolvedMD"].dropna().unique() if m in known_mds)):
             sub = completed[completed["ResolvedMD"] == md]
             name = md.split(",")[0] if "," in md else md
             series.append(_sla_for_subset(sub, name, CHART_COLORWAY[i % len(CHART_COLORWAY)]))
+
+    elif slice_by == "planner" and "CompletingUser" in completed.columns:
+        known_mds = _load_known_physicians()
+        planners = sorted(p for p in completed["CompletingUser"].dropna().unique()
+                          if p.strip() and p.upper() != "NA" and p not in known_mds)
+        for i, p in enumerate(planners):
+            sub = completed[completed["CompletingUser"] == p]
+            series.append(_sla_for_subset(sub, p, CHART_COLORWAY[i % len(CHART_COLORWAY)]))
 
     elif slice_by == "bodysite" and "DiagnosisCodes" in completed.columns and c2b:
         completed = completed.copy()
@@ -1972,211 +2384,251 @@ def _prepare_sla_data(df, is_completed, agg="W", slice_by="", c2b=None, accent_c
         "series": series,
         "stacked": False,
         "height": 320,
-        "yTitle": "SLA Compliance %",
+        "yTitle": "On-Time %",
         "hideLegend": len(series) <= 1,
     }
 
 
-def _build_histogram(df, is_completed, slice_by="", hist_type="histogram", c2b=None, accent_color=None):
-    """Build histogram or density plot of time to complete, optionally sliced.
+def _prepare_histogram_data(df, is_completed, slice_by="", c2b=None, accent_color=None):
+    """Prepare histogram data for clientside rendering.
 
-    Expects is_completed to already exclude zeros and values above the
-    max-days cap (via is_time_valid in the main callback).
+    Returns a dict with series of raw values, stats, and display config.
     """
     if "MinutesToComplete" not in df.columns:
-        return empty_figure("No completion time data")
+        return None
 
     completed = df[is_completed].copy()
     completed["MinutesToComplete"] = pd.to_numeric(completed["MinutesToComplete"], errors="coerce")
     completed = completed.dropna(subset=["MinutesToComplete"])
     if completed.empty:
-        return empty_figure()
-
-    # --- Compute stats ---
-    all_vals = completed["MinutesToComplete"]
-    n_total = len(all_vals)
-    median_val = float(all_vals.median())
-    mean_val = float(all_vals.mean())
-    q1 = float(all_vals.quantile(0.25))
-    q3 = float(all_vals.quantile(0.75))
+        return None
 
     # --- Auto-detect display unit based on data range ---
+    all_vals = completed["MinutesToComplete"]
     max_val = float(all_vals.max())
-    if max_val > 3 * 1440:  # range > 3 days → show days
-        unit, suffix, scale = "days", "d", 1 / 1440
-        x_title = "Days"
-    elif max_val >= 60:  # range > 1 hour → show hours
-        unit, suffix, scale = "hours", "h", 1 / 60
-        x_title = "Hours"
+    if max_val > 3 * 1440:
+        suffix, scale = "d", 1 / 1440
+        tick_suffix, x_title = "d", "Days"
+    elif max_val >= 60:
+        suffix, scale = "h", 1 / 60
+        tick_suffix, x_title = "hr", "Hours"
     else:
-        unit, suffix, scale = "minutes", "m", 1
-        x_title = "Minutes"
+        suffix, scale = "m", 1
+        tick_suffix, x_title = "m", "Minutes"
 
-    # Scale values for display
     completed["_display_val"] = completed["MinutesToComplete"] * scale
-    disp_median = median_val * scale
-    disp_mean = mean_val * scale
-    disp_q1 = q1 * scale
-    disp_q3 = q3 * scale
 
-    # Format helper
-    def _fmt(v):
-        if abs(v) >= 10:
-            return f"{v:.0f}"
-        return f"{v:.1f}"
+    # --- Stats ---
+    disp = completed["_display_val"]
+    stats = {
+        "n": len(disp),
+        "median": float(disp.median()),
+        "mean": float(disp.mean()),
+        "q1": float(disp.quantile(0.25)),
+        "q3": float(disp.quantile(0.75)),
+        "suffix": suffix,
+        "tickSuffix": tick_suffix,
+        "xTitle": x_title,
+        "accentColor": accent_color or PRIMARY,
+    }
 
-    fig = go.Figure()
+    # --- Build series ---
+    series = []
 
-    def _hex_to_rgba(hex_color, alpha):
-        """Convert #RRGGBB to rgba(r,g,b,a)."""
-        h = hex_color.lstrip("#")
-        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-        return f"rgba({r},{g},{b},{alpha})"
-
-    def _add_traces(sub, name, color, show_legend=True):
-        vals = sub["_display_val"].values
-        fill_color = _hex_to_rgba(color, 0.7) if color.startswith("#") else color
-        light_fill = _hex_to_rgba(color, 0.15) if color.startswith("#") else color
-        if hist_type == "density":
-            try:
-                from scipy.stats import gaussian_kde
-                kde = gaussian_kde(vals)
-                x_range = np.linspace(max(0, vals.min() - 1), vals.max() + 1, 200)
-                y_vals = kde(x_range)
-                fig.add_trace(go.Scatter(
-                    x=x_range, y=y_vals, mode="lines",
-                    fill="tozeroy", name=name,
-                    line=dict(color=color, width=2),
-                    fillcolor=light_fill,
-                    showlegend=show_legend,
-                    hovertemplate=f"{x_title}: %{{x:.1f}}<br>Density: %{{y:.4f}}<extra></extra>",
-                ))
-            except Exception:
-                fig.add_trace(go.Histogram(
-                    x=vals,
-                    marker=dict(color=fill_color, line=dict(color=color, width=1)),
-                    xbins=dict(size=1),
-                    name=name, showlegend=show_legend,
-                    hovertemplate=f"{x_title}: %{{x}}<br>Count: %{{y}}<extra></extra>",
-                ))
-        else:
-            fig.add_trace(go.Histogram(
-                x=vals,
-                marker=dict(color=fill_color, line=dict(color=color, width=1)),
-                xbins=dict(size=1),
-                name=name, showlegend=show_legend,
-                hovertemplate=f"{x_title}: %{{x}}<br>Count: %{{y}}<extra></extra>",
-            ))
+    def _add_series(sub, name, color):
+        series.append({
+            "name": name,
+            "values": sub["_display_val"].tolist(),
+            "color": color,
+        })
 
     if not slice_by:
-        _add_traces(completed, "All Tasks", accent_color or PRIMARY, show_legend=False)
+        _add_series(completed, "All Tasks", accent_color or PRIMARY)
     elif slice_by == "task" and "ActivityName" in completed.columns:
         completed["_TaskGroup"] = completed["ActivityName"].map(_TASK_TYPE_TO_GROUP).fillna(completed["ActivityName"])
-        for i, grp in enumerate(sorted(completed["_TaskGroup"].dropna().unique())):
-            sub = completed[completed["_TaskGroup"] == grp]
-            _add_traces(sub, grp, CHART_COLORWAY[i % len(CHART_COLORWAY)])
+        for i, grp in enumerate(sorted(completed["_TaskGroup"].dropna().unique(),
+                                        key=lambda g: _TASK_GROUP_ORDER.get(g, 999))):
+            _add_series(completed[completed["_TaskGroup"] == grp], grp,
+                        _TASK_GROUP_COLORS.get(grp, CHART_COLORWAY[i % len(CHART_COLORWAY)]))
     elif slice_by == "physician" and "ResolvedMD" in completed.columns:
-        for i, md in enumerate(sorted(completed["ResolvedMD"].dropna().unique())):
+        known_mds = _load_known_physicians()
+        for i, md in enumerate(sorted(m for m in completed["ResolvedMD"].dropna().unique() if m in known_mds)):
+            name = md.split(",")[0] if "," in md else md
+            _add_series(completed[completed["ResolvedMD"] == md], name,
+                        CHART_COLORWAY[i % len(CHART_COLORWAY)])
+    elif slice_by == "planner" and "CompletingUser" in completed.columns:
+        known_mds = _load_known_physicians()
+        planners = sorted(p for p in completed["CompletingUser"].dropna().unique()
+                          if p.strip() and p.upper() != "NA" and p not in known_mds)
+        for i, p in enumerate(planners):
+            _add_series(completed[completed["CompletingUser"] == p], p,
+                        CHART_COLORWAY[i % len(CHART_COLORWAY)])
+
+    # When only one series and we have an accent color, use it
+    if len(series) == 1 and accent_color:
+        series[0]["color"] = accent_color
+        stats["accentColor"] = accent_color
+
+    return {"series": series, "stats": stats, "sliced": bool(slice_by)}
+
+
+def _prepare_time_compare_data(df, is_time_valid, slice_by="", c2b=None, accent_color=None):
+    """Prepare actual vs allowed time comparison data for horizontal bar chart.
+
+    Returns rows with median actual and median allowed values, grouped by the
+    selected dimension (task type, physician, or diagnosis).
+    """
+    if "MinutesToComplete" not in df.columns or "MinutesAllowed" not in df.columns:
+        return None
+
+    completed = df[is_time_valid].copy()
+    completed["MinutesToComplete"] = pd.to_numeric(completed["MinutesToComplete"], errors="coerce")
+    completed["MinutesAllowed"] = pd.to_numeric(completed["MinutesAllowed"], errors="coerce")
+    completed = completed.dropna(subset=["MinutesToComplete"])
+    if completed.empty:
+        return None
+
+    # Identify Isodose rows — ARIA SLA data is unreliable for planning tasks
+    _iso_types = _TASK_TYPE_GROUPS.get("Create Isodose Plan", [])
+    is_iso = (completed["ActivityName"].isin(_iso_types)
+              if "ActivityName" in completed.columns
+              else pd.Series(False, index=completed.index))
+
+    # For non-Isodose rows, require valid allowed time
+    has_allowed = completed["MinutesAllowed"].notna() & (completed["MinutesAllowed"] > 0) & ~is_iso
+
+    # Auto-detect display unit from actual times (always present)
+    # plus allowed times where valid
+    max_actual = float(completed["MinutesToComplete"].max())
+    max_allowed = float(completed.loc[has_allowed, "MinutesAllowed"].max()) if has_allowed.any() else 0
+    max_val = max(max_actual, max_allowed)
+    if max_val > 3 * 1440:
+        scale, tick_suffix = 1 / 1440, "d"
+    elif max_val >= 60:
+        scale, tick_suffix = 1 / 60, "hr"
+    else:
+        scale, tick_suffix = 1, "m"
+
+    rows = []
+
+    def _add_row(sub, label, color):
+        actual_med = float(sub["MinutesToComplete"].median()) * scale
+        # Compute allowed only from non-Isodose rows with valid SLA
+        sub_allowed = sub[sub.index.isin(completed.index[has_allowed])]
+        if len(sub_allowed) > 0:
+            allowed_med = round(float(sub_allowed["MinutesAllowed"].median()) * scale, 2)
+        else:
+            allowed_med = None
+        rows.append({
+            "label": label,
+            "actual": round(actual_med, 2),
+            "allowed": allowed_med,
+            "color": color,
+            "n": len(sub),
+        })
+
+    if not slice_by:
+        _add_row(completed, "All Tasks", accent_color or PRIMARY)
+    elif slice_by == "task" and "ActivityName" in completed.columns:
+        completed["_TaskGroup"] = completed["ActivityName"].map(_TASK_TYPE_TO_GROUP).fillna(completed["ActivityName"])
+        for i, grp in enumerate(sorted(completed["_TaskGroup"].dropna().unique(),
+                                        key=lambda g: _TASK_GROUP_ORDER.get(g, 999))):
+            sub = completed[completed["_TaskGroup"] == grp]
+            color = _TASK_GROUP_COLORS.get(grp, CHART_COLORWAY[i % len(CHART_COLORWAY)])
+            _add_row(sub, grp, color)
+    elif slice_by == "physician" and "ResolvedMD" in completed.columns:
+        known_mds = _load_known_physicians()
+        for i, md in enumerate(sorted(m for m in completed["ResolvedMD"].dropna().unique() if m in known_mds)):
             sub = completed[completed["ResolvedMD"] == md]
             name = md.split(",")[0] if "," in md else md
-            _add_traces(sub, name, CHART_COLORWAY[i % len(CHART_COLORWAY)])
+            _add_row(sub, name, CHART_COLORWAY[i % len(CHART_COLORWAY)])
+    elif slice_by == "planner" and "CompletingUser" in completed.columns:
+        known_mds = _load_known_physicians()
+        planners = sorted(p for p in completed["CompletingUser"].dropna().unique()
+                          if p.strip() and p.upper() != "NA" and p not in known_mds)
+        for i, p in enumerate(planners):
+            sub = completed[completed["CompletingUser"] == p]
+            _add_row(sub, p, CHART_COLORWAY[i % len(CHART_COLORWAY)])
     elif slice_by == "bodysite" and "DiagnosisCodes" in completed.columns and c2b:
         completed["_bs"] = completed["DiagnosisCodes"].apply(lambda v: primary_category(v, c2b))
         for i, bs in enumerate(sorted(completed["_bs"].dropna().unique())):
             if bs == "Unknown":
                 continue
             sub = completed[completed["_bs"] == bs]
-            _add_traces(sub, bs, CHART_COLORWAY[i % len(CHART_COLORWAY)])
+            _add_row(sub, bs, CHART_COLORWAY[i % len(CHART_COLORWAY)])
 
-    # --- Median line (dashed, label above chart) ---
-    fig.add_shape(
-        type="line", x0=disp_median, x1=disp_median, y0=0, y1=1,
-        yref="paper", line=dict(color=accent_color or PRIMARY, width=2, dash="dash"),
-    )
-    fig.add_annotation(
-        x=disp_median, y=1.06, yref="paper", xref="x",
-        text=f"Median: {_fmt(disp_median)}{suffix}",
-        showarrow=False,
-        font=dict(size=11, color=accent_color or PRIMARY),
-    )
+    if not rows:
+        return None
 
-    # --- Bottom annotation: stats summary ---
-    annotation = (
-        f"n={n_total:,}  "
-        f"Mean: {_fmt(disp_mean)}{suffix}  "
-        f"(IQR: {_fmt(disp_q1)}\u2013{_fmt(disp_q3)}{suffix})"
-    )
-
-    apply_default_layout(fig, barmode="overlay", height=330)
-    x_range_span = completed["_display_val"].max() - completed["_display_val"].min()
-    tick_suffix = "hr" if unit == "hours" else suffix  # "hr", "m", or "d"
-    fig.update_layout(
-        xaxis=dict(
-            showgrid=False, autorange=True,
-            dtick=1 if x_range_span <= 15 else (2 if x_range_span <= 30 else None),
-            tickangle=0, ticksuffix=tick_suffix,
-        ),
-        yaxis=dict(gridcolor="#F0F0F0", gridwidth=1),
-        paper_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=32, r=12, t=16, b=48),
-        showlegend=bool(slice_by),
-        legend=dict(
-            orientation="h", y=1.02, x=0, xanchor="left", yanchor="bottom",
-            font=dict(size=11), tracegroupgap=0, itemwidth=30,
-        ),
-        hovermode="closest",
-    )
-    fig.add_annotation(
-        text=annotation,
-        xref="paper", yref="paper",
-        x=0.5, y=0, xanchor="center", yanchor="top",
-        yshift=-18,
-        showarrow=False,
-        font=dict(size=11, color=NEUTRAL["text_muted"]),
-    )
-
-    return fig
+    return {
+        "rows": rows,
+        "tickSuffix": tick_suffix,
+        "accentColor": accent_color or PRIMARY,
+    }
 
 
 def _build_table(df, is_completed):
     display_cols = []
-    col_map = {
-        "StartDateTime": "Start",
-        "DueDateTime": "Due",
-        "CompletedDateTime": "Completed",
-        "ActivityName": "Type",
-        "TaskStatus": "Status",
-        "PriorStepComplete": "Prior Step",
-        "ResolvedMD": "Physician",
-        "AssignedMD": "Assigned",
-        "CompletingMD": "Completed By",
-        "MinutesToComplete": "Minutes",
-        "MinutesAllowed": "SLA (min)",
-        "PatientFullName": "Patient",
-    }
 
-    for col, header in col_map.items():
-        if col in df.columns:
-            display_cols.append({"field": col, "headerName": header})
+    # Include all completed tasks + open tasks only if prior step is done
+    actionable = is_completed | _prior_step_complete(df)
+    table_df = df[actionable].copy()
+
+    if table_df.empty:
+        return [], []
+
+    # Check if filtered to Isodose-only (allowed time unreliable)
+    iso_types = _TASK_TYPE_GROUPS.get("Create Isodose Plan", [])
+    is_iso_only = ("ActivityName" in table_df.columns
+                   and set(table_df["ActivityName"].dropna().unique()).issubset(set(iso_types)))
+
+    col_map = [
+        ("PriorStepBaseline", "Baseline"),
+        ("CompletedDateTime", "Completed"),
+        ("PatientFullName", "Patient"),
+        ("ActivityName", "Type"),
+        ("AssignedMD", "Assigned"),
+        ("CompletingUser", "Completing"),
+        ("MinutesToComplete", "Actual (min)"),
+        ("MinutesAllowed", "Allowed (min)"),
+        ("TaskStatus", "Status"),
+    ]
+
+    for col, header in col_map:
+        if col not in table_df.columns:
+            continue
+        if col == "MinutesAllowed" and is_iso_only:
+            continue
+        col_def = {"field": col, "headerName": header}
+        if col == "PriorStepBaseline":
+            col_def["sort"] = "desc"
+        display_cols.append(col_def)
 
     if not display_cols:
-        return dmc.Text("No task data available", c=NEUTRAL["text_muted"], ta="center", py="xl")
+        return [], []
 
-    table_df = df.head(200).copy()
+    # Fill null baselines with a far-future date so they sort to top in desc order
+    _FAR_FUTURE = pd.Timestamp("2099-12-31")
+    if "PriorStepBaseline" in table_df.columns:
+        table_df["PriorStepBaseline"] = table_df["PriorStepBaseline"].fillna(_FAR_FUTURE)
+
+    table_df = table_df.sort_values("PriorStepBaseline", ascending=False).head(200)
+
+    # Blank out allowed time for Isodose rows (unreliable ARIA data)
+    if "MinutesAllowed" in table_df.columns and "ActivityName" in table_df.columns:
+        iso_mask = table_df["ActivityName"].isin(iso_types)
+        table_df.loc[iso_mask, "MinutesAllowed"] = pd.NA
+
     for c in table_df.select_dtypes(include=["datetime64"]).columns:
         table_df[c] = table_df[c].dt.strftime("%m/%d/%Y %H:%M")
+    # Replace the far-future placeholder with a visible label
+    if "PriorStepBaseline" in table_df.columns:
+        table_df["PriorStepBaseline"] = table_df["PriorStepBaseline"].replace(
+            _FAR_FUTURE.strftime("%m/%d/%Y %H:%M"), "Pending"
+        )
     table_df = sanitize_for_grid(table_df)
 
-    return dag.AgGrid(
-        id="tasks-detail-grid",
-        rowData=table_df.to_dict("records"),
-        columnDefs=display_cols,
-        defaultColDef=DEFAULT_COLUMN_DEFS,
-        columnSize="autoSize",
-        dashGridOptions={**DEFAULT_GRID_OPTIONS, "paginationPageSize": 25},
-        style=DEFAULT_GRID_STYLE,
-        className=DEFAULT_GRID_CLASS,
-    )
+    return table_df.to_dict("records"), display_cols
 
 
 def _build_day_index_ticks(start_norm, n_days, max_ticks=12):
@@ -2248,13 +2700,14 @@ clientside_callback(
 )
 
 clientside_callback(
-    """function(rawData, smoothPct, chartType, maxPrior, currentFig) {
-        return window.dash_clientside.cumulative.renderCumulative(rawData, smoothPct, chartType, currentFig, null, maxPrior);
+    """function(rawData, smoothPct, chartType, stackVal, maxPrior, currentFig) {
+        return window.dash_clientside.cumulative.renderCumulative(rawData, smoothPct, chartType, currentFig, stackVal, maxPrior);
     }""",
     Output("tasks-chart-cumulative", "figure"),
     Input("tasks-store-cumulative", "data"),
     Input("tasks-cumulative-settings-smooth", "value"),
     Input("tasks-cumulative-settings-type", "value"),
+    Input("tasks-cumulative-settings-stack", "value"),
     Input("tasks-cumulative-settings-prior-periods", "value"),
     State("tasks-chart-cumulative", "figure"),
 )
@@ -2291,6 +2744,51 @@ clientside_callback(
     Input("tasks-cumulative-mode", "value"),
 )
 
+# Disable Calendar when period > 1 year; cap prior-periods slider to available data
+clientside_callback(
+    """function(storeData, currentPtValue) {
+        return window.dash_clientside.cumulative.updatePriorControls(storeData, currentPtValue);
+    }""",
+    Output("tasks-cumulative-period-type", "data"),
+    Output("tasks-cumulative-period-type", "value", allow_duplicate=True),
+    Output("tasks-cumulative-settings-prior-periods", "max"),
+    Output("tasks-cumulative-settings-prior-periods", "marks"),
+    Input("tasks-store-cumulative", "data"),
+    State("tasks-cumulative-period-type", "value"),
+    prevent_initial_call=True,
+)
+
+# Hide "Total" slice option in line/area mode; swap MD↔Planner for Isodose
+clientside_callback(
+    """function(chartType, taskTypes, sliceVal) {
+        var none = !taskTypes || taskTypes.length === 0;
+        var hasIso = none || taskTypes.indexOf("Create Isodose Plan") >= 0;
+        var isoOnly = !none && taskTypes.length === 1 && taskTypes[0] === "Create Isodose Plan";
+        var hasMD = !isoOnly;
+        var hasPlanner = hasIso;
+        var noUpdate = window.dash_clientside.no_update;
+
+        var opts = [];
+        if (chartType === "bar") opts.push({value: "total", label: "Total"});
+        opts.push({value: "task", label: "Task"});
+        if (hasMD) opts.push({value: "physician", label: "MD"});
+        if (hasPlanner) opts.push({value: "planner", label: "Planner"});
+        opts.push({value: "bodysite", label: "Dx"});
+
+        var valid = false;
+        for (var i = 0; i < opts.length; i++) {
+            if (opts[i].value === sliceVal) { valid = true; break; }
+        }
+        return [opts, valid ? noUpdate : "task"];
+    }""",
+    Output("tasks-cumulative-slice", "data"),
+    Output("tasks-cumulative-slice", "value", allow_duplicate=True),
+    Input("tasks-cumulative-settings-type", "value"),
+    Input("tasks-filter-type", "value"),
+    State("tasks-cumulative-slice", "value"),
+    prevent_initial_call=True,
+)
+
 # ---------------------------------------------------------------------------
 # Clientside callbacks for KPI sparklines
 # ---------------------------------------------------------------------------
@@ -2310,8 +2808,9 @@ for _kg in _KPI_GROUPS:
 # ---------------------------------------------------------------------------
 register_chart_callbacks([
     ("tasks-volume", "tasks-chart-volume"),
-    ("tasks-cumulative", "tasks-chart-cumulative"),
+    {"sid": "tasks-cumulative", "gid": "tasks-chart-cumulative", "show_grouping": False},
     ("tasks-histogram", "tasks-chart-histogram"),
+    ("tasks-time-compare", "tasks-chart-time-compare"),
     ("tasks-time-trend", "tasks-chart-time-trend"),
     ("tasks-sla", "tasks-chart-sla"),
 ])
@@ -2323,12 +2822,39 @@ _SLICE_CLASS_JS = """function(val) {
     return (val && val !== "total") ? "slice-group-active" : "slice-total-active";
 }"""
 
-for _sid in ["tasks-volume-slice", "tasks-hist-slice", "tasks-time-slice", "tasks-sla-slice", "tasks-cumulative-slice"]:
+for _sid in ["tasks-volume-slice", "tasks-hist-slice", "tasks-time-compare-slice", "tasks-time-slice", "tasks-sla-slice", "tasks-cumulative-slice"]:
     clientside_callback(
         _SLICE_CLASS_JS,
         Output(_sid, "className"),
         Input(_sid, "value"),
     )
+
+# Histogram: clientside rendering from store
+clientside_callback(
+    ClientsideFunction(namespace="histogram", function_name="render"),
+    Output("tasks-chart-histogram", "figure"),
+    Input("tasks-store-histogram", "data"),
+    Input("tasks-histogram-settings-type", "value"),
+    Input("tasks-hist-bw", "value"),
+    State("tasks-chart-histogram", "figure"),
+)
+
+# Time comparison: clientside rendering from store
+clientside_callback(
+    ClientsideFunction(namespace="timeCompare", function_name="render"),
+    Output("tasks-chart-time-compare", "figure"),
+    Input("tasks-store-time-compare", "data"),
+    State("tasks-chart-time-compare", "figure"),
+)
+
+# Show kernel bandwidth slider only in density mode
+clientside_callback(
+    """function(chartType) {
+        return chartType === "density" ? {} : {"display": "none"};
+    }""",
+    Output("tasks-hist-bw-wrap", "style"),
+    Input("tasks-histogram-settings-type", "value"),
+)
 
 _HIDE_STACK_JS = """function(sliceVal, chartType) {
     var single = !sliceVal || sliceVal === "total" || sliceVal === "";
@@ -2338,7 +2864,6 @@ _HIDE_STACK_JS = """function(sliceVal, chartType) {
 
 for _slice_id, _settings_id in [
     ("tasks-volume-slice", "tasks-volume"),
-    ("tasks-cumulative-slice", "tasks-cumulative"),
     ("tasks-time-slice", "tasks-time-trend"),
     ("tasks-sla-slice", "tasks-sla"),
 ]:
@@ -2347,5 +2872,136 @@ for _slice_id, _settings_id in [
         Output(f"{_settings_id}-settings-stack-wrap", "style", allow_duplicate=True),
         Input(_slice_id, "value"),
         Input(f"{_settings_id}-settings-type", "value"),
-        prevent_initial_call=True,
+        prevent_initial_call="initial_duplicate",
     )
+
+# Cumulative chart: also hide grouping in Prior Periods mode (single dimension)
+clientside_callback(
+    """function(mode, sliceVal, chartType) {
+        var single = !sliceVal || sliceVal === "total" || sliceVal === "";
+        if (single) return {"display": "none"};
+        if (chartType === "bar") return {};
+        var isPrior = mode === "prior";
+        var noStack = chartType === "line";
+        return (isPrior || noStack) ? {"display": "none"} : {};
+    }""",
+    Output("tasks-cumulative-settings-stack-wrap", "style"),
+    Input("tasks-cumulative-mode", "value"),
+    Input("tasks-cumulative-slice", "value"),
+    Input("tasks-cumulative-settings-type", "value"),
+)
+
+# ---------------------------------------------------------------------------
+# Dynamic MD / Planner slice options based on task type filter
+# ---------------------------------------------------------------------------
+clientside_callback(
+    """function(taskTypes, volVal, histVal, tcVal, timeVal, slaVal) {
+        var none = !taskTypes || taskTypes.length === 0;
+        var hasIso = none || taskTypes.indexOf("Create Isodose Plan") >= 0;
+        var isoOnly = !none && taskTypes.length === 1 && taskTypes[0] === "Create Isodose Plan";
+        var hasMD = !isoOnly;
+        var hasPlanner = hasIso;
+        var singleTask = !none && taskTypes.length === 1;
+        var noUpdate = window.dash_clientside.no_update;
+
+        function buildOpts(includeTotal, includeDx) {
+            var opts = [];
+            if (includeTotal) opts.push({value: "", label: "Total"});
+            opts.push({value: "task", label: "Task"});
+            if (hasMD) opts.push({value: "physician", label: "MD"});
+            if (hasPlanner) opts.push({value: "planner", label: "Planner"});
+            if (includeDx) opts.push({value: "bodysite", label: "Dx"});
+            return opts;
+        }
+        function validVal(opts, curVal) {
+            for (var i = 0; i < opts.length; i++) {
+                if (opts[i].value === curVal) return noUpdate;
+            }
+            return opts.length > 0 ? opts[0].value : "task";
+        }
+        var showTotal = !singleTask;
+        var dxOpts   = buildOpts(showTotal, true);
+        var noDxOpts = buildOpts(showTotal, false);
+        return [
+            dxOpts,   validVal(dxOpts, volVal),
+            noDxOpts, validVal(noDxOpts, histVal),
+            dxOpts,   validVal(dxOpts, tcVal),
+            dxOpts,   validVal(dxOpts, timeVal),
+            dxOpts,   validVal(dxOpts, slaVal)
+        ];
+    }""",
+    Output("tasks-volume-slice", "data"),
+    Output("tasks-volume-slice", "value"),
+    Output("tasks-hist-slice", "data"),
+    Output("tasks-hist-slice", "value"),
+    Output("tasks-time-compare-slice", "data"),
+    Output("tasks-time-compare-slice", "value"),
+    Output("tasks-time-slice", "data"),
+    Output("tasks-time-slice", "value"),
+    Output("tasks-sla-slice", "data"),
+    Output("tasks-sla-slice", "value"),
+    Input("tasks-filter-type", "value"),
+    State("tasks-volume-slice", "value"),
+    State("tasks-hist-slice", "value"),
+    State("tasks-time-compare-slice", "value"),
+    State("tasks-time-slice", "value"),
+    State("tasks-sla-slice", "value"),
+)
+
+# ---------------------------------------------------------------------------
+# Table column filter: badge + clear button
+# ---------------------------------------------------------------------------
+clientside_callback(
+    """function(virtual, rowData) {
+        var base = {"position": "absolute", "top": -12, "right": 8, "zIndex": 10, "cursor": "pointer"};
+        var hidden = Object.assign({}, base, {"display": "none"});
+        var btnHide = {"display": "none"};
+        if (!rowData || !rowData.length || !virtual) {
+            return [hidden, btnHide];
+        }
+        if (virtual.length >= rowData.length) {
+            return [hidden, btnHide];
+        }
+        return [base, {}];
+    }""",
+    Output("tasks-grid-filter-badge", "style"),
+    Output("tasks-table-clear-filters", "style"),
+    Input("tasks-detail-grid", "virtualRowData"),
+    State("tasks-detail-grid", "rowData"),
+)
+
+# Clear filters button → reset filterModel
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        return {};
+    }""",
+    Output("tasks-detail-grid", "filterModel"),
+    Input("tasks-table-clear-filters", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+# CSV export
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        gridExportCsv('tasks-detail-grid', 'tasks_detail.csv');
+        return window.dash_clientside.no_update;
+    }""",
+    Output("tasks-table-export", "n_clicks"),
+    Input("tasks-table-export", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+# Badge click → scroll to table
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        var el = document.getElementById('tasks-detail-accordion');
+        if (el) el.scrollIntoView({behavior: 'smooth', block: 'start'});
+        return window.dash_clientside.no_update;
+    }""",
+    Output("tasks-grid-filter-badge", "n_clicks"),
+    Input("tasks-grid-filter-badge", "n_clicks"),
+    prevent_initial_call=True,
+)

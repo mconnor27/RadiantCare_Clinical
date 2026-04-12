@@ -410,12 +410,11 @@ layout = dmc.Stack(
                         dmc.SegmentedControl(
                             id="plans-cumulative-slice",
                             data=[
-                                {"value": "total", "label": "Total"},
                                 {"value": "physician", "label": "MD"},
                                 {"value": "site", "label": "Site"},
                                 {"value": "diagnosis", "label": "Dx"},
                             ],
-                            value="total",
+                            value="physician",
                             size="xs",
                             style={"display": "none"},
                         ),
@@ -452,7 +451,7 @@ layout = dmc.Stack(
                                             id="plans-ridge-bw-group",
                                             gap=6, align="center",
                                             children=[
-                                                dmc.Text("Bandwidth", size="xs", c="#9CA3AF", fw=500),
+                                                dmc.Text("Density Smoothing", size="xs", c="#9CA3AF", fw=500),
                                                 dmc.Slider(
                                                     id="plans-ridge-bw",
                                                     min=0.05,
@@ -799,7 +798,7 @@ layout = dmc.Stack(
 # ---------------------------------------------------------------------------
 register_chart_callbacks([
     ("plans-volume", "plans-chart-volume"),
-    ("plans-cumulative", "plans-chart-cumulative"),
+    {"sid": "plans-cumulative", "gid": "plans-chart-cumulative", "show_grouping": False},
     ("plans-session-trend", "plans-chart-session-trend"),
     ("plans-complexity", "plans-chart-complexity"),
     ("plans-technique-dist", "plans-chart-technique-dist"),
@@ -816,7 +815,8 @@ _SLICE_CLASS_JS = """function(val) {
     return (val && val !== "total") ? "slice-group-active" : "slice-total-active";
 }"""
 
-for _sid in ["plans-volume-slice", "plans-cumulative-slice"]:
+for _sid in ["plans-volume-slice", "plans-cumulative-slice",
+              "plans-session-trend-slice", "plans-quit-trend-slice"]:
     clientside_callback(
         _SLICE_CLASS_JS,
         Output(_sid, "className"),
@@ -831,15 +831,32 @@ _HIDE_STACK_JS = """function(sliceVal, chartType) {
 
 for _slice_id, _settings_id in [
     ("plans-volume-slice", "plans-volume"),
-    ("plans-cumulative-slice", "plans-cumulative"),
+    ("plans-session-trend-slice", "plans-session-trend"),
+    ("plans-quit-trend-slice", "plans-quit-trend"),
 ]:
     clientside_callback(
         _HIDE_STACK_JS,
         Output(f"{_settings_id}-settings-stack-wrap", "style", allow_duplicate=True),
         Input(_slice_id, "value"),
         Input(f"{_settings_id}-settings-type", "value"),
-        prevent_initial_call=True,
+        prevent_initial_call="initial_duplicate",
     )
+
+# Cumulative chart: also hide grouping in Prior Periods mode (single dimension)
+clientside_callback(
+    """function(mode, sliceVal, chartType) {
+        var single = !sliceVal || sliceVal === "total" || sliceVal === "";
+        if (single) return {"display": "none"};
+        if (chartType === "bar") return {};
+        var isPrior = mode === "prior";
+        var noStack = chartType === "line";
+        return (isPrior || noStack) ? {"display": "none"} : {};
+    }""",
+    Output("plans-cumulative-settings-stack-wrap", "style"),
+    Input("plans-cumulative-mode", "value"),
+    Input("plans-cumulative-slice", "value"),
+    Input("plans-cumulative-settings-type", "value"),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -852,6 +869,46 @@ clientside_callback(
     }""",
     Output("plans-cumulative-slice", "style"),
     Input("plans-cumulative-mode", "value"),
+)
+
+# Disable Calendar when period > 1 year; cap prior-periods slider to available data
+clientside_callback(
+    """function(storeData, currentPtValue) {
+        return window.dash_clientside.cumulative.updatePriorControls(storeData, currentPtValue);
+    }""",
+    Output("plans-cumulative-period-type", "data"),
+    Output("plans-cumulative-period-type", "value", allow_duplicate=True),
+    Output("plans-cumulative-settings-prior-periods", "max"),
+    Output("plans-cumulative-settings-prior-periods", "marks"),
+    Input("plans-store-cumulative", "data"),
+    State("plans-cumulative-period-type", "value"),
+    prevent_initial_call=True,
+)
+
+# Hide "Total" slice option in line/area mode (only useful for bar)
+_PLANS_CUMUL_SLICE_ALL = [
+    {"value": "total", "label": "Total"},
+    {"value": "physician", "label": "MD"},
+    {"value": "site", "label": "Site"},
+    {"value": "diagnosis", "label": "Dx"},
+]
+_PLANS_CUMUL_SLICE_NO_TOTAL = [o for o in _PLANS_CUMUL_SLICE_ALL if o["value"] != "total"]
+
+clientside_callback(
+    """function(chartType, sliceVal) {
+        var all = %s;
+        var noTotal = %s;
+        if (chartType === "bar") {
+            return [all, window.dash_clientside.no_update];
+        }
+        var newVal = (sliceVal === "total") ? "physician" : window.dash_clientside.no_update;
+        return [noTotal, newVal];
+    }""" % (str(_PLANS_CUMUL_SLICE_ALL).replace("'", '"'), str(_PLANS_CUMUL_SLICE_NO_TOTAL).replace("'", '"')),
+    Output("plans-cumulative-slice", "data"),
+    Output("plans-cumulative-slice", "value", allow_duplicate=True),
+    Input("plans-cumulative-settings-type", "value"),
+    State("plans-cumulative-slice", "value"),
+    prevent_initial_call=True,
 )
 
 
@@ -1059,9 +1116,17 @@ clientside_callback(
 @callback(
     Output("plans-filter-physician", "children"),
     Input("plans-interval", "n_intervals"),
+    Input("plans-date-slider", "value"),
+    Input("plans-filter-department", "value"),
+    Input("plans-diag-store", "data"),
+    Input("plans-diag-mode", "data"),
+    Input("plans-filter-technique", "value"),
+    Input("plans-filter-status", "value"),
+    Input("plans-date-mode", "value"),
 )
-def _populate_physician_chips(_n):
-    """Populate physician filter with MDs from the plans dataset."""
+def _populate_physician_chips(_n, slider_val, departments, diagnosis_cats,
+                              diag_mode, techniques, status, date_mode):
+    """Populate physician filter from the plans dataset, applying all active filters."""
     from data.loader import load_plans
     from components.filter_bar import physician_short_name
 
@@ -1072,6 +1137,27 @@ def _populate_physician_chips(_n):
 
     if df.empty or "TreatingPhysician" not in df.columns:
         return []
+
+    c2b = _build_diag_lookup()
+
+    # Date column based on mode
+    date_col = _date_col_for_mode(date_mode)
+    if date_col not in df.columns or df[date_col].notna().sum() == 0:
+        date_col = "PlanCreationDate"
+
+    # Completed mode: restrict to completed plans
+    if date_mode == "completed":
+        df = df[_is_effectively_completed(df)]
+
+    # Date filter
+    start, end = _get_date_range(slider_val, None)
+    if date_col in df.columns:
+        df = df[df[date_col].notna()]
+        df = df[(df[date_col] >= start) & (df[date_col] <= end)]
+
+    # Apply dimension filters (skip physician)
+    df = _apply_filters(df, departments, None, diagnosis_cats, status, None, c2b,
+                        techniques=techniques, diag_mode=diag_mode or "primary")
 
     mds = sorted(df["TreatingPhysician"].dropna().unique())
 
@@ -1890,11 +1976,12 @@ def _prepare_volume_data(dff, agg, slice_by="", date_col="PlanCreationDate", c2b
     )
 
     if use_census:
-        # Build period boundaries
-        period_range = pd.date_range(start, end, freq=period_code)
-        if len(period_range) < 2:
-            period_range = pd.date_range(start, end, periods=2, freq=None)
-        all_periods = sorted(period_range)
+        # Build period boundaries using to_period for consistent week alignment
+        # (Monday-start weeks, matching all other charts)
+        period_range = pd.date_range(start, end, freq="D")
+        all_periods = sorted(
+            period_range.to_period(period_code).to_timestamp().unique()
+        )
         dates = [d.isoformat() for d in all_periods]
 
         ft = dff["FirstTreatmentDate"].values
@@ -2029,7 +2116,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
                               status, session_range, c2b,
                               techniques=None, date_mode="created",
                               mode="prior", period_type="calendar",
-                              slice_by="site", max_prior=5,
+                              slice_by="site", max_prior=10,
                               diag_mode="primary"):
     """Prepare cumulative plan volume data for overlay chart."""
     if df_all.empty or date_col not in df_all.columns:
@@ -2042,6 +2129,10 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
     period_days = (end - start).days + 1
     if period_days < 2:
         return None
+
+    # Force rolling when period exceeds 1 year (calendar shifts would overlap)
+    if period_days > 365 and period_type == "calendar":
+        period_type = "rolling"
 
     def _window_mask(df, w_start, w_end):
         """Return boolean mask for plans in the window, respecting date_mode."""
@@ -2127,6 +2218,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             windows.append((_period_label(p_start, p_end), p_start, p_end))
 
     prior = []
+    last_prior_start = None
     for pi, (label, p_start, p_end) in enumerate(windows):
         vals = _cumulative_for_window(dff_all, p_start, p_end)
         if vals and any(v > 0 for v in vals):
@@ -2135,6 +2227,16 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             elif len(vals) > n_days:
                 vals = vals[:n_days]
             prior.append({"label": label, "values": vals, "color": PRIOR_PERIOD_COLORS[min(pi, len(PRIOR_PERIOD_COLORS) - 1)]})
+            last_prior_start = p_start
+
+    # Metadata for client-side control updates
+    has_partial = (last_prior_start is not None
+                   and last_prior_start.normalize() < data_min.normalize())
+    _prior_meta = {
+        "periodDays": period_days,
+        "maxAvailablePriors": len(prior),
+        "hasPartialPrior": has_partial,
+    }
 
     current_label = _period_label(start, end)
     if len(current_vals) < n_days:
@@ -2186,6 +2288,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             "sliceBreakdown": slice_breakdown,
             "height": 350,
             "yTitle": "Cumulative Plans",
+            **_prior_meta,
         }
 
     else:  # mode == "slice"
@@ -2202,13 +2305,13 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             cumvals = daily_counts.cumsum().tolist()
             raw = daily_counts.tolist()
             first_idx = next((i for i, v in enumerate(raw) if v > 0), None)
-            last_idx = next((i for i in range(len(raw) - 1, -1, -1) if raw[i] > 0), None)
             if first_idx is None:
                 return [None] * len(cumvals)
             for i in range(first_idx):
                 cumvals[i] = None
+            last_idx = next((i for i in range(len(raw) - 1, -1, -1) if raw[i] > 0), first_idx)
             for i in range(last_idx + 1, len(cumvals)):
-                cumvals[i] = None
+                cumvals[i] = cumvals[last_idx]
             return cumvals
 
         series = []
@@ -2253,6 +2356,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             "sliceBreakdown": slice_breakdown,
             "height": 350,
             "yTitle": "Cumulative Plans",
+            **_prior_meta,
         }
 
 
@@ -2919,7 +3023,7 @@ def _update_plans_cumulative(*args):
         mode=cumul_mode or "prior",
         period_type=cumul_period_type or "calendar",
         slice_by=cumul_slice or "site",
-        max_prior=5, diag_mode=ctx.get("diag_mode", "primary"),
+        max_prior=10, diag_mode=ctx.get("diag_mode", "primary"),
     )
 
 
@@ -3101,13 +3205,14 @@ clientside_callback(
 
 # Cumulative: prior-periods slider moved from server to clientside input
 clientside_callback(
-    """function(rawData, smoothPct, chartType, maxPrior, currentFig) {
-        return window.dash_clientside.cumulative.renderCumulative(rawData, smoothPct, chartType, currentFig, null, maxPrior);
+    """function(rawData, smoothPct, chartType, stackVal, maxPrior, currentFig) {
+        return window.dash_clientside.cumulative.renderCumulative(rawData, smoothPct, chartType, currentFig, stackVal, maxPrior);
     }""",
     Output("plans-chart-cumulative", "figure"),
     Input("plans-store-cumulative", "data"),
     Input("plans-cumulative-settings-smooth", "value"),
     Input("plans-cumulative-settings-type", "value"),
+    Input("plans-cumulative-settings-stack", "value"),
     Input("plans-cumulative-settings-prior-periods", "value"),
     State("plans-chart-cumulative", "figure"),
 )
@@ -3269,7 +3374,7 @@ def _update_session_dist(data, mode):
             mode="lines",
             fill="tozeroy",
             line=dict(color=PRIMARY, width=2),
-            fillcolor="rgba(124, 42, 131, 0.2)",
+            fillcolor="rgba(124, 42, 131, 0.15)",
             hovertemplate="Sessions: %{x:.0f}<br>Density: %{y:.4f}<extra></extra>",
         ))
         y_title = "Density"

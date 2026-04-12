@@ -39,8 +39,19 @@ window.dash_clientside.diagRidge = {
         var windowSize = Math.max(1, Math.floor(smoothPct || 0) + 1);
 
         var traces = [];
-        var xNum = [];
-        for (var k = 0; k < nDates; k++) xNum.push(k);
+        // Use actual dates for a linear time axis
+        var xDates = dates.slice();
+
+        // Compute bar width in ms (85% of the minimum gap between dates)
+        var barWidthMs = null;
+        if (nDates >= 2) {
+            var minGap = Infinity;
+            for (var k = 1; k < nDates; k++) {
+                var gap = new Date(dates[k]).getTime() - new Date(dates[k - 1]).getTime();
+                if (gap > 0 && gap < minGap) minGap = gap;
+            }
+            if (minGap < Infinity) barWidthMs = minGap * 0.85;
+        }
 
         for (var i = 0; i < nGroups; i++) {
             var s = series[i];
@@ -68,9 +79,9 @@ window.dash_clientside.diagRidge = {
             // Build hover data
             var hoverDates = [];
             for (var j = 0; j < nDates; j++) {
-                var d = new Date(dates[j]);
+                var p = parseIsoDate(dates[j]);
                 var monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-                hoverDates.push(monthNames[d.getMonth()] + " " + d.getFullYear());
+                hoverDates.push(p.valid ? monthNames[p.month] + " " + p.year : dates[j]);
             }
 
             var customdata = [];
@@ -88,14 +99,16 @@ window.dash_clientside.diagRidge = {
                 }
                 traces.push({
                     type: "bar",
-                    x: xNum,
+                    x: xDates,
                     y: barHeights,
                     base: barBase,
+                    width: barWidthMs,
                     marker: {color: color, opacity: 0.7},
                     name: s.name,
                     showlegend: false,
                     customdata: customdata,
                     text: hoverDates,
+                    textposition: "none",
                     hovertemplate:
                         "<b>%{customdata[1]}</b>" +
                         "<br>%{text}" +
@@ -106,7 +119,7 @@ window.dash_clientside.diagRidge = {
                 // Area or line
                 if (chartType === "area") {
                     // Fill polygon
-                    var fillX = xNum.concat(xNum.slice().reverse());
+                    var fillX = xDates.concat(xDates.slice().reverse());
                     var fillY = yScaled.concat(new Array(nDates).fill(baseline));
                     traces.push({
                         type: "scatter",
@@ -122,7 +135,7 @@ window.dash_clientside.diagRidge = {
                 // Line on top
                 traces.push({
                     type: "scatter",
-                    x: xNum,
+                    x: xDates,
                     y: yScaled,
                     mode: "lines",
                     line: {color: color, width: 1.8},
@@ -137,18 +150,6 @@ window.dash_clientside.diagRidge = {
                         "<extra></extra>",
                 });
             }
-        }
-
-        // X-axis ticks (~8 labels)
-        var step = Math.max(1, Math.floor(nDates / 8));
-        var tickVals = [];
-        var tickLabels = [];
-        for (var j = 0; j < nDates; j += step) {
-            tickVals.push(j);
-            var d = new Date(dates[j]);
-            var monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-            var yr = d.getFullYear() % 100;
-            tickLabels.push(monthNames[d.getMonth()] + " '" + (yr < 10 ? "0" + yr : yr));
         }
 
         // Y-axis ticks
@@ -173,11 +174,11 @@ window.dash_clientside.diagRidge = {
                 tickfont: {size: 12},
             },
             xaxis: {
-                tickvals: tickVals,
-                ticktext: tickLabels,
+                type: "date",
                 showgrid: false,
                 zeroline: false,
                 title: "",
+                tickformat: "%b '%y",
             },
             margin: {l: 0, r: 16, t: 16, b: 20},
             plot_bgcolor: "#FFFFFF",

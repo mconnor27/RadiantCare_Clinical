@@ -607,6 +607,15 @@ body {
 .wf-diag-cat-row:has(.mantine-Checkbox-input:checked) {
     background: rgba(124, 42, 131, 0.05);
 }
+/* Active/selected accordion item highlight (diagnosis page single-select) */
+.wf-diag-panel .mantine-Accordion-item[data-active] {
+    border-left: 3px solid #7C2A83;
+    background: rgba(124, 42, 131, 0.06);
+}
+.wf-diag-panel .mantine-Accordion-item[data-active] .mantine-Accordion-label {
+    font-weight: 600;
+    color: #7C2A83;
+}
 /* Subcategory chip area inside accordion */
 .wf-diag-panel .mantine-Accordion-content {
     padding: 3px 8px 5px;
@@ -645,6 +654,32 @@ body {
 /* Hide the dropdown chevron when clear button is visible */
 div:has(> .wf-filter-clear-btn[style*="inline-flex"]) > .mantine-Button-root .mantine-Button-section[data-position="right"] {
     visibility: hidden;
+}
+
+/* Treatment page — Lacey machine hover panel */
+.tx-dept-machines {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+.tx-machine-hover-panel {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 200;
+    margin-top: 4px;
+    min-width: 160px;
+    background: white;
+}
+/* Show when hovering the Lacey chip (first in group) or the panel itself */
+.tx-dept-machines.tx-lacey-active:has(.mantine-Chip-root:first-child:hover) .tx-machine-hover-panel,
+.tx-dept-machines.tx-lacey-active .tx-machine-hover-panel:hover {
+    display: block;
+}
+/* Highlight border when machines are actively filtered */
+.tx-dept-machines.tx-lacey-active .tx-machine-hover-panel:has(.mantine-Chip-checkIcon) {
+    border-color: #2196F3;
 }
 
 /* Gantt compare divider */
@@ -696,9 +731,10 @@ div:has(> .wf-filter-clear-btn[style*="inline-flex"]) > .mantine-Button-root .ma
     outline-style: solid;
     outline-width: 2px;
 }
-.tasks-kpi-active .tasks-kpi-paper-draw   { outline-color: #7C2A83; background-color: #7C2A8308; }
-.tasks-kpi-active .tasks-kpi-paper-srs    { outline-color: #FF9800; background-color: #FF980008; }
+.tasks-kpi-active .tasks-kpi-paper-draw    { outline-color: #7C2A83; background-color: #7C2A8308; }
+.tasks-kpi-active .tasks-kpi-paper-srs     { outline-color: #FF9800; background-color: #FF980008; }
 .tasks-kpi-active .tasks-kpi-paper-contour { outline-color: #2196F3; background-color: #2196F308; }
+.tasks-kpi-active .tasks-kpi-paper-isodose { outline-color: #4CAF50; background-color: #4CAF5008; }
 .tasks-kpi-active .tasks-kpi-paper-review  { outline-color: #F44336; background-color: #F4433608; }
 
 /* ─── Machine Downtime Page ──────────────────────────────── */

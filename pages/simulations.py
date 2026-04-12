@@ -46,6 +46,13 @@ _CAP_LEAD = 21          # outlier cap: consult → sim (days)
 _CAP_TIME_TO_TX = 21    # outlier cap: sim → treatment (days)
 _CAP_LEAD_TIME = 21     # outlier cap: lead time / booked → sim (days)
 
+# Physician role → column mapping
+_SIM_PHYS_COL = {
+    "consult": "ConsultPhysician",
+    "supervising": "SupervisingPhysician",
+    "attending": "AttendingPhysician",
+}
+
 # Sim types to exclude from filter and charts
 _SIM_TYPE_EXCLUDE = frozenset({"HOLD SIM TIME", "MD Needed in Sim"})
 
@@ -189,9 +196,22 @@ def _build_sim_filter_bar():
                                 ],
                                 style={"position": "relative", "display": "inline-block"},
                             ),
+                            dcc.Store(id="sim-physician-role", data="consult"),
                             dmc.Paper(
                                 id="sim-physician-panel",
                                 children=[
+                                    dmc.SegmentedControl(
+                                        id="sim-physician-role-ctrl",
+                                        data=[
+                                            {"value": "consult", "label": "Consult"},
+                                            {"value": "supervising", "label": "Supervising"},
+                                            {"value": "attending", "label": "Attending"},
+                                        ],
+                                        value="consult",
+                                        size="xs",
+                                        fullWidth=True,
+                                        mb="xs",
+                                    ),
                                     dmc.ChipGroup(
                                         children=[],
                                         id="sim-filter-physician",
@@ -564,7 +584,6 @@ layout = dmc.Stack(
                         dmc.SegmentedControl(
                             id="sim-cumulative-slice",
                             data=[
-                                {"value": "total", "label": "Total"},
                                 {"value": "scope", "label": "Scope"},
                                 {"value": "type", "label": "Type"},
                                 {"value": "physician", "label": "MD"},
@@ -572,7 +591,7 @@ layout = dmc.Stack(
                                 {"value": "machine", "label": "Machine"},
                                 {"value": "bodysite", "label": "Dx"},
                             ],
-                            value="total",
+                            value="scope",
                             size="xs",
                             style={"display": "none"},
                         ),
@@ -1059,6 +1078,14 @@ def _register_sim_filter_callbacks():
         prevent_initial_call=True,
     )
 
+    # --- Physician role toggle → store + clear selection ---
+    clientside_callback(
+        """function(role) { return [role, null]; }""",
+        Output("sim-physician-role", "data"),
+        Output("sim-filter-physician", "value", allow_duplicate=True),
+        Input("sim-physician-role-ctrl", "value"),
+        prevent_initial_call=True,
+    )
 
 
 # Register filter callbacks
@@ -1077,19 +1104,63 @@ register_outlier_callbacks(PAGE_ID, n_transitions=3, defaults=[_CAP_LEAD, _CAP_T
 @callback(
     Output("sim-filter-physician", "children"),
     Input("sim-interval", "n_intervals"),
+    Input("sim-date-slider", "value"),
+    Input("sim-filter-department", "value"),
+    Input("sim-filter-simtype", "value"),
+    Input("sim-filter-machine", "value"),
+    Input("sim-diag-store", "data"),
+    Input("sim-diag-mode", "data"),
+    Input("sim-volume-scope", "value"),
+    Input("sim-inpatient-switch", "checked"),
+    Input("sim-physician-role", "data"),
 )
-def _populate_sim_physician_chips(_n):
-    from data.loader import load_simulations
+def _populate_sim_physician_chips(_n, slider_val, departments, sim_types,
+                                  machines, body_sites, diag_mode, volume_scope,
+                                  inpatient, physician_role):
+    from data.loader import load_simulations, load_diagnosis
+    col = _SIM_PHYS_COL.get(physician_role or "consult", "ConsultPhysician")
     try:
         df = load_simulations()
     except Exception:
         return []
-    if df.empty or "SupervisingPhysician" not in df.columns:
+    if df.empty or col not in df.columns:
         return []
+    # Exclude admin types
+    if "ActivityName" in df.columns:
+        df = df[~df["ActivityName"].isin(_SIM_TYPE_EXCLUDE)]
+    # Date filter
+    start, end = _get_date_range(slider_val, None)
+    if "ScheduledDateTime" in df.columns:
+        df = df[(df["ScheduledDateTime"] >= start) & (df["ScheduledDateTime"] <= end)]
+    # Department
+    if departments and "Department" in df.columns:
+        df = df[df["Department"].isin(departments) | df["Department"].isna()]
+    # Sim type
+    if sim_types and "ActivityName" in df.columns:
+        df = df[df["ActivityName"].isin(sim_types)]
+    # Machine
+    if machines and "SimulationResource" in df.columns:
+        df = df[df["SimulationResource"].isin(machines)]
+    # Diagnosis
+    if body_sites:
+        try:
+            diag_df = load_diagnosis()
+            c2b = build_code_to_category(diag_df)
+            if c2b:
+                from utils.diagnosis_categories import filter_by_diagnosis
+                df = filter_by_diagnosis(df, body_sites, c2b, mode=diag_mode or "primary")
+        except Exception:
+            pass
+    # Volume scope
+    if volume_scope == "initial" and "ActivityName" in df.columns:
+        df = df[df["ActivityName"].apply(_is_initial_sim)]
+    # Inpatient
+    if inpatient and "InPatientFlag" in df.columns:
+        df = df[df["InPatientFlag"].str.upper() == "YES"]
     from components.filter_bar import physician_options, physician_short_name
     return [
         dmc.Chip(physician_short_name(opt["label"]), value=opt["value"], size="xs", variant="filled")
-        for opt in physician_options(df["SupervisingPhysician"])
+        for opt in physician_options(df[col])
     ]
 
 
@@ -1164,7 +1235,8 @@ def _dedup_patient_day(src):
 
 def _load_and_filter_sim(slider_val, departments, physician, sim_types,
                           machines, body_sites, diag_mode, volume_scope,
-                          inpatient, weekend_only, date_preset):
+                          inpatient, weekend_only, date_preset,
+                          physician_role="consult"):
     """Load simulations data, apply filters. Returns dict or None."""
     from data.loader import load_simulations, load_diagnosis
 
@@ -1180,8 +1252,9 @@ def _load_and_filter_sim(slider_val, departments, physician, sim_types,
         df = df[~df["ActivityName"].isin(_SIM_TYPE_EXCLUDE)]
     if departments and "Department" in df.columns:
         df = df[df["Department"].isin(departments) | df["Department"].isna()]
-    if physician and "SupervisingPhysician" in df.columns:
-        df = df[df["SupervisingPhysician"] == physician]
+    phys_col = _SIM_PHYS_COL.get(physician_role or "consult", "ConsultPhysician")
+    if physician and phys_col in df.columns:
+        df = df[df[phys_col] == physician]
     if sim_types and "ActivityName" in df.columns:
         df = df[df["ActivityName"].isin(sim_types)]
     if machines and "SimulationResource" in df.columns:
@@ -1232,6 +1305,13 @@ def _load_and_filter_sim(slider_val, departments, physician, sim_types,
 
     ps, pe = _sim_prior_range(date_preset, end)
 
+    # Normalize the active physician column to SupervisingPhysician so all
+    # downstream slice-by / grid code works without per-function changes.
+    if phys_col != "SupervisingPhysician":
+        for frame in (df, df_all, df_all_status, dfu, dfu_all):
+            if frame is not None and not frame.empty and phys_col in frame.columns:
+                frame["SupervisingPhysician"] = frame[phys_col]
+
     return {
         "df": df, "df_all": df_all, "df_all_status": df_all_status,
         "dfu": dfu, "dfu_all": dfu_all, "c2b": c2b,
@@ -1256,19 +1336,21 @@ _SIM_FILTER_INPUTS = [
     Input("sim-inpatient-switch", "checked"),
     Input("sim-weekend-switch", "checked"),
     Input("sim-filter-date-preset", "value"),
+    Input("sim-physician-role", "data"),
 ]
 
 
 def _unpack_sim_filter_args(args):
-    """Unpack the 12 common filter args into kwargs for _load_and_filter_sim."""
+    """Unpack the 13 common filter args into kwargs for _load_and_filter_sim."""
     (_n, slider_val, departments, physician, sim_types,
      machines, body_sites, diag_mode, volume_scope, inpatient,
-     weekend_only, date_preset) = args[:12]
+     weekend_only, date_preset, physician_role) = args[:13]
     return dict(
         slider_val=slider_val, departments=departments, physician=physician,
         sim_types=sim_types, machines=machines, body_sites=body_sites,
         diag_mode=diag_mode, volume_scope=volume_scope, inpatient=inpatient,
         weekend_only=weekend_only, date_preset=date_preset,
+        physician_role=physician_role,
     )
 
 
@@ -1351,10 +1433,10 @@ def _update_sim_table(*args):
 )
 def _update_sim_kpis(*args):
     ctx = _unpack_sim_filter_args(args)
-    resim_scope = args[12] or "resim"
-    outlier_enabled = args[13]
-    cap_lead_raw, cap_tx_raw, cap_lt_raw = args[14], args[15], args[16]
-    grid_rows = args[17]
+    resim_scope = args[13] or "resim"
+    outlier_enabled = args[14]
+    cap_lead_raw, cap_tx_raw, cap_lt_raw = args[15], args[16], args[17]
+    grid_rows = args[18]
     if not outlier_enabled:
         cap_lead, cap_time_to_tx, cap_lead_time = 365, 365, 365
     else:
@@ -1622,7 +1704,7 @@ def _update_sim_kpis(*args):
 )
 def _update_sim_volume(*args):
     ctx = _unpack_sim_filter_args(args)
-    agg, volume_slice, grid_rows = args[12], args[13], args[14]
+    agg, volume_slice, grid_rows = args[13], args[14], args[15]
     data = _load_and_filter_sim(**ctx)
     if data is None:
         return None
@@ -1651,10 +1733,10 @@ def _update_sim_volume(*args):
 )
 def _update_sim_timing(*args):
     ctx = _unpack_sim_filter_args(args)
-    timing_metric, timing_agg, timing_slice = args[12], args[13], args[14]
-    outlier_enabled = args[15]
-    cap_lead_raw, cap_tx_raw, cap_lt_raw = args[16], args[17], args[18]
-    grid_rows = args[19]
+    timing_metric, timing_agg, timing_slice = args[13], args[14], args[15]
+    outlier_enabled = args[16]
+    cap_lead_raw, cap_tx_raw, cap_lt_raw = args[17], args[18], args[19]
+    grid_rows = args[20]
     if not outlier_enabled:
         cap_lead, cap_tx, cap_lt = 365, 365, 365
     else:
@@ -1692,8 +1774,8 @@ def _update_sim_timing(*args):
 )
 def _update_sim_cumulative(*args):
     ctx = _unpack_sim_filter_args(args)
-    cumul_mode, cumul_period_type, cumul_slice = args[12], args[13], args[14]
-    grid_rows = args[15]
+    cumul_mode, cumul_period_type, cumul_slice = args[13], args[14], args[15]
+    grid_rows = args[16]
     data = _load_and_filter_sim(**ctx)
     if data is None:
         return None
@@ -1706,7 +1788,7 @@ def _update_sim_cumulative(*args):
         mode=cumul_mode or "prior",
         period_type=cumul_period_type or "calendar",
         slice_by=cumul_slice or "dept",
-        c2b=data["c2b"], max_prior=5,
+        c2b=data["c2b"], max_prior=10,
         diag_mode=data.get("diag_mode", "primary"),
     )
 
@@ -1725,7 +1807,7 @@ def _update_sim_cumulative(*args):
 )
 def _update_sim_cancel(*args):
     ctx = _unpack_sim_filter_args(args)
-    cancel_agg, cancel_slice, grid_rows = args[12], args[13], args[14]
+    cancel_agg, cancel_slice, grid_rows = args[13], args[14], args[15]
     data = _load_and_filter_sim(**ctx)
     if data is None:
         return None
@@ -1756,9 +1838,9 @@ def _update_sim_cancel(*args):
 )
 def _update_sim_diag_billing(*args):
     ctx = _unpack_sim_filter_args(args)
-    diagnosis_compare, diagnosis_slice, diagnosis_mode = args[12], args[13], args[14]
-    billing_slice, billing_mode = args[15], args[16]
-    grid_rows = args[17]
+    diagnosis_compare, diagnosis_slice, diagnosis_mode = args[13], args[14], args[15]
+    billing_slice, billing_mode = args[16], args[17]
+    grid_rows = args[18]
     data = _load_and_filter_sim(**ctx)
 
     empty = empty_figure()
@@ -1825,13 +1907,14 @@ clientside_callback(
 )
 
 clientside_callback(
-    """function(rawData, smoothPct, chartType, maxPrior, currentFig) {
-        return window.dash_clientside.cumulative.renderCumulative(rawData, smoothPct, chartType, currentFig, null, maxPrior);
+    """function(rawData, smoothPct, chartType, stackVal, maxPrior, currentFig) {
+        return window.dash_clientside.cumulative.renderCumulative(rawData, smoothPct, chartType, currentFig, stackVal, maxPrior);
     }""",
     Output("sim-chart-cumulative", "figure"),
     Input("sim-store-cumulative", "data"),
     Input("sim-cumulative-settings-smooth", "value"),
     Input("sim-cumulative-settings-type", "value"),
+    Input("sim-cumulative-settings-stack", "value"),
     Input("sim-cumulative-settings-prior-periods", "value"),
     State("sim-chart-cumulative", "figure"),
 )
@@ -1852,6 +1935,49 @@ clientside_callback(
     Input("sim-cumulative-mode", "value"),
 )
 
+# Disable Calendar when period > 1 year; cap prior-periods slider to available data
+clientside_callback(
+    """function(storeData, currentPtValue) {
+        return window.dash_clientside.cumulative.updatePriorControls(storeData, currentPtValue);
+    }""",
+    Output("sim-cumulative-period-type", "data"),
+    Output("sim-cumulative-period-type", "value", allow_duplicate=True),
+    Output("sim-cumulative-settings-prior-periods", "max"),
+    Output("sim-cumulative-settings-prior-periods", "marks"),
+    Input("sim-store-cumulative", "data"),
+    State("sim-cumulative-period-type", "value"),
+    prevent_initial_call=True,
+)
+
+# Hide "Total" slice option in line/area mode (only useful for bar)
+_SIM_CUMUL_SLICE_ALL = [
+    {"value": "total", "label": "Total"},
+    {"value": "scope", "label": "Scope"},
+    {"value": "type", "label": "Type"},
+    {"value": "physician", "label": "MD"},
+    {"value": "dept", "label": "Dept"},
+    {"value": "machine", "label": "Machine"},
+    {"value": "bodysite", "label": "Dx"},
+]
+_SIM_CUMUL_SLICE_NO_TOTAL = [o for o in _SIM_CUMUL_SLICE_ALL if o["value"] != "total"]
+
+clientside_callback(
+    """function(chartType, sliceVal) {
+        var all = %s;
+        var noTotal = %s;
+        if (chartType === "bar") {
+            return [all, window.dash_clientside.no_update];
+        }
+        var newVal = (sliceVal === "total") ? "scope" : window.dash_clientside.no_update;
+        return [noTotal, newVal];
+    }""" % (str(_SIM_CUMUL_SLICE_ALL).replace("'", '"'), str(_SIM_CUMUL_SLICE_NO_TOTAL).replace("'", '"')),
+    Output("sim-cumulative-slice", "data"),
+    Output("sim-cumulative-slice", "value", allow_duplicate=True),
+    Input("sim-cumulative-settings-type", "value"),
+    State("sim-cumulative-slice", "value"),
+    prevent_initial_call=True,
+)
+
 clientside_callback(
     ClientsideFunction(namespace="census", function_name="smoothChartWithType"),
     Output("sim-chart-cancel-rate", "figure"),
@@ -1864,7 +1990,7 @@ clientside_callback(
 # Register chart_card settings callbacks
 register_chart_callbacks([
     ("sim-volume", "sim-chart-volume"),
-    ("sim-cumulative", "sim-chart-cumulative"),
+    {"sid": "sim-cumulative", "gid": "sim-chart-cumulative", "show_grouping": False},
     ("sim-timing", "sim-chart-timing"),
     ("sim-cancel", "sim-chart-cancel-rate"),
 ])
@@ -1877,7 +2003,8 @@ _SLICE_CLASS_JS = """function(val) {
     return (val && val !== "total") ? "slice-group-active" : "slice-total-active";
 }"""
 
-for _sid in ["sim-volume-slice", "sim-timing-slice", "sim-cancel-slice", "sim-cumulative-slice"]:
+for _sid in ["sim-volume-slice", "sim-timing-slice", "sim-cancel-slice", "sim-cumulative-slice",
+              "sim-diagnosis-slice", "sim-billing-slice"]:
     clientside_callback(
         _SLICE_CLASS_JS,
         Output(_sid, "className"),
@@ -1895,15 +2022,30 @@ for _slice_id, _settings_id in [
     ("sim-volume-slice", "sim-volume"),
     ("sim-timing-slice", "sim-timing"),
     ("sim-cancel-slice", "sim-cancel"),
-    ("sim-cumulative-slice", "sim-cumulative"),
 ]:
     clientside_callback(
         _HIDE_STACK_JS,
         Output(f"{_settings_id}-settings-stack-wrap", "style", allow_duplicate=True),
         Input(_slice_id, "value"),
         Input(f"{_settings_id}-settings-type", "value"),
-        prevent_initial_call=True,
+        prevent_initial_call="initial_duplicate",
     )
+
+# Cumulative chart: also hide grouping in Prior Periods mode (single dimension)
+clientside_callback(
+    """function(mode, sliceVal, chartType) {
+        var single = !sliceVal || sliceVal === "total" || sliceVal === "";
+        if (single) return {"display": "none"};
+        if (chartType === "bar") return {};
+        var isPrior = mode === "prior";
+        var noStack = chartType === "line";
+        return (isPrior || noStack) ? {"display": "none"} : {};
+    }""",
+    Output("sim-cumulative-settings-stack-wrap", "style"),
+    Input("sim-cumulative-mode", "value"),
+    Input("sim-cumulative-slice", "value"),
+    Input("sim-cumulative-settings-type", "value"),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -2224,7 +2366,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
                               departments, physician, sim_types,
                               mode="prior",
                               period_type="calendar", slice_by="dept",
-                              c2b=None, max_prior=5, diag_mode="primary"):
+                              c2b=None, max_prior=10, diag_mode="primary"):
     """Prepare cumulative simulation volume data for overlay chart.
 
     mode="prior": Current period cumulative + up to 5 prior equivalent periods.
@@ -2241,6 +2383,10 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
     period_days = (end - start).days + 1
     if period_days < 2:
         return None
+
+    # Force rolling when period exceeds 1 year (calendar shifts would overlap)
+    if period_days > 365 and period_type == "calendar":
+        period_type = "rolling"
 
     dff_all = df_all.copy()
 
@@ -2333,6 +2479,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             windows.append((_period_label(p_start, p_end), p_start, p_end))
 
     prior = []
+    last_prior_start = None
     for pi, (label, p_start, p_end) in enumerate(windows):
         vals = _cumulative_for_window(dff_all, p_start, p_end)
         if vals and any(v > 0 for v in vals):
@@ -2341,6 +2488,16 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             elif len(vals) > n_days:
                 vals = vals[:n_days]
             prior.append({"label": label, "values": vals, "color": PRIOR_PERIOD_COLORS[min(pi, len(PRIOR_PERIOD_COLORS) - 1)]})
+            last_prior_start = p_start
+
+    # Metadata for client-side control updates
+    has_partial = (last_prior_start is not None
+                   and last_prior_start.normalize() < data_min.normalize())
+    _prior_meta = {
+        "periodDays": period_days,
+        "maxAvailablePriors": len(prior),
+        "hasPartialPrior": has_partial,
+    }
 
     current_label = _period_label(start, end)
 
@@ -2399,6 +2556,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             },
             "prior": prior,
             "sliceBreakdown": slice_breakdown,
+            **_prior_meta,
             "height": 350,
             "yTitle": "Cumulative Simulations",
         }
@@ -2413,13 +2571,13 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
         cumvals = daily_counts.cumsum().tolist()
         raw = daily_counts.tolist()
         first_idx = next((i for i, v in enumerate(raw) if v > 0), None)
-        last_idx = next((i for i in range(len(raw) - 1, -1, -1) if raw[i] > 0), None)
         if first_idx is None:
             return [None] * len(cumvals)
         for i in range(first_idx):
             cumvals[i] = None
+        last_idx = next((i for i in range(len(raw) - 1, -1, -1) if raw[i] > 0), first_idx)
         for i in range(last_idx + 1, len(cumvals)):
-            cumvals[i] = None
+            cumvals[i] = cumvals[last_idx]
         return cumvals
 
     series = []
@@ -2502,6 +2660,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
         "dates": dates_iso,
         "series": series,
         "sliceBreakdown": slice_breakdown,
+        **_prior_meta,
         "height": 350,
         "yTitle": "Cumulative Simulations",
     }

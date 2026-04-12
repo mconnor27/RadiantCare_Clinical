@@ -13,9 +13,10 @@ from config.settings import (
     DEPARTMENTS, DEPARTMENT_COLORS, CHART_COLORWAY,
     PRIMARY, DEFAULT_LAYOUT, FONT_FAMILY, NEUTRAL,
 )
-from components.filter_bar import department_chips
+from components.filter_bar import department_chips, physician_short_name
 from components.chart_card import chart_card, register_chart_callbacks
 from components.chart_settings import chart_settings_popover
+from utils.diagnosis_categories import SUBCATEGORIES as DIAG_SUBCATEGORIES
 from utils.charts import apply_default_layout, empty_figure
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, DEFAULT_SLIDER, SLIDER_MARKS,
@@ -23,11 +24,7 @@ from utils.date_slider import (
 )
 from utils.diagnosis_categories import (
     CATEGORIES as BODY_SYSTEMS,
-    SUBCATEGORIES as DIAG_SUBCATEGORIES,
-    ALL_SUBCATEGORIES,
     build_code_to_category,
-    get_categories_for_codes,
-    get_all_subcategory_entries,
     primary_category,
 )
 
@@ -37,6 +34,7 @@ dash.register_page(__name__, path="/diagnosis", name="Diagnosis", order=6)
 # Constants
 # ---------------------------------------------------------------------------
 _DEFAULT_DATE_PRESET = "ytd" if pd.Timestamp.now().month > 1 else "12mo"
+_DEFAULT_MODE = "consults"
 
 # Consistent colors for each diagnosis group (13 categories)
 _DIAG_COLORS = [
@@ -62,29 +60,80 @@ def _get_date_range(slider_val):
     return pd.Timestamp("2020-01-01"), today
 
 
-def _load_consults():
-    """Load clinic visits and filter to new consults only."""
-    from data.loader import load_clinic_visits
-    from pages.home import _is_consult
-
-    df = load_clinic_visits()
-    if df.empty:
-        return df
-
-    if "ActivityName" in df.columns:
-        mask = df.apply(_is_consult, axis=1)
-        df = df[mask]
-    return df
+# Per-mode floor dates — DiagnosisCodes not reliably populated before these
+_MODE_FLOOR = {
+    "consults":    pd.Timestamp("2021-08-01"),
+    "followups":   pd.Timestamp("2021-08-01"),
+    "virtual":     pd.Timestamp("2021-08-01"),
+    "otvs":        pd.Timestamp("2021-08-01"),
+}
+_DEFAULT_FLOOR_IDX = month_idx(
+    _MODE_FLOOR[_DEFAULT_MODE].year, _MODE_FLOOR[_DEFAULT_MODE].month
+) if _DEFAULT_MODE in _MODE_FLOOR else 0
 
 
-def _load_courses_data():
-    """Load courses data."""
-    from data.loader import load_courses
-    return load_courses()
+def _load_for_mode(mode):
+    """Load the dataset for *mode* and return ``(df, date_col, phys_col)``.
+
+    Applies a per-mode floor date to exclude periods where DiagnosisCodes
+    was not reliably populated in ARIA.
+
+    Modes
+    -----
+    consults   – Clinic Visits classified as new-patient consults
+    followups  – Clinic Visits classified as follow-ups
+    virtual    – Clinic Visits where ActivityName contains "virtual"
+    simulations – Simulation appointments
+    treatments – Treatment Detail records
+    courses    – Treatment Courses
+    otvs       – OTV Audit records
+    """
+    from data.loader import (
+        load_clinic_visits, load_courses, load_simulations,
+        load_treatment_detail, load_weekly_visits,
+    )
+
+    if mode in ("consults", "followups", "virtual"):
+        df = load_clinic_visits()
+        if df.empty:
+            return df, "ScheduledDateTime", "AppointmentPhysician"
+        if mode == "virtual":
+            if "ActivityName" in df.columns:
+                df = df[df["ActivityName"].str.lower().str.contains("virtual", na=False)]
+        else:
+            from pages.home import _is_consult
+            if "ActivityName" in df.columns:
+                is_consult = df.apply(_is_consult, axis=1)
+                df = df[is_consult] if mode == "consults" else df[~is_consult]
+        date_col = "ScheduledDateTime"
+        phys_col = "AppointmentPhysician"
+
+    elif mode == "simulations":
+        df, date_col, phys_col = load_simulations(), "ScheduledDateTime", "SupervisingPhysician"
+
+    elif mode == "treatments":
+        df, date_col, phys_col = load_treatment_detail(), "ScheduledDateTime", "TreatingPhysician"
+
+    elif mode == "otvs":
+        df = load_weekly_visits()
+        if not df.empty and "ActivityStatus" in df.columns:
+            df = df[df["ActivityStatus"].isin(["Completed", "Manually Completed"])]
+        date_col, phys_col = "AppointmentDateTime", "TreatingPhysician"
+
+    else:
+        # courses (default)
+        df, date_col, phys_col = load_courses(), "CourseStartDate", "TreatingPhysician"
+
+    # Apply floor date
+    floor = _MODE_FLOOR.get(mode)
+    if floor is not None and not df.empty and date_col in df.columns:
+        df = df[df[date_col] >= floor]
+
+    return df, date_col, phys_col
 
 
 def _assign_diagnosis(df, c2b):
-    """Add _diag_group column from DiagnosisCodes."""
+    """Add _diag_group column from DiagnosisCodes (body system level)."""
     if "DiagnosisCodes" not in df.columns or not c2b:
         return df
     df = df.copy()
@@ -93,12 +142,36 @@ def _assign_diagnosis(df, c2b):
     return df
 
 
+def _assign_subcategory(df, c2s, category):
+    """Add _diag_group column using subcategory within *category*.
+
+    Falls back to 'Other' for codes without a subcategory assignment.
+    """
+    if "DiagnosisCodes" not in df.columns:
+        return df
+    from utils.diagnosis_categories import get_subcategories_for_codes
+    df = df.copy()
+
+    def _primary_sub(codes_str):
+        if pd.isna(codes_str):
+            return None
+        subs = get_subcategories_for_codes(codes_str, c2s)
+        # Only keep subcategories that belong to the selected category
+        valid = DIAG_SUBCATEGORIES.get(category, [])
+        matched = [s for s in valid if s in subs]
+        return matched[0] if matched else "Other"
+
+    df["_diag_group"] = df["DiagnosisCodes"].apply(_primary_sub)
+    df = df[df["_diag_group"].notna() & (df["_diag_group"] != "")]
+    return df
+
+
 def _color_map():
     """Return a stable {group_name: hex_color} dict for all BODY_SYSTEMS."""
     return {g: _DIAG_COLORS[i % len(_DIAG_COLORS)] for i, g in enumerate(BODY_SYSTEMS)}
 
 
-def _hex_to_rgba(hex_color, alpha=0.35):
+def _hex_to_rgba(hex_color, alpha=0.15):
     """Convert hex like '#7C2A83' to 'rgba(124,42,131,0.35)'."""
     h = hex_color.lstrip("#")
     r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
@@ -106,10 +179,105 @@ def _hex_to_rgba(hex_color, alpha=0.35):
 
 
 # ---------------------------------------------------------------------------
+# Diagnosis distribution data builder (top N + Other)
+# ---------------------------------------------------------------------------
+
+_TOP_N = 5  # show top N groups, bundle rest into "Other"
+
+
+def _prepare_diag_dist_data(df, date_col):
+    """Build diagnosis distribution over time for all agg levels.
+
+    Groups by _diag_group, keeps the top N by total count, bundles
+    the rest into "Other". Returns JSON-serialisable dict keyed by agg.
+    """
+    if df.empty or "_diag_group" not in df.columns or date_col not in df.columns:
+        return None
+
+    tmp = df[[date_col, "_diag_group"]].dropna(subset=[date_col]).copy()
+
+    # Determine top N groups by total count
+    total_counts = tmp["_diag_group"].value_counts()
+    top_groups = total_counts.head(_TOP_N).index.tolist()
+
+    # Assign: keep top groups, everything else → "Other"
+    tmp["_grp"] = tmp["_diag_group"].where(
+        tmp["_diag_group"].isin(top_groups), "Other"
+    )
+
+    # Stacked-area-friendly palette (high contrast, distinct hues)
+    _DIST_PALETTE = ["#2196F3", "#F44336", "#FF9800", "#4CAF50", "#9C27B0"]
+    cmap = {g: _DIST_PALETTE[i] for i, g in enumerate(top_groups)}
+    cmap["Other"] = "#BDBDBD"
+
+    # Order: top groups by count descending, Other last
+    ordered = top_groups + ["Other"]
+
+    combos = {}
+    for agg in ("W", "M", "Y"):
+        period_code = "Y" if agg == "Y" else agg
+        t = tmp.copy()
+        t["period"] = t[date_col].dt.to_period(period_code).dt.to_timestamp()
+        all_periods = sorted(t["period"].unique())
+        dates = [d.isoformat() for d in all_periods]
+
+        pivot = t.groupby(["period", "_grp"]).size().unstack(fill_value=0)
+        pivot = pivot.reindex(all_periods, fill_value=0)
+
+        series = []
+        for grp in ordered:
+            vals = pivot[grp].tolist() if grp in pivot.columns else [0] * len(all_periods)
+            series.append({
+                "name": grp,
+                "values": vals,
+                "color": cmap.get(grp, CHART_COLORWAY[0]),
+            })
+
+        combos[agg] = {"dates": dates, "series": series}
+
+    return combos
+
+
+def _apply_moving_avg(values, window):
+    """Apply simple moving average to a list of values."""
+    if window <= 1:
+        return values
+    result = []
+    for i in range(len(values)):
+        start = max(0, i - window + 1)
+        chunk = [v for v in values[start:i + 1] if v is not None]
+        result.append(round(sum(chunk) / len(chunk), 2) if chunk else None)
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Trend store data builder (server → store, rendered clientside)
 # ---------------------------------------------------------------------------
 
-def _prepare_trend_store(df, date_col):
+def _sort_groups(groups_by_count, sort_order, curr_counts=None, prior_counts=None):
+    """Return groups list sorted per *sort_order* (bottom→top for ridgeline).
+
+    sort_order: "volume" (by current count), "change" (by abs delta %),
+                "alpha" (alphabetical).
+    """
+    if sort_order == "alpha":
+        return sorted(groups_by_count, reverse=True)
+    if sort_order == "change" and curr_counts is not None and prior_counts is not None:
+        def _abs_change(g):
+            c = curr_counts.get(g, 0)
+            p = prior_counts.get(g, 0)
+            if p > 0:
+                return abs((c - p) / p)
+            return float(c > 0)  # new items sort above zero-change
+        return sorted(groups_by_count, key=_abs_change)
+    # default: volume (ascending for ridgeline bottom→top)
+    return list(reversed(pd.Series(
+        {g: curr_counts.get(g, 0) if curr_counts is not None else 0
+         for g in groups_by_count}
+    ).sort_values(ascending=False).index.tolist()))
+
+
+def _prepare_trend_store(df, date_col, sort_order="volume", prior_windows=None):
     """Build per-group time-series data for all agg levels (W/M/Y).
 
     Returns a JSON-serialisable dict consumed by the clientside renderer.
@@ -118,12 +286,30 @@ def _prepare_trend_store(df, date_col):
         return None
 
     tmp = df[[date_col, "_diag_group"]].dropna(subset=[date_col]).copy()
-    cmap = _color_map()
+    body_cmap = _color_map()
 
-    group_counts = tmp["_diag_group"].value_counts()
-    groups = list(reversed(group_counts.index.tolist()))  # ascending (bottom→top)
+    curr_counts = tmp["_diag_group"].value_counts()
+    # Build prior counts from first prior window for change sorting
+    prior_counts = pd.Series(dtype=int)
+    if prior_windows:
+        pw0 = prior_windows[0][0]
+        if pw0 is not None and not pw0.empty and "_diag_group" in pw0.columns:
+            prior_counts = pw0["_diag_group"].value_counts()
+
+    all_groups = list(curr_counts.index)
+    groups = _sort_groups(all_groups, sort_order, curr_counts, prior_counts)
     if not groups:
         return None
+
+    # Dynamic color map: use body system colors if they match, else cycle CHART_COLORWAY
+    cmap = {}
+    ci = 0
+    for g in groups:
+        if g in body_cmap:
+            cmap[g] = body_cmap[g]
+        else:
+            cmap[g] = CHART_COLORWAY[ci % len(CHART_COLORWAY)]
+            ci += 1
 
     combos = {}
     for agg in ("W", "M", "Y"):
@@ -165,55 +351,84 @@ def _period_label(start, end):
     return f"{start.strftime('%b %y')} – {end.strftime('%b %y')}"
 
 
-def _build_comparison_bars(dff_curr, dff_prior, start, end, prior_start, prior_end):
-    """Horizontal grouped bar chart: current vs prior period per diagnosis group.
+def _build_comparison_bars(dff_curr, prior_windows, start, end, sort_order="volume"):
+    """Horizontal grouped bar chart: current vs N prior periods per diagnosis group.
 
-    Bars are colored by diagnosis group (current) with prior in muted gray.
-    Count annotations on each bar and a delta % annotation to the right.
+    Args:
+        dff_curr: Current period dataframe (with _diag_group column)
+        prior_windows: list of (dff_prior, prior_start, prior_end) tuples
+        start, end: Current period boundaries
+        sort_order: "volume", "change", or "alpha"
     """
     if dff_curr.empty or "_diag_group" not in dff_curr.columns:
         fig = empty_figure("No diagnosis data available")
         fig.update_layout(height=_RIDGE_HEIGHT)
         return fig
 
-    cmap = _color_map()
+    body_cmap = _color_map()
     curr_label = _period_label(start, end)
-    prior_label = _period_label(prior_start, prior_end)
-
-    # Count by group — use all groups present in either period
     curr_counts = dff_curr["_diag_group"].value_counts()
-    prior_counts = (
-        dff_prior["_diag_group"].value_counts()
-        if dff_prior is not None and not dff_prior.empty and "_diag_group" in dff_prior.columns
-        else pd.Series(dtype=int)
-    )
 
-    all_groups = sorted(set(curr_counts.index) | set(prior_counts.index))
-    # Order by current count descending, reversed for horizontal bar (largest at top)
-    all_groups = sorted(all_groups, key=lambda g: curr_counts.get(g, 0))
+    # Build prior count series + labels
+    prior_data = []  # list of (label, counts_series)
+    for dff_p, ps, pe in prior_windows:
+        label = _period_label(ps, pe)
+        counts = (
+            dff_p["_diag_group"].value_counts()
+            if dff_p is not None and not dff_p.empty and "_diag_group" in dff_p.columns
+            else pd.Series(dtype=int)
+        )
+        prior_data.append((label, counts))
+
+    # Collect all groups across current + all priors
+    all_group_set = set(curr_counts.index)
+    for _, pc in prior_data:
+        all_group_set.update(pc.index)
+
+    # Sort for horizontal bar (Plotly renders last item at top)
+    first_prior = prior_data[0][1] if prior_data else pd.Series(dtype=int)
+    all_groups = _sort_groups(list(all_group_set), sort_order, curr_counts, first_prior)
+
+    # Dynamic color map
+    cmap = {}
+    ci = 0
+    for g in all_groups:
+        if g in body_cmap:
+            cmap[g] = body_cmap[g]
+        else:
+            cmap[g] = CHART_COLORWAY[ci % len(CHART_COLORWAY)]
+            ci += 1
 
     curr_vals = [int(curr_counts.get(g, 0)) for g in all_groups]
-    prior_vals = [int(prior_counts.get(g, 0)) for g in all_groups]
+    n_periods = 1 + len(prior_data)  # current + priors
+    # When bars are narrow (2-3 periods), put labels outside in black
+    outside = n_periods >= 3
 
     fig = go.Figure()
 
-    # Prior bars (behind, muted)
-    fig.add_trace(go.Bar(
-        x=prior_vals,
-        y=all_groups,
-        orientation="h",
-        marker_color="rgba(156, 163, 175, 0.45)",
-        name=prior_label,
-        text=[f"{v:,}" for v in prior_vals],
-        textposition="inside",
-        insidetextanchor="end",
-        textangle=0,
-        textfont=dict(size=13, color="#6B7280"),
-        hovertemplate=[
-            f"<b>{g}</b><br>{prior_label}: {v:,}<extra></extra>"
-            for g, v in zip(all_groups, prior_vals)
-        ],
-    ))
+    # Prior bars (furthest back first, progressively lighter)
+    gray_alphas = [0.45, 0.30, 0.18]
+    for idx in range(len(prior_data) - 1, -1, -1):
+        plabel, pcounts = prior_data[idx]
+        pvals = [int(pcounts.get(g, 0)) for g in all_groups]
+        alpha = gray_alphas[idx] if idx < len(gray_alphas) else 0.15
+        fig.add_trace(go.Bar(
+            x=pvals,
+            y=all_groups,
+            orientation="h",
+            marker_color=f"rgba(156, 163, 175, {alpha})",
+            name=plabel,
+            text=[f"{v:,}" for v in pvals],
+            textposition="outside" if outside else "inside",
+            insidetextanchor="end" if not outside else None,
+            textangle=0,
+            textfont=dict(size=11 if outside else 13,
+                          color="#374151" if outside else "#6B7280"),
+            hovertemplate=[
+                f"<b>{g}</b><br>{plabel}: {v:,}<extra></extra>"
+                for g, v in zip(all_groups, pvals)
+            ],
+        ))
 
     # Current bars (front, colored per group)
     bar_colors = [cmap.get(g, CHART_COLORWAY[0]) for g in all_groups]
@@ -224,23 +439,29 @@ def _build_comparison_bars(dff_curr, dff_prior, start, end, prior_start, prior_e
         marker_color=bar_colors,
         name=curr_label,
         text=[f"{v:,}" for v in curr_vals],
-        textposition="inside",
-        insidetextanchor="end",
+        textposition="outside" if outside else "inside",
+        insidetextanchor="end" if not outside else None,
         textangle=0,
-        textfont=dict(size=13, color="white"),
+        textfont=dict(size=11 if outside else 13,
+                      color="#374151" if outside else "white"),
         hovertemplate=[
             f"<b>{g}</b><br>{curr_label}: {v:,}<extra></extra>"
             for g, v in zip(all_groups, curr_vals)
         ],
     ))
 
-    # Delta annotations to the right of each bar pair
-    max_val = max(max(curr_vals, default=0), max(prior_vals, default=0))
+    # Delta annotations: compare current vs most recent prior
+    first_prior_counts = prior_data[0][1] if prior_data else pd.Series(dtype=int)
+    first_prior_vals = [int(first_prior_counts.get(g, 0)) for g in all_groups]
+    all_vals = curr_vals + first_prior_vals
+    for _, pc in prior_data:
+        all_vals += [int(pc.get(g, 0)) for g in all_groups]
+    max_val = max(all_vals) if all_vals else 0
     annot_x = max_val * 1.05 if max_val > 0 else 1
 
     annotations = []
     for i, g in enumerate(all_groups):
-        c, p = curr_vals[i], prior_vals[i]
+        c, p = curr_vals[i], first_prior_vals[i]
         if p > 0:
             pct = (c - p) / p * 100
             if pct > 0:
@@ -301,29 +522,21 @@ def _build_filter_bar():
             dmc.Group(
                 children=[
                     department_chips("diag"),
-                    dmc.Select(
-                        id="diag-filter-physician",
-                        data=[],
-                        placeholder="All Physicians",
-                        clearable=True,
-                        size="sm",
-                        w=200,
-                    ),
-                    # Diagnosis group dropdown
+                    # Physician chip dropdown (multi-select)
                     html.Div(
                         children=[
                             html.Div(
                                 children=[
                                     dmc.Button(
-                                        "Diagnosis",
-                                        id="diag-diagnosis-trigger",
+                                        "Physician",
+                                        id="diag-physician-trigger",
                                         variant="default",
                                         size="sm",
                                         rightSection=DashIconify(icon="mdi:chevron-down", width=14),
                                     ),
                                     dmc.ActionIcon(
                                         DashIconify(icon="mdi:close-circle", width=18),
-                                        id="diag-diagnosis-clear",
+                                        id="diag-physician-clear",
                                         variant="subtle",
                                         color="gray",
                                         size="sm",
@@ -333,16 +546,15 @@ def _build_filter_bar():
                                 style={"position": "relative", "display": "inline-block"},
                             ),
                             dmc.Paper(
-                                dmc.ChipGroup(
-                                    children=[
-                                        dmc.Chip(bs, value=bs, size="xs", variant="filled")
-                                        for bs in BODY_SYSTEMS
-                                    ],
-                                    id="diag-filter-diagnosis",
-                                    multiple=True,
-                                    value=[],
-                                ),
-                                id="diag-diagnosis-panel",
+                                id="diag-physician-panel",
+                                children=[
+                                    dmc.ChipGroup(
+                                        children=[],
+                                        id="diag-filter-physician",
+                                        multiple=True,
+                                        value=[],
+                                    ),
+                                ],
                                 p="xs",
                                 shadow="md",
                                 withBorder=True,
@@ -353,14 +565,91 @@ def _build_filter_bar():
                         ],
                         style={"position": "relative", "display": "inline-block"},
                     ),
+                    # Diagnosis category selector (single-select, expand = select)
+                    html.Div(
+                        children=[
+                            html.Div(
+                                children=[
+                                    dmc.Button(
+                                        "Diagnosis",
+                                        id="diag-diag-trigger",
+                                        variant="default",
+                                        size="sm",
+                                        rightSection=DashIconify(icon="mdi:chevron-down", width=14),
+                                    ),
+                                    dmc.ActionIcon(
+                                        DashIconify(icon="mdi:close-circle", width=18),
+                                        id="diag-diag-clear",
+                                        variant="subtle",
+                                        color="gray",
+                                        size="sm",
+                                        className="wf-filter-clear-btn",
+                                    ),
+                                ],
+                                style={"position": "relative", "display": "inline-block"},
+                            ),
+                            dcc.Store(id="diag-diag-store", data=None),
+                            dcc.Store(id="diag-diag-mode", data="primary"),
+                            dmc.Paper(
+                                children=[
+                                    dmc.SegmentedControl(
+                                        id="diag-diag-mode-ctrl",
+                                        data=[
+                                            {"value": "primary", "label": "Primary"},
+                                            {"value": "all", "label": "All"},
+                                        ],
+                                        value="primary",
+                                        size="xs",
+                                        fullWidth=True,
+                                        mb="xs",
+                                    ),
+                                    dmc.Accordion(
+                                        children=[
+                                            dmc.AccordionItem(
+                                                children=[
+                                                    dmc.AccordionControl(cat),
+                                                    dmc.AccordionPanel(
+                                                        dmc.Text(
+                                                            ", ".join(DIAG_SUBCATEGORIES.get(cat, [])),
+                                                            size="xs", c=NEUTRAL["text_muted"],
+                                                        ) if DIAG_SUBCATEGORIES.get(cat) else
+                                                        dmc.Text("No subsites", size="xs", c=NEUTRAL["text_muted"]),
+                                                    ),
+                                                ],
+                                                value=cat,
+                                            )
+                                            for cat in BODY_SYSTEMS
+                                        ],
+                                        id="diag-diag-accordion",
+                                        value=None,
+                                        variant="contained",
+                                        chevronPosition="right",
+                                    ),
+                                ],
+                                id="diag-diag-panel",
+                                p="xs",
+                                shadow="md",
+                                withBorder=True,
+                                radius="md",
+                                className="wf-chip-dropdown wf-diag-panel",
+                                style={"display": "none"},
+                            ),
+                        ],
+                        style={"position": "relative", "display": "inline-block"},
+                    ),
                     dmc.SegmentedControl(
                         id="diag-mode-toggle",
                         data=[
-                            {"value": "consults", "label": "New Consults"},
+                            {"value": "consults", "label": "Consults"},
+                            {"value": "followups", "label": "Follow-ups"},
+                            {"value": "virtual", "label": "Virtual"},
+                            {"value": "simulations", "label": "Simulations"},
+                            {"value": "treatments", "label": "Treatments"},
                             {"value": "courses", "label": "Courses"},
+                            {"value": "otvs", "label": "OTVs"},
                         ],
                         value="consults",
-                        size="sm",
+                        size="xs",
                         color="violet",
                     ),
                 ],
@@ -376,8 +665,11 @@ def _build_filter_bar():
                             {"value": "12mo", "label": "Prior 12 mo"},
                             {"value": "6mo", "label": "Prior 6 mo"},
                             {"value": "3mo", "label": "Prior 3 mo"},
+                            {"value": "30d", "label": "Prior 30 days"},
                             {"value": "ytd", "label": "Year to Date"},
                             {"value": "last_year", "label": "Last Year"},
+                            {"value": "this_month", "label": "This Month"},
+                            {"value": "last_month", "label": "Last Month"},
                             {"value": "all", "label": "All Time"},
                             {"value": "custom", "label": "Custom Range"},
                         ],
@@ -398,7 +690,8 @@ def _build_filter_bar():
                             clearable=True,
                             number_of_months_shown=2,
                             minimum_nights=0,
-                            start_date=idx_to_date(preset_to_slider_val(_DEFAULT_DATE_PRESET, MAX_IDX)[0]).strftime("%Y-%m-%d"),
+                            min_date_allowed=idx_to_date(_DEFAULT_FLOOR_IDX).strftime("%Y-%m-%d"),
+                            start_date=idx_to_date(max(preset_to_slider_val(_DEFAULT_DATE_PRESET, MAX_IDX)[0], _DEFAULT_FLOOR_IDX)).strftime("%Y-%m-%d"),
                             end_date=idx_to_date(preset_to_slider_val(_DEFAULT_DATE_PRESET, MAX_IDX)[1], end_of_month=True).strftime("%Y-%m-%d"),
                             className="wf-date-picker-range",
                         ),
@@ -413,11 +706,11 @@ def _build_filter_bar():
                             html.Div(id="diag-date-range-label", style={"display": "none"}),
                             dmc.RangeSlider(
                                 id="diag-date-slider",
-                                min=0,
+                                min=_DEFAULT_FLOOR_IDX,
                                 max=MAX_IDX,
                                 step=1,
-                                value=preset_to_slider_val(_DEFAULT_DATE_PRESET, MAX_IDX),
-                                marks=SLIDER_MARKS,
+                                value=[max(v, _DEFAULT_FLOOR_IDX) for v in preset_to_slider_val(_DEFAULT_DATE_PRESET, MAX_IDX)],
+                                marks=[m for m in SLIDER_MARKS if m["value"] >= _DEFAULT_FLOOR_IDX],
                                 color="violet",
                                 size="sm",
                                 minRange=0,
@@ -482,10 +775,29 @@ layout = dmc.Stack(
                         chart_types=_TREND_CHART_TYPES,
                         show_smooth=True,
                         smooth_max=30,
-                        smooth_default=0,
+                        smooth_default=3,
+                        show_grouping=False,
                         graph_height="100%",
                         paper_height=f"{_RIDGE_HEIGHT + 60}px",
                         store_data=True,
+                        extra_controls_left=[
+                            dmc.Group(
+                                gap=4, align="center",
+                                children=[
+                                    DashIconify(icon="mdi:sort", width=14, color="#6B7280"),
+                                    dmc.SegmentedControl(
+                                        id="diag-trend-sort",
+                                        data=[
+                                            {"value": "volume", "label": "Volume"},
+                                            {"value": "change", "label": "Change"},
+                                            {"value": "alpha", "label": "A–Z"},
+                                        ],
+                                        value="volume",
+                                        size="xs",
+                                    ),
+                                ],
+                            ),
+                        ],
                         extra_controls=[
                             dmc.SegmentedControl(
                                 id="diag-trend-agg",
@@ -494,7 +806,7 @@ layout = dmc.Stack(
                                     {"value": "M", "label": "Monthly"},
                                     {"value": "Y", "label": "Yearly"},
                                 ],
-                                value="M",
+                                value="W",
                                 size="xs",
                             ),
                         ],
@@ -515,16 +827,50 @@ layout = dmc.Stack(
                                 justify="space-between",
                                 mb=8,
                                 children=[
-                                    dmc.Text("Current vs Prior Period", size="sm", fw=500,
-                                             c=NEUTRAL["text_secondary"]),
-                                    dmc.SegmentedControl(
-                                        id="diag-compare-period-type",
-                                        data=[
-                                            {"value": "calendar", "label": "Calendar"},
-                                            {"value": "rolling", "label": "Rolling"},
+                                    dmc.Group(
+                                        gap="xs",
+                                        children=[
+                                            dmc.Text("Current vs Prior Period", size="sm", fw=500,
+                                                     c=NEUTRAL["text_secondary"]),
+                                            dmc.Group(
+                                                gap=4, align="center",
+                                                children=[
+                                                    DashIconify(icon="mdi:sort", width=14, color="#6B7280"),
+                                                    dmc.SegmentedControl(
+                                                        id="diag-compare-sort",
+                                                        data=[
+                                                            {"value": "volume", "label": "Volume"},
+                                                            {"value": "change", "label": "Change"},
+                                                            {"value": "alpha", "label": "A–Z"},
+                                                        ],
+                                                        value="volume",
+                                                        size="xs",
+                                                    ),
+                                                ],
+                                            ),
                                         ],
-                                        value="calendar",
-                                        size="xs",
+                                    ),
+                                    dmc.Group(
+                                        gap="xs",
+                                        children=[
+                                            dmc.SegmentedControl(
+                                                id="diag-compare-period-type",
+                                                data=[
+                                                    {"value": "calendar", "label": "Calendar"},
+                                                    {"value": "rolling", "label": "Rolling"},
+                                                ],
+                                                value="calendar",
+                                                size="xs",
+                                            ),
+                                            chart_settings_popover(
+                                                "diag-compare",
+                                                chart_types=None,
+                                                show_smooth=False,
+                                                show_grouping=False,
+                                                show_prior_periods=True,
+                                                prior_periods_default=1,
+                                            ),
+                                        ],
                                     ),
                                 ],
                             ),
@@ -552,6 +898,48 @@ layout = dmc.Stack(
                         style={"display": "flex", "flexDirection": "column"},
                     ),
                     span=6,
+                ),
+            ],
+        ),
+        # Distribution chart (full-width, top N + Other)
+        chart_card(
+            "diag-chart-dist",
+            "Diagnosis Distribution",
+            settings_id="diag-dist",
+            chart_types=[
+                {"value": "area", "label": "Area"},
+                {"value": "line", "label": "Line"},
+                {"value": "bar", "label": "Bar"},
+            ],
+            show_smooth=True,
+            smooth_max=24,
+            smooth_default=3,
+            show_grouping=False,
+            paper_padding="md",
+            paper_height="500px",
+            graph_height="420px",
+            store_data=True,
+            extra_controls_left=[
+                dmc.SegmentedControl(
+                    id="diag-dist-mode",
+                    data=[
+                        {"value": "count", "label": "Count"},
+                        {"value": "pct", "label": "%"},
+                    ],
+                    value="pct",
+                    size="xs",
+                ),
+            ],
+            extra_controls=[
+                dmc.SegmentedControl(
+                    id="diag-dist-agg",
+                    data=[
+                        {"value": "W", "label": "Weekly"},
+                        {"value": "M", "label": "Monthly"},
+                        {"value": "Y", "label": "Yearly"},
+                    ],
+                    value="W",
+                    size="xs",
                 ),
             ],
         ),
@@ -602,6 +990,12 @@ layout = dmc.Stack(
                                     id="diag-mgr-reviewed-btn",
                                     leftSection=DashIconify(icon="tabler:check", width=14),
                                     variant="light", color="green", size="xs",
+                                ),
+                                dmc.Button(
+                                    "Delete Selected",
+                                    id="diag-mgr-delete-btn",
+                                    leftSection=DashIconify(icon="tabler:trash", width=14),
+                                    variant="light", color="red", size="xs",
                                 ),
                                 dmc.Button(
                                     "Export CSV",
@@ -710,50 +1104,149 @@ layout = dmc.Stack(
     ],
 )
 
-# Register gear-icon toggle + export callbacks for trend chart
-register_chart_callbacks(["diag-chart-trend"])
+# Register gear-icon toggle + export callbacks
+register_chart_callbacks([
+    "diag-chart-trend",
+    ("diag-compare", "diag-chart-comparison"),
+    ("diag-dist", "diag-chart-dist"),
+])
+
+# --- Diagnosis single-select: expand = select ---
+# Accordion expand → store (expanding a category selects it)
+clientside_callback(
+    """function(val) { return val || null; }""",
+    Output("diag-diag-store", "data"),
+    Input("diag-diag-accordion", "value"),
+)
+
+# Mode toggle → store sync
+clientside_callback(
+    """function(val) { return val; }""",
+    Output("diag-diag-mode", "data"),
+    Input("diag-diag-mode-ctrl", "value"),
+)
+
+# Trigger label
+clientside_callback(
+    """function(cat) {
+        return cat ? cat : "Diagnosis";
+    }""",
+    Output("diag-diag-trigger", "children"),
+    Input("diag-diag-store", "data"),
+)
+
+# Clear-button visibility
+clientside_callback(
+    """function(cat) {
+        return cat ? {"display": "inline-flex"} : {"display": "none"};
+    }""",
+    Output("diag-diag-clear", "style"),
+    Input("diag-diag-store", "data"),
+)
+
+# Clear-button action (reset category + mode)
+clientside_callback(
+    """function(n) { return [null, null, "primary", "primary"]; }""",
+    Output("diag-diag-store", "data", allow_duplicate=True),
+    Output("diag-diag-accordion", "value", allow_duplicate=True),
+    Output("diag-diag-mode", "data", allow_duplicate=True),
+    Output("diag-diag-mode-ctrl", "value", allow_duplicate=True),
+    Input("diag-diag-clear", "n_clicks"),
+    prevent_initial_call=True,
+)
 
 # ---------------------------------------------------------------------------
-# Diagnosis dropdown: trigger label, clear visibility, clear action
+# Sync sort toggles between trend and comparison charts
+# ---------------------------------------------------------------------------
+clientside_callback(
+    """function(trendVal, compareVal) {
+        var ctx = window.dash_clientside.callback_context;
+        if (!ctx || !ctx.triggered || ctx.triggered.length === 0) {
+            return [window.dash_clientside.no_update, window.dash_clientside.no_update];
+        }
+        var tid = ctx.triggered[0].prop_id;
+        if (tid.indexOf("trend") >= 0) return [window.dash_clientside.no_update, trendVal];
+        return [compareVal, window.dash_clientside.no_update];
+    }""",
+    Output("diag-trend-sort", "value", allow_duplicate=True),
+    Output("diag-compare-sort", "value", allow_duplicate=True),
+    Input("diag-trend-sort", "value"),
+    Input("diag-compare-sort", "value"),
+    prevent_initial_call=True,
+)
+
+# ---------------------------------------------------------------------------
+# Physician chip dropdown: trigger label, clear visibility, clear action
 # ---------------------------------------------------------------------------
 clientside_callback(
     """function(vals) {
-        if (!vals || vals.length === 0) return "Diagnosis";
-        if (vals.length === 1) return vals[0];
+        if (!vals || vals.length === 0) return "Physician";
+        if (vals.length === 1) return vals[0].split(", ")[0];
         return vals.length + " selected";
     }""",
-    Output("diag-diagnosis-trigger", "children"),
-    Input("diag-filter-diagnosis", "value"),
+    Output("diag-physician-trigger", "children"),
+    Input("diag-filter-physician", "value"),
 )
 clientside_callback(
     """function(vals) { return vals && vals.length > 0 ? {"display": "inline-flex"} : {"display": "none"}; }""",
-    Output("diag-diagnosis-clear", "style"),
-    Input("diag-filter-diagnosis", "value"),
+    Output("diag-physician-clear", "style"),
+    Input("diag-filter-physician", "value"),
 )
 clientside_callback(
     """function(n) { return []; }""",
-    Output("diag-filter-diagnosis", "value", allow_duplicate=True),
-    Input("diag-diagnosis-clear", "n_clicks"),
+    Output("diag-filter-physician", "value", allow_duplicate=True),
+    Input("diag-physician-clear", "n_clicks"),
     prevent_initial_call=True,
 )
+
+
+# ---------------------------------------------------------------------------
+# Mode → clamp date slider min to floor date
+# ---------------------------------------------------------------------------
+@callback(
+    Output("diag-date-slider", "min"),
+    Output("diag-date-slider", "value", allow_duplicate=True),
+    Output("diag-date-slider", "marks"),
+    Output("diag-filter-daterange", "min_date_allowed"),
+    Input("diag-mode-toggle", "value"),
+    State("diag-date-slider", "value"),
+    prevent_initial_call=True,
+)
+def _clamp_slider_to_mode(mode, current_val):
+    floor = _MODE_FLOOR.get(mode)
+    floor_idx = month_idx(floor.year, floor.month) if floor else 0
+    # Clamp current slider value
+    new_val = current_val
+    if current_val and len(current_val) == 2:
+        lo = max(current_val[0], floor_idx)
+        hi = max(current_val[1], floor_idx)
+        new_val = [lo, hi]
+        if new_val == current_val:
+            new_val = dash.no_update
+    marks = [m for m in SLIDER_MARKS if m["value"] >= floor_idx]
+    floor_date = idx_to_date(floor_idx).strftime("%Y-%m-%d")
+    return floor_idx, new_val, marks, floor_date
 
 
 # ---------------------------------------------------------------------------
 # Date filter sync: Preset ↔ Slider ↔ DatePicker
 # ---------------------------------------------------------------------------
 
-# A) Preset → Slider + DatePicker
+# A) Preset → Slider + DatePicker (clamped to slider min)
 @callback(
     Output("diag-date-slider", "value"),
     Output("diag-filter-daterange", "start_date", allow_duplicate=True),
     Output("diag-filter-daterange", "end_date", allow_duplicate=True),
     Input("diag-filter-date-preset", "value"),
+    State("diag-date-slider", "min"),
     prevent_initial_call=True,
 )
-def _sync_preset(preset):
+def _sync_preset(preset, slider_min):
     if not preset or preset == "custom":
         return (dash.no_update,) * 3
+    slider_min = slider_min or 0
     sv = preset_to_slider_val(preset, MAX_IDX)
+    sv = [max(sv[0], slider_min), max(sv[1], slider_min)]
     s = idx_to_date(sv[0]).strftime("%Y-%m-%d")
     e_ts = idx_to_date(sv[1], end_of_month=True)
     today = pd.Timestamp.now().normalize()
@@ -799,10 +1292,68 @@ def _sync_picker_to_slider(start, end, current_slider):
     prevent_initial_call=True,
 )
 def _slider_to_preset(slider_val):
-    for preset_key in ("12mo", "6mo", "3mo", "ytd", "last_year", "all"):
+    for preset_key in ("12mo", "6mo", "3mo", "30d", "ytd", "last_year", "this_month", "last_month", "all"):
         if slider_val == preset_to_slider_val(preset_key, MAX_IDX):
             return preset_key
     return "custom"
+
+
+# ---------------------------------------------------------------------------
+# Dynamic physician chip population
+# ---------------------------------------------------------------------------
+@callback(
+    Output("diag-filter-physician", "children"),
+    Input("diag-interval", "n_intervals"),
+    Input("diag-date-slider", "value"),
+    Input("diag-filter-department", "value"),
+    Input("diag-diag-store", "data"),
+    Input("diag-diag-mode", "data"),
+    Input("diag-mode-toggle", "value"),
+)
+def _populate_physician_chips(_n, slider_val, departments, diag_filter,
+                              diag_mode, mode):
+    """Populate physician chips from the active dataset, applying all filters."""
+    from data.loader import load_diagnosis
+    try:
+        df, date_col, phys_col = _load_for_mode(mode or "consults")
+    except Exception:
+        return []
+
+    if df.empty or phys_col not in df.columns:
+        return []
+
+    # Date filter
+    start, end = _get_date_range(slider_val)
+    if date_col in df.columns:
+        df = df[(df[date_col] >= start) & (df[date_col] <= end)]
+
+    # Department filter
+    if departments and "Department" in df.columns:
+        df = df[df["Department"].isin(departments)]
+
+    # Diagnosis filter
+    diag_mode = diag_mode or "primary"
+    if diag_filter:
+        try:
+            diag_df = load_diagnosis()
+            c2b = build_code_to_category(diag_df)
+            if c2b:
+                from utils.diagnosis_categories import filter_by_diagnosis
+                df = filter_by_diagnosis(df, [diag_filter], c2b, mode=diag_mode)
+        except Exception:
+            pass
+
+    mds = sorted(df[phys_col].dropna().unique())
+
+    return [
+        dmc.Chip(
+            physician_short_name(md),
+            value=md,
+            size="xs",
+            variant="filled",
+        )
+        for md in mds
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -811,25 +1362,36 @@ def _slider_to_preset(slider_val):
 @callback(
     Output("diag-chart-trend-store", "data"),
     Output("diag-chart-comparison", "figure"),
-    Output("diag-filter-physician", "data"),
+    Output("diag-chart-dist-store", "data"),
+    Output("diag-compare-period-type", "data"),
+    Output("diag-compare-period-type", "value", allow_duplicate=True),
+    Output("diag-compare-settings-prior-periods", "max"),
+    Output("diag-compare-settings-prior-periods", "marks"),
     Input("diag-interval", "n_intervals"),
     Input("diag-date-slider", "value"),
     Input("diag-filter-department", "value"),
     Input("diag-filter-physician", "value"),
-    Input("diag-filter-diagnosis", "value"),
+    Input("diag-diag-store", "data"),
+    Input("diag-diag-mode", "data"),
     Input("diag-mode-toggle", "value"),
     Input("diag-compare-period-type", "value"),
+    Input("diag-compare-settings-prior-periods", "value"),
+    Input("diag-compare-sort", "value"),
     running=[
         (Output("diag-chart-trend-loading", "visible"), True, False),
         (Output("diag-chart-comparison-loading", "visible"), True, False),
     ],
+    prevent_initial_call=True,
 )
-def update_diagnosis(_n, slider_val, departments, physician, diag_filter, mode, period_type):
+def update_diagnosis(_n, slider_val, departments, physicians, diag_filter,
+                     diag_mode, mode, period_type, max_prior, sort_order):
     from data.loader import load_diagnosis
 
+    max_prior = max_prior or 1
     empty_bar = empty_figure("No data for selected filters")
     empty_bar.update_layout(height=_RIDGE_HEIGHT)
-    no_phys = []
+    # Default control outputs (no change)
+    no_ctrl = (dash.no_update,) * 4
 
     try:
         diag_df = load_diagnosis()
@@ -839,54 +1401,45 @@ def update_diagnosis(_n, slider_val, departments, physician, diag_filter, mode, 
 
     start, end = _get_date_range(slider_val)
 
-    if mode == "courses":
-        try:
-            df_all = _load_courses_data()
-        except Exception:
-            return None, empty_bar, no_phys
-        date_col = "CourseStartDate"
-        phys_col = "TreatingPhysician"
-    else:
-        try:
-            df_all = _load_consults()
-        except Exception:
-            return None, empty_bar, no_phys
-        date_col = "ScheduledDateTime"
-        phys_col = "AppointmentPhysician"
+    try:
+        df_all, date_col, phys_col = _load_for_mode(mode or "consults")
+    except Exception:
+        return (None, empty_bar, None) + no_ctrl
 
     if df_all.empty:
-        return None, empty_bar, no_phys
+        return (None, empty_bar, None) + no_ctrl
 
-    # Department filter (before extracting physician options)
+    # Department filter
     if departments and "Department" in df_all.columns:
         df_all = df_all[df_all["Department"].isin(departments)]
 
-    # Build physician options from data (after department filter, before physician filter)
-    phys_options = []
-    if phys_col in df_all.columns:
-        phys_options = sorted(df_all[phys_col].dropna().unique().tolist())
+    # Physician filter (multi-select)
+    if physicians and phys_col in df_all.columns:
+        df_all = df_all[df_all[phys_col].isin(physicians)]
 
-    # Physician filter
-    if physician and phys_col in df_all.columns:
-        df_all = df_all[df_all[phys_col] == physician]
+    # Diagnosis filter + dimension assignment
+    # diag_filter is a single category string (or None)
+    diag_mode = diag_mode or "primary"
+    if diag_filter and c2b:
+        from utils.diagnosis_categories import filter_by_diagnosis, build_code_to_subcategory
+        # Filter to selected category
+        df_all = filter_by_diagnosis(df_all, [diag_filter], c2b, mode=diag_mode)
+        if df_all.empty:
+            return (None, empty_bar, None) + no_ctrl
+        # Assign subcategory as the chart dimension
+        c2s = build_code_to_subcategory(diag_df)
+        df_all = _assign_subcategory(df_all, c2s, diag_filter)
+    else:
+        # No category selected — show body system level
+        from utils.diagnosis_categories import assign_diagnosis_column
+        df_all = assign_diagnosis_column(df_all, c2b, mode=diag_mode)
+        if "_bs" in df_all.columns:
+            df_all = df_all.rename(columns={"_bs": "_diag_group"})
+        else:
+            df_all = _assign_diagnosis(df_all, c2b)
 
-    # Diagnosis group filter (applied before _assign_diagnosis so the
-    # comparison chart and trend both respect it)
-    if diag_filter and "DiagnosisCodes" in df_all.columns:
-        diag_set = set(diag_filter)
-        # Need c2b for filtering — already computed above
-        mask = df_all["DiagnosisCodes"].apply(
-            lambda v: bool(get_categories_for_codes(v, c2b) & diag_set) if pd.notna(v) else False
-        )
-        df_all = df_all[mask]
-
-    if df_all.empty:
-        return None, empty_bar, phys_options
-
-    # Assign diagnosis groups on full dataset
-    df_all = _assign_diagnosis(df_all, c2b)
     if df_all.empty or "_diag_group" not in df_all.columns:
-        return None, empty_bar, phys_options
+        return (None, empty_bar, None) + no_ctrl
 
     # Current period
     if date_col in df_all.columns:
@@ -895,37 +1448,62 @@ def update_diagnosis(_n, slider_val, departments, physician, diag_filter, mode, 
         dff = df_all
 
     if dff.empty:
-        return None, empty_bar, phys_options
+        return (None, empty_bar, None) + no_ctrl
 
-    # Prior period: calendar (same dates last year) or rolling (shift by range length)
+    # --- Prior periods ---
     period_type = period_type or "calendar"
-    if period_type == "calendar":
-        try:
-            prior_start = start - pd.DateOffset(years=1)
-            prior_end = end - pd.DateOffset(years=1)
-        except Exception:
-            span = end - start
-            prior_end = start - pd.Timedelta(days=1)
-            prior_start = prior_end - span
-    else:
-        span = end - start
-        prior_end = start - pd.Timedelta(days=1)
-        prior_start = prior_end - span
+    period_days = (end - start).days
+    # Force rolling when range > 1 year
+    cal_disabled = period_days > 365
+    if cal_disabled and period_type == "calendar":
+        period_type = "rolling"
 
-    if date_col in df_all.columns:
-        dff_prior = df_all[
-            (df_all[date_col] >= prior_start) & (df_all[date_col] <= prior_end)
-        ]
-    else:
-        dff_prior = pd.DataFrame()
+    data_min = df_all[date_col].min() if date_col in df_all.columns else start
+
+    # Probe up to 3 prior periods to discover availability
+    _MAX_PROBE = 3
+    all_prior_windows = []
+    for i in range(1, _MAX_PROBE + 1):
+        if period_type == "calendar":
+            try:
+                ps = start - pd.DateOffset(years=i)
+                pe = end - pd.DateOffset(years=i)
+            except Exception:
+                break
+        else:
+            shift = pd.Timedelta(days=period_days * i)
+            ps = start - shift
+            pe = end - shift
+        if pe < data_min:
+            break
+        if date_col in df_all.columns:
+            pw = df_all[(df_all[date_col] >= ps) & (df_all[date_col] <= pe)]
+        else:
+            pw = pd.DataFrame()
+        all_prior_windows.append((pw, ps, pe))
+
+    avail_priors = max(len(all_prior_windows), 1)
+    # Slice to user's selected count
+    prior_windows = all_prior_windows[:max_prior]
+
+    # Control outputs: calendar disable + slider cap
+    pt_data = [
+        {"value": "calendar", "label": "Calendar", "disabled": cal_disabled},
+        {"value": "rolling", "label": "Rolling"},
+    ]
+    pt_value = "rolling" if cal_disabled and period_type == "calendar" else dash.no_update
+    slider_max = avail_priors
+    slider_marks = [{"value": i, "label": str(i)} for i in range(1, slider_max + 1)]
 
     # Build outputs
-    trend_store = _prepare_trend_store(dff, date_col)
-    fig_bars = _build_comparison_bars(
-        dff, dff_prior, start, end, prior_start, prior_end,
-    )
+    sort_order = sort_order or "volume"
+    trend_store = _prepare_trend_store(dff, date_col, sort_order=sort_order,
+                                       prior_windows=prior_windows)
+    fig_bars = _build_comparison_bars(dff, prior_windows, start, end,
+                                      sort_order=sort_order)
+    dist_store = _prepare_diag_dist_data(dff, date_col)
 
-    return trend_store, fig_bars, phys_options
+    return (trend_store, fig_bars, dist_store, pt_data, pt_value, slider_max, slider_marks)
 
 
 # --- Unreviewed-only toggle for Diagnosis manager grid ---
@@ -957,6 +1535,112 @@ clientside_callback(
 )
 
 
+# ---------------------------------------------------------------------------
+# Diagnosis distribution chart callback
+# ---------------------------------------------------------------------------
+@callback(
+    Output("diag-chart-dist", "figure"),
+    Input("diag-chart-dist-store", "data"),
+    Input("diag-dist-mode", "value"),
+    Input("diag-dist-agg", "value"),
+    Input("diag-dist-settings-smooth", "value"),
+    Input("diag-dist-settings-type", "value"),
+)
+def _update_diag_dist(data, mode, agg, smooth, chart_type):
+    if not data:
+        return empty_figure("No diagnosis data")
+
+    agg = agg or "M"
+    combo = data.get(agg)
+    if not combo or not combo.get("series"):
+        return empty_figure("No data for selection")
+
+    dates = combo["dates"]
+    mode = mode or "pct"
+    chart_type = chart_type or "area"
+    smooth = smooth or 0
+
+    # Stack order: least common at bottom, most common on top
+    raw_series = list(reversed(combo["series"]))
+
+    # Convert to proportions if needed
+    n_periods = len(dates)
+    if mode == "pct":
+        totals = [0.0] * n_periods
+        for s in raw_series:
+            for i in range(n_periods):
+                totals[i] += s["values"][i]
+        proc_series = []
+        for s in raw_series:
+            pct_vals = [
+                round(s["values"][i] / totals[i] * 100, 1) if totals[i] > 0 else 0
+                for i in range(n_periods)
+            ]
+            proc_series.append({**s, "values": pct_vals})
+    else:
+        proc_series = raw_series
+
+    # Apply smoothing
+    if smooth > 1:
+        proc_series = [
+            {**s, "values": _apply_moving_avg(s["values"], smooth)}
+            for s in proc_series
+        ]
+
+    fig = go.Figure()
+
+    if chart_type == "bar":
+        for s in proc_series:
+            fig.add_trace(go.Bar(
+                x=dates,
+                y=s["values"],
+                name=s["name"],
+                marker_color=s["color"],
+                marker_opacity=0.7,
+                hovertemplate=(
+                    "<b>%{x|%b %Y}</b><br>"
+                    + s["name"] + ": %{y:.0f}" + ("%" if mode == "pct" else "")
+                    + "<extra></extra>"
+                ),
+            ))
+        fig.update_layout(barmode="stack")
+    else:
+        stackgroup = "diag" if chart_type == "area" else None
+        for s in proc_series:
+            fig.add_trace(go.Scatter(
+                x=dates,
+                y=s["values"],
+                name=s["name"],
+                mode="lines",
+                line=dict(color=s["color"], width=0.5 if chart_type == "area" else 2),
+                stackgroup=stackgroup,
+                fillcolor=_hex_to_rgba(s["color"], 0.75) if chart_type == "area" else None,
+                opacity=0.85,
+                hovertemplate=(
+                    "<b>%{x|%b %Y}</b><br>"
+                    + s["name"] + ": %{y:.0f}" + ("%" if mode == "pct" else "")
+                    + "<extra></extra>"
+                ),
+            ))
+
+    apply_default_layout(fig)
+    fig.update_layout(
+        height=420,
+        yaxis_title="Proportion (%)" if mode == "pct" else "Count",
+        showlegend=True,
+        legend=dict(
+            orientation="h", y=1.02, x=0.5, xanchor="center", yanchor="bottom",
+            traceorder="normal",
+        ),
+        margin=dict(l=48, r=16, t=56, b=40),
+        hovermode="x unified",
+    )
+    if mode == "pct" and chart_type != "line":
+        fig.update_yaxes(range=[0, 100])
+
+    return fig
+
+
 # ==========================================================================
 # Diagnosis Classification Manager Callbacks
 # ==========================================================================
@@ -981,6 +1665,8 @@ def _build_diag_mgr_data():
         with open(csv_path, newline="", encoding="utf-8") as f:
             for row in csv_mod.DictReader(f):
                 code = row["icd_code"].strip()
+                if not code:
+                    continue
                 desc = row.get("description", "").strip()
                 cat = row.get("category", "").strip()
                 sub = row.get("subcategory", "").strip()
@@ -1004,19 +1690,38 @@ def _build_diag_mgr_data():
                     "reviewed": reviewed,
                 })
 
-    # Enrich with patient counts from clinic visits DiagnosisCodes
+    # Enrich with unique patient counts across ALL datasets carrying DiagnosisCodes
     try:
-        from data.loader import load_clinic_visits
-        cv = load_clinic_visits()
-        if not cv.empty and "DiagnosisCodes" in cv.columns:
-            code_counts: dict[str, int] = {}
-            for codes_str in cv["DiagnosisCodes"].dropna():
+        from data.loader import (
+            load_clinic_visits, load_courses, load_simulations,
+            load_treatment_detail, load_weekly_visits, load_billing,
+            load_tasks, load_plans, load_workflow, load_procedures, load_otvs,
+        )
+        code_patients: dict[str, set] = {}
+
+        def _tally(df):
+            if df.empty or "DiagnosisCodes" not in df.columns or "PatientId" not in df.columns:
+                return
+            for pid, codes_str in zip(df["PatientId"], df["DiagnosisCodes"]):
+                if pd.isna(codes_str) or pd.isna(pid):
+                    continue
                 for code in str(codes_str).split(","):
                     c = code.strip()
                     if c:
-                        code_counts[c] = code_counts.get(c, 0) + 1
-            for r in rows:
-                r["patients"] = code_counts.get(r["icd_code"], 0)
+                        code_patients.setdefault(c, set()).add(pid)
+
+        for loader in (load_clinic_visits, load_courses, load_simulations,
+                       load_treatment_detail, load_weekly_visits, load_billing,
+                       load_tasks, load_plans, load_workflow, load_procedures,
+                       load_otvs):
+            try:
+                _tally(loader())
+            except Exception:
+                pass
+
+        for r in rows:
+            pts = code_patients.get(r["icd_code"])
+            r["patients"] = len(pts) if pts else 0
     except Exception:
         pass
 
@@ -1142,6 +1847,61 @@ def _diag_mgr_mark_reviewed(n, full_data, selected_rows, unreviewed_only):
     total = len(row_data)
     reviewed_n = sum(1 for r in row_data if r.get("reviewed"))
     categorized = sum(1 for r in row_data if r.get("category"))
+    stats = (
+        f"{total:,} codes  |  {categorized:,} categorized  |  "
+        f"{reviewed_n:,} reviewed  |  {total - reviewed_n:,} unreviewed"
+    )
+    visible = [r for r in row_data if not r.get("reviewed")] if unreviewed_only else row_data
+    return visible, row_data, stats
+
+
+# --- Diagnosis Manager: Delete Selected ---
+@callback(
+    Output("diag-mgr-grid", "rowData", allow_duplicate=True),
+    Output("diag-mgr-full-store", "data", allow_duplicate=True),
+    Output("diag-mgr-stats", "children", allow_duplicate=True),
+    Input("diag-mgr-delete-btn", "n_clicks"),
+    State("diag-mgr-full-store", "data"),
+    State("diag-mgr-grid", "selectedRows"),
+    State("diag-mgr-unreviewed-toggle", "checked"),
+    prevent_initial_call=True,
+)
+def _diag_mgr_delete(n, full_data, selected_rows, unreviewed_only):
+    if not n or not full_data or not selected_rows:
+        return dash.no_update, dash.no_update, dash.no_update
+    import csv as csv_mod
+    from pathlib import Path
+
+    codes_to_delete = {r["icd_code"] for r in selected_rows if r.get("icd_code")}
+    if not codes_to_delete:
+        return dash.no_update, dash.no_update, dash.no_update
+
+    # Remove from in-memory data
+    row_data = [r for r in full_data if r.get("icd_code") not in codes_to_delete]
+
+    # Remove from CSV file
+    csv_path = Path(__file__).resolve().parent.parent / "data" / "diagnosis_subcategories.csv"
+    if csv_path.exists():
+        with open(csv_path, newline="", encoding="utf-8") as f:
+            reader = csv_mod.DictReader(f)
+            fieldnames = reader.fieldnames
+            kept = [row for row in reader if row["icd_code"].strip() not in codes_to_delete]
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv_mod.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(kept)
+
+    # Remove any DB overrides for deleted codes
+    try:
+        from data.reviews_db import delete_diagnosis_override
+        for code in codes_to_delete:
+            delete_diagnosis_override(code)
+    except Exception:
+        pass
+
+    total = len(row_data)
+    categorized = sum(1 for r in row_data if r.get("category"))
+    reviewed_n = sum(1 for r in row_data if r.get("reviewed"))
     stats = (
         f"{total:,} codes  |  {categorized:,} categorized  |  "
         f"{reviewed_n:,} reviewed  |  {total - reviewed_n:,} unreviewed"

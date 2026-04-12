@@ -9,11 +9,12 @@ import pandas as pd
 import numpy as np
 from datetime import timedelta
 
-from config.settings import CHART_COLORWAY, DEFAULT_GRAPH_CONFIG, DEFAULT_LAYOUT, FONT_FAMILY, PRIMARY
+from config.settings import CHART_COLORWAY, DEFAULT_GRAPH_CONFIG, DEFAULT_LAYOUT, FONT_FAMILY, PRIMARY, OUTLIER_CAPS
 from utils.tables import sanitize_for_grid
 from utils.diagnosis_categories import (
     build_code_to_category, build_code_to_subcategory,
     get_categories_for_codes, get_subcategories_for_codes,
+    primary_category,
     CATEGORIES, SUBCATEGORIES,
 )
 from components.filter_bar import department_chips
@@ -37,9 +38,15 @@ INTER_STAGE_LABELS = [
     "Consult→Sim", "Sim→Contour", "Contour→Plan", "Plan→Review", "Review→Tx",
 ]
 
-# Outlier-cap defaults (max days per inter-stage gap)
-OUTLIER_DEFAULTS = [21, 8, 8, 5, 8]
-OUTLIER_SLIDER_MAX = 120
+# Outlier-cap defaults (max days per inter-stage gap) — from shared config
+OUTLIER_DEFAULTS = [
+    OUTLIER_CAPS["consult_to_sim"],
+    OUTLIER_CAPS["sim_to_contour"],
+    OUTLIER_CAPS["contour_to_plan"],
+    OUTLIER_CAPS["plan_to_review"],
+    OUTLIER_CAPS["review_to_tx"],
+]
+OUTLIER_SLIDER_MAX = 120  # workflow gaps can be longer than task durations
 
 
 # ---------------------------------------------------------------------------
@@ -166,6 +173,8 @@ _A_ID_MAP = {
     "filter-body-system": "workflow-filter-body-system",
     "filter-subcategory": "workflow-filter-subcategory",
     "diag-accordion": "workflow-diag-accordion",
+    "diag-mode": "workflow-diag-mode",
+    "diag-mode-ctrl": "workflow-diag-mode-ctrl",
     "filter-date-preset": "workflow-filter-date-preset",
     "filter-daterange": "workflow-filter-daterange",
     "loopback-switch": "wf-sankey-loopback-switch",
@@ -316,10 +325,23 @@ def _build_filter_bar(prefix, label=None):
                                 ],
                                 style={"position": "relative", "display": "inline-block"},
                             ),
-                            # Hidden store for selected categories
+                            # Hidden stores for selected categories and mode
                             dcc.Store(id=_id(prefix, "filter-body-system"), data=[]),
+                            dcc.Store(id=_id(prefix, "diag-mode"), data="primary"),
                             dmc.Paper(
                                 children=[
+                                    # Primary / All toggle
+                                    dmc.SegmentedControl(
+                                        id=_id(prefix, "diag-mode-ctrl"),
+                                        data=[
+                                            {"value": "primary", "label": "Primary"},
+                                            {"value": "all", "label": "All"},
+                                        ],
+                                        value="primary",
+                                        size="xs",
+                                        fullWidth=True,
+                                        mb="xs",
+                                    ),
                                     html.Div(
                                         children=[
                                             dmc.ChipGroup(
@@ -710,7 +732,7 @@ layout = dmc.Stack(
                                         smooth_step=0.5,
                                         smooth_default=1,
                                         show_grouping=False,
-                                        slider_label="Kernel Bandwidth",
+                                        slider_label="Density Smoothing",
                                     ),
                                 ]),
                             ],
@@ -886,42 +908,112 @@ layout = dmc.Stack(
 # ---------------------------------------------------------------------------
 # Physician filter — dynamic from data
 # ---------------------------------------------------------------------------
+def _wf_physician_chips(slider_val, departments, techniques, body_systems,
+                        subcategories, inpatient_only, diag_mode="primary"):
+    """Shared helper: load workflow, apply all filters except physician, return chips."""
+    from data.loader import load_workflow, load_courses, load_diagnosis, load_clinic_visits
+    from components.filter_bar import physician_options, physician_short_name
+    try:
+        wf = load_workflow().copy()
+    except Exception:
+        return []
+    if wf.empty or "AppointmentPhysician" not in wf.columns:
+        return []
+    wf = _forward_fill_exam_info(wf)
+    # Date filter on Exam rows
+    exam_dates = wf.loc[wf["StageName"] == "Exam", "StageDateTime"].dropna()
+    last_date = exam_dates.max() if not exam_dates.empty else pd.Timestamp.now().normalize()
+    first_date = pd.Timestamp("2014-01-01")
+    start, end = _get_date_range(slider_val, None, first_date, last_date)
+    if "StageDateTime" in wf.columns:
+        exam_in_range = wf[
+            (wf["StageName"] == "Exam") &
+            (wf["StageDateTime"] >= start) & (wf["StageDateTime"] <= end)
+        ]
+        # Keep only chains with an Exam in the date range
+        if "DimCourseID" in wf.columns and exam_in_range["DimCourseID"].notna().any():
+            course_ids = exam_in_range["DimCourseID"].dropna().unique()
+            patient_ids = exam_in_range["PatientId"].dropna().unique()
+            wf = wf[
+                wf["DimCourseID"].isin(course_ids) |
+                (wf["DimCourseID"].isna() & wf["PatientId"].isin(patient_ids))
+            ]
+        elif "PatientId" in wf.columns:
+            patient_ids = exam_in_range["PatientId"].dropna().unique()
+            wf = wf[wf["PatientId"].isin(patient_ids)]
+    else:
+        exam_in_range = wf
+    # Inpatient
+    if inpatient_only:
+        try:
+            cv = load_clinic_visits()
+            inpt = cv[cv["InPatientFlag"] == "Yes"]
+            if not inpt.empty and "PatientId" in wf.columns:
+                inpt_keys = set(zip(inpt["PatientId"].astype(str),
+                                    inpt["ScheduledDateTime"].dt.normalize()))
+                exams = wf[wf["StageName"] == "Exam"].copy()
+                exam_keys = list(zip(exams["PatientId"].astype(str),
+                                     exams["StageDateTime"].dt.normalize()))
+                match_mask = [k in inpt_keys for k in exam_keys]
+                inpt_chains = set(exams.loc[exams.index[match_mask], "UniqueRowID"])
+                wf = wf[wf["UniqueRowID"].isin(inpt_chains)]
+                exam_in_range = exam_in_range[exam_in_range["UniqueRowID"].isin(inpt_chains)]
+        except Exception:
+            pass
+    # Lookup tables for dimension filtering
+    try:
+        courses_df = load_courses()
+    except Exception:
+        courses_df = None
+    try:
+        diag_df = load_diagnosis()
+    except Exception:
+        diag_df = None
+    # Apply all filters except physician to the date-scoped exams
+    exam_in_range = _apply_dimension_filter(
+        exam_in_range, departments, None, techniques, body_systems,
+        subcategories, courses_df, diag_df, skip="physician",
+        diag_mode=diag_mode)
+    if exam_in_range.empty:
+        return []
+    return [
+        dmc.Chip(physician_short_name(opt["label"]), value=opt["value"], size="xs", variant="filled")
+        for opt in physician_options(exam_in_range["AppointmentPhysician"])
+    ]
+
+
 @callback(
     Output("workflow-filter-physician", "children"),
     Input("wf-interval", "n_intervals"),
+    Input("wf-date-slider", "value"),
+    Input("workflow-filter-department", "value"),
+    Input("workflow-filter-technique", "value"),
+    Input("workflow-filter-body-system", "data"),
+    Input("workflow-filter-subcategory", "value"),
+    Input("workflow-diag-mode", "data"),
+    Input("wf-inpatient-switch", "checked"),
 )
-def _populate_wf_physician_chips(_n):
-    from data.loader import load_workflow
-    try:
-        df = load_workflow()
-    except Exception:
-        return []
-    if df.empty or "TreatingPhysician" not in df.columns:
-        return []
-    from components.filter_bar import physician_options, physician_short_name
-    return [
-        dmc.Chip(physician_short_name(opt["label"]), value=opt["value"], size="xs", variant="filled")
-        for opt in physician_options(df["TreatingPhysician"])
-    ]
+def _populate_wf_physician_chips(_n, slider_val, departments, techniques,
+                                 body_systems, subcategories, diag_mode, inpatient_only):
+    return _wf_physician_chips(slider_val, departments, techniques, body_systems,
+                               subcategories, inpatient_only, diag_mode=diag_mode)
 
 
 @callback(
     Output("wf-b-filter-physician", "children"),
     Input("wf-interval", "n_intervals"),
+    Input(_id("wf-b", "date-slider"), "value"),
+    Input("wf-b-filter-department", "value"),
+    Input("wf-b-filter-technique", "value"),
+    Input("wf-b-filter-body-system", "data"),
+    Input("wf-b-filter-subcategory", "value"),
+    Input(_id("wf-b", "diag-mode"), "data"),
+    Input(_id("wf-b", "inpatient-switch"), "checked"),
 )
-def _populate_wfb_physician_chips(_n):
-    from data.loader import load_workflow
-    try:
-        df = load_workflow()
-    except Exception:
-        return []
-    if df.empty or "TreatingPhysician" not in df.columns:
-        return []
-    from components.filter_bar import physician_options, physician_short_name
-    return [
-        dmc.Chip(physician_short_name(opt["label"]), value=opt["value"], size="xs", variant="filled")
-        for opt in physician_options(df["TreatingPhysician"])
-    ]
+def _populate_wfb_physician_chips(_n, slider_val, departments, techniques,
+                                  body_systems, subcategories, diag_mode, inpatient_only):
+    return _wf_physician_chips(slider_val, departments, techniques, body_systems,
+                               subcategories, inpatient_only, diag_mode=diag_mode)
 
 
 # ---------------------------------------------------------------------------
@@ -1137,7 +1229,10 @@ def _compute_flow_data(pivot, wf_full, use_business_days=False, agg_func="median
             mean_days.append(round(float(days.mean()), 1) if len(days) > 0 else 0)
 
             # Median allotted time (StageDueDateTime - BaselineDateTime) for next stage
-            if ("StageDueDateTime" in wf_full.columns
+            # Skip for Isodose — ARIA has no reliable allotted time for planning
+            if next_stage == "Isodose":
+                allotted_median = None
+            elif ("StageDueDateTime" in wf_full.columns
                     and "BaselineDateTime" in wf_full.columns):
                 next_rows = wf_full[
                     (wf_full["StageName"] == next_stage)
@@ -1163,8 +1258,9 @@ def _compute_flow_data(pivot, wf_full, use_business_days=False, agg_func="median
             # On-time %: did the patient complete before the due date?
             # This is always a calendar comparison (timestamp <= due),
             # independent of the business-day toggle.
+            # Skip for Isodose — no reliable SLA from ARIA
             on_time_pct = None
-            if "StageDueDateTime" in wf_full.columns:
+            if next_stage != "Isodose" and "StageDueDateTime" in wf_full.columns:
                 next_due = wf_full[
                     (wf_full["StageName"] == next_stage)
                     & wf_full["StageDueDateTime"].notna()
@@ -1412,6 +1508,13 @@ def _register_filter_callbacks(prefix):
         Input(_id(prefix, "technique-clear"), "n_clicks"),
         prevent_initial_call=True,
     )
+    # --- Diagnosis mode toggle → store sync ---
+    clientside_callback(
+        """function(val) { return val; }""",
+        Output(_id(prefix, "diag-mode"), "data"),
+        Input(_id(prefix, "diag-mode-ctrl"), "value"),
+    )
+
     # --- Checkbox → Store sync (category selection) ---
     _cat_type = f"diag-cat-{prefix}"
     _n_cats = len(CATEGORIES)
@@ -1431,11 +1534,13 @@ def _register_filter_callbacks(prefix):
     ]
     clientside_callback(
         f"""function(n) {{
-            var r = [[], [], []];
+            var r = [[], "primary", "primary", [], []];
             for (var i = 0; i < {_n_cats}; i++) r.push(false);
             return r;
         }}""",
         Output(_id(prefix, "filter-body-system"), "data", allow_duplicate=True),
+        Output(_id(prefix, "diag-mode"), "data", allow_duplicate=True),
+        Output(_id(prefix, "diag-mode-ctrl"), "value", allow_duplicate=True),
         Output(_id(prefix, "filter-subcategory"), "value", allow_duplicate=True),
         Output(_id(prefix, "diag-accordion"), "value", allow_duplicate=True),
         *_cat_check_outputs,
@@ -1550,13 +1655,14 @@ _register_filter_callbacks("wf-b")
 # ---------------------------------------------------------------------------
 
 def _apply_dimension_filter(wf, departments, physician, techniques, body_systems,
-                            subcategories, courses_df, diag_lookup, skip=None):
+                            subcategories, courses_df, diag_lookup, skip=None,
+                            diag_mode="primary"):
     """Apply all dimension filters EXCEPT the one named by `skip`."""
     d = wf
     if skip != "department" and departments and "Department" in d.columns:
         d = d[d["Department"].isin(departments)]
-    if skip != "physician" and physician and "TreatingPhysician" in d.columns and "UniqueRowID" in d.columns:
-        ep = d[(d["StageName"] == "Exam") & (d["TreatingPhysician"] == physician)]["UniqueRowID"].unique()
+    if skip != "physician" and physician and "AppointmentPhysician" in d.columns and "UniqueRowID" in d.columns:
+        ep = d[(d["StageName"] == "Exam") & (d["AppointmentPhysician"] == physician)]["UniqueRowID"].unique()
         d = d[d["UniqueRowID"].isin(ep)]
     if skip != "technique" and techniques and "DimCourseID" in d.columns and courses_df is not None:
         tc = "TreatmentTechniques"
@@ -1578,6 +1684,11 @@ def _apply_dimension_filter(wf, departments, physician, techniques, body_systems
                 mm = cd["DiagnosisCodes"].apply(
                     lambda s: bool(ss & get_subcategories_for_codes(s, c2s))
                 )
+            elif diag_mode == "primary":
+                bs = set(body_systems)
+                mm = cd["DiagnosisCodes"].apply(
+                    lambda s: primary_category(s, c2c) in bs
+                )
             else:
                 bs = set(body_systems)
                 mm = cd["DiagnosisCodes"].apply(
@@ -1588,26 +1699,29 @@ def _apply_dimension_filter(wf, departments, physician, techniques, body_systems
 
 
 def _compute_available_options(wf_base, departments, physician, techniques, body_systems,
-                               subcategories, courses_df, diag_lookup):
+                               subcategories, courses_df, diag_lookup, diag_mode="primary"):
     """Cross-filter: for each dimension, apply all OTHER filters and return available values."""
     # Department options
     wf_nd = _apply_dimension_filter(wf_base, departments, physician, techniques, body_systems,
-                                    subcategories, courses_df, diag_lookup, skip="department")
+                                    subcategories, courses_df, diag_lookup, skip="department",
+                                    diag_mode=diag_mode)
     dept_opts = sorted(wf_nd["Department"].dropna().unique().tolist()) if "Department" in wf_nd.columns else []
 
     # Physician options (from Exam rows only)
     wf_np = _apply_dimension_filter(wf_base, departments, physician, techniques, body_systems,
-                                    subcategories, courses_df, diag_lookup, skip="physician")
+                                    subcategories, courses_df, diag_lookup, skip="physician",
+                                    diag_mode=diag_mode)
     if "StageName" in wf_np.columns:
         phys_src = wf_np[wf_np["StageName"] == "Exam"]
     else:
         phys_src = wf_np
-    phys_opts = sorted(phys_src["TreatingPhysician"].dropna().unique().tolist()) if "TreatingPhysician" in phys_src.columns else []
+    phys_opts = sorted(phys_src["AppointmentPhysician"].dropna().unique().tolist()) if "AppointmentPhysician" in phys_src.columns else []
 
     # Technique options
     tech_opts = []
     wf_nt = _apply_dimension_filter(wf_base, departments, physician, techniques, body_systems,
-                                    subcategories, courses_df, diag_lookup, skip="technique")
+                                    subcategories, courses_df, diag_lookup, skip="technique",
+                                    diag_mode=diag_mode)
     if courses_df is not None and "DimCourseID" in wf_nt.columns:
         tc = "TreatmentTechniques"
         if tc in courses_df.columns:
@@ -1622,7 +1736,8 @@ def _compute_available_options(wf_base, departments, physician, techniques, body
     bs_opts = []
     sub_opts = []
     wf_nb = _apply_dimension_filter(wf_base, departments, physician, techniques, body_systems,
-                                    subcategories, courses_df, diag_lookup, skip="body_system")
+                                    subcategories, courses_df, diag_lookup, skip="body_system",
+                                    diag_mode=diag_mode)
     if diag_lookup is not None and "DiagnosisCodes" in wf_nb.columns:
         c2c = build_code_to_category(diag_lookup)
         if c2c:
@@ -1655,7 +1770,8 @@ _EXCLUDED_MODALITIES = frozenset({"BRACHYTHERAPY", "PLUVICTO"})
 
 
 def _load_and_filter_wf(slider_val, departments, physician, techniques,
-                        body_systems, subcategories=None, show_loopbacks=False,
+                        body_systems, subcategories=None, diag_mode="primary",
+                        show_loopbacks=False,
                         use_business_days=False, inpatient_only=False,
                         outlier_enabled=True, caps=None):
     """Load workflow data, apply all filters, pivot to courses.
@@ -1755,13 +1871,13 @@ def _load_and_filter_wf(slider_val, departments, physician, techniques,
     # Cross-filter: compute available options for each dimension
     filter_options = _compute_available_options(
         wf, departments, physician, techniques, body_systems,
-        subcategories, courses_df, diag_df,
+        subcategories, courses_df, diag_df, diag_mode=diag_mode,
     )
 
     # Apply dimension filters
     wf = _apply_dimension_filter(
         wf, departments, physician, techniques, body_systems,
-        subcategories, courses_df, diag_df,
+        subcategories, courses_df, diag_df, diag_mode=diag_mode,
     )
 
     if wf.empty:
@@ -1884,6 +2000,7 @@ _WF_FILTER_INPUTS = [
     Input("workflow-filter-technique", "value"),
     Input("workflow-filter-body-system", "data"),
     Input("workflow-filter-subcategory", "value"),
+    Input("workflow-diag-mode", "data"),
     Input("wf-sankey-loopback-switch", "checked"),
     Input("wf-business-days-switch", "checked"),
     Input("wf-inpatient-switch", "checked"),
@@ -1897,14 +2014,14 @@ _WF_FILTER_INPUTS = [
 
 
 def _unpack_wf_filter_args(args):
-    """Unpack the 16 common filter args into kwargs for _load_and_filter_wf."""
+    """Unpack the 17 common filter args into kwargs for _load_and_filter_wf."""
     (_n, departments, slider_val, physician, techniques, body_systems,
-     subcategories, show_loopbacks, use_business_days, inpatient_only,
-     outlier_enabled, cap0, cap1, cap2, cap3, cap4) = args[:16]
+     subcategories, diag_mode, show_loopbacks, use_business_days, inpatient_only,
+     outlier_enabled, cap0, cap1, cap2, cap3, cap4) = args[:17]
     return dict(
         slider_val=slider_val, departments=departments, physician=physician,
         techniques=techniques, body_systems=body_systems,
-        subcategories=subcategories,
+        subcategories=subcategories, diag_mode=diag_mode,
         show_loopbacks=show_loopbacks, use_business_days=use_business_days,
         inpatient_only=inpatient_only, outlier_enabled=outlier_enabled,
         caps=[cap0, cap1, cap2, cap3, cap4],
@@ -1921,6 +2038,7 @@ _WF_B_FILTER_INPUTS = [
     Input("wf-b-filter-technique", "value"),
     Input("wf-b-filter-body-system", "data"),
     Input("wf-b-filter-subcategory", "value"),
+    Input(_id("wf-b", "diag-mode"), "data"),
     Input(_id("wf-b", "loopback-switch"), "checked"),
     Input(_id("wf-b", "business-days-switch"), "checked"),
     Input(_id("wf-b", "inpatient-switch"), "checked"),
@@ -1934,15 +2052,15 @@ _WF_B_FILTER_INPUTS = [
 
 
 def _unpack_wf_b_filter_args(args):
-    """Unpack the 17 common filter args for Dataset B into kwargs."""
+    """Unpack the 18 common filter args for Dataset B into kwargs."""
     (compare_mode, _n, departments, slider_val, physician, techniques,
-     body_systems, subcategories, show_loopbacks, use_business_days,
-     inpatient_only, outlier_enabled, cap0, cap1, cap2, cap3, cap4) = args[:17]
+     body_systems, subcategories, diag_mode, show_loopbacks, use_business_days,
+     inpatient_only, outlier_enabled, cap0, cap1, cap2, cap3, cap4) = args[:18]
     return dict(
         compare_mode=compare_mode,
         slider_val=slider_val, departments=departments, physician=physician,
         techniques=techniques, body_systems=body_systems,
-        subcategories=subcategories,
+        subcategories=subcategories, diag_mode=diag_mode,
         show_loopbacks=show_loopbacks, use_business_days=use_business_days,
         inpatient_only=inpatient_only, outlier_enabled=outlier_enabled,
         caps=[cap0, cap1, cap2, cap3, cap4],
@@ -1983,8 +2101,8 @@ def _update_wf_table_and_filters(*args):
 )
 def _update_wf_sankey(*args):
     ctx = _unpack_wf_filter_args(args)
-    agg_func = args[16]
-    grid_rows = args[17]
+    agg_func = args[17]
+    grid_rows = args[18]
     data = _load_and_filter_wf(**ctx)
     if data is None or data["pivot"] is None:
         return None
@@ -2008,8 +2126,8 @@ def _update_wf_sankey(*args):
 )
 def _update_wf_flow_details(*args):
     ctx = _unpack_wf_filter_args(args)
-    agg_func = args[16]
-    grid_rows = args[17]
+    agg_func = args[17]
+    grid_rows = args[18]
     data = _load_and_filter_wf(**ctx)
     if data is None or data["pivot"] is None:
         return None
@@ -2033,8 +2151,8 @@ def _update_wf_flow_details(*args):
 )
 def _update_wf_trend(*args):
     ctx = _unpack_wf_filter_args(args)
-    agg_func = args[16]
-    grid_rows = args[17]
+    agg_func = args[17]
+    grid_rows = args[18]
     data = _load_and_filter_wf(**ctx)
     if data is None or data["pivot"] is None:
         return None
@@ -2133,7 +2251,7 @@ def _update_wfb_sankey(*args):
     compare_mode = ctx.pop("compare_mode")
     if not compare_mode:
         return None
-    agg_func = args[17]
+    agg_func = args[18]
     data = _load_and_filter_wf(**ctx)
     if data is None or data["pivot"] is None:
         return None
@@ -2155,7 +2273,7 @@ def _update_wfb_flow_details(*args):
     compare_mode = ctx.pop("compare_mode")
     if not compare_mode:
         return None
-    agg_func = args[17]
+    agg_func = args[18]
     data = _load_and_filter_wf(**ctx)
     if data is None or data["pivot"] is None:
         return None
@@ -2177,7 +2295,7 @@ def _update_wfb_trend(*args):
     compare_mode = ctx.pop("compare_mode")
     if not compare_mode:
         return None
-    agg_func = args[17]
+    agg_func = args[18]
     data = _load_and_filter_wf(**ctx)
     if data is None or data["pivot"] is None:
         return None

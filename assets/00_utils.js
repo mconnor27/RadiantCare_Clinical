@@ -3,6 +3,7 @@
  * Loaded first (00_ prefix) so all other chart modules can use these.
  */
 
+
 window.dash_clientside = window.dash_clientside || {};
 
 // ---------------------------------------------------------------------------
@@ -197,6 +198,16 @@ function parseIsoDate(dateStr) {
         }
     }
     return {valid: false};
+}
+
+/**
+ * Format a local Date object as an ISO date string (YYYY-MM-DD).
+ * Avoids the UTC shift that toISOString() causes on local-time Dates.
+ */
+function localDateToIso(d) {
+    return d.getFullYear() + "-" +
+        String(d.getMonth() + 1).padStart(2, "0") + "-" +
+        String(d.getDate()).padStart(2, "0");
 }
 
 /**

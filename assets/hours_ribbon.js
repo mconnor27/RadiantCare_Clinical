@@ -148,8 +148,9 @@ window.dash_clientside.hoursRibbon = {
             // Build hover text from raw (unsmoothed) values
             var hoverText = [];
             for (var j = 0; j < dates.length; j++) {
-                var d = new Date(dates[j]);
-                var dateStr = d.toLocaleDateString("en-US", {month: "short", day: "numeric"});
+                var _hp = parseIsoDate(dates[j]);
+                var _hMonths = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+                var dateStr = _hp.valid ? _hMonths[_hp.month] + " " + _hp.day : dates[j];
                 hoverText.push("<b>" + s.name + "</b><br>" + dateStr + ": " +
                     hourToTimeStr(rawStart[j]) + " - " + hourToTimeStr(rawEnd[j]));
             }
@@ -279,8 +280,9 @@ window.dash_clientside.hoursRibbon = {
                 // Build hover text
                 var hoverText = [];
                 for (var j = 0; j < dates.length; j++) {
-                    var d = new Date(dates[j]);
-                    var dateStr = d.toLocaleDateString("en-US", {month: "short", day: "numeric"});
+                    var _fp = parseIsoDate(dates[j]);
+                    var _fMonths = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+                    var dateStr = _fp.valid ? _fMonths[_fp.month] + " " + _fp.day : dates[j];
                     hoverText.push("<b>" + s.name + " (scheduled)</b><br>" + dateStr + ": " +
                         hourToTimeStr(startHours[j]) + " - " + hourToTimeStr(endHours[j]));
                 }
@@ -551,10 +553,9 @@ window.dash_clientside.hoursRibbon = {
 
             if (lastDate) {
                 lastDate = lastDate.split('T')[0];
-                var lastDateObj = new Date(lastDate);
-                var startDateObj = new Date(lastDateObj);
-                startDateObj.setDate(startDateObj.getDate() - days);
-                var startDate = startDateObj.toISOString().split('T')[0];
+                var _rlp = parseIsoDate(lastDate);
+                var startDateObj = _rlp.valid ? new Date(_rlp.year, _rlp.month, _rlp.day - days) : new Date();
+                var startDate = localDateToIso(startDateObj);
 
                 var minHour = 24, maxHour = 0;
                 var allSeries = rawData.pastSeries.concat(rawData.futureSeries || []);
@@ -1041,8 +1042,8 @@ function calculateRibbonYAxis(startDate, endDate) {
     if (!window._ribbonChartData) return null;
 
     // Convert to YYYY-MM-DD format
-    var startStr = (typeof startDate === 'string') ? startDate.split('T')[0] : new Date(startDate).toISOString().split('T')[0];
-    var endStr = (typeof endDate === 'string') ? endDate.split('T')[0] : new Date(endDate).toISOString().split('T')[0];
+    var startStr = (typeof startDate === 'string') ? startDate.split('T')[0] : localDateToIso(new Date(startDate));
+    var endStr = (typeof endDate === 'string') ? endDate.split('T')[0] : localDateToIso(new Date(endDate));
 
     var rawData = window._ribbonChartData;
 

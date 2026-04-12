@@ -94,6 +94,17 @@ def _build_courses_filter_bar():
                             dmc.Paper(
                                 id="courses-physician-panel",
                                 children=[
+                                    dmc.SegmentedControl(
+                                        id="courses-physician-role",
+                                        data=[
+                                            {"value": "treating", "label": "Treating"},
+                                            {"value": "consult", "label": "Consult"},
+                                        ],
+                                        value="treating",
+                                        size="xs",
+                                        fullWidth=True,
+                                        mb="xs",
+                                    ),
                                     dmc.ChipGroup(
                                         children=[],
                                         id="courses-filter-physician",
@@ -271,7 +282,7 @@ def _build_courses_filter_bar():
                     dmc.SegmentedControl(
                         id="courses-date-mode",
                         data=DATE_MODES,
-                        value="started",
+                        value="treated",
                         size="xs",
                     ),
                     dmc.Box(
@@ -345,6 +356,7 @@ layout = dmc.Stack(
                         {"value": "area", "label": "Area"},
                         {"value": "bar", "label": "Bar"},
                     ],
+                    chart_type_default="bar",
                     show_smooth=True,
                     smooth_max=12,
                     smooth_default=0,
@@ -358,7 +370,7 @@ layout = dmc.Stack(
                                 {"value": "site", "label": "Site"},
                                 {"value": "diagnosis", "label": "Dx"},
                             ],
-                            value="",
+                            value="site",
                             size="xs",
                         ),
                     ],
@@ -370,7 +382,7 @@ layout = dmc.Stack(
                                 {"value": "M", "label": "Monthly"},
                                 {"value": "Y", "label": "Yearly"},
                             ],
-                            value="M",
+                            value="W",
                             size="xs",
                         ),
                     ],
@@ -417,12 +429,11 @@ layout = dmc.Stack(
                         dmc.SegmentedControl(
                             id="courses-cumulative-slice",
                             data=[
-                                {"value": "total", "label": "Total"},
                                 {"value": "physician", "label": "MD"},
                                 {"value": "site", "label": "Site"},
                                 {"value": "diagnosis", "label": "Dx"},
                             ],
-                            value="total",
+                            value="physician",
                             size="xs",
                             style={"display": "none"},
                         ),
@@ -436,7 +447,12 @@ layout = dmc.Stack(
         dmc.Stack(id="courses-charts", gap=16),
 
         # Detail table container
-        dmc.Stack(id="courses-table-container", gap=0),
+        detail_table(
+            "courses-detail-grid",
+            title="Course Details",
+            export_id="courses-table-export",
+            column_size="autoSize",
+        ),
 
         # Stores for clientside rendering
         dcc.Store(id="courses-store-volume"),
@@ -448,6 +464,7 @@ layout = dmc.Stack(
         dcc.Store(id="courses-store-complexity-trends"),
         dcc.Store(id="courses-store-technique-dist"),
         dcc.Store(id="courses-store-quit-trend"),
+        dcc.Store(id="courses-store-interruption"),
 
         # Interval for periodic refresh
         dcc.Interval(id="courses-interval", interval=300_000, n_intervals=0),
@@ -460,11 +477,15 @@ layout = dmc.Stack(
 # ---------------------------------------------------------------------------
 register_chart_callbacks([
     ("courses-volume", "courses-chart-volume"),
-    ("courses-cumulative", "courses-chart-cumulative"),
+    {"sid": "courses-cumulative", "gid": "courses-chart-cumulative", "show_grouping": False},
     ("courses-frac-trend", "courses-chart-frac-trend"),
     ("courses-complexity", "courses-chart-complexity"),
     ("courses-technique-dist", "courses-chart-technique-dist"),
     ("courses-quit-trend", "courses-chart-quit-trend"),
+    ("courses-ridgeline", "courses-chart-ridgeline"),
+    ("courses-frac-dist", "courses-chart-frac-dist"),
+    ("courses-sites", "courses-chart-sites"),
+    ("courses-interruption", "courses-chart-interruption"),
 ])
 
 
@@ -475,7 +496,9 @@ _SLICE_CLASS_JS = """function(val) {
     return (val && val !== "total") ? "slice-group-active" : "slice-total-active";
 }"""
 
-for _sid in ["courses-volume-slice", "courses-cumulative-slice"]:
+for _sid in ["courses-volume-slice", "courses-cumulative-slice",
+              "courses-frac-trend-slice", "courses-quit-trend-slice",
+              "courses-interruption-slice"]:
     clientside_callback(
         _SLICE_CLASS_JS,
         Output(_sid, "className"),
@@ -490,15 +513,43 @@ _HIDE_STACK_JS = """function(sliceVal, chartType) {
 
 for _slice_id, _settings_id in [
     ("courses-volume-slice", "courses-volume"),
-    ("courses-cumulative-slice", "courses-cumulative"),
+    ("courses-frac-trend-slice", "courses-frac-trend"),
+    ("courses-quit-trend-slice", "courses-quit-trend"),
+    ("courses-interruption-slice", "courses-interruption"),
 ]:
     clientside_callback(
         _HIDE_STACK_JS,
         Output(f"{_settings_id}-settings-stack-wrap", "style", allow_duplicate=True),
         Input(_slice_id, "value"),
         Input(f"{_settings_id}-settings-type", "value"),
-        prevent_initial_call=True,
+        prevent_initial_call="initial_duplicate",
     )
+
+# Technique dist: hide grouping in line mode (always multi-series)
+clientside_callback(
+    """function(chartType) {
+        return chartType === "line" ? {"display": "none"} : {};
+    }""",
+    Output("courses-technique-dist-settings-stack-wrap", "style", allow_duplicate=True),
+    Input("courses-technique-dist-settings-type", "value"),
+    prevent_initial_call="initial_duplicate",
+)
+
+# Cumulative chart: also hide grouping in Prior Periods mode (single dimension)
+clientside_callback(
+    """function(mode, sliceVal, chartType) {
+        var single = !sliceVal || sliceVal === "total" || sliceVal === "";
+        if (single) return {"display": "none"};
+        if (chartType === "bar") return {};
+        var isPrior = mode === "prior";
+        var noStack = chartType === "line";
+        return (isPrior || noStack) ? {"display": "none"} : {};
+    }""",
+    Output("courses-cumulative-settings-stack-wrap", "style"),
+    Input("courses-cumulative-mode", "value"),
+    Input("courses-cumulative-slice", "value"),
+    Input("courses-cumulative-settings-type", "value"),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -511,6 +562,46 @@ clientside_callback(
     }""",
     Output("courses-cumulative-slice", "style"),
     Input("courses-cumulative-mode", "value"),
+)
+
+# Disable Calendar when period > 1 year; cap prior-periods slider to available data
+clientside_callback(
+    """function(storeData, currentPtValue) {
+        return window.dash_clientside.cumulative.updatePriorControls(storeData, currentPtValue);
+    }""",
+    Output("courses-cumulative-period-type", "data"),
+    Output("courses-cumulative-period-type", "value", allow_duplicate=True),
+    Output("courses-cumulative-settings-prior-periods", "max"),
+    Output("courses-cumulative-settings-prior-periods", "marks"),
+    Input("courses-store-cumulative", "data"),
+    State("courses-cumulative-period-type", "value"),
+    prevent_initial_call=True,
+)
+
+# Hide "Total" slice option in line/area mode (only useful for bar)
+_COURSES_CUMUL_SLICE_ALL = [
+    {"value": "total", "label": "Total"},
+    {"value": "physician", "label": "MD"},
+    {"value": "site", "label": "Site"},
+    {"value": "diagnosis", "label": "Dx"},
+]
+_COURSES_CUMUL_SLICE_NO_TOTAL = [o for o in _COURSES_CUMUL_SLICE_ALL if o["value"] != "total"]
+
+clientside_callback(
+    """function(chartType, sliceVal) {
+        var all = %s;
+        var noTotal = %s;
+        if (chartType === "bar") {
+            return [all, window.dash_clientside.no_update];
+        }
+        var newVal = (sliceVal === "total") ? "physician" : window.dash_clientside.no_update;
+        return [noTotal, newVal];
+    }""" % (str(_COURSES_CUMUL_SLICE_ALL).replace("'", '"'), str(_COURSES_CUMUL_SLICE_NO_TOTAL).replace("'", '"')),
+    Output("courses-cumulative-slice", "data"),
+    Output("courses-cumulative-slice", "value", allow_duplicate=True),
+    Input("courses-cumulative-settings-type", "value"),
+    State("courses-cumulative-slice", "value"),
+    prevent_initial_call=True,
 )
 
 
@@ -717,24 +808,61 @@ clientside_callback(
 # ---------------------------------------------------------------------------
 @callback(
     Output("courses-filter-physician", "children"),
+    Output("courses-filter-physician", "value", allow_duplicate=True),
     Input("courses-interval", "n_intervals"),
+    Input("courses-date-slider", "value"),
+    Input("courses-filter-department", "value"),
+    Input("courses-diag-store", "data"),
+    Input("courses-diag-mode", "data"),
+    Input("courses-filter-technique", "value"),
+    Input("courses-filter-status", "value"),
+    Input("courses-date-mode", "value"),
+    Input("courses-inpatient-switch", "checked"),
+    Input("courses-physician-role", "value"),
+    prevent_initial_call="initial_duplicate",
 )
-def _populate_physician_chips(_n):
-    """Populate physician filter with MDs from the courses dataset."""
+def _populate_physician_chips(_n, slider_val, departments, diagnosis_cats,
+                              diag_mode, techniques, status, date_mode,
+                              inpatient, physician_role):
+    """Populate physician filter from courses dataset, applying all active filters."""
     from data.loader import load_courses
     from components.filter_bar import physician_short_name
 
     try:
         df = load_courses()
     except Exception:
-        return []
+        return [], None
 
-    if df.empty or "TreatingPhysician" not in df.columns:
-        return []
+    phys_col = "ConsultPhysician" if physician_role == "consult" else "TreatingPhysician"
 
-    mds = sorted(df["TreatingPhysician"].dropna().unique())
+    if df.empty or phys_col not in df.columns:
+        return [], None
 
-    return [
+    c2b = _build_diag_lookup()
+
+    # Date column based on mode
+    date_col = _date_col_for_mode(date_mode)
+    if date_col not in df.columns or df[date_col].notna().sum() == 0:
+        date_col = "CourseStartDate"
+
+    # Completed mode
+    if date_mode == "completed":
+        df = df[_is_effectively_completed(df)]
+
+    # Date filter
+    start, end = _get_date_range(slider_val, None)
+    if date_col in df.columns:
+        df = df[df[date_col].notna()]
+        df = df[(df[date_col] >= start) & (df[date_col] <= end)]
+
+    # Apply dimension filters (skip physician)
+    df = _apply_filters(df, departments, None, diagnosis_cats, status, None, c2b,
+                        inpatient=inpatient, techniques=techniques,
+                        diag_mode=diag_mode or "primary")
+
+    mds = sorted(df[phys_col].dropna().unique())
+
+    chips = [
         dmc.Chip(
             physician_short_name(md),
             value=md,
@@ -743,6 +871,8 @@ def _populate_physician_chips(_n):
         )
         for md in mds
     ]
+    # Clear selection when role changes
+    return chips, None
 
 
 # ---------------------------------------------------------------------------
@@ -1060,19 +1190,48 @@ def _prepare_frac_trend_data(dff, date_col, c2b, start=None, end=None, diag_mode
 # ---------------------------------------------------------------------------
 
 def _prepare_quit_trend_data(completed_df, date_col, c2b, start=None, end=None, diag_mode="primary"):
-    """Prepare quit-rate-over-time data for all agg × slice combos."""
-    needed = {"CourseSessionsPlanned", "CourseSessionsDelivered", date_col}
-    if not needed.issubset(completed_df.columns) or completed_df.empty:
+    """Prepare quit-rate-over-time data for all agg × slice × metric combos.
+
+    Computes quit flags for both session-based and fraction-based metrics.
+    """
+    has_sessions = (
+        "CourseSessionsPlanned" in completed_df.columns
+        and "CourseSessionsDelivered" in completed_df.columns
+    )
+    has_fractions = (
+        "FractionsPrescribed" in completed_df.columns
+        and "FractionsDelivered" in completed_df.columns
+    )
+    if (not has_sessions and not has_fractions) or completed_df.empty:
+        return None
+    if date_col not in completed_df.columns:
         return None
 
-    tmp = completed_df[
-        (completed_df["CourseSessionsPlanned"] > 0)
-        & (completed_df["CourseSessionsDelivered"] > 0)
-        & completed_df[date_col].notna()
-    ].copy()
-    tmp["_quit"] = (
-        tmp["CourseSessionsDelivered"] < tmp["CourseSessionsPlanned"]
-    ).astype(int)
+    # Build base df — need at least one metric with planned > 0 & delivered > 0
+    base_mask = completed_df[date_col].notna()
+    if has_sessions:
+        sess_mask = (completed_df["CourseSessionsPlanned"] > 0) & (completed_df["CourseSessionsDelivered"] > 0)
+    if has_fractions:
+        frac_mask = (completed_df["FractionsPrescribed"] > 0) & (completed_df["FractionsDelivered"] > 0)
+
+    if has_sessions and has_fractions:
+        base_mask = base_mask & (sess_mask | frac_mask)
+    elif has_sessions:
+        base_mask = base_mask & sess_mask
+    else:
+        base_mask = base_mask & frac_mask
+
+    tmp = completed_df[base_mask].copy()
+    if has_sessions:
+        tmp["_quit_session"] = (
+            tmp["CourseSessionsDelivered"] < tmp["CourseSessionsPlanned"]
+        ).astype(int)
+    if has_fractions:
+        tmp["_quit_fraction"] = (
+            tmp["FractionsDelivered"] < tmp["FractionsPrescribed"]
+        ).astype(int)
+    # Default _quit for backwards compat
+    tmp["_quit"] = tmp.get("_quit_fraction", tmp.get("_quit_session"))
 
     for col in ["TreatingPhysician", "Department", "DiagnosisCodes"]:
         if col in completed_df.columns and col not in tmp.columns:
@@ -1088,58 +1247,185 @@ def _prepare_quit_trend_data(completed_df, date_col, c2b, start=None, end=None, 
     else:
         tmp["_plot_date"] = tmp[date_col]
 
+    # Build combos for each metric × agg × slice
+    metrics = []
+    if has_fractions:
+        metrics.append(("fraction", "_quit_fraction"))
+    if has_sessions:
+        metrics.append(("session", "_quit_session"))
+
     combos = {}
-    for agg in ["W", "M", "Y"]:
-        period_code = "Y" if agg == "Y" else agg
-        t = tmp.copy()
-        t["period"] = t["_plot_date"].dt.to_period(period_code).dt.to_timestamp()
-        all_periods = sorted(t["period"].unique())
-        dates = [d.isoformat() for d in all_periods]
+    for metric_name, quit_col in metrics:
+        for agg in ["W", "M", "Y"]:
+            period_code = "Y" if agg == "Y" else agg
+            t = tmp.copy()
+            t["period"] = t["_plot_date"].dt.to_period(period_code).dt.to_timestamp()
+            all_periods = sorted(t["period"].unique())
+            dates = [d.isoformat() for d in all_periods]
 
-        for slice_key in ["", "physician", "site", "diagnosis"]:
-            series = []
+            for slice_key in ["", "physician", "site", "diagnosis"]:
+                series = []
 
-            def _rate_series(sub, name, color):
-                grp = sub.groupby("period")["_quit"].agg(["sum", "count"]).reindex(all_periods)
-                # Require ≥5 courses for a meaningful rate
-                rates = []
-                for _, row in grp.iterrows():
-                    if pd.notna(row["count"]) and row["count"] >= 5:
-                        rates.append(round(float(row["sum"]) / float(row["count"]) * 100, 1))
-                    else:
-                        rates.append(None)
-                series.append({"name": name, "values": rates, "color": color})
+                def _rate_series(sub, name, color, _qc=quit_col, _ap=all_periods):
+                    grp = sub.groupby("period")[_qc].agg(["sum", "count"]).reindex(_ap)
+                    rates = []
+                    for _, row in grp.iterrows():
+                        if pd.notna(row["count"]) and row["count"] >= 5:
+                            rates.append(round(float(row["sum"]) / float(row["count"]) * 100, 1))
+                        else:
+                            rates.append(None)
+                    series.append({"name": name, "values": rates, "color": color})
 
-            if not slice_key:
-                _rate_series(t, "Overall", PRIMARY)
-            elif slice_key == "physician":
-                col = "TreatingPhysician"
-                if col in t.columns:
-                    for i, phys in enumerate(sorted(t[col].dropna().unique())):
-                        label = phys.split(",")[0] if "," in phys else phys
+                if not slice_key:
+                    _rate_series(t, "Overall", PRIMARY)
+                elif slice_key == "physician":
+                    col = "TreatingPhysician"
+                    if col in t.columns:
+                        for i, phys in enumerate(sorted(t[col].dropna().unique())):
+                            label = phys.split(",")[0] if "," in phys else phys
+                            _rate_series(
+                                t[t[col] == phys], label,
+                                CHART_COLORWAY[i % len(CHART_COLORWAY)],
+                            )
+                elif slice_key == "site":
+                    if "Department" in t.columns:
+                        for dept in sorted(t["Department"].dropna().unique()):
+                            _rate_series(
+                                t[t["Department"] == dept], dept,
+                                DEPARTMENT_COLORS.get(dept, CHART_COLORWAY[0]),
+                            )
+                elif slice_key == "diagnosis" and c2b and "DiagnosisCodes" in t.columns:
+                    t2 = assign_diagnosis_column(t, c2b, mode=diag_mode)
+                    top_bs = t2["_bs"].value_counts().head(8).index.tolist()
+                    for i, bs in enumerate(top_bs):
                         _rate_series(
-                            t[t[col] == phys], label,
+                            t2[t2["_bs"] == bs], bs,
                             CHART_COLORWAY[i % len(CHART_COLORWAY)],
                         )
-            elif slice_key == "site":
-                if "Department" in t.columns:
-                    for dept in sorted(t["Department"].dropna().unique()):
-                        _rate_series(
-                            t[t["Department"] == dept], dept,
-                            DEPARTMENT_COLORS.get(dept, CHART_COLORWAY[0]),
-                        )
-            elif slice_key == "diagnosis" and c2b and "DiagnosisCodes" in t.columns:
-                t2 = assign_diagnosis_column(t, c2b, mode=diag_mode)
-                top_bs = t2["_bs"].value_counts().head(8).index.tolist()
-                for i, bs in enumerate(top_bs):
-                    _rate_series(
-                        t2[t2["_bs"] == bs], bs,
-                        CHART_COLORWAY[i % len(CHART_COLORWAY)],
-                    )
 
-            combos[f"{agg}|{slice_key}"] = {"dates": dates, "series": series}
+                combos[f"{agg}|{slice_key}|{metric_name}"] = {"dates": dates, "series": series}
 
     return combos
+
+
+# ---------------------------------------------------------------------------
+# Course Interruption: actual duration vs expected duration
+# ---------------------------------------------------------------------------
+
+def _prepare_interruption_data(completed_df):
+    """Compute course interruption metrics.
+
+    A course is "interrupted" if its actual treatment duration exceeds the
+    expected duration based on fractions delivered at daily frequency,
+    excluding weekends and holidays.
+
+    Returns a dict with histogram data and summary stats, or None.
+    """
+    from utils.holidays import get_holidays
+
+    needed = {"FirstTreatmentDate", "LastTreatmentDate", "FractionsDelivered"}
+    if not needed.issubset(completed_df.columns) or completed_df.empty:
+        return None
+
+    df = completed_df[
+        completed_df["FirstTreatmentDate"].notna()
+        & completed_df["LastTreatmentDate"].notna()
+        & (completed_df["FractionsDelivered"] > 1)
+    ].copy()
+
+    if df.empty:
+        return None
+
+    holidays = get_holidays()
+    hol_arr = np.array(sorted(holidays), dtype="datetime64[D]") if holidays else np.array([], dtype="datetime64[D]")
+
+    ft = df["FirstTreatmentDate"].values.astype("datetime64[D]")
+    lt = df["LastTreatmentDate"].values.astype("datetime64[D]")
+    fx = df["FractionsDelivered"].values.astype(int)
+
+    # Actual business days of treatment span
+    actual_bdays = np.busday_count(ft, lt, holidays=hol_arr).astype(float) + 1  # inclusive
+
+    # Expected business days based on frequency
+    # Default: daily (1 fx per business day)
+    expected_bdays = fx.astype(float)
+    if "RxFrequency" in df.columns:
+        freq = df["RxFrequency"].fillna("")
+        # Every Other Day: 1 fx per 2 business days
+        mask_eod = freq.str.lower().str.contains("every other", na=False)
+        expected_bdays = np.where(mask_eod, fx * 2.0, expected_bdays)
+        # 2X Daily: 2 fx per business day
+        mask_2x = freq.str.lower().str.contains("2x daily", na=False)
+        expected_bdays = np.where(mask_2x, np.ceil(fx / 2.0), expected_bdays)
+        # Twice Weekly: 2 fx per 5 business days
+        mask_tw = freq.str.lower().str.contains("twice weekly", na=False)
+        expected_bdays = np.where(mask_tw, np.ceil(fx * 2.5), expected_bdays)
+
+    # Delay in business days
+    delay = actual_bdays - expected_bdays
+    df["_delay_bdays"] = delay
+
+    # Interruption = delay > 0
+    df["_interrupted"] = delay > 0
+
+    # Bucket definitions
+    _BUCKETS = [
+        ("1 day", 1, 1),
+        ("2-3 days", 2, 3),
+        ("4-7 days", 4, 7),
+        ("1-2 wk", 8, 14),
+        ("2-4 wk", 15, 28),
+        ("> 4 wk", 29, 9999),
+    ]
+
+    def _summarize(sub):
+        n = len(sub)
+        n_int = int(sub["_interrupted"].sum())
+        dels = sub.loc[sub["_interrupted"], "_delay_bdays"]
+        bkts = []
+        for label, lo, hi in _BUCKETS:
+            count = int(((dels >= lo) & (dels <= hi)).sum()) if not dels.empty else 0
+            bkts.append({"label": label, "count": count})
+        return {
+            "n_total": n,
+            "n_interrupted": n_int,
+            "rate": round(n_int / n * 100, 1) if n else 0,
+            "median_delay": round(float(dels.median()), 1) if not dels.empty else 0,
+            "buckets": bkts,
+        }
+
+    result = {"": _summarize(df)}
+
+    # Per-physician
+    if "TreatingPhysician" in df.columns:
+        phys_data = {}
+        for phys in sorted(df["TreatingPhysician"].dropna().unique()):
+            label = phys.split(",")[0] if "," in phys else phys
+            phys_data[label] = _summarize(df[df["TreatingPhysician"] == phys])
+        result["physician"] = phys_data
+
+    # Per-site
+    if "Department" in df.columns:
+        site_data = {}
+        for dept in sorted(df["Department"].dropna().unique()):
+            site_data[dept] = _summarize(df[df["Department"] == dept])
+        result["site"] = site_data
+
+    # Per-diagnosis
+    if "DiagnosisCodes" in df.columns:
+        try:
+            from pages.courses import _build_diag_lookup, assign_diagnosis_column
+            c2b = _build_diag_lookup()
+            if c2b:
+                df2 = assign_diagnosis_column(df, c2b, mode="primary")
+                dx_data = {}
+                for bs in df2["_bs"].value_counts().head(8).index:
+                    dx_data[bs] = _summarize(df2[df2["_bs"] == bs])
+                result["diagnosis"] = dx_data
+        except Exception:
+            pass
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1299,12 +1585,15 @@ _TECHNIQUE_COLORS = {
 }
 
 
-def _prepare_technique_dist_data(dff, date_col, start=None, end=None):
+def _prepare_technique_dist_data(dff, date_col, start=None, end=None, date_mode="started"):
     """Prepare technique distribution over time from courses data.
 
     Builds two counting modes:
     - "any": explode comma-separated techniques (course counted once per technique)
     - "primary": take only the first listed technique per course
+
+    In "treated" mode, uses census-style counting: each course is counted in
+    every period it was actively under treatment, matching the volume trend.
 
     Returns JSON-serialisable dict keyed by "{agg}|{counting}" for the store.
     """
@@ -1312,35 +1601,39 @@ def _prepare_technique_dist_data(dff, date_col, start=None, end=None):
     if dff.empty or date_col not in dff.columns or tech_col not in dff.columns:
         return None
 
-    base = dff[[date_col, tech_col]].dropna(subset=[date_col, tech_col]).copy()
+    use_census = (
+        date_mode == "treated"
+        and "FirstTreatmentDate" in dff.columns
+        and "LastTreatmentDate" in dff.columns
+        and start is not None and end is not None
+    )
+
+    needed_cols = list(dict.fromkeys(
+        [date_col, tech_col]
+        + (["FirstTreatmentDate", "LastTreatmentDate"] if use_census else [])
+    ))
+    base = dff[[c for c in needed_cols if c in dff.columns]].dropna(subset=[date_col, tech_col]).copy()
     if base.empty:
         return None
 
-    if start is not None:
-        base["_plot_date"] = base[date_col].clip(lower=start)
-        if end is not None:
-            base["_plot_date"] = base["_plot_date"].clip(upper=end)
-    else:
-        base["_plot_date"] = base[date_col]
+    # Explode techniques for both counting modes
+    # "any" — all techniques per course
+    any_base = base.copy()
+    any_base["_techs"] = any_base[tech_col].str.split(",")
+    any_base = any_base.explode("_techs")
+    any_base["_techs"] = any_base["_techs"].str.strip()
+    any_base = any_base[any_base["_techs"] != ""]
 
-    # Pre-compute both counting modes
-    # "any" — explode all techniques
-    any_df = base.copy()
-    any_df["_techs"] = any_df[tech_col].str.split(",")
-    any_df = any_df.explode("_techs")
-    any_df["_techs"] = any_df["_techs"].str.strip()
-    any_df = any_df[any_df["_techs"] != ""]
+    # "primary" — first technique only
+    primary_base = base.copy()
+    primary_base["_techs"] = primary_base[tech_col].str.split(",").str[0].str.strip()
+    primary_base = primary_base[primary_base["_techs"] != ""]
 
-    # "primary" — first listed technique only
-    primary_df = base.copy()
-    primary_df["_techs"] = primary_df[tech_col].str.split(",").str[0].str.strip()
-    primary_df = primary_df[primary_df["_techs"] != ""]
-
-    if any_df.empty:
+    if any_base.empty:
         return None
 
-    # Collect all techniques across both modes for consistent ordering
-    all_techs = set(any_df["_techs"].unique()) | set(primary_df["_techs"].unique())
+    # Collect all techniques for consistent ordering
+    all_techs = set(any_base["_techs"].unique()) | set(primary_base["_techs"].unique())
     ordered = [t for t in _TECHNIQUE_ORDER if t in all_techs]
     remaining = sorted(all_techs - set(ordered))
     ordered.extend(remaining)
@@ -1349,15 +1642,45 @@ def _prepare_technique_dist_data(dff, date_col, start=None, end=None):
     for agg in ["W", "M", "Y"]:
         period_code = "Y" if agg == "Y" else agg
 
-        for counting, src_df in [("any", any_df), ("primary", primary_df)]:
-            t = src_df.copy()
-            t["period"] = t["_plot_date"].dt.to_period(period_code).dt.to_timestamp()
-            all_periods = sorted(t["period"].unique())
+        for counting, src_df in [("any", any_base), ("primary", primary_base)]:
+            if use_census:
+                # Census: count each course in every period it's active
+                period_range = pd.date_range(start, end, freq="D")
+                all_periods = sorted(
+                    period_range.to_period(period_code).to_timestamp().unique()
+                )
+
+                ft = src_df["FirstTreatmentDate"].values
+                lt = src_df["LastTreatmentDate"].fillna(src_df["FirstTreatmentDate"]).values
+                techs = src_df["_techs"].values
+
+                # For each period, count active courses per technique
+                rows = []
+                for p in all_periods:
+                    p_np = p.to_numpy()
+                    active = (ft <= p_np) & (lt >= p_np)
+                    for tech in ordered:
+                        count = int((active & (techs == tech)).sum())
+                        rows.append((p, tech, count))
+
+                pivot = pd.DataFrame(rows, columns=["period", "_techs", "count"])
+                pivot = pivot.pivot(index="period", columns="_techs", values="count").fillna(0)
+                pivot = pivot.reindex(all_periods, fill_value=0)
+            else:
+                # Standard: count by date_col per period, clipped to window
+                t = src_df.copy()
+                if start is not None:
+                    t["_plot_date"] = t[date_col].clip(lower=start)
+                    if end is not None:
+                        t["_plot_date"] = t["_plot_date"].clip(upper=end)
+                else:
+                    t["_plot_date"] = t[date_col]
+                t["period"] = t["_plot_date"].dt.to_period(period_code).dt.to_timestamp()
+                all_periods = sorted(t["period"].unique())
+                pivot = t.groupby(["period", "_techs"]).size().unstack(fill_value=0)
+                pivot = pivot.reindex(all_periods, fill_value=0)
+
             dates = [d.isoformat() for d in all_periods]
-
-            pivot = t.groupby(["period", "_techs"]).size().unstack(fill_value=0)
-            pivot = pivot.reindex(all_periods, fill_value=0)
-
             series = []
             for tech in ordered:
                 vals = pivot[tech].tolist() if tech in pivot.columns else [0] * len(all_periods)
@@ -1593,11 +1916,12 @@ def _prepare_volume_data(dff, agg, slice_by="", date_col="CourseStartDate", c2b=
     )
 
     if use_census:
-        # Build period boundaries
-        period_range = pd.date_range(start, end, freq=period_code)
-        if len(period_range) < 2:
-            period_range = pd.date_range(start, end, periods=2, freq=None)
-        all_periods = sorted(period_range)
+        # Build period boundaries using to_period for consistent week alignment
+        # with other charts (Monday-start weeks)
+        period_range = pd.date_range(start, end, freq="D")
+        all_periods = sorted(
+            period_range.to_period(period_code).to_timestamp().unique()
+        )
         dates = [d.isoformat() for d in all_periods]
 
         ft = dff["FirstTreatmentDate"].values
@@ -1732,7 +2056,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
                               status, frac_range, c2b, inpatient=False,
                               techniques=None, date_mode="started",
                               mode="prior", period_type="calendar",
-                              slice_by="site", max_prior=5,
+                              slice_by="site", max_prior=10,
                               diag_mode="primary"):
     """Prepare cumulative course volume data for overlay chart."""
     if df_all.empty or date_col not in df_all.columns:
@@ -1745,6 +2069,10 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
     period_days = (end - start).days + 1
     if period_days < 2:
         return None
+
+    # Force rolling when period exceeds 1 year (calendar shifts would overlap)
+    if period_days > 365 and period_type == "calendar":
+        period_type = "rolling"
 
     def _window_mask(df, w_start, w_end):
         """Return boolean mask for courses in the window, respecting date_mode."""
@@ -1838,6 +2166,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             windows.append((_period_label(p_start, p_end), p_start, p_end))
 
     prior = []
+    last_prior_start = None
     for pi, (label, p_start, p_end) in enumerate(windows):
         vals = _cumulative_for_window(dff_all, p_start, p_end)
         if vals and any(v > 0 for v in vals):
@@ -1846,6 +2175,16 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             elif len(vals) > n_days:
                 vals = vals[:n_days]
             prior.append({"label": label, "values": vals, "color": PRIOR_PERIOD_COLORS[min(pi, len(PRIOR_PERIOD_COLORS) - 1)]})
+            last_prior_start = p_start
+
+    # Metadata for client-side control updates
+    has_partial = (last_prior_start is not None
+                   and last_prior_start.normalize() < data_min.normalize())
+    _prior_meta = {
+        "periodDays": period_days,
+        "maxAvailablePriors": len(prior),
+        "hasPartialPrior": has_partial,
+    }
 
     current_label = _period_label(start, end)
     if len(current_vals) < n_days:
@@ -1897,6 +2236,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             "sliceBreakdown": slice_breakdown,
             "height": 350,
             "yTitle": "Cumulative Courses",
+            **_prior_meta,
         }
 
     else:  # mode == "slice"
@@ -1913,13 +2253,13 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             cumvals = daily_counts.cumsum().tolist()
             raw = daily_counts.tolist()
             first_idx = next((i for i, v in enumerate(raw) if v > 0), None)
-            last_idx = next((i for i in range(len(raw) - 1, -1, -1) if raw[i] > 0), None)
             if first_idx is None:
                 return [None] * len(cumvals)
             for i in range(first_idx):
                 cumvals[i] = None
+            last_idx = next((i for i in range(len(raw) - 1, -1, -1) if raw[i] > 0), first_idx)
             for i in range(last_idx + 1, len(cumvals)):
-                cumvals[i] = None
+                cumvals[i] = cumvals[last_idx]
             return cumvals
 
         series = []
@@ -1964,6 +2304,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             "sliceBreakdown": slice_breakdown,
             "height": 350,
             "yTitle": "Cumulative Courses",
+            **_prior_meta,
         }
 
 
@@ -2025,7 +2366,8 @@ def _is_effectively_completed(df):
 # ---------------------------------------------------------------------------
 
 def _apply_filters(df, departments, physician, diagnosis_cats, status, frac_range, c2b,
-                   inpatient=False, techniques=None, diag_mode="primary"):
+                   inpatient=False, techniques=None, diag_mode="primary",
+                   physician_role="treating"):
     """Apply dimension filters (not date) to a dataframe."""
     from utils.diagnosis_categories import filter_by_diagnosis
 
@@ -2035,8 +2377,10 @@ def _apply_filters(df, departments, physician, diagnosis_cats, status, frac_rang
     if departments and "Department" in df.columns:
         df = df[df["Department"].isin(departments)]
 
-    if physician and "TreatingPhysician" in df.columns:
-        df = df[df["TreatingPhysician"] == physician]
+    if physician:
+        phys_col = "ConsultPhysician" if physician_role == "consult" else "TreatingPhysician"
+        if phys_col in df.columns:
+            df = df[df[phys_col] == physician]
 
     if diagnosis_cats:
         df = filter_by_diagnosis(df, diagnosis_cats, c2b, mode=diag_mode)
@@ -2219,19 +2563,21 @@ _COURSES_FILTER_INPUTS = [
     Input("courses-date-mode", "value"),
     Input("courses-filter-date-preset", "value"),
     Input("courses-inpatient-switch", "checked"),
+    Input("courses-physician-role", "value"),
     State("courses-fraction-engaged", "data"),
 ]
 
 
 def _unpack_courses_filter_args(args):
-    """Unpack the 13 common filter args (12 Inputs + 1 State) into kwargs for _load_and_filter_courses."""
+    """Unpack the 14 common filter args (13 Inputs + 1 State) into kwargs for _load_and_filter_courses."""
     (_n, slider_val, departments, physician, diagnosis_cats, diag_mode, techniques,
-     status, frac_range, date_mode, date_preset, inpatient, frac_engaged) = args[:13]
+     status, frac_range, date_mode, date_preset, inpatient, physician_role, frac_engaged) = args[:14]
     return dict(
         slider_val=slider_val, departments=departments, physician=physician,
         diagnosis_cats=diagnosis_cats, diag_mode=diag_mode, techniques=techniques,
         status=status, frac_range=frac_range, date_mode=date_mode,
         date_preset=date_preset, inpatient=inpatient, frac_engaged=frac_engaged,
+        physician_role=physician_role or "treating",
     )
 
 
@@ -2253,8 +2599,10 @@ def _unpack_courses_filter_args(args):
     Output("courses-store-complexity-trends", "data"),
     Output("courses-store-technique-dist", "data"),
     Output("courses-store-quit-trend", "data"),
+    Output("courses-store-interruption", "data"),
     Output("courses-charts", "children"),
-    Output("courses-table-container", "children"),
+    Output("courses-detail-grid", "rowData"),
+    Output("courses-detail-grid", "columnDefs"),
     Output("courses-fraction-slider", "min"),
     Output("courses-fraction-slider", "max"),
     *_COURSES_FILTER_INPUTS,
@@ -2541,6 +2889,7 @@ def _update_courses_kpis(*args):
     frac_trend_data = _prepare_frac_trend_data(dff, date_col, c2b, start=start, end=end, diag_mode=_dm)
     frac_dist_data = _prepare_frac_dist_data(dff)
     quit_trend_data = _prepare_quit_trend_data(completed_df, "LastTreatmentDate", c2b, start=start, end=end, diag_mode=_dm)
+    interruption_data = _prepare_interruption_data(completed_df)
 
     # Build iso_map: max UniqueIsocenters per (PatientId, CourseId) from Treatment Detail
     iso_map = None
@@ -2556,7 +2905,7 @@ def _update_courses_kpis(*args):
     complexity_trend_data = _prepare_complexity_trend_data(
         dff, date_col, start=start, end=end, iso_map=iso_map,
     )
-    technique_dist_data = _prepare_technique_dist_data(dff, date_col, start=start, end=end)
+    technique_dist_data = _prepare_technique_dist_data(dff, date_col, start=start, end=end, date_mode=date_mode)
 
     # ------------------------------------------------------------------
     # Remaining Charts (server-side layout)
@@ -2577,7 +2926,7 @@ def _update_courses_kpis(*args):
                         children=[
                             dmc.Text("Fractions per Course by Year", size="sm", fw=500, c="#6B7280"),
                             dmc.Group(
-                                gap="md", align="center",
+                                gap="sm", align="center",
                                 children=[
                                     dmc.SegmentedControl(
                                         id="courses-ridge-mode",
@@ -2588,22 +2937,30 @@ def _update_courses_kpis(*args):
                                         value="density",
                                         size="xs",
                                     ),
-                                    dmc.Group(
-                                        id="courses-ridge-bw-group",
-                                        gap=6, align="center",
-                                        children=[
-                                            dmc.Text("Bandwidth", size="xs", c="#9CA3AF", fw=500),
-                                            dmc.Slider(
-                                                id="courses-ridge-bw",
-                                                min=0.05,
-                                                max=1.0,
-                                                step=0.05,
-                                                value=0.1,
-                                                size="xs",
-                                                w=100,
-                                                color="violet",
-                                                showLabelOnHover=True,
-                                                updatemode="mouseup",
+                                    chart_settings_popover(
+                                        "courses-ridgeline",
+                                        chart_types=None,
+                                        show_smooth=False,
+                                        extra_settings=[
+                                            html.Div(
+                                                id="courses-ridge-bw-group",
+                                                children=dmc.Stack(
+                                                    gap=4,
+                                                    children=[
+                                                        dmc.Text("Density Smoothing", size="xs", fw=500, c="#6B7280"),
+                                                        dmc.Slider(
+                                                            id="courses-ridge-bw",
+                                                            min=0.05,
+                                                            max=1.0,
+                                                            step=0.05,
+                                                            value=0.1,
+                                                            size="xs",
+                                                            color="violet",
+                                                            showLabelOnHover=True,
+                                                            updatemode="drag",
+                                                        ),
+                                                    ],
+                                                ),
                                             ),
                                         ],
                                     ),
@@ -2661,7 +3018,7 @@ def _update_courses_kpis(*args):
                                                     {"value": "M", "label": "Monthly"},
                                                     {"value": "Y", "label": "Yearly"},
                                                 ],
-                                                value="M",
+                                                value="W",
                                                 size="xs",
                                             ),
                                             chart_settings_popover(
@@ -2671,9 +3028,10 @@ def _update_courses_kpis(*args):
                                                     {"value": "area", "label": "Area"},
                                                     {"value": "bar", "label": "Bar"},
                                                 ],
+                                                chart_type_default="area",
                                                 show_smooth=True,
                                                 smooth_max=12,
-                                                smooth_default=0,
+                                                smooth_default=1,
                                             ),
                                         ],
                                     ),
@@ -2695,14 +3053,46 @@ def _update_courses_kpis(*args):
                                 justify="space-between", align="center", mb="sm",
                                 children=[
                                     dmc.Text("Fractions Distribution", size="sm", fw=500, c="#6B7280"),
-                                    dmc.SegmentedControl(
-                                        id="courses-frac-dist-mode",
-                                        data=[
-                                            {"value": "histogram", "label": "Histogram"},
-                                            {"value": "density", "label": "Density"},
+                                    dmc.Group(
+                                        gap="sm", align="center",
+                                        children=[
+                                            dmc.SegmentedControl(
+                                                id="courses-frac-dist-mode",
+                                                data=[
+                                                    {"value": "histogram", "label": "Histogram"},
+                                                    {"value": "density", "label": "Density"},
+                                                ],
+                                                value="histogram",
+                                                size="xs",
+                                            ),
+                                            chart_settings_popover(
+                                                "courses-frac-dist",
+                                                chart_types=None,
+                                                show_smooth=False,
+                                                extra_settings=[
+                                                    html.Div(
+                                                        id="courses-frac-dist-bw-group",
+                                                        children=dmc.Stack(
+                                                            gap=4,
+                                                            children=[
+                                                                dmc.Text("Density Smoothing", size="xs", fw=500, c="#6B7280"),
+                                                                dmc.Slider(
+                                                                    id="courses-frac-dist-bw",
+                                                                    min=0.05,
+                                                                    max=1.0,
+                                                                    step=0.05,
+                                                                    value=0.15,
+                                                                    size="xs",
+                                                                    color="violet",
+                                                                    showLabelOnHover=True,
+                                                                    updatemode="drag",
+                                                                ),
+                                                            ],
+                                                        ),
+                                                    ),
+                                                ],
+                                            ),
                                         ],
-                                        value="histogram",
-                                        size="xs",
                                     ),
                                 ],
                             ),
@@ -2733,6 +3123,7 @@ def _update_courses_kpis(*args):
                 {"value": "area", "label": "Area"},
                 {"value": "bar", "label": "Bar"},
             ],
+            chart_type_default="area",
             show_smooth=True,
             smooth_max=24,
             smooth_default=3,
@@ -2743,10 +3134,10 @@ def _update_courses_kpis(*args):
                 dmc.SegmentedControl(
                     id="courses-technique-dist-counting",
                     data=[
-                        {"value": "any", "label": "Any"},
                         {"value": "primary", "label": "Primary"},
+                        {"value": "any", "label": "Any"},
                     ],
-                    value="any",
+                    value="primary",
                     size="xs",
                 ),
                 dmc.SegmentedControl(
@@ -2767,7 +3158,7 @@ def _update_courses_kpis(*args):
                         {"value": "M", "label": "Monthly"},
                         {"value": "Y", "label": "Yearly"},
                     ],
-                    value="M",
+                    value="W",
                     size="xs",
                 ),
             ],
@@ -2785,6 +3176,8 @@ def _update_courses_kpis(*args):
                 {"value": "area", "label": "Area"},
                 {"value": "bar", "label": "Bar"},
             ],
+            chart_type_default="area",
+            show_grouping=False,
             show_smooth=True,
             smooth_max=12,
             smooth_default=4,
@@ -2850,9 +3243,9 @@ def _update_courses_kpis(*args):
                 height=None,
                 yaxis_title="",
                 xaxis_title="",
-                margin=dict(l=120, r=8, t=0, b=0),
+                margin=dict(l=120, r=8, t=16, b=36),
             )
-            fig_sites.update_xaxes(automargin=True)
+            fig_sites.update_xaxes(automargin=False)
             fig_sites.update_yaxes(automargin=True)
         else:
             fig_sites = empty_figure("No prescription site data")
@@ -2863,10 +3256,20 @@ def _update_courses_kpis(*args):
 
     row3a_charts.append(
         dmc.GridCol(
-            span={"base": 12, "md": 6},
+            span={"base": 12, "md": 4},
             children=dmc.Paper(
                 children=[
-                    dmc.Text("Treatment Site Distribution", size="sm", fw=500, c="#6B7280", mb=0),
+                    dmc.Group(
+                        justify="space-between", align="center", mb=0,
+                        children=[
+                            dmc.Text("Treatment Site Distribution", size="sm", fw=500, c="#6B7280"),
+                            chart_settings_popover(
+                                "courses-sites",
+                                chart_types=None,
+                                show_smooth=False,
+                            ),
+                        ],
+                    ),
                     dmc.Box(
                         pos="relative",
                         style={"flex": "1", "minHeight": 0},
@@ -2875,6 +3278,7 @@ def _update_courses_kpis(*args):
                                 style={"position": "absolute", "top": 0, "left": 0, "right": 0, "bottom": 0},
                                 children=[
                                     dcc.Graph(
+                                        id="courses-chart-sites",
                                         figure=fig_sites,
                                         config={"displayModeBar": False},
                                         style={"height": "100%"},
@@ -2884,7 +3288,7 @@ def _update_courses_kpis(*args):
                         ],
                     ),
                 ],
-                p="sm", pt="md", pb=6, radius="md", shadow="xs", withBorder=True,
+                p="sm", pt="xs", pb=0, radius="md", shadow="xs", withBorder=True,
                 h=CHART_PAPER_HEIGHT,
                 style={"display": "flex", "flexDirection": "column"},
             ),
@@ -2894,7 +3298,7 @@ def _update_courses_kpis(*args):
     # Quitting Rate Trend (clientside-rendered from store)
     row3a_charts.append(
         dmc.GridCol(
-            span={"base": 12, "md": 6},
+            span={"base": 12, "md": 4},
             children=dmc.Paper(
                 children=[
                     dmc.Group(
@@ -2940,6 +3344,23 @@ def _update_courses_kpis(*args):
                                         show_smooth=True,
                                         smooth_max=12,
                                         smooth_default=0,
+                                        extra_settings=[
+                                            html.Div(
+                                                dmc.Stack(gap=4, children=[
+                                                    dmc.Text("Metric", size="xs", fw=500, c="#6B7280"),
+                                                    dmc.SegmentedControl(
+                                                        id="courses-quit-metric",
+                                                        data=[
+                                                            {"value": "fraction", "label": "Fraction"},
+                                                            {"value": "session", "label": "Session"},
+                                                        ],
+                                                        value="fraction",
+                                                        size="xs",
+                                                        fullWidth=True,
+                                                    ),
+                                                ]),
+                                            ),
+                                        ],
                                     ),
                                 ],
                             ),
@@ -2958,6 +3379,45 @@ def _update_courses_kpis(*args):
         )
     )
 
+    # Course Interruption chart (clientside-rendered from store)
+    row3a_charts.append(
+        dmc.GridCol(
+            span={"base": 12, "md": 4},
+            children=chart_card(
+                "courses-chart-interruption",
+                "Course Interruptions",
+                settings_id="courses-interruption",
+                chart_types=[{"value": "bar", "label": "Bar"}],
+                show_smooth=False,
+                paper_padding="md",
+                extra_controls_left=[
+                    dmc.SegmentedControl(
+                        id="courses-interruption-mode",
+                        data=[
+                            {"value": "count", "label": "Count"},
+                            {"value": "pct", "label": "%"},
+                        ],
+                        value="pct",
+                        size="xs",
+                    ),
+                ],
+                extra_controls=[
+                    dmc.SegmentedControl(
+                        id="courses-interruption-slice",
+                        data=[
+                            {"value": "", "label": "Total"},
+                            {"value": "physician", "label": "MD"},
+                            {"value": "site", "label": "Site"},
+                            {"value": "diagnosis", "label": "Dx"},
+                        ],
+                        value="",
+                        size="xs",
+                    ),
+                ],
+            ),
+        )
+    )
+
     chart_children.append(dmc.Grid(gutter=16, align="stretch", children=row3a_charts))
 
     # ------------------------------------------------------------------
@@ -2965,66 +3425,67 @@ def _update_courses_kpis(*args):
     # ------------------------------------------------------------------
     table_df = dff.copy()
 
+    # Computed status
+    table_df["_Status"] = "Active"
+    eff_comp_mask = _is_effectively_completed(table_df)
+    table_df.loc[eff_comp_mask, "_Status"] = "Completed"
+
+    # Format dates
+    for dc in ["LastTreatmentDate", "FirstTreatmentDate", "CourseStartDate"]:
+        if dc in table_df.columns:
+            table_df[dc] = table_df[dc].dt.strftime("%Y-%m-%d")
+
+    # Deduplicate techniques
+    if "TreatmentTechniques" in table_df.columns:
+        table_df["TreatmentTechniques"] = table_df["TreatmentTechniques"].apply(
+            lambda v: ", ".join(dict.fromkeys(s.strip() for s in str(v).split(",") if s.strip()))
+            if pd.notna(v) else v
+        )
+
+    # Deduplicate prescription sites
+    if "PrescriptionSites" in table_df.columns:
+        table_df["PrescriptionSites"] = table_df["PrescriptionSites"].apply(
+            lambda v: "; ".join(dict.fromkeys(s.strip() for s in str(v).split(";") if s.strip()))
+            if pd.notna(v) else v
+        )
+
     table_cols = [
-        "PatientFullName", "CourseId", "CourseStartDate", "ClinicalStatus",
-        "TreatingPhysician", "TreatmentTechniques", "FractionsPrescribed",
-        "FractionsDelivered", "TreatmentDurationDays", "Department",
-        "Machines", "PrescriptionSites",
+        "LastTreatmentDate", "FirstTreatmentDate", "CourseStartDate",
+        "PatientFullName", "Department", "Machines",
+        "CourseId", "PlanNames", "_Status",
+        "TreatingPhysician", "ConsultPhysician",
+        "TreatmentTechniques",
+        "FractionsPrescribed", "FractionsDelivered", "TreatmentDurationDays",
     ]
     available_cols = [c for c in table_cols if c in table_df.columns]
-    table_df = table_df[available_cols].copy()
-
-    if "CourseStartDate" in table_df.columns:
-        table_df["CourseStartDate"] = table_df["CourseStartDate"].dt.strftime("%Y-%m-%d")
+    table_df = table_df[available_cols]
 
     records = table_df.to_dict("records")
 
     column_defs = [
-        {"field": "PatientFullName", "headerName": "Patient", "width": 180},
-        {"field": "CourseId", "headerName": "Course ID", "width": 120},
-        {"field": "CourseStartDate", "headerName": "Start Date", "width": 120, "sort": "desc"},
-        {"field": "ClinicalStatus", "headerName": "Status", "width": 110},
-        {"field": "TreatingPhysician", "headerName": "Physician", "width": 160},
-        {"field": "TreatmentTechniques", "headerName": "Techniques", "width": 180},
-        {"field": "FractionsPrescribed", "headerName": "Fx Prescribed", "width": 120, "type": "numericColumn"},
-        {"field": "FractionsDelivered", "headerName": "Fx Delivered", "width": 110, "type": "numericColumn"},
-        {"field": "TreatmentDurationDays", "headerName": "Duration (d)", "width": 110, "type": "numericColumn"},
+        {"field": "LastTreatmentDate", "headerName": "Last Tx", "minWidth": 120, "sort": "desc"},
+        {"field": "FirstTreatmentDate", "headerName": "First Tx", "minWidth": 120},
+        {"field": "CourseStartDate", "headerName": "Start Date", "minWidth": 120},
+        {"field": "PatientFullName", "headerName": "Patient", "width": 170},
         {"field": "Department", "headerName": "Department", "width": 110},
-        {"field": "Machines", "headerName": "Machines", "width": 160},
-        {"field": "PrescriptionSites", "headerName": "Rx Sites", "width": 180},
+        {"field": "Machines", "headerName": "Machines", "width": 140},
+        {"field": "CourseId", "headerName": "Course ID", "width": 110},
+        {"field": "PlanNames", "headerName": "Plans", "width": 160},
+        {"field": "_Status", "headerName": "Status", "width": 100},
+        {"field": "TreatingPhysician", "headerName": "Treating MD", "width": 140},
+        {"field": "ConsultPhysician", "headerName": "Consult MD", "width": 140},
+        {"field": "TreatmentTechniques", "headerName": "Techniques", "width": 150},
+        {"field": "FractionsPrescribed", "headerName": "Fx Rx", "width": 80, "type": "numericColumn"},
+        {"field": "FractionsDelivered", "headerName": "Fx Del", "width": 80, "type": "numericColumn"},
+        {"field": "TreatmentDurationDays", "headerName": "Duration (d)", "width": 100, "type": "numericColumn"},
     ]
-
-    table_children = [
-        dmc.Paper(
-            children=[
-                dmc.Group(
-                    justify="space-between",
-                    mb="sm",
-                    children=[
-                        dmc.Text("Course Details", size="sm", fw=500, c="#6B7280"),
-                        dmc.Button("Export CSV", id="courses-table-export", size="compact-xs", variant="light"),
-                    ],
-                ),
-                dag.AgGrid(
-                    id="courses-detail-table",
-                    rowData=records,
-                    columnDefs=column_defs,
-                    defaultColDef=DEFAULT_COLUMN_DEFS,
-                    columnSize="autoSize",
-                    dashGridOptions={**DEFAULT_GRID_OPTIONS},
-                    style=DEFAULT_GRID_STYLE,
-                    className=DEFAULT_GRID_CLASS,
-                ),
-            ],
-            p="md", radius="md", shadow="xs", withBorder=True,
-        ),
-    ]
+    column_defs = [cd for cd in column_defs if cd["field"] in available_cols]
 
     return (
         kpi_active, kpi_started, kpi_completed, kpi_median_frac, kpi_median_dur, kpi_multiplan,
         sparkline_data,
-        ridgeline_data, frac_trend_data, frac_dist_data, complexity_trend_data, technique_dist_data, quit_trend_data,
-        chart_children, table_children,
+        ridgeline_data, frac_trend_data, frac_dist_data, complexity_trend_data, technique_dist_data, quit_trend_data, interruption_data,
+        chart_children, records, column_defs,
         frac_min_data, frac_max_data,
     )
 
@@ -3083,7 +3544,7 @@ def _update_courses_cumulative(*args):
         mode=cumul_mode or "prior",
         period_type=cumul_period_type or "calendar",
         slice_by=cumul_slice or "site",
-        max_prior=5, diag_mode=data.get("diag_mode", "primary"),
+        max_prior=10, diag_mode=data.get("diag_mode", "primary"),
     )
 
 
@@ -3101,13 +3562,14 @@ clientside_callback(
 )
 
 clientside_callback(
-    """function(rawData, smoothPct, chartType, maxPrior, currentFig) {
-        return window.dash_clientside.cumulative.renderCumulative(rawData, smoothPct, chartType, currentFig, null, maxPrior);
+    """function(rawData, smoothPct, chartType, stackVal, maxPrior, currentFig) {
+        return window.dash_clientside.cumulative.renderCumulative(rawData, smoothPct, chartType, currentFig, stackVal, maxPrior);
     }""",
     Output("courses-chart-cumulative", "figure"),
     Input("courses-store-cumulative", "data"),
     Input("courses-cumulative-settings-smooth", "value"),
     Input("courses-cumulative-settings-type", "value"),
+    Input("courses-cumulative-settings-stack", "value"),
     Input("courses-cumulative-settings-prior-periods", "value"),
     State("courses-chart-cumulative", "figure"),
 )
@@ -3160,6 +3622,113 @@ clientside_callback(
     Input("courses-ridge-mode", "value"),
 )
 
+# Hide frac-dist bandwidth slider in histogram mode
+clientside_callback(
+    """function(mode) {
+        return mode === "histogram" ? {display: "none"} : {};
+    }""",
+    Output("courses-frac-dist-bw-group", "style"),
+    Input("courses-frac-dist-mode", "value"),
+)
+
+
+# ---------------------------------------------------------------------------
+# Course Interruption callback
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("courses-chart-interruption", "figure"),
+    Input("courses-store-interruption", "data"),
+    Input("courses-interruption-mode", "value"),
+    Input("courses-interruption-slice", "value"),
+    Input("courses-interruption-settings-stack", "value"),
+)
+def _update_interruption(data, mode, slice_by, stack_mode):
+    if not data:
+        fig = empty_figure("No interruption data")
+        fig.update_layout(height=None)
+        return fig
+
+    mode = mode or "count"
+    slice_by = slice_by or ""
+
+    if not slice_by:
+        # Total view
+        summary = data.get("", data)
+        if not summary or summary.get("n_interrupted", 0) == 0:
+            fig = empty_figure("No interruption data")
+            fig.update_layout(height=None)
+            return fig
+
+        buckets = summary["buckets"]
+        n_total = summary["n_total"]
+        labels = [b["label"] for b in buckets]
+
+        if mode == "pct":
+            values = [round(b["count"] / n_total * 100, 1) if n_total else 0 for b in buckets]
+            y_title = "% of Courses"
+        else:
+            values = [b["count"] for b in buckets]
+            y_title = "Courses"
+
+        fig = go.Figure(go.Bar(
+            x=labels, y=values, marker_color=PRIMARY,
+            hovertemplate="<b>%{x}</b><br>" + y_title + ": %{y}<extra></extra>",
+        ))
+        sub_text = f"{summary['rate']:.0f}% interrupted  ·  Median {summary['median_delay']:.0f} business days"
+    else:
+        # Sliced view — grouped bar by slice category
+        slice_data = data.get(slice_by, {})
+        if not slice_data:
+            fig = empty_figure("No data for slice")
+            fig.update_layout(height=None)
+            return fig
+
+        bucket_labels = [b["label"] for b in list(slice_data.values())[0]["buckets"]]
+        fig = go.Figure()
+
+        colors = CHART_COLORWAY
+        if slice_by == "site":
+            colors = None  # use dept colors
+
+        for i, (name, summary) in enumerate(slice_data.items()):
+            buckets = summary["buckets"]
+            n_total = summary["n_total"]
+            if mode == "pct":
+                values = [round(b["count"] / n_total * 100, 1) if n_total else 0 for b in buckets]
+            else:
+                values = [b["count"] for b in buckets]
+
+            color = DEPARTMENT_COLORS.get(name, CHART_COLORWAY[i % len(CHART_COLORWAY)]) if slice_by == "site" else CHART_COLORWAY[i % len(CHART_COLORWAY)]
+            fig.add_trace(go.Bar(
+                x=bucket_labels, y=values, name=name, marker_color=color,
+                hovertemplate=f"<b>{name}</b><br>" + "%{x}: %{y}<extra></extra>",
+            ))
+
+        fig.update_layout(barmode="stack" if stack_mode == "stacked" else "group")
+        y_title = "% of Courses" if mode == "pct" else "Courses"
+
+        total_summary = data.get("", {})
+        sub_text = f"{total_summary.get('rate', 0):.0f}% interrupted overall" if total_summary else ""
+
+    apply_default_layout(fig)
+    fig.add_annotation(
+        text=sub_text,
+        xref="paper", yref="paper",
+        x=0.5, y=-0.07, yanchor="top",
+        showarrow=False,
+        font=dict(size=12, color="#9CA3AF"),
+    )
+    fig.update_layout(
+        height=None,
+        yaxis_title=y_title,
+        xaxis_title="",
+        margin=dict(l=40, r=8, t=8, b=0),
+        showlegend=bool(slice_by),
+        legend=dict(orientation="h", y=1.02, x=0.5, xanchor="center", yanchor="bottom"),
+    )
+    return fig
+
 
 # ---------------------------------------------------------------------------
 # Fractions Trend callback (clientside: agg + slice-by + smooth + chart type)
@@ -3208,9 +3777,9 @@ clientside_callback(
 # ---------------------------------------------------------------------------
 
 clientside_callback(
-    """function(storeData, smoothVal, chartType, agg, sliceBy, currentFig) {
+    """function(storeData, smoothVal, chartType, agg, sliceBy, metric, currentFig) {
         if (!storeData) return window.dash_clientside.no_update;
-        var key = (agg || "M") + "|" + (sliceBy || "");
+        var key = (agg || "M") + "|" + (sliceBy || "") + "|" + (metric || "fraction");
         var combo = storeData[key];
         if (!combo || !combo.series || combo.series.length === 0) {
             return {
@@ -3241,6 +3810,7 @@ clientside_callback(
     Input("courses-quit-trend-settings-type", "value"),
     Input("courses-quit-trend-agg", "value"),
     Input("courses-quit-trend-slice", "value"),
+    Input("courses-quit-metric", "value"),
     State("courses-chart-quit-trend", "figure"),
 )
 
@@ -3253,26 +3823,38 @@ clientside_callback(
     Output("courses-chart-frac-dist", "figure"),
     Input("courses-store-frac-dist", "data"),
     Input("courses-frac-dist-mode", "value"),
+    Input("courses-frac-dist-bw", "value"),
 )
-def _update_frac_dist(data, mode):
+def _update_frac_dist(data, mode, bw):
     if not data:
         fig = empty_figure("No fractions data")
         fig.update_layout(height=310)
         return fig
 
     mode = mode or "histogram"
+    bw = bw or 0.15
     fig = go.Figure()
 
-    if mode == "density" and data.get("kde_x"):
-        fig.add_trace(go.Scatter(
-            x=data["kde_x"],
-            y=data["kde_y"],
-            mode="lines",
-            fill="tozeroy",
-            line=dict(color=PRIMARY, width=2),
-            fillcolor="rgba(124, 42, 131, 0.2)",
-            hovertemplate="Fractions: %{x:.0f}<br>Density: %{y:.4f}<extra></extra>",
-        ))
+    if mode == "density" and data.get("values"):
+        from scipy.stats import gaussian_kde
+        arr = np.array(data["values"])
+        try:
+            kde = gaussian_kde(arr, bw_method=bw)
+            x_min = max(0, float(arr.min()) - 2)
+            x_max = float(arr.max()) + 2
+            x_grid = np.linspace(x_min, x_max, 200)
+            kde_y = kde(x_grid)
+            fig.add_trace(go.Scatter(
+                x=x_grid.tolist(),
+                y=kde_y.tolist(),
+                mode="lines",
+                fill="tozeroy",
+                line=dict(color=PRIMARY, width=2),
+                fillcolor="rgba(124, 42, 131, 0.15)",
+                hovertemplate="Fractions: %{x:.0f}<br>Density: %{y:.4f}<extra></extra>",
+            ))
+        except Exception:
+            pass
         y_title = "Density"
     else:
         fig.add_trace(go.Histogram(
@@ -3298,7 +3880,7 @@ def _update_frac_dist(data, mode):
         height=310,
         xaxis_title=f"Fractions Prescribed  (n={data['n']}  Mean: {data['mean']:.0f}  IQR: {data['p25']:.0f}\u2013{data['p75']:.0f})",
         yaxis_title=y_title,
-        margin=dict(l=48, r=16, t=16, b=24),
+        margin=dict(l=48, r=16, t=16, b=4),
     )
     return fig
 
@@ -3441,9 +4023,10 @@ def _update_complexity_facets(data, agg, mode, smooth, chart_type):
     Input("courses-technique-dist-agg", "value"),
     Input("courses-technique-dist-settings-smooth", "value"),
     Input("courses-technique-dist-settings-type", "value"),
+    Input("courses-technique-dist-settings-stack", "value"),
     prevent_initial_call=False,
 )
-def _update_technique_dist(data, counting, mode, agg, smooth, chart_type):
+def _update_technique_dist(data, counting, mode, agg, smooth, chart_type, stack_mode):
     if not data:
         return empty_figure("No technique data")
 
@@ -3498,15 +4081,16 @@ def _update_technique_dist(data, counting, mode, agg, smooth, chart_type):
                 y=s["values"],
                 name=s["name"],
                 marker_color=s["color"],
+                marker_opacity=0.7,
                 hovertemplate=(
                     "<b>%{x|%b %Y}</b><br>"
                     + s["name"] + ": %{y:.0f}" + ("%" if mode == "pct" else "")
                     + "<extra></extra>"
                 ),
             ))
-        fig.update_layout(barmode="stack")
+        fig.update_layout(barmode="stack" if stack_mode != "grouped" else "group")
     else:
-        stackgroup = "tech" if chart_type == "area" else None
+        stackgroup = "tech" if (chart_type == "area" and stack_mode != "grouped") else None
         for s in proc_series:
             fig.add_trace(go.Scatter(
                 x=dates,
@@ -3515,7 +4099,8 @@ def _update_technique_dist(data, counting, mode, agg, smooth, chart_type):
                 mode="lines",
                 line=dict(color=s["color"], width=0.5 if chart_type == "area" else 2),
                 stackgroup=stackgroup,
-                fillcolor=s["color"] if chart_type == "area" else None,
+                fillcolor=_hex_to_rgba(s["color"], 0.75) if chart_type == "area" else None,
+                opacity=0.85,
                 hovertemplate=(
                     "<b>%{x|%b %Y}</b><br>"
                     + s["name"] + ": %{y:.0f}" + ("%" if mode == "pct" else "")
@@ -3527,7 +4112,7 @@ def _update_technique_dist(data, counting, mode, agg, smooth, chart_type):
     n_series = len(proc_series)
     fig.update_layout(
         height=420,
-        yaxis_title="Proportion (%)" if mode == "pct" else "Plan Count",
+        yaxis_title="Proportion (%)" if mode == "pct" else "Course Count",
         showlegend=True,
         legend=dict(
             orientation="h", y=1.02, x=0.5, xanchor="center", yanchor="bottom",
@@ -3536,7 +4121,7 @@ def _update_technique_dist(data, counting, mode, agg, smooth, chart_type):
         margin=dict(l=48, r=16, t=56, b=40),
         hovermode="x unified",
     )
-    if mode == "pct":
+    if mode == "pct" and chart_type != "line":
         fig.update_yaxes(range=[0, 100])
 
     return fig
@@ -3548,7 +4133,7 @@ def _update_technique_dist(data, counting, mode, agg, smooth, chart_type):
 clientside_callback(
     """function(n) {
         if (!n) return window.dash_clientside.no_update;
-        gridExportCsv('courses-detail-table', 'courses_detail.csv');
+        gridExportCsv('courses-detail-grid', 'courses_detail.csv');
         return window.dash_clientside.no_update;
     }""",
     Output("courses-table-export", "n_clicks"),

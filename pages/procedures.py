@@ -401,11 +401,10 @@ layout = dmc.Stack(
                         dmc.SegmentedControl(
                             id=f"{PAGE_ID}-cumul-slice",
                             data=[
-                                {"value": "total", "label": "Total"},
                                 {"value": "physician", "label": "MD"},
                                 {"value": "dept", "label": "Dept"},
                             ],
-                            value="total",
+                            value="physician",
                             size="xs",
                             orientation="horizontal",
                             style={"display": "none"},
@@ -578,6 +577,31 @@ clientside_callback(
     Input(f"{PAGE_ID}-cumul-mode", "value"),
 )
 
+# Hide "Total" slice option in line/area mode (only useful for bar)
+_PROC_CUMUL_SLICE_ALL = [
+    {"value": "total", "label": "Total"},
+    {"value": "physician", "label": "MD"},
+    {"value": "dept", "label": "Dept"},
+]
+_PROC_CUMUL_SLICE_NO_TOTAL = [o for o in _PROC_CUMUL_SLICE_ALL if o["value"] != "total"]
+
+clientside_callback(
+    """function(chartType, sliceVal) {
+        var all = %s;
+        var noTotal = %s;
+        if (chartType === "bar") {
+            return [all, window.dash_clientside.no_update];
+        }
+        var newVal = (sliceVal === "total") ? "physician" : window.dash_clientside.no_update;
+        return [noTotal, newVal];
+    }""" % (str(_PROC_CUMUL_SLICE_ALL).replace("'", '"'), str(_PROC_CUMUL_SLICE_NO_TOTAL).replace("'", '"')),
+    Output(f"{PAGE_ID}-cumul-slice", "data"),
+    Output(f"{PAGE_ID}-cumul-slice", "value", allow_duplicate=True),
+    Input(f"{PAGE_ID}-cumul-settings-type", "value"),
+    State(f"{PAGE_ID}-cumul-slice", "value"),
+    prevent_initial_call=True,
+)
+
 _SLICE_CLASS_JS = """function(val) {
     return (val && val !== "total") ? "slice-group-active" : "slice-total-active";
 }"""
@@ -596,15 +620,30 @@ _HIDE_STACK_JS = """function(sliceVal, chartType) {
 
 for _slice_id, _settings_id in [
     (f"{PAGE_ID}-trend-slice", f"{PAGE_ID}-trend"),
-    (f"{PAGE_ID}-cumul-slice", f"{PAGE_ID}-cumul"),
 ]:
     clientside_callback(
         _HIDE_STACK_JS,
         Output(f"{_settings_id}-settings-stack-wrap", "style", allow_duplicate=True),
         Input(_slice_id, "value"),
         Input(f"{_settings_id}-settings-type", "value"),
-        prevent_initial_call=True,
+        prevent_initial_call="initial_duplicate",
     )
+
+# Cumulative chart: also hide grouping in Prior Periods mode (single dimension)
+clientside_callback(
+    """function(mode, sliceVal, chartType) {
+        var single = !sliceVal || sliceVal === "total" || sliceVal === "";
+        if (single) return {"display": "none"};
+        if (chartType === "bar") return {};
+        var isPrior = mode === "prior";
+        var noStack = chartType === "line";
+        return (isPrior || noStack) ? {"display": "none"} : {};
+    }""",
+    Output(f"{PAGE_ID}-cumul-settings-stack-wrap", "style"),
+    Input(f"{PAGE_ID}-cumul-mode", "value"),
+    Input(f"{PAGE_ID}-cumul-slice", "value"),
+    Input(f"{PAGE_ID}-cumul-settings-type", "value"),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -953,7 +992,8 @@ def _build_day_index_ticks(start_norm, n_days, max_ticks=12):
 
 
 def _prepare_cumul_data(dff_all, cat_name, start, end, date_preset="12mo",
-                        slice_by="", mode="prior", max_prior=5):
+                        slice_by="", mode="prior", max_prior=5,
+                        period_type="calendar"):
     """Build cumulative chart data for clientside rendering.
 
     mode="prior": Current period + prior periods overlay (day-index x-axis).
@@ -975,6 +1015,9 @@ def _prepare_cumul_data(dff_all, cat_name, start, end, date_preset="12mo",
         end = today
 
     period_days = (end - start).days + 1
+    # Force rolling when period exceeds 1 year (calendar shifts would overlap)
+    if period_days > 365 and period_type == "calendar":
+        period_type = "rolling"
     if period_days < 2:
         return _EMPTY_CUMUL
 
@@ -1019,13 +1062,19 @@ def _prepare_cumul_data(dff_all, cat_name, start, end, date_preset="12mo",
 
         # Build prior windows
         prior = []
+        last_prior_start = None
         if date_preset != "all":
             for i in range(1, max_prior + 1):
-                try:
-                    p_start = start - pd.DateOffset(years=i)
-                    p_end = end - pd.DateOffset(years=i)
-                except Exception:
-                    continue
+                if period_type == "calendar":
+                    try:
+                        p_start = start - pd.DateOffset(years=i)
+                        p_end = end - pd.DateOffset(years=i)
+                    except Exception:
+                        continue
+                else:
+                    shift = pd.Timedelta(days=period_days * i)
+                    p_start = start - shift
+                    p_end = end - shift
                 if p_end < data_min:
                     break
                 vals = _cumulative_for_window(dff_all, p_start, p_end)
@@ -1035,6 +1084,16 @@ def _prepare_cumul_data(dff_all, cat_name, start, end, date_preset="12mo",
                     elif len(vals) > n_days:
                         vals = vals[:n_days]
                     prior.append({"label": _period_label(p_start, p_end), "values": vals, "color": PRIOR_PERIOD_COLORS[min(i - 1, len(PRIOR_PERIOD_COLORS) - 1)]})
+                    last_prior_start = p_start
+
+        # Metadata for client-side control updates
+        has_partial = (last_prior_start is not None
+                       and last_prior_start.normalize() < data_min.normalize())
+        _prior_meta = {
+            "periodDays": period_days,
+            "maxAvailablePriors": len(prior),
+            "hasPartialPrior": has_partial,
+        }
 
         return {
             "mode": "prior",
@@ -1052,6 +1111,7 @@ def _prepare_cumul_data(dff_all, cat_name, start, end, date_preset="12mo",
             "sliceBreakdown": {"periods": [], "slices": []},
             "height": 380,
             "yTitle": f"Cumulative {cat_name}",
+            **_prior_meta,
         }
 
     # --- Slice mode ---
@@ -1063,13 +1123,13 @@ def _prepare_cumul_data(dff_all, cat_name, start, end, date_preset="12mo",
         cumvals = daily_counts.cumsum().tolist()
         raw = daily_counts.tolist()
         first_idx = next((i for i, v in enumerate(raw) if v > 0), None)
-        last_idx = next((i for i in range(len(raw) - 1, -1, -1) if raw[i] > 0), None)
         if first_idx is None:
             return [None] * len(cumvals)
         for i in range(first_idx):
             cumvals[i] = None
+        last_idx = next((i for i in range(len(raw) - 1, -1, -1) if raw[i] > 0), first_idx)
         for i in range(last_idx + 1, len(cumvals)):
-            cumvals[i] = None
+            cumvals[i] = cumvals[last_idx]
         return cumvals
 
     series = []
@@ -1121,6 +1181,9 @@ def _prepare_cumul_data(dff_all, cat_name, start, end, date_preset="12mo",
         "stacked": False,
         "height": 380,
         "yTitle": f"Cumulative {cat_name}",
+        "periodDays": period_days,
+        "maxAvailablePriors": 0,
+        "hasPartialPrior": False,
     }
 
 
@@ -1582,20 +1645,42 @@ clientside_callback(
     State(f"{PAGE_ID}-chart-trend", "figure"),
 )
 
-# Cumulative chart: store + smoothing + chart type → figure
+# Cumulative chart: store + smoothing + chart type + stack + prior periods → figure
 clientside_callback(
-    ClientsideFunction(namespace="cumulative", function_name="renderCumulative"),
+    """function(rawData, smoothPct, chartType, stackVal, maxPrior, currentFig) {
+        return window.dash_clientside.cumulative.renderCumulative(rawData, smoothPct, chartType, currentFig, stackVal, maxPrior);
+    }""",
     Output(f"{PAGE_ID}-chart-cumul", "figure"),
     Input(f"{PAGE_ID}-store-cumul", "data"),
     Input(f"{PAGE_ID}-cumul-settings-smooth", "value"),
     Input(f"{PAGE_ID}-cumul-settings-type", "value"),
+    Input(f"{PAGE_ID}-cumul-settings-stack", "value"),
+    Input(f"{PAGE_ID}-cumul-settings-prior-periods", "value"),
     State(f"{PAGE_ID}-chart-cumul", "figure"),
+)
+
+# Cap prior-periods slider to available data
+clientside_callback(
+    """function(storeData) {
+        var nu = window.dash_clientside.no_update;
+        if (!storeData) return [nu, nu];
+        var maxAvail = (storeData.maxAvailablePriors != null) ? storeData.maxAvailablePriors : 5;
+        var sliderMax = Math.max(maxAvail, 1);
+        if (sliderMax > 10) sliderMax = 10;
+        var marks = [];
+        for (var i = 1; i <= sliderMax; i++) marks.push({value: i, label: String(i)});
+        return [sliderMax, marks];
+    }""",
+    Output(f"{PAGE_ID}-cumul-settings-prior-periods", "max"),
+    Output(f"{PAGE_ID}-cumul-settings-prior-periods", "marks"),
+    Input(f"{PAGE_ID}-store-cumul", "data"),
+    prevent_initial_call=True,
 )
 
 # Register settings gear toggle + PNG export callbacks
 register_chart_callbacks([
     (f"{PAGE_ID}-trend", f"{PAGE_ID}-chart-trend"),
-    (f"{PAGE_ID}-cumul", f"{PAGE_ID}-chart-cumul"),
+    {"sid": f"{PAGE_ID}-cumul", "gid": f"{PAGE_ID}-chart-cumul", "show_grouping": False},
 ])
 
 
