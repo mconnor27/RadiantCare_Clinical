@@ -2450,7 +2450,8 @@ def _trend(curr, prior, invert=False):
 
 def _load_and_filter_courses(slider_val, departments, physician, diagnosis_cats,
                               diag_mode, techniques, status, frac_range, date_mode,
-                              date_preset, inpatient, frac_engaged):
+                              date_preset, inpatient, frac_engaged,
+                              physician_role="treating"):
     """Load courses data, apply filters. Returns dict with shared frames or None."""
     from data.loader import load_courses
 
