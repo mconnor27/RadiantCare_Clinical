@@ -403,7 +403,10 @@ dagcomponentfuncs.CptReviewButtons = function (props) {
     };
 
     function send(action) {
-        props.setData(Object.assign({}, data, { _action: action }));
+        var payload = Object.assign({}, data, { _action: action, _ts: Date.now() });
+        if (window.dash_clientside) {
+            window.dash_clientside.set_props("cpt-store-review-action", { data: payload });
+        }
     }
 
     if (status === "OK" || status === "Fixed") {
@@ -655,6 +658,267 @@ dagcomponentfuncs.InstitutionEditor = function (props) {
                     style: itemStyle,
                 }, inst);
             })
+        )
+    );
+};
+
+
+// =========================================================================
+// Payor Mapping components
+// =========================================================================
+
+/**
+ * Colored pill badge for standardized payor names.
+ * Shows "— unmapped —" when empty.  Includes × to clear.
+ */
+dagcomponentfuncs.PayorBadge = function (props) {
+    var value = props.value || "";
+    if (!value) {
+        return React.createElement(
+            "span",
+            {
+                style: {color: "#9CA3AF", fontSize: "12px", fontStyle: "italic", cursor: "pointer"},
+                title: "Double-click to assign payor",
+            },
+            "\u2014 unmapped \u2014"
+        );
+    }
+    var colors = [
+        {bg: "#EDE9FE", text: "#6D28D9", x: "#A78BFA"},
+        {bg: "#DBEAFE", text: "#1D4ED8", x: "#60A5FA"},
+        {bg: "#D1FAE5", text: "#047857", x: "#34D399"},
+        {bg: "#FEE2E2", text: "#B91C1C", x: "#F87171"},
+        {bg: "#FEF3C7", text: "#92400E", x: "#FBBF24"},
+        {bg: "#E0E7FF", text: "#3730A3", x: "#818CF8"},
+        {bg: "#FCE7F3", text: "#9D174D", x: "#F472B6"},
+        {bg: "#CCFBF1", text: "#0F766E", x: "#2DD4BF"},
+    ];
+    var hash = 0;
+    for (var i = 0; i < value.length; i++) {
+        hash = ((hash << 5) - hash + value.charCodeAt(i)) | 0;
+    }
+    var c = colors[Math.abs(hash) % colors.length];
+
+    function clearPayor(e) {
+        e.stopPropagation();
+        var updated = Object.assign({}, props.data, {standardized_payor: ""});
+        props.setData(updated);
+    }
+
+    return React.createElement(
+        "div",
+        {style: {display: "flex", alignItems: "center", height: "100%", gap: "0px", minWidth: 0}},
+        React.createElement(
+            "span",
+            {
+                style: {
+                    background: c.bg, color: c.text,
+                    padding: "1px 6px 1px 10px", borderRadius: "12px",
+                    fontSize: "12px", fontWeight: 600, lineHeight: "22px",
+                    display: "inline-flex", alignItems: "center", gap: "0px",
+                    maxWidth: "100%", minWidth: 0,
+                },
+            },
+            React.createElement("span", {
+                style: {overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0},
+            }, value),
+            React.createElement("span", {
+                onClick: clearPayor,
+                style: {
+                    cursor: "pointer", color: c.x, fontSize: "14px", fontWeight: "bold",
+                    lineHeight: 1, marginLeft: "4px", opacity: 0.7, flexShrink: 0,
+                },
+                title: "Clear payor mapping",
+                onMouseEnter: function(e) { e.target.style.opacity = 1; },
+                onMouseLeave: function(e) { e.target.style.opacity = 0.7; },
+            }, "\u00d7")
+        )
+    );
+};
+
+
+/**
+ * Colored pill for broad payor category with deterministic colors.
+ */
+dagcomponentfuncs.BroadCategoryBadge = function (props) {
+    var value = props.value || "";
+    var colorMap = {
+        "Medicare": {bg: "#DBEAFE", text: "#1D4ED8"},
+        "Medicaid": {bg: "#D1FAE5", text: "#047857"},
+        "Private": {bg: "#FEF3C7", text: "#92400E"},
+        "Military/VA": {bg: "#EDE9FE", text: "#6D28D9"},
+        "Workers Comp": {bg: "#CCFBF1", text: "#0F766E"},
+        "Tribal/IHS": {bg: "#F3E8FF", text: "#7C2D12"},
+        "Self Pay": {bg: "#FEE2E2", text: "#B91C1C"},
+        "Other/Unknown": {bg: "#F3F4F6", text: "#6B7280"},
+    };
+    var c = colorMap[value] || colorMap["Other/Unknown"];
+    if (!value) {
+        return React.createElement("span", {style: {color: "#9CA3AF", fontSize: "12px"}}, "\u2013");
+    }
+    return React.createElement(
+        "div",
+        {style: {display: "flex", alignItems: "center", height: "100%"}},
+        React.createElement("span", {
+            style: {
+                background: c.bg, color: c.text,
+                padding: "1px 10px", borderRadius: "12px",
+                fontSize: "12px", fontWeight: 600, lineHeight: "22px",
+                whiteSpace: "nowrap",
+            },
+        }, value)
+    );
+};
+
+
+/**
+ * Autocomplete editor for standardized payor names.
+ * Canonical payor list passed via cellEditorParams.values.
+ */
+dagcomponentfuncs.PayorMappingEditor = function (props) {
+    var ref = React.useRef(null);
+    var _s = React.useState(props.value || "");
+    var value = _s[0], setValue = _s[1];
+    var _o = React.useState(true);
+    var open = _o[0], setOpen = _o[1];
+
+    // Get canonical payors from cellEditorParams or fall back to grid values
+    var allPayors = React.useMemo(function () {
+        if (props.colDef && props.colDef.cellEditorParams && props.colDef.cellEditorParams.values) {
+            return props.colDef.cellEditorParams.values.slice().sort();
+        }
+        var payors = [];
+        var seen = {};
+        if (props.api) {
+            props.api.forEachNode(function (node) {
+                var p = node.data && node.data.standardized_payor;
+                if (p && !seen[p]) { seen[p] = true; payors.push(p); }
+            });
+        }
+        return payors.sort();
+    }, []);
+
+    var filtered = allPayors.filter(function (p) {
+        return p.toLowerCase().indexOf(value.toLowerCase()) !== -1;
+    });
+
+    React.useEffect(function () {
+        if (ref.current) { ref.current.focus(); ref.current.select(); }
+    }, []);
+
+    function commitValue(val) {
+        setValue(val);
+        setOpen(false);
+        if (props.onValueChange) { props.onValueChange(val); }
+        if (props.stopEditing) { setTimeout(function () { props.stopEditing(); }, 50); }
+    }
+
+    return React.createElement("div", {
+        style: {position: "relative", width: "100%", minWidth: "250px"},
+    },
+        React.createElement("input", {
+            ref: ref, value: value,
+            onChange: function (e) { setValue(e.target.value); setOpen(true);
+                if (props.onValueChange) { props.onValueChange(e.target.value); } },
+            onKeyDown: function (e) {
+                if (e.key === "Enter") { commitValue(value); }
+                else if (e.key === "Escape") { props.stopEditing(true); }
+                else if (e.key === "Tab") { commitValue(value); }
+            },
+            style: {
+                width: "100%", height: "36px", border: "2px solid #7C2A83",
+                borderRadius: "4px", padding: "0 8px", fontSize: "13px",
+                boxSizing: "border-box", outline: "none",
+            },
+        }),
+        React.createElement("div", {
+            style: {
+                position: "absolute", top: "100%", left: 0, right: 0,
+                maxHeight: "400px", overflowY: "auto", background: "#fff",
+                border: "1px solid #dee2e6", borderRadius: "0 0 6px 6px",
+                boxShadow: "0 4px 12px rgba(0,0,0,0.15)", zIndex: 9999,
+                display: open && filtered.length > 0 ? "block" : "none",
+            },
+        },
+            filtered.map(function (p) {
+                return React.createElement("div", {
+                    key: p,
+                    onMouseDown: function (e) { e.preventDefault(); commitValue(p); },
+                    onMouseEnter: function (e) { e.target.style.background = "#f0e6f6"; },
+                    onMouseLeave: function (e) { e.target.style.background = "#fff"; },
+                    style: {padding: "6px 10px", cursor: "pointer", fontSize: "13px"},
+                }, p);
+            })
+        )
+    );
+};
+
+
+/**
+ * Raw insurance name with Google search icon.
+ */
+dagcomponentfuncs.RawInsuranceSearch = function (props) {
+    var name = props.value || "";
+    if (!name) {
+        return React.createElement("span", {style: {color: "#9CA3AF"}}, "\u2014");
+    }
+    var searchUrl = "https://www.google.com/search?q=" + encodeURIComponent(name + " insurance");
+    return React.createElement(
+        "div",
+        {style: {display: "flex", alignItems: "center", height: "100%", gap: "4px", minWidth: 0}},
+        React.createElement(
+            "span",
+            {style: {overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flex: 1, fontSize: "12px"}},
+            name
+        ),
+        React.createElement(
+            "a",
+            {
+                href: searchUrl,
+                target: "_blank",
+                rel: "noopener",
+                style: {color: "#6B7280", textDecoration: "none", fontSize: "13px", flexShrink: 0, opacity: 0.6},
+                title: "Google: " + name,
+                onMouseEnter: function(e) { e.target.style.opacity = 1; },
+                onMouseLeave: function(e) { e.target.style.opacity = 0.6; },
+            },
+            "\uD83D\uDD0D"
+        )
+    );
+};
+
+
+/**
+ * Delete button for payor entity management grid.
+ */
+dagcomponentfuncs.PayorEntityDelete = function (props) {
+    function handleDelete(e) {
+        e.stopPropagation();
+        var data = Object.assign({}, props.data, {_action: "delete"});
+        props.setData(data);
+    }
+    return React.createElement(
+        "div",
+        {style: {display: "flex", alignItems: "center", justifyContent: "center", height: "100%"}},
+        React.createElement(
+            "button",
+            {
+                onClick: handleDelete,
+                style: {
+                    background: "transparent",
+                    border: "1px solid #E5E7EB",
+                    borderRadius: "4px",
+                    color: "#9CA3AF",
+                    cursor: "pointer",
+                    fontSize: "11px",
+                    padding: "1px 8px",
+                    lineHeight: "20px",
+                },
+                title: "Delete payor (clears from all mappings)",
+                onMouseEnter: function(e) { e.target.style.color = "#EF4444"; e.target.style.borderColor = "#EF4444"; },
+                onMouseLeave: function(e) { e.target.style.color = "#9CA3AF"; e.target.style.borderColor = "#E5E7EB"; },
+            },
+            "Delete"
         )
     );
 };

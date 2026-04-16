@@ -15,6 +15,7 @@ from config.settings import (
     DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, DEFAULT_GRID_STYLE, DEFAULT_GRID_CLASS,
 )
 from components.chart_settings import chart_settings_popover
+from components.detail_table import detail_table
 from components.kpi_card import kpi_card, kpi_placeholder
 from utils.charts import apply_default_layout, empty_figure, color_for_index
 from utils.tables import sanitize_for_grid
@@ -173,7 +174,7 @@ layout = dmc.Stack(
                                                 {"value": "M", "label": "Monthly"},
                                                 {"value": "Y", "label": "Yearly"},
                                             ],
-                                            value="D",
+                                            value="M",
                                             size="xs",
                                         ),
                                         chart_settings_popover(
@@ -183,9 +184,11 @@ layout = dmc.Stack(
                                                 {"value": "area", "label": "Area"},
                                                 {"value": "bar", "label": "Bar"},
                                             ],
+                                            chart_type_default="bar",
                                             show_smooth=True,
                                             smooth_max=50,
                                             smooth_default=15,
+                                            show_grouping=False,
                                         ),
                                     ],
                                 ),
@@ -218,14 +221,25 @@ layout = dmc.Stack(
                             justify="space-between", mb="sm",
                             children=[
                                 dmc.Text("Site Assignments", size="sm", fw=500, c=NEUTRAL["text_secondary"]),
-                                dmc.SegmentedControl(
-                                    id=f"{PAGE_ID}-sites-mode",
-                                    data=[
-                                        {"value": "count", "label": "Count"},
-                                        {"value": "pct", "label": "%"},
+                                dmc.Group(
+                                    gap="sm", align="center",
+                                    children=[
+                                        dmc.SegmentedControl(
+                                            id=f"{PAGE_ID}-sites-mode",
+                                            data=[
+                                                {"value": "count", "label": "Count"},
+                                                {"value": "pct", "label": "%"},
+                                            ],
+                                            value="count",
+                                            size="xs",
+                                        ),
+                                        chart_settings_popover(
+                                            f"{PAGE_ID}-sites",
+                                            show_smooth=False,
+                                            show_grouping=True,
+                                            grouping_default="grouped",
+                                        ),
                                     ],
-                                    value="count",
-                                    size="xs",
                                 ),
                             ],
                         ),
@@ -257,55 +271,116 @@ layout = dmc.Stack(
                 dmc.Paper(
                     children=[
                         dmc.Group(
-                            gap="sm", align="center", wrap="nowrap", mb="sm",
+                            justify="space-between", align="center", wrap="nowrap", mb="sm",
                             children=[
-                                dmc.Text("After-Hours Tasks", size="sm", fw=500, c=NEUTRAL["text_secondary"], style={"whiteSpace": "nowrap"}),
-                                dmc.ChipGroup(
-                                    id=f"{PAGE_ID}-ah-toggles",
+                                dmc.Group(
+                                    gap="sm", align="center",
                                     children=[
-                                        dmc.Chip("Weekends", value="weekends", size="xs", variant="filled", color="violet"),
-                                        dmc.Chip("Holidays", value="holidays", size="xs", variant="filled", color="violet"),
-                                        dmc.Chip("Off Days", value="off", size="xs", variant="filled", color="violet"),
-                                        dmc.Chip("Vacation", value="vacation", size="xs", variant="filled", color="violet"),
-                                    ],
-                                    value=["weekends"],
-                                    multiple=True,
-                                ),
-                                dmc.Box(
-                                    children=[
-                                        dmc.Group(
-                                            gap=4, justify="center", mb=0,
-                                            children=[
-                                                dmc.Switch(
-                                                    id=f"{PAGE_ID}-ah-hours-active",
-                                                    size="xs",
-                                                    checked=True,
-                                                    color="orange",
+                                        dmc.Text("After-Hours Tasks", size="sm", fw=500, c=NEUTRAL["text_secondary"], style={"whiteSpace": "nowrap"}),
+                                        # Filter dropdown panel
+                                        html.Div(
+                                            [
+                                                dmc.ActionIcon(
+                                                    DashIconify(icon="mdi:filter-variant", width=16),
+                                                    id=f"{PAGE_ID}-ah-filter-btn",
+                                                    variant="subtle",
+                                                    color="gray",
+                                                    size="sm",
                                                 ),
-                                                dmc.Text("Business hours", size="10px", c=NEUTRAL["text_muted"]),
+                                                html.Div(
+                                                    dmc.Paper(
+                                                        dmc.Stack(
+                                                            gap="sm",
+                                                            children=[
+                                                                dmc.Stack(
+                                                                    gap=4,
+                                                                    children=[
+                                                                        dmc.Text("Include", size="xs", fw=500, c="#6B7280"),
+                                                                        dmc.ChipGroup(
+                                                                            id=f"{PAGE_ID}-ah-toggles",
+                                                                            children=[
+                                                                                dmc.Chip("Weekends", value="weekends", size="xs", variant="filled", color="violet"),
+                                                                                dmc.Chip("Holidays", value="holidays", size="xs", variant="filled", color="violet"),
+                                                                                dmc.Chip("Off Days", value="off", size="xs", variant="filled", color="violet"),
+                                                                                dmc.Chip("Vacation", value="vacation", size="xs", variant="filled", color="violet"),
+                                                                            ],
+                                                                            value=["weekends"],
+                                                                            multiple=True,
+                                                                        ),
+                                                                    ],
+                                                                ),
+                                                                dmc.Stack(
+                                                                    gap=4,
+                                                                    children=[
+                                                                        dmc.Group(
+                                                                            gap=4,
+                                                                            children=[
+                                                                                dmc.Switch(
+                                                                                    id=f"{PAGE_ID}-ah-hours-active",
+                                                                                    size="xs",
+                                                                                    checked=True,
+                                                                                    color="orange",
+                                                                                ),
+                                                                                dmc.Text("Business hours", size="xs", fw=500, c="#6B7280"),
+                                                                            ],
+                                                                        ),
+                                                                        dmc.Box(
+                                                                            id=f"{PAGE_ID}-ah-hours-wrapper",
+                                                                            children=dmc.RangeSlider(
+                                                                                id=f"{PAGE_ID}-ah-hours",
+                                                                                min=0, max=48, step=1,
+                                                                                value=[14, 36],
+                                                                                marks=[
+                                                                                    {"value": 0, "label": "12a"},
+                                                                                    {"value": 12, "label": "6a"},
+                                                                                    {"value": 24, "label": "12p"},
+                                                                                    {"value": 36, "label": "6p"},
+                                                                                    {"value": 48, "label": "12a"},
+                                                                                ],
+                                                                                color="orange",
+                                                                                size="xs",
+                                                                                minRange=1,
+                                                                                disabled=False,
+                                                                            ),
+                                                                        ),
+                                                                    ],
+                                                                ),
+                                                            ],
+                                                        ),
+                                                        p="sm",
+                                                        radius="md",
+                                                        shadow="md",
+                                                        withBorder=True,
+                                                        style={"backgroundColor": "white", "minWidth": "260px"},
+                                                    ),
+                                                    id=f"{PAGE_ID}-ah-filter-panel",
+                                                    className="chart-settings-panel chart-settings-panel--left",
+                                                    style={"display": "none"},
+                                                ),
                                             ],
-                                        ),
-                                        dmc.Box(
-                                            id=f"{PAGE_ID}-ah-hours-wrapper",
-                                            children=dmc.RangeSlider(
-                                                id=f"{PAGE_ID}-ah-hours",
-                                                min=0, max=48, step=1,
-                                                value=[14, 36],
-                                                marks=[
-                                                    {"value": 0, "label": "12a"},
-                                                    {"value": 12, "label": "6a"},
-                                                    {"value": 24, "label": "12p"},
-                                                    {"value": 36, "label": "6p"},
-                                                    {"value": 48, "label": "12a"},
-                                                ],
-                                                color="orange",
-                                                size="xs",
-                                                minRange=1,
-                                                disabled=False,
-                                            ),
+                                            className="chart-settings-container",
+                                            style={"position": "relative", "display": "inline-block"},
                                         ),
                                     ],
-                                    style={"width": "280px", "flexShrink": 0},
+                                ),
+                                dmc.Group(
+                                    gap="sm", align="center",
+                                    children=[
+                                        dmc.SegmentedControl(
+                                            id=f"{PAGE_ID}-ah-mode",
+                                            data=[
+                                                {"value": "count", "label": "Count"},
+                                                {"value": "pct", "label": "%"},
+                                            ],
+                                            value="count",
+                                            size="xs",
+                                        ),
+                                        chart_settings_popover(
+                                            f"{PAGE_ID}-afterhours",
+                                            show_smooth=False,
+                                            show_grouping=False,
+                                        ),
+                                    ],
                                 ),
                             ],
                         ),
@@ -332,7 +407,31 @@ layout = dmc.Stack(
             dmc.GridCol(
                 dmc.Paper(
                     children=[
-                        dmc.Text("Cross-Coverage (Tasks for Other MDs' Patients)", size="sm", fw=500, c=NEUTRAL["text_secondary"], mb="sm"),
+                        dmc.Group(
+                            justify="space-between", mb="sm",
+                            children=[
+                                dmc.Text("Cross-Coverage (Tasks for Other MDs' Patients)", size="sm", fw=500, c=NEUTRAL["text_secondary"]),
+                                dmc.Group(
+                                    gap="sm", align="center",
+                                    children=[
+                                        dmc.SegmentedControl(
+                                            id=f"{PAGE_ID}-cc-mode",
+                                            data=[
+                                                {"value": "count", "label": "Count"},
+                                                {"value": "pct", "label": "%"},
+                                            ],
+                                            value="count",
+                                            size="xs",
+                                        ),
+                                        chart_settings_popover(
+                                            f"{PAGE_ID}-crosscov",
+                                            show_smooth=False,
+                                            show_grouping=False,
+                                        ),
+                                    ],
+                                ),
+                            ],
+                        ),
                         dmc.Box(
                             pos="relative",
                             style={"flex": "1", "minHeight": 0},
@@ -371,12 +470,11 @@ layout = dmc.Stack(
         ),
 
         # Schedule detail table
-        dmc.Paper(
-            children=[
-                dmc.Text("Schedule Detail", size="sm", fw=500, c=NEUTRAL["text_secondary"], mb="sm"),
-                dmc.Box(id=f"{PAGE_ID}-table-container"),
-            ],
-            p="md", radius="md", shadow="xs", withBorder=True,
+        detail_table(
+            f"{PAGE_ID}-detail-grid",
+            title="Schedule Detail",
+            export_id=f"{PAGE_ID}-table-export",
+            column_size="autoSize",
         ),
 
         dcc.Store(id=f"{PAGE_ID}-store-manpower"),
@@ -509,7 +607,8 @@ def _trend(curr, prior, invert=False):
     Output(f"{PAGE_ID}-chart-afterhours", "figure"),
     Output(f"{PAGE_ID}-chart-crosscoverage", "figure"),
     Output(f"{PAGE_ID}-chart-calendar", "figure"),
-    Output(f"{PAGE_ID}-table-container", "children"),
+    Output(f"{PAGE_ID}-detail-grid", "rowData"),
+    Output(f"{PAGE_ID}-detail-grid", "columnDefs"),
     Output(f"{PAGE_ID}-manpower-loading", "visible"),
     Output(f"{PAGE_ID}-sites-loading", "visible"),
     Output(f"{PAGE_ID}-afterhours-loading", "visible"),
@@ -524,9 +623,12 @@ def _trend(curr, prior, invert=False):
     Input(f"{PAGE_ID}-ah-toggles", "value"),
     Input(f"{PAGE_ID}-ah-hours", "value"),
     Input(f"{PAGE_ID}-ah-hours-active", "checked"),
+    Input(f"{PAGE_ID}-sites-settings-stack", "value"),
+    Input(f"{PAGE_ID}-ah-mode", "value"),
+    Input(f"{PAGE_ID}-cc-mode", "value"),
 )
 def update_physicians(_n, range_start, range_end, slider_val, manpower_agg, sites_mode,
-                      ah_toggles, ah_hours, ah_hours_active):
+                      ah_toggles, ah_hours, ah_hours_active, sites_stack, ah_mode, cc_mode):
     from data.loader import load_physician_schedule, load_tasks
 
     # Initialize empty outputs
@@ -537,7 +639,7 @@ def update_physicians(_n, range_start, range_end, slider_val, manpower_agg, site
     try:
         schedule = load_physician_schedule()
     except Exception:
-        return (na_kpi,) * 5 + (None, None) + (empty,) * 4 + ([],) + (loading_off,) * 5
+        return (na_kpi,) * 5 + (None, None) + (empty,) * 4 + ([], []) + (loading_off,) * 5
 
     try:
         tasks = load_tasks()
@@ -615,19 +717,20 @@ def update_physicians(_n, range_start, range_end, slider_val, manpower_agg, site
 
     # --- Charts ---
     manpower_data = _build_manpower_data(df, manpower_agg or "D")
-    fig_sites = _build_site_assignments(df, sites_mode or "count")
-    fig_afterhours = _build_afterhours_chart(task_df, df, ah_opts)
-    fig_crosscov = _build_crosscoverage_chart(task_df)
+    barmode = "stack" if sites_stack == "stacked" else "group"
+    fig_sites = _build_site_assignments(df, sites_mode or "count", barmode=barmode)
+    fig_afterhours = _build_afterhours_chart(task_df, df, ah_opts, mode=ah_mode or "count")
+    fig_crosscov = _build_crosscoverage_chart(task_df, mode=cc_mode or "count")
     fig_calendar = _build_calendar_heatmap(df)
 
     # --- Table ---
-    table = _build_schedule_table(df)
+    table_rows, table_cols = _build_schedule_table(df)
 
     return (
         kpi_cov, kpi_ah, kpi_cc, kpi_vac, kpi_wknd,
         manpower_data, sparkline_data or None,
         fig_sites, fig_afterhours, fig_crosscov, fig_calendar,
-        table,
+        table_rows, table_cols,
         False, False, False, False, False,
     )
 
@@ -955,7 +1058,9 @@ def _build_manpower_data(df, agg="D"):
         y_title = "MDs On Duty"
     else:
         # W/M/Y: sum man-days per period
-        grouped = daily["count"].resample(agg).sum()
+        # Use period-start codes so JS detectAggLevel sees day=1 for M/Y
+        resample_code = {"W": "W", "M": "MS", "Y": "YS"}.get(agg, agg)
+        grouped = daily["count"].resample(resample_code).sum()
         grouped = grouped[grouped > 0]
         if grouped.empty:
             return None
@@ -975,12 +1080,13 @@ def _build_manpower_data(df, agg="D"):
     }
 
 
-def _build_site_assignments(df, mode="count"):
-    """Grouped bar chart of site assignment days per physician.
+def _build_site_assignments(df, mode="count", barmode="group"):
+    """Bar chart of site assignment days per physician.
 
     Site is derived from Status (LACEY/CENTRALIA/ABERDEEN/ON CALL).
     ON CALL historically = Lacey assignment.
     mode: "count" = raw days, "pct" = percentage of each physician's total.
+    barmode: "group" or "stack".
     """
     if df.empty or "Status" not in df.columns or "Physician" not in df.columns:
         return empty_figure("No assignment data")
@@ -1026,13 +1132,13 @@ def _build_site_assignments(df, mode="count"):
     apply_default_layout(fig, autosize=True)
     fig.update_layout(
         yaxis_title=y_title,
-        barmode="group",
+        barmode=barmode,
         margin=dict(l=48, r=16, t=4, b=20),
     )
     return fig
 
 
-def _build_afterhours_chart(task_df, schedule_df, opts):
+def _build_afterhours_chart(task_df, schedule_df, opts, mode="count"):
     """Bar chart of after-hours tasks by physician."""
     if task_df.empty or "CompletedDateTime" not in task_df.columns or "CompletingMD" not in task_df.columns:
         return empty_figure("No task data")
@@ -1042,22 +1148,38 @@ def _build_afterhours_chart(task_df, schedule_df, opts):
         return empty_figure("No after-hours tasks")
 
     ah_by_md = ah.groupby("CompletingMD").size().reset_index(name="count")
-    ah_by_md = ah_by_md.sort_values("count", ascending=True)
+
+    if mode == "pct":
+        # Percentage of each MD's total completed tasks that are after-hours
+        completed = task_df[task_df["CompletedDateTime"].notna()]
+        total_by_md = completed.groupby("CompletingMD").size()
+        ah_by_md["value"] = ah_by_md.apply(
+            lambda r: round(r["count"] / total_by_md.get(r["CompletingMD"], 1) * 100, 1), axis=1
+        )
+        x_title = "% of MD's Tasks After-Hours"
+        hover_suffix = "%"
+    else:
+        ah_by_md["value"] = ah_by_md["count"]
+        x_title = "After-Hours Tasks"
+        hover_suffix = ""
+
+    ah_by_md = ah_by_md.sort_values("value", ascending=True)
     ah_by_md["short_name"] = ah_by_md["CompletingMD"].str.split(",").str[0]
 
     fig = go.Figure(go.Bar(
-        x=ah_by_md["count"],
+        x=ah_by_md["value"],
         y=ah_by_md["short_name"],
         orientation="h",
         marker_color=SEMANTIC_COLORS["warning"],
+        hovertemplate="%{y}: %{x}" + hover_suffix + "<extra></extra>",
     ))
 
     apply_default_layout(fig, autosize=True)
-    fig.update_layout(xaxis_title="After-Hours Tasks", margin=dict(l=100, r=16, t=4, b=28))
+    fig.update_layout(xaxis_title=x_title, margin=dict(l=100, r=16, t=4, b=28))
     return fig
 
 
-def _build_crosscoverage_chart(task_df):
+def _build_crosscoverage_chart(task_df, mode="count"):
     """Bar chart showing cross-coverage by physician."""
     if task_df.empty or "CompletingMD" not in task_df.columns or "TreatingPhysician" not in task_df.columns:
         return empty_figure("No task data")
@@ -1069,18 +1191,33 @@ def _build_crosscoverage_chart(task_df):
         return empty_figure("No cross-coverage tasks")
 
     cc_by_md = cross.groupby("CompletingMD").size().reset_index(name="count")
-    cc_by_md = cc_by_md.sort_values("count", ascending=True)
+
+    if mode == "pct":
+        # Percentage of each MD's total completed tasks that are cross-coverage
+        total_by_md = completed.groupby("CompletingMD").size()
+        cc_by_md["value"] = cc_by_md.apply(
+            lambda r: round(r["count"] / total_by_md.get(r["CompletingMD"], 1) * 100, 1), axis=1
+        )
+        x_title = "% of MD's Tasks Cross-Coverage"
+        hover_suffix = "%"
+    else:
+        cc_by_md["value"] = cc_by_md["count"]
+        x_title = "Cross-Coverage Tasks"
+        hover_suffix = ""
+
+    cc_by_md = cc_by_md.sort_values("value", ascending=True)
     cc_by_md["short_name"] = cc_by_md["CompletingMD"].str.split(",").str[0]
 
     fig = go.Figure(go.Bar(
-        x=cc_by_md["count"],
+        x=cc_by_md["value"],
         y=cc_by_md["short_name"],
         orientation="h",
         marker_color=CHART_COLORWAY[1],
+        hovertemplate="%{y}: %{x}" + hover_suffix + "<extra></extra>",
     ))
 
     apply_default_layout(fig, autosize=True)
-    fig.update_layout(xaxis_title="Cross-Coverage Tasks", margin=dict(l=100, r=16, t=4, b=28))
+    fig.update_layout(xaxis_title=x_title, margin=dict(l=100, r=16, t=4, b=28))
     return fig
 
 
@@ -1204,52 +1341,74 @@ def _build_calendar_heatmap(df):
 
 
 def _build_schedule_table(df):
-    """Build AG Grid table of schedule records (one row per physician-day)."""
+    """Build rowData and columnDefs for the schedule detail grid."""
     if df.empty:
-        return dmc.Text("No schedule data available", c=NEUTRAL["text_muted"], ta="center", py="xl")
+        return [], []
 
     # Deduplicate: pick highest-priority status per physician-day
-    # (same logic as calendar heatmap)
     _STATUS_PRIORITY = {
         "LACEY": 6, "CENTRALIA": 5, "ABERDEEN": 5,
         "ON CALL": 4, "ON": 4, "WEEKEND CALL": 3,
         "OFF": 1, "VACATION": 0, "SICK": 0, "SICK LEAVE": 0,
     }
-    deduped = df.copy()
-    deduped["_priority"] = deduped["Status"].str.upper().map(_STATUS_PRIORITY).fillna(2)
-    deduped = deduped.sort_values(["Date", "Physician", "_priority"], ascending=[False, True, False])
-    deduped = deduped.drop_duplicates(subset=["Date", "Physician"], keep="first")
-    deduped = deduped.drop(columns=["_priority"])
+    from utils.holidays import get_holidays
+    holidays = get_holidays()
 
-    col_map = {
-        "Date": "Date",
-        "Physician": "Physician",
-        "Status": "Status",
-    }
+    working = df.copy()
 
-    display_cols = []
-    for col, header in col_map.items():
-        if col in deduped.columns:
-            display_cols.append({"field": col, "headerName": header})
+    # Build a date-level holiday name lookup from OFF rows BEFORE dedup.
+    # Uses date-level (not physician-level) so every physician on a holiday
+    # gets the name even if their winning row is WEEKEND CALL, not OFF.
+    is_hol_date = working["Date"].dt.normalize().isin(holidays)
+    is_off = working["Status"].str.upper() == "OFF"
+    has_note = working["ActivityNote"].notna() & (working["ActivityNote"] != "")
+    cleaned_note = working["ActivityNote"].str.replace(r"^CLOSED\s*-?\s*", "", regex=True).str.strip()
+    working["_hol_note"] = cleaned_note.where(is_hol_date & is_off & has_note, "")
+    # Most common cleaned note per date
+    hol_notes = working.loc[working["_hol_note"] != "", ["Date", "_hol_note"]]
+    if not hol_notes.empty:
+        holiday_lookup = (
+            hol_notes.groupby(hol_notes["Date"].dt.normalize())["_hol_note"]
+            .agg(lambda s: s.value_counts().index[0])
+            .rename("_holiday_name")
+        )
+    else:
+        holiday_lookup = pd.Series(dtype=str, name="_holiday_name")
 
-    if not display_cols:
-        return dmc.Text("No schedule data available", c=NEUTRAL["text_muted"], ta="center", py="xl")
+    # Deduplicate: pick highest-priority status per physician-day
+    working["_priority"] = working["Status"].str.upper().map(_STATUS_PRIORITY).fillna(2)
+    working = working.sort_values(["Date", "Physician", "_priority"], ascending=[False, True, False])
+    deduped = working.drop_duplicates(subset=["Date", "Physician"], keep="first")
+    deduped = deduped.drop(columns=["_priority", "_hol_note"])
 
-    table_df = deduped.head(200).copy()
-    if "Date" in table_df.columns:
-        table_df["Date"] = table_df["Date"].dt.strftime("%Y-%m-%d")
-    table_df = sanitize_for_grid(table_df)
-
-    return dag.AgGrid(
-        id=f"{PAGE_ID}-detail-grid",
-        rowData=table_df.to_dict("records"),
-        columnDefs=display_cols,
-        defaultColDef=DEFAULT_COLUMN_DEFS,
-        columnSize="autoSize",
-        dashGridOptions={**DEFAULT_GRID_OPTIONS, "paginationPageSize": 25},
-        style=DEFAULT_GRID_STYLE,
-        className=DEFAULT_GRID_CLASS,
+    # Map holiday name by date, normalize to title case
+    deduped["Holiday"] = (
+        deduped["Date"].dt.normalize().map(holiday_lookup).fillna("").str.title()
     )
+
+    # Derive day-of-week and weekend flag
+    deduped["DayOfWeek"] = deduped["Date"].dt.strftime("%a")
+    deduped["Weekend"] = deduped["Date"].dt.dayofweek.ge(5).map({True: "Yes", False: ""})
+
+    column_defs = [
+        {"field": "Date", "headerName": "Date", "width": 120, "suppressSizeToFit": True, "sort": "desc"},
+        {"field": "DayOfWeek", "headerName": "Day", "width": 75, "suppressSizeToFit": True},
+        {"field": "Physician", "headerName": "Physician", "width": 160},
+        {"field": "Status", "headerName": "Status", "width": 140},
+        {"field": "Department", "headerName": "Department", "width": 120},
+        {"field": "Weekend", "headerName": "Weekend", "width": 100},
+        {"field": "Holiday", "headerName": "Holiday", "width": 220},
+        {"field": "ActivityNote", "headerName": "Comment", "width": 200},
+    ]
+    # Only include columns that exist
+    available = set(deduped.columns)
+    column_defs = [cd for cd in column_defs if cd["field"] in available]
+
+    if "Date" in deduped.columns:
+        deduped["Date"] = deduped["Date"].dt.strftime("%Y-%m-%d")
+
+    table_df = sanitize_for_grid(deduped)
+    return table_df.to_dict("records"), column_defs
 
 
 # ---------------------------------------------------------------------------
@@ -1282,6 +1441,37 @@ def toggle_manpower_settings(n, style):
     return {"display": "block"} if is_hidden else {"display": "none"}
 
 
+# Sites / After-Hours / Cross-Coverage settings panel toggle + export
+for _sid, _gid in [
+    (f"{PAGE_ID}-sites", f"{PAGE_ID}-chart-sites"),
+    (f"{PAGE_ID}-afterhours", f"{PAGE_ID}-chart-afterhours"),
+    (f"{PAGE_ID}-crosscov", f"{PAGE_ID}-chart-crosscoverage"),
+]:
+    clientside_callback(
+        ClientsideFunction("chartSettings", "toggle"),
+        Output(f"{_sid}-settings-panel", "style"),
+        Input(f"{_sid}-settings-btn", "n_clicks"),
+        State(f"{_sid}-settings-panel", "style"),
+        prevent_initial_call=True,
+    )
+    clientside_callback(
+        ClientsideFunction("chartExport", "exportPng"),
+        Output(f"{_sid}-settings-export", "n_clicks"),
+        Input(f"{_sid}-settings-export", "n_clicks"),
+        State(_gid, "id"),
+        prevent_initial_call=True,
+    )
+
+# After-hours filter panel toggle
+clientside_callback(
+    ClientsideFunction("chartSettings", "toggle"),
+    Output(f"{PAGE_ID}-ah-filter-panel", "style"),
+    Input(f"{PAGE_ID}-ah-filter-btn", "n_clicks"),
+    State(f"{PAGE_ID}-ah-filter-panel", "style"),
+    prevent_initial_call=True,
+)
+
+
 # ---------------------------------------------------------------------------
 # KPI Sparkline clientside callbacks
 # ---------------------------------------------------------------------------
@@ -1297,3 +1487,16 @@ for _key in _SPARK_KEYS:
         Input(f"{PAGE_ID}-filter-smoothing", "value"),
         State(f"{PAGE_ID}-spark-{_key}", "id"),
     )
+
+# Table export CSV
+clientside_callback(
+    f"""function(n) {{
+        if (!n) return window.dash_clientside.no_update;
+        gridExportCsv('{PAGE_ID}-detail-grid', 'physician_schedule.csv');
+        return window.dash_clientside.no_update;
+    }}""",
+    Output(f"{PAGE_ID}-table-export", "n_clicks"),
+    Input(f"{PAGE_ID}-table-export", "n_clicks"),
+    prevent_initial_call=True,
+)
+

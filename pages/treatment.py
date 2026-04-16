@@ -14,7 +14,7 @@ from config.settings import (
     DEPARTMENTS, DEPARTMENT_COLORS, CHART_COLORWAY, PRIMARY,
     DEFAULT_LAYOUT, FONT_FAMILY, SEMANTIC_COLORS, NEUTRAL,
     DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, CHART_PAPER_HEIGHT,
-    MACHINE_DEPT, MACHINE_COLORS,
+    MACHINE_DEPT, MACHINE_COLORS, PRIOR_PERIOD_COLORS,
 )
 from components.filter_bar import department_chips
 from components.diagnosis_filter import diagnosis_accordion, register_diagnosis_callbacks
@@ -318,7 +318,7 @@ layout = dmc.Stack(
             dmc.GridCol(kpi_placeholder(), id="tx-kpi-gating", span={"base": 12, "sm": 6, "md": 2}),
         ]),
 
-        # Row 1: Treatment Volume + Technique Mix
+        # Row 1: Treatment Volume + Cumulative Treatment Volume
         dmc.Grid(gutter="md", children=[
             dmc.GridCol(
                 chart_card(
@@ -374,6 +374,63 @@ layout = dmc.Stack(
             ),
             dmc.GridCol(
                 chart_card(
+                    "tx-chart-cumulative",
+                    "Cumulative Treatment Volume",
+                    settings_id="tx-cumulative",
+                    chart_types=[
+                        {"value": "line", "label": "Line"},
+                        {"value": "area", "label": "Area"},
+                        {"value": "bar", "label": "Bar"},
+                    ],
+                    show_smooth=True,
+                    show_prior_periods=True,
+                    smooth_min=0,
+                    smooth_max=1,
+                    smooth_step=0.05,
+                    smooth_default=0.1,
+                    prior_periods_default=3,
+                    paper_padding="md",
+                    extra_controls=[
+                        dmc.SegmentedControl(
+                            id="tx-cumulative-mode",
+                            data=[
+                                {"value": "prior", "label": "Prior Periods"},
+                                {"value": "slice", "label": "Slice By"},
+                            ],
+                            value="prior",
+                            size="xs",
+                        ),
+                        dmc.SegmentedControl(
+                            id="tx-cumulative-period-type",
+                            data=[
+                                {"value": "calendar", "label": "Calendar"},
+                                {"value": "rolling", "label": "Rolling"},
+                            ],
+                            value="calendar",
+                            size="xs",
+                        ),
+                        dmc.SegmentedControl(
+                            id="tx-cumulative-slice",
+                            data=[
+                                {"value": "dept", "label": "Dept"},
+                                {"value": "machine", "label": "Machine"},
+                                {"value": "physician", "label": "MD"},
+                                {"value": "technique", "label": "Technique"},
+                            ],
+                            value="dept",
+                            size="xs",
+                            style={"display": "none"},
+                        ),
+                    ],
+                ),
+                span={"base": 12, "md": 6},
+            ),
+        ]),
+
+        # Row 2: Technique Mix + Field Type Mix
+        dmc.Grid(gutter="md", children=[
+            dmc.GridCol(
+                chart_card(
                     "tx-chart-technique",
                     "Technique Mix",
                     settings_id="tx-technique",
@@ -412,9 +469,49 @@ layout = dmc.Stack(
                 ),
                 span={"base": 12, "md": 6},
             ),
+            dmc.GridCol(
+                chart_card(
+                    "tx-chart-fieldtype",
+                    "Field Type Mix",
+                    settings_id="tx-fieldtype",
+                    chart_types=[
+                        {"value": "area", "label": "Area"},
+                        {"value": "line", "label": "Line"},
+                        {"value": "bar", "label": "Bar"},
+                    ],
+                    show_smooth=True,
+                    smooth_max=40,
+                    smooth_default=15,
+                    store_data=True,
+                    paper_padding="md",
+                    extra_controls_left=[
+                        dmc.SegmentedControl(
+                            id="tx-fieldtype-pct",
+                            data=[
+                                {"value": "count", "label": "#"},
+                                {"value": "pct", "label": "%"},
+                            ],
+                            value="count", size="xs",
+                        ),
+                    ],
+                    extra_controls=[
+                        dmc.SegmentedControl(
+                            id="tx-fieldtype-agg",
+                            data=[
+                                {"value": "D", "label": "Daily"},
+                                {"value": "W", "label": "Weekly"},
+                                {"value": "M", "label": "Monthly"},
+                                {"value": "Y", "label": "Yearly"},
+                            ],
+                            value="D", size="xs",
+                        ),
+                    ],
+                ),
+                span={"base": 12, "md": 6},
+            ),
         ]),
 
-        # Row 2: Session Duration + Field Type Breakdown
+        # Row 3: Session Duration + Image Guidance
         dmc.Grid(gutter="md", children=[
             dmc.GridCol(
                 chart_card(
@@ -467,9 +564,9 @@ layout = dmc.Stack(
             ),
             dmc.GridCol(
                 chart_card(
-                    "tx-chart-fields",
-                    "Field Type Breakdown",
-                    settings_id="tx-fields",
+                    "tx-chart-igrt",
+                    "Image Guidance",
+                    settings_id="tx-igrt",
                     chart_types=[
                         {"value": "area", "label": "Area"},
                         {"value": "line", "label": "Line"},
@@ -482,17 +579,18 @@ layout = dmc.Stack(
                     paper_padding="md",
                     extra_controls_left=[
                         dmc.SegmentedControl(
-                            id="tx-fields-pct",
+                            id="tx-igrt-pct",
                             data=[
                                 {"value": "count", "label": "#"},
-                                {"value": "pct", "label": "%"},
+                                {"value": "per_session", "label": "/ Ses"},
+                                {"value": "pct_sessions", "label": "% Ses"},
                             ],
-                            value="count", size="xs",
+                            value="pct_sessions", size="xs",
                         ),
                     ],
                     extra_controls=[
                         dmc.SegmentedControl(
-                            id="tx-fields-agg",
+                            id="tx-igrt-agg",
                             data=[
                                 {"value": "D", "label": "Daily"},
                                 {"value": "W", "label": "Weekly"},
@@ -507,7 +605,7 @@ layout = dmc.Stack(
             ),
         ]),
 
-        # Row 3: New Starts + Gating Utilization
+        # Row 4: New Starts + Gating Utilization
         dmc.Grid(gutter="md", children=[
             dmc.GridCol(
                 chart_card(
@@ -618,7 +716,7 @@ layout = dmc.Stack(
             ),
         ]),
 
-        # Row 4: Multi-Iso Rate + Avg Fields
+        # Row 5: Multi-Iso Rate + Avg Fields
         dmc.Grid(gutter="md", children=[
             dmc.GridCol(
                 chart_card(
@@ -728,6 +826,7 @@ layout = dmc.Stack(
         # Stores
         dcc.Store(id="tx-store-kpi-sparklines"),
         dcc.Store(id="tx-store-elapsed"),
+        dcc.Store(id="tx-store-cumulative"),
         dcc.Store(id="tx-table-filter-rows"),
 
         # Interval for periodic refresh
@@ -741,9 +840,11 @@ layout = dmc.Stack(
 # ---------------------------------------------------------------------------
 register_chart_callbacks([
     {"sid": "tx-elapsed", "gid": "tx-chart-elapsed", "show_smooth": False, "show_grouping": False},
+    {"sid": "tx-cumulative", "gid": "tx-chart-cumulative", "show_grouping": False},
     ("tx-volume", "tx-chart-volume", "tx-chart-volume-store"),
     ("tx-technique", "tx-chart-technique", "tx-chart-technique-store"),
-    ("tx-fields", "tx-chart-fields", "tx-chart-fields-store"),
+    ("tx-fieldtype", "tx-chart-fieldtype", "tx-chart-fieldtype-store"),
+    ("tx-igrt", "tx-chart-igrt", "tx-chart-igrt-store"),
     ("tx-newstarts", "tx-chart-newstarts", "tx-chart-newstarts-store"),
     ("tx-gating", "tx-chart-gating", "tx-chart-gating-store"),
     ("tx-multiiso", "tx-chart-multiiso", "tx-chart-multiiso-store"),
@@ -1064,6 +1165,272 @@ def _to_pct(store_data):
     return store_data
 
 
+def _build_day_index_ticks(start_norm, n_days, max_ticks=12):
+    """Build tick positions and labels for day-indexed cumulative charts."""
+    dates = pd.date_range(start_norm, periods=n_days, freq="D")
+    if n_days <= max_ticks:
+        positions = list(range(n_days))
+        labels = [d.strftime("%-m/%-d") for d in dates]
+        return positions, labels
+    step = max(1, n_days // max_ticks)
+    positions, labels = [], []
+    for i in range(0, n_days, step):
+        positions.append(i)
+        labels.append(dates[i].strftime("%-m/%-d"))
+    if positions[-1] != n_days - 1:
+        positions.append(n_days - 1)
+        labels.append(dates[-1].strftime("%-m/%-d"))
+    return positions, labels
+
+
+def _prepare_cumulative_data(df, start, end, date_preset,
+                              mode="prior", period_type="calendar",
+                              slice_by="dept", max_prior=10):
+    """Prepare cumulative treatment volume data for overlay chart."""
+    if df.empty or "ScheduledDateTime" not in df.columns:
+        return None
+
+    today = pd.Timestamp.now().normalize()
+    if end.normalize() > today:
+        end = today
+
+    period_days = (end - start).days + 1
+    if period_days < 2:
+        return None
+
+    if period_days > 365 and period_type == "calendar":
+        period_type = "rolling"
+
+    dff_all = df.copy()
+    if dff_all.empty:
+        return None
+
+    def _cumulative_for_window(dfa, w_start, w_end):
+        mask = (dfa["ScheduledDateTime"] >= w_start) & (dfa["ScheduledDateTime"] <= w_end)
+        sub = dfa.loc[mask]
+        if sub.empty:
+            return []
+        daily = sub.groupby(sub["ScheduledDateTime"].dt.normalize()).size()
+        idx = pd.date_range(w_start.normalize(), w_end.normalize(), freq="D")
+        daily = daily.reindex(idx, fill_value=0)
+        return daily.cumsum().tolist()
+
+    def _slice_totals_for_window(dfa, w_start, w_end, sb):
+        mask = (dfa["ScheduledDateTime"] >= w_start) & (dfa["ScheduledDateTime"] <= w_end)
+        sub = dfa.loc[mask]
+        if sub.empty:
+            return {}
+        if sb == "total":
+            return {"Total": len(sub)}
+        if sb == "dept" and "Department" in sub.columns:
+            return sub.groupby("Department").size().to_dict()
+        elif sb == "machine" and "Machine" in sub.columns:
+            return sub.groupby("Machine").size().to_dict()
+        elif sb == "physician" and "TreatingPhysician" in sub.columns:
+            counts = sub.groupby("TreatingPhysician").size()
+            return {(k.split(",")[0] if "," in k else k): v for k, v in counts.items()}
+        elif sb == "technique" and "PlanTechniques" in sub.columns:
+            sub = sub.copy()
+            sub["_tech"] = sub["PlanTechniques"].apply(_bucket_technique)
+            return sub.groupby("_tech").size().to_dict()
+        return {}
+
+    n_days = period_days
+    start_norm = start.normalize()
+    day_indices = list(range(n_days))
+    tick_positions, tick_labels = _build_day_index_ticks(start_norm, n_days)
+
+    current_vals = _cumulative_for_window(dff_all, start, end) if not dff_all.empty else [0] * n_days
+    data_min = dff_all["ScheduledDateTime"].min() if not dff_all.empty else start
+
+    def _period_label(p_start, p_end):
+        same_year = p_start.year == p_end.year
+        same_month = same_year and p_start.month == p_end.month
+        if same_month:
+            return p_start.strftime("%b %Y")
+        if same_year:
+            if date_preset in ("ytd", "last_year") or (p_start.month == 1 and p_end.month == 12):
+                return str(p_start.year)
+            return f"{p_start.strftime('%b')} – {p_end.strftime('%b %Y')}"
+        fmt = "%b '%y"
+        return f"{p_start.strftime(fmt)} – {p_end.strftime(fmt)}"
+
+    windows = []
+    if date_preset != "all":
+        for i in range(1, max_prior + 1):
+            if period_type == "calendar":
+                try:
+                    p_start = start - pd.DateOffset(years=i)
+                    p_end = end - pd.DateOffset(years=i)
+                except Exception:
+                    continue
+            else:
+                shift = pd.Timedelta(days=period_days * i)
+                p_start = start - shift
+                p_end = end - shift
+            if p_end < data_min:
+                break
+            windows.append((_period_label(p_start, p_end), p_start, p_end))
+
+    prior = []
+    last_prior_start = None
+    for pi, (label, p_start, p_end) in enumerate(windows):
+        vals = _cumulative_for_window(dff_all, p_start, p_end)
+        if vals and any(v > 0 for v in vals):
+            if len(vals) < n_days:
+                vals = vals + [vals[-1] if vals else 0] * (n_days - len(vals))
+            elif len(vals) > n_days:
+                vals = vals[:n_days]
+            prior.append({"label": label, "values": vals,
+                          "color": PRIOR_PERIOD_COLORS[min(pi, len(PRIOR_PERIOD_COLORS) - 1)]})
+            last_prior_start = p_start
+
+    has_partial = (last_prior_start is not None
+                   and last_prior_start.normalize() < data_min.normalize())
+    _prior_meta = {
+        "periodDays": period_days,
+        "maxAvailablePriors": len(prior),
+        "hasPartialPrior": has_partial,
+    }
+
+    current_label = _period_label(start, end)
+    if len(current_vals) < n_days:
+        current_vals = current_vals + [None] * (n_days - len(current_vals))
+
+    # Per-slice-per-period breakdown for bar mode
+    all_windows = [(current_label, start, end)]
+    for label, p_start, p_end in windows:
+        all_windows.append((label, p_start, p_end))
+
+    all_slice_totals = []
+    all_slice_keys = set()
+    for wlabel, ws, we in all_windows:
+        totals = _slice_totals_for_window(dff_all, ws, we, slice_by)
+        all_slice_totals.append((wlabel, totals))
+        all_slice_keys.update(totals.keys())
+
+    slice_keys_sorted = sorted(all_slice_keys)
+    if slice_by == "dept":
+        slice_colors = {k: DEPARTMENT_COLORS.get(k, CHART_COLORWAY[i % len(CHART_COLORWAY)])
+                       for i, k in enumerate(slice_keys_sorted)}
+    elif slice_by == "machine":
+        slice_colors = {k: MACHINE_COLORS.get(k, CHART_COLORWAY[i % len(CHART_COLORWAY)])
+                       for i, k in enumerate(slice_keys_sorted)}
+    elif slice_by == "technique":
+        slice_colors = {k: _TECHNIQUE_COLORS.get(k, CHART_COLORWAY[i % len(CHART_COLORWAY)])
+                       for i, k in enumerate(slice_keys_sorted)}
+    else:
+        slice_colors = {k: CHART_COLORWAY[i % len(CHART_COLORWAY)]
+                       for i, k in enumerate(slice_keys_sorted)}
+
+    breakdown_periods = [t[0] for t in reversed(all_slice_totals)]
+    breakdown_slices = []
+    for sk in slice_keys_sorted:
+        vals = [t[1].get(sk, 0) for t in reversed(all_slice_totals)]
+        breakdown_slices.append({"name": sk, "values": vals, "color": slice_colors[sk]})
+    slice_breakdown = {"periods": breakdown_periods, "slices": breakdown_slices}
+
+    if mode == "prior":
+        return {
+            "mode": "prior",
+            "startDate": start_norm.isoformat(),
+            "dayIndices": day_indices,
+            "tickPositions": tick_positions,
+            "tickLabels": tick_labels,
+            "current": {
+                "label": current_label,
+                "values": current_vals,
+                "color": PRIMARY,
+                "endpoint": current_vals[-1] if current_vals and current_vals[-1] is not None else (
+                    next((v for v in reversed(current_vals) if v is not None), 0)
+                ),
+            },
+            "prior": prior,
+            "sliceBreakdown": slice_breakdown,
+            **_prior_meta,
+            "height": 350,
+            "yTitle": "Cumulative Treatments",
+        }
+
+    # Slice mode
+    mask = (dff_all["ScheduledDateTime"] >= start) & (dff_all["ScheduledDateTime"] <= end)
+    dff_period = dff_all.loc[mask]
+    dates_range = pd.date_range(start.normalize(), end.normalize(), freq="D")
+
+    def _trimmed_cumsum(daily_counts):
+        cumvals = daily_counts.cumsum().tolist()
+        raw = daily_counts.tolist()
+        first_idx = next((i for i, v in enumerate(raw) if v > 0), None)
+        if first_idx is None:
+            return [None] * len(cumvals)
+        for i in range(first_idx):
+            cumvals[i] = None
+        last_idx = next((i for i in range(len(raw) - 1, -1, -1) if raw[i] > 0), first_idx)
+        for i in range(last_idx + 1, len(cumvals)):
+            cumvals[i] = cumvals[last_idx]
+        return cumvals
+
+    series = []
+
+    if slice_by == "dept" and "Department" in dff_period.columns:
+        for dept in sorted(dff_period["Department"].dropna().unique()):
+            sub = dff_period[dff_period["Department"] == dept]
+            daily = sub.groupby(sub["ScheduledDateTime"].dt.normalize()).size()
+            daily = daily.reindex(dates_range, fill_value=0)
+            series.append({
+                "name": dept,
+                "values": _trimmed_cumsum(daily),
+                "color": DEPARTMENT_COLORS.get(dept, CHART_COLORWAY[0]),
+            })
+
+    elif slice_by == "machine" and "Machine" in dff_period.columns:
+        for m in sorted(dff_period["Machine"].dropna().unique()):
+            sub = dff_period[dff_period["Machine"] == m]
+            daily = sub.groupby(sub["ScheduledDateTime"].dt.normalize()).size()
+            daily = daily.reindex(dates_range, fill_value=0)
+            series.append({
+                "name": m,
+                "values": _trimmed_cumsum(daily),
+                "color": MACHINE_COLORS.get(m, CHART_COLORWAY[len(series) % len(CHART_COLORWAY)]),
+            })
+
+    elif slice_by == "physician" and "TreatingPhysician" in dff_period.columns:
+        for i, phys in enumerate(sorted(dff_period["TreatingPhysician"].dropna().unique())):
+            sub = dff_period[dff_period["TreatingPhysician"] == phys]
+            daily = sub.groupby(sub["ScheduledDateTime"].dt.normalize()).size()
+            daily = daily.reindex(dates_range, fill_value=0)
+            series.append({
+                "name": phys.split(",")[0] if "," in phys else phys,
+                "values": _trimmed_cumsum(daily),
+                "color": CHART_COLORWAY[i % len(CHART_COLORWAY)],
+            })
+
+    elif slice_by == "technique" and "PlanTechniques" in dff_period.columns:
+        dff_period = dff_period.copy()
+        dff_period["_tech"] = dff_period["PlanTechniques"].apply(_bucket_technique)
+        for tech in [t for t in _TECHNIQUE_ORDER if t in dff_period["_tech"].values]:
+            sub = dff_period[dff_period["_tech"] == tech]
+            daily = sub.groupby(sub["ScheduledDateTime"].dt.normalize()).size()
+            daily = daily.reindex(dates_range, fill_value=0)
+            series.append({
+                "name": tech,
+                "values": _trimmed_cumsum(daily),
+                "color": _TECHNIQUE_COLORS.get(tech, CHART_COLORWAY[len(series) % len(CHART_COLORWAY)]),
+            })
+
+    dates_iso = [d.isoformat() for d in dates_range]
+
+    return {
+        "mode": "slice",
+        "dates": dates_iso,
+        "series": series,
+        "sliceBreakdown": slice_breakdown,
+        **_prior_meta,
+        "height": 350,
+        "yTitle": "Cumulative Treatments",
+    }
+
+
 def _get_date_range(slider_val, daterange):
     """Calculate start/end dates from slider or explicit daterange."""
     today = pd.Timestamp.now().normalize()
@@ -1211,7 +1578,7 @@ def _apply_filters(_n, slider_val, date_preset, departments, physician,
             (df_det_f["ScheduledDateTime"] >= prior_start) & (df_det_f["ScheduledDateTime"] <= prior_end)
         ]
 
-    return df_agg_filtered, df_det_filtered, df_agg_prior, df_det_prior, start, end, trend_label
+    return df_agg_filtered, df_det_filtered, df_agg_prior, df_det_prior, start, end, trend_label, df_det_f
 
 
 # ---------------------------------------------------------------------------
@@ -1295,7 +1662,7 @@ def _update_kpis(*args):
     grid_rows = args[-1]
     filt_args = args[:-1]
     na_kpi = kpi_card("--", "N/A")
-    df_agg_filtered, df_det_filtered, df_agg_prior, df_det_prior, start, end, trend_label = \
+    df_agg_filtered, df_det_filtered, df_agg_prior, df_det_prior, start, end, trend_label, *_ = \
         _apply_filters(*filt_args)
 
     # Apply grid row filter
@@ -1537,7 +1904,7 @@ def _update_volume(*args):
 
 
 # ---------------------------------------------------------------------------
-# Callback 3: Technique Mix store (tech_agg)
+# Callback 3: Technique Mix store
 # ---------------------------------------------------------------------------
 @callback(
     Output("tx-chart-technique-store", "data"),
@@ -1554,6 +1921,7 @@ def _update_technique(*args):
     df_det_filtered = _apply_grid_row_filter(df_det_filtered, grid_rows)
 
     _tech_agg = tech_agg or "D"
+
     if not df_det_filtered.empty and "PlanTechniques" in df_det_filtered.columns:
         tdf = df_det_filtered[["ScheduledDateTime", "PlanTechniques"]].copy()
         tdf["Technique"] = tdf["PlanTechniques"].apply(_bucket_technique)
@@ -1566,6 +1934,80 @@ def _update_technique(*args):
         )
         return _to_pct(result) if tech_pct == "pct" and result else result
     return None
+
+
+# ---------------------------------------------------------------------------
+# Callback 3b: Field Type Mix store
+# ---------------------------------------------------------------------------
+@callback(
+    Output("tx-chart-fieldtype-store", "data"),
+    *_TX_FILTER_INPUTS,
+    Input("tx-fieldtype-agg", "value"),
+    Input("tx-fieldtype-pct", "value"),
+    Input("tx-table-filter-rows", "data"),
+    running=[(Output("tx-chart-fieldtype-loading", "visible"), True, False)],
+)
+def _update_fieldtype(*args):
+    ft_agg, ft_pct, grid_rows = args[-3], args[-2], args[-1]
+    filt_args = args[:-3]
+    _, df_det_filtered, *_ = _apply_filters(*filt_args)
+    df_det_filtered = _apply_grid_row_filter(df_det_filtered, grid_rows)
+
+    _ft_agg = ft_agg or "D"
+
+    if df_det_filtered.empty:
+        return None
+    field_cols = {
+        "Fields_Arc": "Arc",
+        "Fields_DynamicMLC": "Dynamic MLC",
+        "Fields_StaticMLC": "Static MLC",
+        "Fields_Electron": "Electron",
+    }
+    available = {k: v for k, v in field_cols.items() if k in df_det_filtered.columns}
+    if not available:
+        return None
+    fdf = df_det_filtered[["ScheduledDateTime"] + list(available.keys())].copy().fillna(0)
+    fdf["_d"] = fdf["ScheduledDateTime"].dt.normalize()
+    fdf = fdf.melt(id_vars=["_d"], value_vars=list(available.keys()), var_name="_col", value_name="_val")
+    fdf["FieldType"] = fdf["_col"].map(available)
+    field_types = [v for v in field_cols.values() if v in fdf["FieldType"].values]
+    result = _build_census_store(
+        fdf, "_d", "FieldType", "_val", field_types, _FIELD_COLORS,
+        agg=_ft_agg, agg_func="sum", y_title="Fields",
+    )
+    return _to_pct(result) if ft_pct == "pct" and result else result
+
+
+# ---------------------------------------------------------------------------
+# Callback 3c: Cumulative Treatment Volume store
+# ---------------------------------------------------------------------------
+@callback(
+    Output("tx-store-cumulative", "data"),
+    *_TX_FILTER_INPUTS,
+    Input("tx-cumulative-mode", "value"),
+    Input("tx-cumulative-period-type", "value"),
+    Input("tx-cumulative-slice", "value"),
+    Input("tx-table-filter-rows", "data"),
+    running=[(Output("tx-chart-cumulative-loading", "visible"), True, False)],
+)
+def _update_cumulative(*args):
+    cumul_mode, cumul_period_type, cumul_slice, grid_rows = args[-4], args[-3], args[-2], args[-1]
+    filt_args = args[:-4]
+    results = _apply_filters(*filt_args)
+    # df_det_f (index 7) is dimension-filtered but NOT date-filtered — needed for prior periods
+    df_det_all = results[7] if len(results) > 7 else results[1]
+    df_det_all = _apply_grid_row_filter(df_det_all, grid_rows)
+    if df_det_all.empty:
+        return None
+    start, end = results[4], results[5]
+    date_preset = filt_args[2]
+    return _prepare_cumulative_data(
+        df_det_all, start, end, date_preset,
+        mode=cumul_mode or "prior",
+        period_type=cumul_period_type or "calendar",
+        slice_by=cumul_slice or "dept",
+        max_prior=10,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1646,43 +2088,148 @@ def _update_elapsed_store(*args):
 
 
 # ---------------------------------------------------------------------------
-# Callback 5a: Field Type Breakdown (own agg toggle)
+# Callback 5a: Image Guidance (CBCT / PortFilm from Downtime-Fields)
 # ---------------------------------------------------------------------------
-@callback(
-    Output("tx-chart-fields-store", "data"),
-    *_TX_FILTER_INPUTS,
-    Input("tx-fields-agg", "value"),
-    Input("tx-fields-pct", "value"),
-    Input("tx-table-filter-rows", "data"),
-    running=[(Output("tx-chart-fields-loading", "visible"), True, False)],
-)
-def _update_fields(*args):
-    fields_agg, fields_pct, grid_rows = args[-3], args[-2], args[-1]
-    filt_args = args[:-3]
-    _, df_det_filtered, *_ = _apply_filters(*filt_args)
-    df_det_filtered = _apply_grid_row_filter(df_det_filtered, grid_rows)
+_IGRT_COLORS = {
+    "CBCT": CHART_COLORWAY[1],       # blue
+    "Port Film": CHART_COLORWAY[4],  # orange
+}
 
-    if df_det_filtered.empty:
+_IGRT_TYPE_MAP = {
+    "Image": "CBCT",
+    "PortFilm": "Port Film",
+}
+
+
+def _igrt_per_session(store_data, sessions_with_type):
+    """Convert IGRT counts to average per session when that image type is used.
+
+    sessions_with_type: dict mapping (date_iso, image_type) → count of
+    unique sessions that had at least one image of that type.
+    """
+    if not store_data or not store_data.get("series") or not sessions_with_type:
+        return store_data
+    for di, d in enumerate(store_data["dates"]):
+        for s in store_data["series"]:
+            denom = sessions_with_type.get((d, s["name"]), 0)
+            if denom > 0:
+                s["values"][di] = round(s["values"][di] / denom, 2)
+            else:
+                s["values"][di] = 0
+    store_data["yTitle"] = "per Session"
+    return store_data
+
+
+def _igrt_pct_sessions(store_data, sessions_with_type, tx_sessions):
+    """Convert to % of treatment sessions containing each image type.
+
+    sessions_with_type: dict mapping (date_iso, image_type) → count of
+    unique sessions that had at least one image of that type.
+    tx_sessions: dict mapping date_iso → total session count.
+    """
+    if not store_data or not store_data.get("series") or not tx_sessions:
+        return store_data
+    for di, d in enumerate(store_data["dates"]):
+        denom = tx_sessions.get(d, 0)
+        if denom > 0:
+            for s in store_data["series"]:
+                numerator = sessions_with_type.get((d, s["name"]), 0)
+                s["values"][di] = round(numerator / denom * 100, 1)
+        else:
+            for s in store_data["series"]:
+                s["values"][di] = 0
+    store_data["yTitle"] = "% of Sessions"
+    return store_data
+
+
+@callback(
+    Output("tx-chart-igrt-store", "data"),
+    Input("tx-interval", "n_intervals"),
+    Input("tx-date-slider", "value"),
+    Input("tx-filter-date-preset", "value"),
+    Input("tx-filter-department", "value"),
+    Input("tx-igrt-agg", "value"),
+    Input("tx-igrt-pct", "value"),
+    running=[(Output("tx-chart-igrt-loading", "visible"), True, False)],
+)
+def _update_igrt(_n, slider_val, date_preset, departments,
+                 igrt_agg, igrt_pct):
+    from data.loader import load_downtime_fields_imaging
+
+    df_all = load_downtime_fields_imaging()
+    if df_all.empty:
         return None
-    field_cols = {
-        "Fields_Arc": "Arc",
-        "Fields_DynamicMLC": "Dynamic MLC",
-        "Fields_StaticMLC": "Static MLC",
-        "Fields_Electron": "Electron",
-    }
-    available = {k: v for k, v in field_cols.items() if k in df_det_filtered.columns}
-    if not available:
+
+    # Date filter
+    start, end = _get_date_range(slider_val, None)
+    df_all = df_all[(df_all["ActivityDate"] >= start) & (df_all["ActivityDate"] <= end)]
+
+    # Exclude weekends and holidays
+    df_all = df_all[df_all["ActivityDate"].dt.weekday < 5]
+    holidays = get_holidays()
+    if holidays:
+        df_all = df_all[~df_all["ActivityDate"].dt.normalize().isin(holidays)]
+
+    # Department filter via Site
+    if departments:
+        df_all = df_all[df_all["Site"].isin(departments)]
+
+    if df_all.empty:
         return None
-    fdf = df_det_filtered[["ScheduledDateTime"] + list(available.keys())].copy().fillna(0)
-    fdf["_d"] = fdf["ScheduledDateTime"].dt.normalize()
-    fdf = fdf.melt(id_vars=["_d"], value_vars=list(available.keys()), var_name="_col", value_name="_val")
-    fdf["FieldType"] = fdf["_col"].map(available)
-    field_types = [v for v in field_cols.values() if v in fdf["FieldType"].values]
+
+    df_all["_d"] = df_all["ActivityDate"].dt.normalize()
+    _agg = igrt_agg or "D"
+
+    # Imaging rows only for the chart
+    df = df_all[df_all["RecordType"].isin(["Image", "PortFilm"])].copy()
+    if df.empty:
+        return None
+
+    df["ImageType"] = df["RecordType"].map(_IGRT_TYPE_MAP).fillna(df["RecordType"])
+    df["_count"] = 1
+
+    present = [t for t in _IGRT_TYPE_MAP.values() if t in df["ImageType"].values]
+    if not present:
+        return None
     result = _build_census_store(
-        fdf, "_d", "FieldType", "_val", field_types, _FIELD_COLORS,
-        agg=fields_agg or "D", agg_func="sum", y_title="Fields",
+        df, "_d", "ImageType", "_count", present, _IGRT_COLORS,
+        agg=_agg, agg_func="sum", y_title="Acquisitions",
     )
-    return _to_pct(result) if fields_pct == "pct" and result else result
+
+    # Rate modes: per session or % of sessions
+    if igrt_pct in ("per_session", "pct_sessions") and result and result.get("dates"):
+        # Sessions with each image type (unique patients per period)
+        img = df.copy()
+        if _agg in ("W", "M", "Y"):
+            img["_pd"] = img["_d"].dt.to_period(_agg).dt.to_timestamp()
+        else:
+            img["_pd"] = img["_d"]
+        sess_by_type = (
+            img.groupby(["_pd", "ImageType"])["PatientId"]
+            .nunique()
+            .to_dict()
+        )
+        swt_map = {
+            (pd.Timestamp(d).isoformat(), t): int(c)
+            for (d, t), c in sess_by_type.items()
+        }
+
+        if igrt_pct == "per_session":
+            result = _igrt_per_session(result, swt_map)
+        else:
+            # Total treatment sessions for the denominator
+            df_tx = df_all[df_all["RecordType"] == "Treatment"]
+            if not df_tx.empty:
+                tx_sess = df_tx.copy()
+                if _agg in ("W", "M", "Y"):
+                    tx_sess["_pd"] = tx_sess["_d"].dt.to_period(_agg).dt.to_timestamp()
+                else:
+                    tx_sess["_pd"] = tx_sess["_d"]
+                tx_counts = tx_sess.groupby("_pd")["PatientId"].nunique()
+                tx_map = {d.isoformat(): int(c) for d, c in tx_counts.items()}
+                result = _igrt_pct_sessions(result, swt_map, tx_map)
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -2045,7 +2592,7 @@ _SLICE_CLASS_JS = """function(val) {
     return (val && val !== "total") ? "slice-group-active" : "slice-total-active";
 }"""
 for _sc_id in ["tx-groupby", "tx-elapsed-slice", "tx-gating-slice",
-                "tx-multiiso-slice", "tx-avgfields-slice"]:
+                "tx-multiiso-slice", "tx-avgfields-slice", "tx-cumulative-slice"]:
     clientside_callback(
         _SLICE_CLASS_JS,
         Output(_sc_id, "className"),
@@ -2137,12 +2684,106 @@ clientside_callback(
 
 clientside_callback(
     _CENSUS_RENDER,
-    Output("tx-chart-fields", "figure"),
-    Input("tx-chart-fields-store", "data"),
-    Input("tx-fields-settings-smooth", "value"),
-    Input("tx-fields-settings-type", "value"),
-    Input("tx-fields-settings-stack", "value"),
-    State("tx-chart-fields", "figure"),
+    Output("tx-chart-fieldtype", "figure"),
+    Input("tx-chart-fieldtype-store", "data"),
+    Input("tx-fieldtype-settings-smooth", "value"),
+    Input("tx-fieldtype-settings-type", "value"),
+    Input("tx-fieldtype-settings-stack", "value"),
+    State("tx-chart-fieldtype", "figure"),
+)
+
+clientside_callback(
+    """function(rawData, smoothPct, chartType, stackVal, maxPrior, currentFig) {
+        return window.dash_clientside.cumulative.renderCumulative(rawData, smoothPct, chartType, currentFig, stackVal, maxPrior);
+    }""",
+    Output("tx-chart-cumulative", "figure"),
+    Input("tx-store-cumulative", "data"),
+    Input("tx-cumulative-settings-smooth", "value"),
+    Input("tx-cumulative-settings-type", "value"),
+    Input("tx-cumulative-settings-stack", "value"),
+    Input("tx-cumulative-settings-prior-periods", "value"),
+    State("tx-chart-cumulative", "figure"),
+)
+
+# Cumulative: show/hide slice selector vs period-type based on mode
+clientside_callback(
+    """function(mode) {
+        var isSlice = mode === "slice";
+        return [
+            isSlice ? {"display": "flex"} : {"display": "none"},
+            isSlice ? {"display": "none"} : {"display": "flex"}
+        ];
+    }""",
+    Output("tx-cumulative-slice", "style"),
+    Output("tx-cumulative-period-type", "style"),
+    Input("tx-cumulative-mode", "value"),
+)
+
+# Cumulative: cap prior-periods slider to available data
+clientside_callback(
+    """function(storeData, currentPtValue) {
+        return window.dash_clientside.cumulative.updatePriorControls(storeData, currentPtValue);
+    }""",
+    Output("tx-cumulative-period-type", "data"),
+    Output("tx-cumulative-period-type", "value", allow_duplicate=True),
+    Output("tx-cumulative-settings-prior-periods", "max"),
+    Output("tx-cumulative-settings-prior-periods", "marks"),
+    Input("tx-store-cumulative", "data"),
+    State("tx-cumulative-period-type", "value"),
+    prevent_initial_call=True,
+)
+
+# Cumulative: hide "Total" slice option in line/area mode
+_TX_CUMUL_SLICE_ALL = [
+    {"value": "total", "label": "Total"},
+    {"value": "dept", "label": "Dept"},
+    {"value": "machine", "label": "Machine"},
+    {"value": "physician", "label": "MD"},
+    {"value": "technique", "label": "Technique"},
+]
+_TX_CUMUL_SLICE_NO_TOTAL = [o for o in _TX_CUMUL_SLICE_ALL if o["value"] != "total"]
+
+clientside_callback(
+    """function(chartType, sliceVal) {
+        var all = %s;
+        var noTotal = %s;
+        if (chartType === "bar") {
+            return [all, window.dash_clientside.no_update];
+        }
+        var newVal = (sliceVal === "total") ? "dept" : window.dash_clientside.no_update;
+        return [noTotal, newVal];
+    }""" % (str(_TX_CUMUL_SLICE_ALL).replace("'", '"'), str(_TX_CUMUL_SLICE_NO_TOTAL).replace("'", '"')),
+    Output("tx-cumulative-slice", "data"),
+    Output("tx-cumulative-slice", "value", allow_duplicate=True),
+    Input("tx-cumulative-settings-type", "value"),
+    State("tx-cumulative-slice", "value"),
+    prevent_initial_call=True,
+)
+
+# Cumulative: hide grouping in Prior Periods mode (single dimension)
+clientside_callback(
+    """function(mode, sliceVal, chartType) {
+        var single = !sliceVal || sliceVal === "total" || sliceVal === "";
+        if (single) return {"display": "none"};
+        if (chartType === "bar") return {};
+        var isPrior = mode === "prior";
+        var noStack = chartType === "line";
+        return (isPrior || noStack) ? {"display": "none"} : {};
+    }""",
+    Output("tx-cumulative-settings-stack-wrap", "style"),
+    Input("tx-cumulative-mode", "value"),
+    Input("tx-cumulative-slice", "value"),
+    Input("tx-cumulative-settings-type", "value"),
+)
+
+clientside_callback(
+    _CENSUS_RENDER,
+    Output("tx-chart-igrt", "figure"),
+    Input("tx-chart-igrt-store", "data"),
+    Input("tx-igrt-settings-smooth", "value"),
+    Input("tx-igrt-settings-type", "value"),
+    Input("tx-igrt-settings-stack", "value"),
+    State("tx-chart-igrt", "figure"),
 )
 
 clientside_callback(

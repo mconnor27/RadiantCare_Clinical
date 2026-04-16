@@ -48,6 +48,11 @@ body {
     background-color: #F3E8F5 !important;
 }
 
+/* Make AG Grid select editor popup taller */
+.ag-select-list {
+    max-height: 400px !important;
+}
+
 /* Tighten gap between chart card header and Plotly legend */
 .js-plotly-plot {
     margin-top: -6px;
@@ -156,6 +161,11 @@ body {
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(-4px); }
     to { opacity: 1; transform: translateY(0); }
+}
+
+.chart-settings-panel--left {
+    left: 0;
+    right: auto;
 }
 
 .chart-settings-panel .mantine-SegmentedControl-root {
@@ -626,6 +636,69 @@ body {
     gap: 4px;
 }
 
+/* CPT accordion filter panel */
+.wf-cpt-panel {
+    width: 420px;
+}
+.wf-cpt-panel .mantine-Accordion-control {
+    padding: 0 8px !important;
+    min-height: unset !important;
+}
+.wf-cpt-panel .mantine-Accordion-label {
+    font-size: 12.5px;
+    padding: 3px 0 !important;
+}
+.wf-cpt-panel .mantine-Accordion-chevron {
+    width: 14px;
+    min-width: 14px;
+}
+.wf-cpt-panel .mantine-Accordion-item {
+    border-color: var(--mantine-color-gray-2);
+}
+.wf-cpt-panel .mantine-Accordion-content {
+    padding: 3px 8px 5px;
+}
+.wf-cpt-panel .mantine-Accordion-item[data-active] {
+    border-left: 3px solid #7C2A83;
+    background: rgba(124, 42, 131, 0.06);
+}
+.wf-cpt-panel .mantine-Accordion-item[data-active] .mantine-Accordion-label {
+    font-weight: 600;
+    color: #7C2A83;
+}
+/* Subcategory heading within CPT accordion */
+.wf-cpt-sub-heading {
+    display: flex;
+    align-items: center;
+    padding: 4px 0 2px;
+    border-bottom: 1px solid var(--mantine-color-gray-2);
+    margin-bottom: 3px;
+}
+.wf-cpt-sub-heading .mantine-Checkbox-label {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: #555;
+}
+.wf-cpt-sub-check {
+    flex-shrink: 0;
+}
+/* CPT code chips within subcategory */
+.wf-cpt-code-chip-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    padding: 2px 0 6px 16px;
+}
+.wf-cpt-code-chip-list .mantine-Chip-label {
+    font-size: 11px;
+    padding: 2px 6px;
+    font-family: monospace;
+}
+/* Subcategory section spacing */
+.wf-cpt-sub-section {
+    margin-bottom: 2px;
+}
+
 /* Filter bar left borders */
 .wf-filter-bar-a { border-left: 3px solid #2196F3; }
 .wf-filter-bar-b { border-left: 3px solid #FF9800; }
@@ -767,23 +840,32 @@ div:has(> .wf-filter-clear-btn[style*="inline-flex"]) > .mantine-Button-root .ma
 .machines-timeline-container svg {
     font-family: Inter, system-ui, -apple-system, sans-serif;
 }
-#machines-filter-gap-threshold .mantine-Slider-bar,
-#machines-filter-min-cancellations .mantine-Slider-bar {
-    background: linear-gradient(90deg, #F59E0B, #EF4444);
-}
 /* Let filter button expand to fit summary text */
 #machines-filter-trigger {
     white-space: nowrap;
-}
-/* Dim the note switch when disabled */
-#machines-filter-require-note[data-disabled] {
-    opacity: 0.4;
 }
 .machines-strip-container {
     width: 100%;
     min-height: 120px;
     padding: 4px 0;
     border-radius: 6px;
+}
+
+/* ─── Condition Builder ──────────────────────────── */
+.mcb-panel.wf-chip-dropdown {
+    min-width: 540px;
+    max-width: 700px;
+}
+.mcb-condition-row {
+    min-height: 30px;
+    margin-bottom: 2px;
+}
+.mcb-field-select { flex: 0 0 140px; min-width: 0; }
+.mcb-op-select { flex: 0 0 100px; min-width: 0; }
+.mcb-value-widget { flex: 1 1 120px; min-width: 0; }
+.mcb-preset-row { flex-wrap: wrap; }
+.mcb-group-card {
+    background: var(--mantine-color-gray-0, #F8F9FA);
 }
 
 /* Physicians after-hours slider — compact marks + wide tooltip */

@@ -75,6 +75,8 @@
         for (var k = 0; k < subcatPanels.length; k++) {
             if (subcatPanels[k].contains(e.target)) return;
         }
+        // Check if click is inside a Mantine combobox dropdown (portal-rendered)
+        if (e.target.closest && e.target.closest("[class*='mantine-Combobox'], [class*='mantine-Select'], [class*='mantine-MultiSelect'], [role=listbox], [role=option]")) return;
         // Click outside — close all
         closeAll();
     });

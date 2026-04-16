@@ -27,6 +27,10 @@ from data.reviews_db import (
     get_all_insurance_rates, upsert_insurance_rate, delete_insurance_rate,
     seed_insurance_rates, get_rate_history, upsert_rate_history,
     delete_rate_history_entry,
+    seed_payor_mappings, get_all_payor_mappings, upsert_payor_mapping,
+    get_payor_mapping_dict,
+    rename_standardized_payor, delete_standardized_payor,
+    get_standardized_payor_counts,
 )
 
 dash.register_page(__name__, path="/billing", name="Billing", order=7)
@@ -35,87 +39,27 @@ PAGE_ID = "billing"
 _DEFAULT_DATE_PRESET = "12mo"
 
 # CMS Conversion Factor (Medicare PFS) — update annually
-_CMS_CF = {2024: 33.29, 2025: 32.35, 2026: 32.35}
-_CMS_CF_DEFAULT = 32.35
+_CMS_CF = {
+    2015: 35.80, 2016: 35.80, 2017: 35.89, 2018: 36.00, 2019: 36.04,
+    2020: 36.09, 2021: 34.89, 2022: 34.61, 2023: 33.89, 2024: 33.29,
+    2025: 32.35, 2026: 33.40,
+}
+_CMS_CF_DEFAULT = 33.40
 # All sites: physician group bills pro fees only (wRVU + MP_RVU)
 # Aberdeen is freestanding but group still earns pro component only
 
 
 # ---------------------------------------------------------------------------
-# CPT Category Mapping
+# CPT Category Mapping (imported from shared module)
 # ---------------------------------------------------------------------------
 
-CPT_CATEGORIES = {
-    "E&M": {
-        "99202", "99203", "99204", "99205",
-        "99211", "99212", "99213", "99214", "99215",
-        "99221", "99222", "99223", "99231", "99232",
-        "99241", "99242", "99243", "99244", "99245",
-        "99251", "99252", "99253", "99254", "99255",
-        "99261", "99262", "99263",
-        "99271", "99272", "99273", "99274", "99275",
-        "99354", "99355", "99356", "99357", "99417",
-        "99441", "99442", "99443", "99459", "99499",
-        "98003", "98004", "98006", "98007", "98015",
-        "G2211", "G2212",
-        "99406", "99407", "G0436", "G0437",  # smoking/tobacco cessation
-    },
-    "Simulation": {
-        "77280", "77285", "77290", "77293", "77011", "76370",
-    },
-    "Treatment Planning": {
-        "77261", "77263", "77295", "77300", "77301",
-        "77305", "77306", "77307", "77310", "77315", "77316", "77318",
-        "77320", "77321", "77328",
-    },
-    "Physics & Devices": {
-        "77331", "77332", "77333", "77334", "77336", "77338", "77370", "77399",
-        "77470",
-    },
-    "Treatment Delivery": {
-        "77385", "77386", "77402", "77403", "77404",
-        "77407", "77408", "77409", "77412", "77413", "77414", "77416",
-        "77417", "77418", "77372", "77373",
-        "G6002", "G6004", "G6005", "G6006", "G6009",
-        "G6012", "G6013", "G6014", "G6015",
-    },
-    "Image Guidance": {
-        "77014", "77387", "77421", "0197T", "G6017",
-    },
-    "Treatment Management": {
-        "77427", "77431", "77432", "77435",
-    },
-    "Brachytherapy": {
-        "77778", "77790", "76965",
-    },
-    "Procedures": {
-        "55874", "55875", "55876", "76873", "76942", "A4646", "A4648",
-    },
-    "Drug Administration": {
-        "96400", "J9217", "90782",
-    },
-    "Radiopharmaceutical": {
-        "79101",
-    },
-}
-
-# Build reverse lookup: code → category
-_CODE_TO_CATEGORY = {}
-for _cat, _codes in CPT_CATEGORIES.items():
-    for _code in _codes:
-        _CODE_TO_CATEGORY[_code] = _cat
-
-CATEGORY_NAMES = list(CPT_CATEGORIES.keys()) + ["Other"]
-
-CATEGORY_SLUGS = {
-    "E&M": "em", "Simulation": "simulation", "Treatment Planning": "planning",
-    "Physics & Devices": "physics", "Treatment Delivery": "delivery",
-    "Image Guidance": "igrt", "Treatment Management": "management",
-    "Brachytherapy": "brachy", "Procedures": "procedures",
-    "Drug Administration": "drugs", "Radiopharmaceutical": "radiopharm",
-    "Other": "other",
-}
-SLUG_TO_CATEGORY = {v: k for k, v in CATEGORY_SLUGS.items()}
+from utils.cpt_categories import (
+    CPT_CATEGORIES, CPT_SUBCATEGORIES, CPT_DESCRIPTIONS,
+    CODE_TO_CATEGORY as _CODE_TO_CATEGORY,
+    CODE_TO_SUBCATEGORY as _CODE_TO_SUBCATEGORY,
+    CATEGORY_NAMES, CATEGORY_SLUGS, SLUG_TO_CATEGORY,
+)
+from components.cpt_filter import cpt_accordion, register_cpt_callbacks
 
 CATEGORY_COLORS = {}
 for _i, _cat in enumerate(CATEGORY_NAMES):
@@ -337,74 +281,88 @@ def _broad_payor(name):
 
 
 def _merge_rvu(df, rvu):
-    """Add RVU columns for both physician group and facility components.
+    """Add individual RVU component columns for physician revenue estimation.
 
-    CodeType-independent: uses Fac_Total_RVU from the CMS RVU table to
-    derive each entity's share.  This avoids component-level data quality
-    issues (e.g. bad MP values in older CMS years).
+    Strategy: for codes with a 26/TC split, use the 26 row (physician group
+    bills professional component only — does not own any facility).  For
+    codes without a 26 row that have physician work (wRVU > 0), use the
+    global row (e.g. E&M, management codes).
 
-    Columns added:
-      wRVU          — physician work component
-      Pro_Total_RVU — physician group total (from 26 row; fallback global − TC)
-      TC_Total_RVU  — facility total (from TC row; 0 if no TC variant)
-      Fac_Total_RVU — global total RVU (for reference / fee schedule comparison)
+    PE selection by site:
+      Lacey/Centralia (POS 22) → Fac_PE_RVU
+      Aberdeen (POS 11)        → NonFac_PE_RVU (higher, covers practice overhead)
+    For -26 rows these are identical; the distinction matters for non-split
+    global codes (E&M etc.).
+
+    Columns added (per billing row):
+      wRVU, Fac_PE_RVU, NonFac_PE_RVU, MP_RVU, Pro_Total_RVU, Fac_Total_RVU
+      TC_wRVU, TC_PE_RVU, TC_MP_RVU (for hospital revenue at Aberdeen)
     """
+    _empty_cols = ["wRVU", "Fac_PE_RVU", "NonFac_PE_RVU", "MP_RVU",
+                   "Pro_Total_RVU", "Fac_Total_RVU",
+                   "TC_wRVU", "TC_PE_RVU", "TC_MP_RVU"]
     if df.empty:
-        df["wRVU"] = 0.0
-        df["Pro_Total_RVU"] = 0.0
-        df["TC_Total_RVU"] = 0.0
-        df["Fac_Total_RVU"] = 0.0
+        for c in _empty_cols:
+            df[c] = 0.0
         return df
 
     df = df.copy()
     df["_base"] = df["ProcedureCode"].apply(_strip_modifier)
     df["_yr"] = df["DateOfService"].dt.year
+    yr_str = df["_yr"].astype(str)
 
     # Build lookup dicts keyed by HCPCS|MOD|Year
     rvu_key = rvu["HCPCS"] + "|" + rvu["MOD"] + "|" + rvu["Year"].astype(str)
     wrvu_dict = dict(zip(rvu_key, rvu["wRVU"]))
-    total_dict = dict(zip(rvu_key, rvu["Fac_Total_RVU"]))
+    fac_pe_dict = dict(zip(rvu_key, rvu["Fac_PE_RVU"]))
+    nonfac_pe_dict = dict(zip(rvu_key, rvu["NonFac_PE_RVU"]))
+    mp_dict = dict(zip(rvu_key, rvu["MP_RVU"]))
+    fac_total_dict = dict(zip(rvu_key, rvu["Fac_Total_RVU"]))
 
-    yr_str = df["_yr"].astype(str)
     pro_key = df["_base"] + "|26|" + yr_str
     global_key = df["_base"] + "||" + yr_str
     tc_key = df["_base"] + "|TC|" + yr_str
 
-    # --- wRVU: from 26 row, fallback to global (same value either way) ---
-    df["wRVU"] = pro_key.map(wrvu_dict)
-    miss_w = df["wRVU"].isna()
-    if miss_w.any():
-        df.loc[miss_w, "wRVU"] = global_key[miss_w].map(wrvu_dict)
-    df["wRVU"] = df["wRVU"].fillna(0)
+    # --- For each component: try 26 row first, fall back to global ---
+    def _lookup(primary, fallback, lookup_dict):
+        vals = primary.map(lookup_dict)
+        miss = vals.isna()
+        if miss.any():
+            vals[miss] = fallback[miss].map(lookup_dict)
+        return vals.fillna(0)
 
-    # --- Global total for deriving components ---
-    g_total = global_key.map(total_dict).fillna(0)
+    df["wRVU"] = _lookup(pro_key, global_key, wrvu_dict)
+    df["Fac_PE_RVU"] = _lookup(pro_key, global_key, fac_pe_dict)
+    df["NonFac_PE_RVU"] = _lookup(pro_key, global_key, nonfac_pe_dict)
+    df["MP_RVU"] = _lookup(pro_key, global_key, mp_dict)
 
-    # --- Physician group total: 26 row's Fac_Total when available ---
-    df["Pro_Total_RVU"] = pro_key.map(total_dict)
-    miss_p = df["Pro_Total_RVU"].isna()
-    if miss_p.any():
-        # No 26 row: physician gets global total only if there's physician work
-        has_work = df.loc[miss_p, "wRVU"] > 0
-        df.loc[miss_p & has_work, "Pro_Total_RVU"] = g_total[miss_p & has_work]
-        df.loc[miss_p & ~has_work, "Pro_Total_RVU"] = 0
-    df["Pro_Total_RVU"] = df["Pro_Total_RVU"].clip(lower=0)
+    # For codes with no physician work (TC-only, e.g. delivery at hospital),
+    # zero out the professional components — physician group doesn't bill these
+    no_work = df["wRVU"] == 0
+    for c in ["Fac_PE_RVU", "NonFac_PE_RVU", "MP_RVU"]:
+        df.loc[no_work, c] = 0.0
 
-    # --- Facility total: TC row when available, otherwise global − pro ---
-    tc_direct = tc_key.map(total_dict)
-    has_tc = tc_direct.notna()
-    df["TC_Total_RVU"] = 0.0
-    df.loc[has_tc, "TC_Total_RVU"] = tc_direct[has_tc]
-    df.loc[~has_tc, "TC_Total_RVU"] = (
-        g_total[~has_tc] - df.loc[~has_tc, "Pro_Total_RVU"]
-    ).clip(lower=0)
+    # Pro total (facility-site version) for quick reference
+    df["Pro_Total_RVU"] = df["wRVU"] + df["Fac_PE_RVU"] + df["MP_RVU"]
 
-    # --- Global total for reference ---
-    df["Fac_Total_RVU"] = global_key.map(total_dict)
-    miss_g = df["Fac_Total_RVU"].isna()
-    if miss_g.any():
-        df.loc[miss_g, "Fac_Total_RVU"] = pro_key[miss_g].map(total_dict)
-    df["Fac_Total_RVU"] = df["Fac_Total_RVU"].fillna(0)
+    # Global total for reference
+    df["Fac_Total_RVU"] = global_key.map(fac_total_dict).fillna(0)
+
+    # --- TC components for Aberdeen hospital revenue (PFS TC rows) ---
+    # For true split codes: use TC modifier row
+    # For TC-only codes (PCTC=3, wRVU=0): use global row (entire code is technical)
+    # For professional-only codes (wRVU>0, no TC row): hospital gets nothing
+    df["TC_wRVU"] = tc_key.map(wrvu_dict)
+    df["TC_PE_RVU"] = tc_key.map(fac_pe_dict)
+    df["TC_MP_RVU"] = tc_key.map(mp_dict)
+    # Fall back to global for TC-only codes (no TC row, no physician work)
+    tc_miss = df["TC_PE_RVU"].isna()
+    tc_only = tc_miss & no_work  # wRVU=0 → entire code is technical
+    if tc_only.any():
+        df.loc[tc_only, "TC_wRVU"] = global_key[tc_only].map(wrvu_dict).fillna(0)
+        df.loc[tc_only, "TC_PE_RVU"] = global_key[tc_only].map(fac_pe_dict).fillna(0)
+        df.loc[tc_only, "TC_MP_RVU"] = global_key[tc_only].map(mp_dict).fillna(0)
+    df[["TC_wRVU", "TC_PE_RVU", "TC_MP_RVU"]] = df[["TC_wRVU", "TC_PE_RVU", "TC_MP_RVU"]].fillna(0)
 
     df.drop(columns=["_base", "_yr"], inplace=True)
     return df
@@ -452,12 +410,13 @@ def _trend_text(current, prior):
     return f"{abs(pct):.0f}% vs prior", direction
 
 
-def _count_spark_raw(df, date_col, start, end):
+def _count_spark_raw(df, date_col, start, end, value_col=None):
     """Return daily counts as sparkline data {labels, values}."""
     if df.empty or date_col not in df.columns:
         return {"labels": [], "values": []}
     sub = df[(df[date_col] >= start) & (df[date_col] <= end)]
-    daily = sub.groupby(sub[date_col].dt.normalize()).size()
+    grp = sub.groupby(sub[date_col].dt.normalize())
+    daily = grp[value_col].sum() if value_col and value_col in sub.columns else grp.size()
     idx = pd.date_range(start, end, freq="D")
     daily = daily.reindex(idx, fill_value=0)
     return {
@@ -709,16 +668,36 @@ def _build_cumulative(df, date_col, start, end, date_preset,
 
 
 def _build_payor_data(df, label_col, count_col=None, top_n=10):
-    """Build payor distribution data.  Returns dict with actual + broad groupings."""
+    """Build payor distribution data.  Returns dict with actual + broad groupings.
+
+    Uses DB payor mappings when available:
+    - Actual chart: rolls up raw names into standardized_payor
+    - Broad chart: uses broad_category from DB (falls back to _broad_payor())
+    """
     if df.empty or label_col not in df.columns:
         return {"actual": {"labels": [], "values": [], "colors": []},
                 "broad": {"labels": [], "values": [], "colors": []}}
 
-    # Actual insurers
+    # Load DB mappings (small table, fast read)
+    try:
+        mapping = get_payor_mapping_dict()
+    except Exception:
+        mapping = {}
+
+    df = df.copy()
+
+    # Actual insurers — roll up via standardized_payor when mapped
+    def _resolve_actual(name):
+        if name in mapping and mapping[name]["standardized_payor"]:
+            return mapping[name]["standardized_payor"]
+        return name
+
+    df["_actual"] = df[label_col].apply(_resolve_actual)
+
     if count_col:
-        totals = df.groupby(label_col)[count_col].sum().sort_values(ascending=False)
+        totals = df.groupby("_actual")[count_col].sum().sort_values(ascending=False)
     else:
-        totals = df[label_col].value_counts()
+        totals = df["_actual"].value_counts()
 
     top = totals.head(top_n)
     other_val = totals.iloc[top_n:].sum() if len(totals) > top_n else 0
@@ -729,9 +708,13 @@ def _build_payor_data(df, label_col, count_col=None, top_n=10):
         actual_values.append(int(other_val))
     actual_colors = [color_for_index(i) for i in range(len(actual_labels))]
 
-    # Broad categories
-    df = df.copy()
-    df["_broad"] = df[label_col].apply(_broad_payor)
+    # Broad categories — use DB mapping with keyword fallback
+    def _resolve_broad(name):
+        if name in mapping and mapping[name]["broad_category"]:
+            return mapping[name]["broad_category"]
+        return _broad_payor(name)
+
+    df["_broad"] = df[label_col].apply(_resolve_broad)
     broad_order = [
         "Medicare", "Medicaid", "Private", "Military/VA",
         "Workers Comp", "Tribal/IHS", "Self Pay", "Other/Unknown",
@@ -769,24 +752,26 @@ def _get_enriched_billing():
     Caches result — only recomputes when the underlying loader cache changes
     (i.e., new data loaded).
     """
-    from data.loader import load_billing, load_rvu_lookup
+    from data.loader import load_billing, load_rvu_lookup, load_opps_lookup
 
     billing = load_billing()
     rvu = load_rvu_lookup()
+    opps = load_opps_lookup()
 
     # Use object ids as cache key (lru_cache returns same object if unchanged)
-    key = (id(billing), id(rvu))
+    key = (id(billing), id(rvu), id(opps))
     if _enriched_cache["key"] == key and _enriched_cache["df"] is not None:
         return _enriched_cache["df"]
 
     df = billing.copy()
-    # Auto-exclude incomplete, credited, and waived charges
+    # Ensure Quantity column exists and defaults to 1
+    if "Quantity" not in df.columns:
+        df["Quantity"] = 1
+    else:
+        df["Quantity"] = pd.to_numeric(df["Quantity"], errors="coerce").fillna(1).astype(int).clip(lower=1)
+    # Auto-exclude incomplete charges (credited/waived now filter-controlled)
     if "Completed" in df.columns:
         df = df[df["Completed"] == "Yes"]
-    if "Credited" in df.columns:
-        df = df[df["Credited"] != "Yes"]
-    if "Waived" in df.columns:
-        df = df[df["Waived"] != "Yes"]
 
     # Vectorized: build lookup dicts from unique codes, then map
     unique_codes = df["ProcedureCode"].dropna().unique()
@@ -795,36 +780,163 @@ def _get_enriched_billing():
     unique_base = df["_base_code"].unique()
     cat_map = {b: _assign_category(b) for b in unique_base}
     df["Category"] = df["_base_code"].map(cat_map)
+    subcat_map = {b: _CODE_TO_SUBCATEGORY.get(b, "Other") for b in unique_base}
+    df["Subcategory"] = df["_base_code"].map(subcat_map)
     status_map = {c: _derive_charge_status(c) for c in unique_codes}
     df["ChargeStatus"] = df["ProcedureCode"].map(status_map)
     if not rvu.empty:
         df = _merge_rvu(df, rvu)
     else:
-        df["wRVU"] = 0.0
-        df["Pro_Total_RVU"] = 0.0
-        df["TC_Total_RVU"] = 0.0
-        df["Fac_Total_RVU"] = 0.0
+        for _c in ["wRVU", "Fac_PE_RVU", "NonFac_PE_RVU", "MP_RVU",
+                    "Pro_Total_RVU", "Fac_Total_RVU",
+                    "TC_wRVU", "TC_PE_RVU", "TC_MP_RVU"]:
+            df[_c] = 0.0
 
-    # Merge payor info once during enrichment (avoids 50ms merge per callback)
-    from data.loader import load_patients
-    try:
-        patients = load_patients()
-    except Exception:
-        patients = pd.DataFrame()
-    if not patients.empty and "PatientId" in df.columns and "PatientId" in patients.columns:
-        ins_cols = [c for c in ["PatientId", "PrimaryInsurance"] if c in patients.columns]
-        if "PrimaryInsurance" in patients.columns:
-            df = df.merge(
-                patients[ins_cols].drop_duplicates("PatientId"),
-                on="PatientId", how="left",
-            )
-    if "PrimaryInsurance" not in df.columns:
-        df["PrimaryInsurance"] = "Unknown"
+    # Merge OPPS payment rates for hospital revenue (keyed by base HCPCS + year)
+    if not opps.empty and "DateOfService" in df.columns:
+        df["_opps_yr"] = df["DateOfService"].dt.year
+        opps_rates = opps[opps["PaymentRate"] > 0][["HCPCS", "Year", "PaymentRate"]].copy()
+        opps_rates = opps_rates.drop_duplicates(subset=["HCPCS", "Year"], keep="last")
+        opps_key = dict(zip(
+            opps_rates["HCPCS"] + "|" + opps_rates["Year"].astype(str),
+            opps_rates["PaymentRate"],
+        ))
+        df["OPPS_Rate"] = (df["_base_code"] + "|" + df["_opps_yr"].astype(str)).map(opps_key).fillna(0)
+        df.drop(columns=["_opps_yr"], inplace=True)
+    else:
+        df["OPPS_Rate"] = 0.0
+
+    # Scale RVU and rate columns by Quantity (per-unit → total for this line)
+    qty = df["Quantity"]
+    for _rc in ["wRVU", "Fac_PE_RVU", "NonFac_PE_RVU", "MP_RVU",
+                "Pro_Total_RVU", "Fac_Total_RVU",
+                "TC_wRVU", "TC_PE_RVU", "TC_MP_RVU", "OPPS_Rate"]:
+        if _rc in df.columns:
+            df[_rc] = df[_rc] * qty
+
+    # Payor: use billing's own PayorName (81.6% populated), then fall back to
+    # Referrals Payer (per-patient, covers 98% of the gap) for the rest.
+    import re as _re_payor
+    from data.loader import load_referrals
+
+    if "PayorName" in df.columns:
+        df["PrimaryInsurance"] = df["PayorName"].where(
+            df["PayorName"].notna() & (df["PayorName"].str.strip() != "")
+        )
+    else:
+        df["PrimaryInsurance"] = np.nan
+
+    # Referral fallback for rows missing PayorName — match to the closest
+    # referral by date so a 2024 billing row doesn't pick up a 2020 payer.
+    mask = df["PrimaryInsurance"].isna()
+    if mask.any() and "PatientId" in df.columns and "DateOfService" in df.columns:
+        def _parse_ref_payer(v):
+            if pd.isna(v):
+                return None
+            first_line = str(v).split("\n")[0].strip()
+            return _re_payor.sub(r"\s*\[\d+\]\s*$", "", first_line).strip() or None
+
+        try:
+            referrals = load_referrals()
+        except Exception:
+            referrals = pd.DataFrame()
+        if not referrals.empty and "Payer" in referrals.columns and "MRN" in referrals.columns:
+            ref_payer = referrals[["MRN", "Created", "Payer"]].copy()
+            ref_payer["RefPayer"] = ref_payer["Payer"].apply(_parse_ref_payer)
+            ref_payer = ref_payer.dropna(subset=["RefPayer", "Created"])
+            ref_payer = ref_payer.sort_values("Created")
+
+            # Prepare billing rows that need filling
+            need = df.loc[mask, ["PatientId", "DateOfService"]].copy()
+            need["_MRN"] = pd.to_numeric(need["PatientId"], errors="coerce").astype("Int64")
+            need = need.dropna(subset=["_MRN", "DateOfService"])
+            need = need.sort_values("DateOfService")
+
+            if not need.empty:
+                matched = pd.merge_asof(
+                    need[["_MRN", "DateOfService"]].rename(columns={"_MRN": "MRN"}),
+                    ref_payer[["MRN", "Created", "RefPayer"]],
+                    left_on="DateOfService", right_on="Created",
+                    by="MRN", direction="backward",
+                )
+                # Map back by original index
+                matched.index = need.index
+                df.loc[matched.index, "PrimaryInsurance"] = matched["RefPayer"]
+
     df["PrimaryInsurance"] = df["PrimaryInsurance"].fillna("Unknown")
+
+    # Pre-compute per-row revenue estimates for trend/cumulative charts
+    # Professional: [(wRVU × W_GPCI) + (PE × PE_GPCI) + (MP × MP_GPCI)] × CF × HPSA
+    # Hospital: OPPS wage-adjusted with SCH (Lacey/Centralia) or PFS TC (Aberdeen)
+    from data.loader import load_gpci, load_opps_params
+    gpci = load_gpci()
+    opps_params = load_opps_params()
+    if "DateOfService" in df.columns and not df.empty:
+        yrs = df["DateOfService"].dt.year
+        w_g = yrs.map({y: g[0] for y, g in gpci.items()}).fillna(1.0)
+        pe_g = yrs.map({y: g[1] for y, g in gpci.items()}).fillna(1.0)
+        mp_g = yrs.map({y: g[2] for y, g in gpci.items()}).fillna(1.0)
+        cf = yrs.map(_CMS_CF).fillna(_CMS_CF_DEFAULT)
+
+        # PE: For split codes (-26), Fac and NonFac PE are identical — no effect.
+        # For non-split codes (E&M etc.), POS determines rate:
+        #   POS 22 (Lacey/Centralia) → Fac_PE
+        #   POS 11 (Aberdeen) → NonFac_PE (higher, covers practice overhead)
+        is_ab = df["Department"] == "Aberdeen" if "Department" in df.columns else False
+        pe = df["Fac_PE_RVU"].copy()
+        if hasattr(is_ab, 'any') and is_ab.any():
+            pe.loc[is_ab] = df.loc[is_ab, "NonFac_PE_RVU"]
+        hpsa = pd.Series(1.0, index=df.index)
+        if "Department" in df.columns:
+            hpsa.loc[df["Department"].isin(["Centralia", "Aberdeen"])] = 1.10
+        df["Pro_Revenue"] = (df["wRVU"] * w_g + pe * pe_g + df["MP_RVU"] * mp_g) * cf * hpsa
+
+        # Hospital revenue per row
+        is_ab = df["Department"] == "Aberdeen" if "Department" in df.columns else pd.Series(False, index=df.index)
+        # OPPS wage-adjusted for Lacey/Centralia
+        wi = yrs.map({y: p[1] for y, p in opps_params.items()}).fillna(1.0)
+        labor = yrs.map({y: p[2] for y, p in opps_params.items()}).fillna(0.60)
+        sch = yrs.map({y: p[3] for y, p in opps_params.items()}).fillna(1.071)
+        opps_adj = df["OPPS_Rate"] * (labor * wi + (1 - labor)) * sch
+        # PFS TC for Aberdeen (no HPSA)
+        tc_adj = (df["TC_wRVU"] * w_g + df["TC_PE_RVU"] * pe_g + df["TC_MP_RVU"] * mp_g) * cf
+        df["Hosp_Revenue"] = 0.0
+        df.loc[~is_ab, "Hosp_Revenue"] = opps_adj[~is_ab]
+        df.loc[is_ab, "Hosp_Revenue"] = tc_adj[is_ab]
+        df["Total_Revenue"] = df["Pro_Revenue"] + df["Hosp_Revenue"]
+    else:
+        df["Pro_Revenue"] = 0.0
+        df["Hosp_Revenue"] = 0.0
+        df["Total_Revenue"] = 0.0
 
     _enriched_cache["key"] = key
     _enriched_cache["df"] = df
     return df
+
+
+# ---------------------------------------------------------------------------
+# Filter result cache — shared between main and cumulative callbacks
+# ---------------------------------------------------------------------------
+
+_filter_cache = {"key": None, "result": None}
+
+
+def _load_and_filter_billing_cached(**kwargs):
+    """Cached wrapper — avoids re-filtering when main and cumulative callbacks
+    fire on the same filter state (sequential execution in single-threaded Dash)."""
+    key_parts = []
+    for k in sorted(kwargs.keys()):
+        v = kwargs[k]
+        if isinstance(v, list):
+            v = tuple(v) if v else ()
+        key_parts.append((k, v))
+    key = tuple(key_parts)
+    if _filter_cache["key"] == key and _filter_cache["result"] is not None:
+        return _filter_cache["result"]
+    result = _load_and_filter_billing(**kwargs)
+    _filter_cache["key"] = key
+    _filter_cache["result"] = result
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -880,49 +992,30 @@ def _build_filter_bar():
                     department_chips(PAGE_ID),
                     # Physician dropdown + role toggle
                     _chip_dropdown(PAGE_ID, "Physician", "physician", multiple=False, children=[
+                        dmc.SegmentedControl(
+                            id=f"{PAGE_ID}-filter-physician-role",
+                            data=[
+                                {"value": "supervising", "label": "Supervising"},
+                                {"value": "attending", "label": "Attending"},
+                            ],
+                            value="supervising",
+                            size="xs",
+                            fullWidth=True,
+                            mb="xs",
+                        ),
                         dmc.ChipGroup(
                             children=[],
                             id=f"{PAGE_ID}-filter-physician",
                             multiple=False,
                         ),
                     ]),
-                    dmc.SegmentedControl(
-                        id=f"{PAGE_ID}-filter-physician-role",
-                        data=[
-                            {"value": "supervising", "label": "Supervising"},
-                            {"value": "attending", "label": "Attending"},
-                        ],
-                        value="supervising",
-                        size="xs",
-                    ),
-                    # Category dropdown with Select All / None
-                    _chip_dropdown(PAGE_ID, "Category", "category", multiple=True, children=[
-                        dmc.Group(
-                            children=[
-                                dmc.Button("All", id=f"{PAGE_ID}-category-all",
-                                           variant="subtle", size="compact-xs", color="violet"),
-                                dmc.Button("None", id=f"{PAGE_ID}-category-none",
-                                           variant="subtle", size="compact-xs", color="gray"),
-                            ],
-                            gap="xs", mb=4,
-                        ),
-                        dmc.ChipGroup(
-                            children=[
-                                dmc.Chip(c, value=c, size="xs", variant="filled")
-                                for c in CATEGORY_NAMES
-                            ],
-                            id=f"{PAGE_ID}-filter-category",
-                            multiple=True,
-                            value=[],
-                        ),
-                    ]),
+                    cpt_accordion(PAGE_ID),
                     dmc.SegmentedControl(
                         id=f"{PAGE_ID}-filter-codetype",
                         data=[
                             {"value": "all", "label": "All"},
-                            {"value": "Professional", "label": "Professional"},
-                            {"value": "Technical", "label": "Technical"},
-                            {"value": "Global", "label": "Global"},
+                            {"value": "pro", "label": "Professional"},
+                            {"value": "hospital", "label": "Hospital"},
                         ],
                         value="all",
                         size="xs",
@@ -934,21 +1027,115 @@ def _build_filter_bar():
                             {"value": "Billable", "label": "Billable"},
                             {"value": "No Charge", "label": "No Charge"},
                         ],
-                        value="all",
+                        value="Billable",
                         size="xs",
                     ),
-                    dmc.Button(
-                        "Reviewed",
-                        id=f"{PAGE_ID}-btn-reviewed",
-                        variant="default", size="compact-sm",
-                    ),
-                    dcc.Store(id=f"{PAGE_ID}-filter-reviewed", data="all"),
-                    dmc.Button(
-                        "Exported",
-                        id=f"{PAGE_ID}-btn-exported",
-                        variant="default", size="compact-sm",
-                    ),
-                    dcc.Store(id=f"{PAGE_ID}-filter-exported", data="all"),
+                    # Charge status dropdown panel
+                    _chip_dropdown(PAGE_ID, "Status", "status", children=[
+                        # --- Professional section ---
+                        dmc.Text("Professional", size="xs", fw=600, c=PRIMARY, mb=4),
+                        dmc.Group(
+                            children=[
+                                dmc.Text("Reviewed", size="xs", c="dimmed", w=70),
+                                dmc.SegmentedControl(
+                                    id=f"{PAGE_ID}-filter-pro-reviewed",
+                                    data=[
+                                        {"value": "all", "label": "All"},
+                                        {"value": "yes", "label": "Yes"},
+                                        {"value": "no", "label": "No"},
+                                    ],
+                                    value="yes",
+                                    size="xs",
+                                ),
+                            ],
+                            gap="xs", align="center", mb=2,
+                        ),
+                        dmc.Group(
+                            children=[
+                                dmc.Text("Exported", size="xs", c="dimmed", w=70),
+                                dmc.SegmentedControl(
+                                    id=f"{PAGE_ID}-filter-pro-exported",
+                                    data=[
+                                        {"value": "all", "label": "All"},
+                                        {"value": "yes", "label": "Yes"},
+                                        {"value": "no", "label": "No"},
+                                    ],
+                                    value="all",
+                                    size="xs",
+                                ),
+                            ],
+                            gap="xs", align="center", mb=6,
+                        ),
+                        dmc.Group(
+                            children=[
+                                dmc.Switch(
+                                    id=f"{PAGE_ID}-filter-excl-credited",
+                                    label="Exclude Credited",
+                                    size="xs",
+                                    checked=True,
+                                ),
+                                dmc.Switch(
+                                    id=f"{PAGE_ID}-filter-excl-waived",
+                                    label="Exclude Waived",
+                                    size="xs",
+                                    checked=True,
+                                ),
+                            ],
+                            gap="md", mb=8,
+                        ),
+                        dmc.Divider(mb=8),
+                        # --- Hospital section ---
+                        dmc.Text("Hospital", size="xs", fw=600, c=PRIMARY, mb=4),
+                        dmc.Group(
+                            children=[
+                                dmc.Text("Reviewed", size="xs", c="dimmed", w=70),
+                                dmc.SegmentedControl(
+                                    id=f"{PAGE_ID}-filter-hosp-reviewed",
+                                    data=[
+                                        {"value": "all", "label": "All"},
+                                        {"value": "yes", "label": "Yes"},
+                                        {"value": "no", "label": "No"},
+                                    ],
+                                    value="yes",
+                                    size="xs",
+                                ),
+                            ],
+                            gap="xs", align="center", mb=2,
+                        ),
+                        dmc.Group(
+                            children=[
+                                dmc.Text("Exported", size="xs", c="dimmed", w=70),
+                                dmc.SegmentedControl(
+                                    id=f"{PAGE_ID}-filter-hosp-exported",
+                                    data=[
+                                        {"value": "all", "label": "All"},
+                                        {"value": "yes", "label": "Yes"},
+                                        {"value": "no", "label": "No"},
+                                    ],
+                                    value="yes",
+                                    size="xs",
+                                ),
+                            ],
+                            gap="xs", align="center", mb=6,
+                        ),
+                        dmc.Group(
+                            children=[
+                                dmc.Switch(
+                                    id=f"{PAGE_ID}-filter-hosp-excl-credited",
+                                    label="Exclude Credited",
+                                    size="xs",
+                                    checked=True,
+                                ),
+                                dmc.Switch(
+                                    id=f"{PAGE_ID}-filter-hosp-excl-waived",
+                                    label="Exclude Waived",
+                                    size="xs",
+                                    checked=True,
+                                ),
+                            ],
+                            gap="md",
+                        ),
+                    ]),
                     dmc.Group(
                         children=[
                             dmc.Text("Smoothing", size="xs", c="#6B7280", fw=500),
@@ -1036,6 +1223,7 @@ def _build_filter_bar():
 _SLICE_TOGGLE = [
     {"value": "total", "label": "Total"},
     {"value": "category", "label": "Category"},
+    {"value": "subcategory", "label": "Sub-Cat"},
     {"value": "department", "label": "Site"},
     {"value": "physician", "label": "MD"},
     {"value": "cpt", "label": "CPT"},
@@ -1057,6 +1245,7 @@ _CHART_TYPES = [
 _CUM_CHART_TYPES = [
     {"value": "line", "label": "Line"},
     {"value": "area", "label": "Area"},
+    {"value": "bar", "label": "Bar"},
 ]
 
 layout = dmc.Stack(
@@ -1076,6 +1265,8 @@ layout = dmc.Stack(
                             variant="subtle", color="violet", size="lg",
                         ),
                     ],
+                    justify="center",
+                    gap="xs",
                 ),
                 _build_filter_bar(),
             ],
@@ -1108,6 +1299,7 @@ layout = dmc.Stack(
                         "Billing Volume Trend",
                         settings_id=f"{PAGE_ID}-vol",
                         chart_types=_CHART_TYPES,
+                        chart_type_default="bar",
                         show_smooth=True,
                         smooth_max=50, smooth_default=15,
                         paper_padding="md",
@@ -1132,7 +1324,9 @@ layout = dmc.Stack(
                         "Cumulative Volume",
                         settings_id=f"{PAGE_ID}-volcum",
                         chart_types=_CUM_CHART_TYPES,
-                        show_smooth=False,
+                        show_smooth=True,
+                        smooth_min=0, smooth_max=1,
+                        smooth_step=0.05, smooth_default=0.1,
                         show_prior_periods=True,
                         prior_periods_default=3,
                         paper_padding="md",
@@ -1160,8 +1354,9 @@ layout = dmc.Stack(
             ],
         ),
 
-        # Row 2: wRVU Trend + Cumulative
+        # Row 2: wRVU Trend + Cumulative (hidden when Hospital component selected)
         dmc.Grid(
+            id=f"{PAGE_ID}-rvu-row",
             gutter="md",
             children=[
                 dmc.GridCol(
@@ -1170,13 +1365,14 @@ layout = dmc.Stack(
                         "wRVU Trend",
                         settings_id=f"{PAGE_ID}-rvu",
                         chart_types=_CHART_TYPES,
+                        chart_type_default="bar",
                         show_smooth=True,
                         smooth_max=50, smooth_default=15,
                         paper_padding="md",
                         extra_controls_left=[
                             dmc.SegmentedControl(
                                 id=f"{PAGE_ID}-rvu-slice",
-                                data=_SLICE_TOGGLE, value="category", size="xs",
+                                data=_SLICE_TOGGLE, value="physician", size="xs",
                             ),
                         ],
                         extra_controls=[
@@ -1194,7 +1390,9 @@ layout = dmc.Stack(
                         "Cumulative wRVU",
                         settings_id=f"{PAGE_ID}-rvucum",
                         chart_types=_CUM_CHART_TYPES,
-                        show_smooth=False,
+                        show_smooth=True,
+                        smooth_min=0, smooth_max=1,
+                        smooth_step=0.05, smooth_default=0.1,
                         show_prior_periods=True,
                         prior_periods_default=3,
                         paper_padding="md",
@@ -1222,7 +1420,72 @@ layout = dmc.Stack(
             ],
         ),
 
-        # Row 3: Payor Mix
+        # Row 3: Revenue ($) Trend + Cumulative
+        dmc.Grid(
+            id=f"{PAGE_ID}-revenue-chart-row",
+            gutter="md",
+            children=[
+                dmc.GridCol(
+                    chart_card(
+                        f"{PAGE_ID}-chart-dollar-trend",
+                        "Revenue Trend ($)",
+                        settings_id=f"{PAGE_ID}-dollar",
+                        chart_types=_CHART_TYPES,
+                        show_smooth=True,
+                        smooth_max=50, smooth_default=15,
+                        paper_padding="md",
+                        extra_controls_left=[
+                            dmc.SegmentedControl(
+                                id=f"{PAGE_ID}-dollar-slice",
+                                data=_SLICE_TOGGLE, value="department", size="xs",
+                            ),
+                        ],
+                        extra_controls=[
+                            dmc.SegmentedControl(
+                                id=f"{PAGE_ID}-dollar-agg",
+                                data=_AGG_TOGGLE, value="W", size="xs",
+                            ),
+                        ],
+                    ),
+                    span={"base": 12, "md": 6},
+                ),
+                dmc.GridCol(
+                    chart_card(
+                        f"{PAGE_ID}-chart-dollar-cum",
+                        "Cumulative Revenue ($)",
+                        settings_id=f"{PAGE_ID}-dollarcum",
+                        chart_types=_CUM_CHART_TYPES,
+                        show_smooth=True,
+                        smooth_min=0, smooth_max=1,
+                        smooth_step=0.05, smooth_default=0.1,
+                        show_prior_periods=True,
+                        prior_periods_default=3,
+                        paper_padding="md",
+                        extra_controls=[
+                            dmc.SegmentedControl(
+                                id=f"{PAGE_ID}-dollarcum-mode",
+                                data=[{"value": "prior", "label": "Prior Periods"},
+                                      {"value": "slice", "label": "Slice By"}],
+                                value="prior", size="xs",
+                            ),
+                            dmc.SegmentedControl(
+                                id=f"{PAGE_ID}-dollarcum-period-type",
+                                data=[{"value": "calendar", "label": "Calendar"},
+                                      {"value": "rolling", "label": "Rolling"}],
+                                value="calendar", size="xs",
+                            ),
+                            dmc.SegmentedControl(
+                                id=f"{PAGE_ID}-dollarcum-slice",
+                                data=_SLICE_TOGGLE, value="total", size="xs",
+                            ),
+                        ],
+                    ),
+                    span={"base": 12, "md": 6},
+                ),
+            ],
+        ),
+
+        # Row 4: Payor Mix
         dmc.Grid(
             gutter="md",
             mb=0,
@@ -1233,7 +1496,6 @@ layout = dmc.Stack(
                         "Payor Mix (Per Billing Event)",
                         settings_id=f"{PAGE_ID}-payevt",
                         show_smooth=False,
-                        show_settings=False,
                         paper_padding="md",
                         extra_controls=[
                             dmc.SegmentedControl(
@@ -1256,7 +1518,6 @@ layout = dmc.Stack(
                         "Payor Mix (Per Patient)",
                         settings_id=f"{PAGE_ID}-paypat",
                         show_smooth=False,
-                        show_settings=False,
                         paper_padding="md",
                         extra_controls=[
                             dmc.SegmentedControl(
@@ -1284,8 +1545,8 @@ layout = dmc.Stack(
             opened=False,
             title=dmc.Group(
                 children=[
-                    DashIconify(icon="tabler:receipt-2", width=22, color=PRIMARY),
-                    dmc.Text("Insurance Rate Manager", fw=600, size="lg"),
+                    DashIconify(icon="tabler:building-bank", width=22, color=PRIMARY),
+                    dmc.Text("Payor Manager", fw=600, size="lg"),
                 ],
                 gap="xs",
             ),
@@ -1299,6 +1560,33 @@ layout = dmc.Stack(
                          "display": "flex", "flexDirection": "column"},
             },
             children=[
+                dmc.Tabs(
+                    id=f"{PAGE_ID}-irm-tabs",
+                    value="mapping",
+                    style={"display": "flex", "flexDirection": "column", "flex": 1, "minHeight": 0},
+                    styles={"panel": {"flex": 1, "display": "flex", "flexDirection": "column", "minHeight": 0, "overflow": "hidden"}},
+                    children=[
+                        dmc.TabsList(
+                            [
+                                dmc.TabsTab(
+                                    "Payor Mapping",
+                                    value="mapping",
+                                    leftSection=DashIconify(icon="tabler:map-pin", width=16),
+                                ),
+                                dmc.TabsTab(
+                                    "Payor Entities",
+                                    value="entities",
+                                    leftSection=DashIconify(icon="tabler:building-bank", width=16),
+                                ),
+                            ],
+                            mb=6,
+                        ),
+
+                        # ---- Hidden: Rate Manager (code preserved, removed from UI) ----
+                        dmc.TabsPanel(
+                            value="rates",
+                            style={"display": "none"},
+                            children=[
                 dmc.Group(
                     justify="space-between", align="center", mb=4,
                     style={"borderBottom": "1px solid #dee2e6"},
@@ -1368,11 +1656,12 @@ layout = dmc.Stack(
                          "tooltipField": "notes",
                          "floatingFilter": True},
                         {"field": "_delete", "headerName": "",
-                         "width": 40, "maxWidth": 40, "sortable": False,
+                         "width": 50, "maxWidth": 50, "sortable": False,
                          "filter": False, "floatingFilter": False,
                          "cellStyle": {"color": "#F44336", "cursor": "pointer",
-                                       "textAlign": "center", "fontWeight": 700},
-                         "editable": False},
+                                       "textAlign": "center", "fontWeight": 700,
+                                       "overflow": "visible"},
+                         "editable": False, "suppressSizeToFit": True},
                     ],
                     defaultColDef={
                         "sortable": True,
@@ -1577,6 +1866,180 @@ layout = dmc.Stack(
                     gap="xs", mt="xs",
                     style={"display": "none"},
                 ),
+                            ],  # end TabsPanel "rates" children
+                        ),  # end TabsPanel "rates"
+
+                        # ---- Tab 2: Payor Mapping ----
+                        dmc.TabsPanel(
+                            value="mapping",
+                            children=[
+                                dmc.Group(
+                                    justify="space-between", align="center", mb=4,
+                                    style={"borderBottom": "1px solid #dee2e6"},
+                                    children=[
+                                        dmc.Group(
+                                            gap="sm",
+                                            children=[
+                                                dmc.Text(
+                                                    "Map raw insurance names to standardized payors and broad categories.",
+                                                    size="xs", c="dimmed",
+                                                ),
+                                                dmc.Text(id=f"{PAGE_ID}-pm-count", size="xs", c="dimmed"),
+                                            ],
+                                        ),
+                                        dmc.SegmentedControl(
+                                            id=f"{PAGE_ID}-pm-filter",
+                                            data=[
+                                                {"value": "all", "label": "All"},
+                                                {"value": "unreviewed", "label": "Unreviewed"},
+                                                {"value": "unmapped", "label": "Unmapped"},
+                                            ],
+                                            value="all",
+                                            size="xs",
+                                        ),
+                                    ],
+                                ),
+                                dag.AgGrid(
+                                    id=f"{PAGE_ID}-pm-grid",
+                                    rowData=[],
+                                    columnDefs=[
+                                        {"field": "raw_name", "headerName": "Raw Insurance Name",
+                                         "editable": False, "flex": 2, "minWidth": 250,
+                                         "cellRenderer": "RawInsuranceSearch",
+                                         "filter": "agTextColumnFilter", "floatingFilter": True,
+                                         "cellStyle": {"fontSize": "12px"}},
+                                        {"field": "event_count", "headerName": "Events",
+                                         "editable": False, "flex": 0.4, "minWidth": 70,
+                                         "type": "numericColumn", "sort": "desc",
+                                         "filter": "agNumberColumnFilter"},
+                                        {"field": "standardized_payor", "headerName": "Standardized Payor",
+                                         "editable": True, "flex": 1.3, "minWidth": 180,
+                                         "cellEditor": "PayorMappingEditor",
+                                         "cellEditorPopup": True,
+                                         "cellEditorPopupPosition": "under",
+                                         "cellRenderer": "PayorBadge",
+                                         "cellStyle": {"cursor": "pointer"},
+                                         "filter": "agTextColumnFilter", "floatingFilter": True},
+                                        {"field": "broad_category", "headerName": "Category",
+                                         "editable": True, "flex": 0.7, "minWidth": 130,
+                                         "cellEditor": "agSelectCellEditor",
+                                         "cellEditorParams": {"values": [
+                                             "Medicare", "Medicaid", "Private", "Military/VA",
+                                             "Workers Comp", "Tribal/IHS", "Self Pay", "Other/Unknown",
+                                         ]},
+                                         "cellRenderer": "BroadCategoryBadge",
+                                         "filter": "agTextColumnFilter", "floatingFilter": True},
+                                        {"field": "phdsc_category", "headerName": "PHDSC",
+                                         "editable": True, "flex": 0.5, "minWidth": 100,
+                                         "cellEditor": "agSelectCellEditor",
+                                         "cellEditorParams": {"values": [
+                                             "1 - Medicare", "2 - Medicaid/CHIP",
+                                             "3 - Other Govt", "4 - Corrections",
+                                             "5 - Private", "6 - BCBS",
+                                             "8 - No Payment", "9 - Other",
+                                         ]},
+                                         "filter": "agTextColumnFilter", "floatingFilter": True},
+                                        {"field": "reviewed", "headerName": "Reviewed",
+                                         "editable": True, "flex": 0.3, "minWidth": 80,
+                                         "cellDataType": "boolean",
+                                         "cellStyle": {"textAlign": "center"}},
+                                    ],
+                                    defaultColDef={
+                                        "sortable": True,
+                                        "resizable": True,
+                                        "filter": "agTextColumnFilter",
+                                        "floatingFilter": True,
+                                        "valueFormatter": {"function": "params.value == null || params.value === '' ? '\u2013' : params.value"},
+                                    },
+                                    dashGridOptions={
+                                        "animateRows": True,
+                                        "singleClickEdit": True,
+                                        "stopEditingWhenCellsLoseFocus": True,
+                                        "rowHeight": 36,
+                                        "headerHeight": 36,
+                                        "floatingFiltersHeight": 32,
+                                        "domLayout": "normal",
+                                    },
+                                    style={"flex": 1, "minHeight": 0},
+                                    className="ag-theme-alpine",
+                                ),
+                                # Store for the full (unfiltered) mapping data
+                                dcc.Store(id=f"{PAGE_ID}-pm-full-store", data=[]),
+                            ],  # end TabsPanel "mapping" children
+                        ),  # end TabsPanel "mapping"
+
+                        # ---- Tab: Payor Entities ----
+                        dmc.TabsPanel(
+                            value="entities",
+                            pt=4,
+                            style={"flex": 1, "display": "flex", "flexDirection": "column", "overflow": "hidden"},
+                            children=[
+                                dmc.Group(
+                                    justify="space-between", mb=6,
+                                    children=[
+                                        dmc.Text(
+                                            "Edit a payor name to rename it across all mappings. "
+                                            "Delete removes the assignment from all mappings. "
+                                            "Rename one payor to another to merge them.",
+                                            size="xs", c="dimmed",
+                                        ),
+                                        dmc.Text(id=f"{PAGE_ID}-pe-count", size="xs", c="dimmed"),
+                                    ],
+                                ),
+                                dmc.Group(
+                                    gap="xs", mb=6,
+                                    children=[
+                                        dmc.TextInput(
+                                            id=f"{PAGE_ID}-pe-new-name",
+                                            placeholder="New payor name",
+                                            size="xs", style={"flex": 1},
+                                        ),
+                                        dmc.Button(
+                                            "Add Payor",
+                                            id=f"{PAGE_ID}-pe-add-btn",
+                                            leftSection=DashIconify(icon="mdi:plus", width=16),
+                                            variant="light", color="violet", size="compact-sm",
+                                        ),
+                                    ],
+                                ),
+                                dag.AgGrid(
+                                    id=f"{PAGE_ID}-pe-grid",
+                                    rowData=[],
+                                    columnDefs=[
+                                        {"field": "name", "headerName": "Standardized Payor Name",
+                                         "editable": True, "flex": 2,
+                                         "cellEditor": "agTextCellEditor",
+                                         "filter": "agTextColumnFilter", "floatingFilter": True},
+                                        {"field": "mapping_count", "headerName": "Mapped Raw Names",
+                                         "flex": 0.5, "type": "numericColumn", "sort": "desc",
+                                         "filter": "agNumberColumnFilter"},
+                                        {"field": "delete", "headerName": "", "flex": 0.3,
+                                         "cellRenderer": "PayorEntityDelete",
+                                         "cellStyle": {"textAlign": "center"},
+                                         "sortable": False, "filter": False},
+                                    ],
+                                    defaultColDef={
+                                        "sortable": True, "resizable": True,
+                                        "valueFormatter": {"function": "params.value == null || params.value === '' ? '\u2013' : params.value"},
+                                    },
+                                    dashGridOptions={
+                                        "pagination": True,
+                                        "paginationPageSize": 25,
+                                        "rowHeight": 36,
+                                        "headerHeight": 36,
+                                        "floatingFiltersHeight": 32,
+                                        "animateRows": True,
+                                        "singleClickEdit": True,
+                                        "stopEditingWhenCellsLoseFocus": True,
+                                    },
+                                    style={"flex": 1, "minHeight": 0},
+                                    className="ag-theme-alpine",
+                                ),
+                            ],  # end TabsPanel "entities" children
+                        ),  # end TabsPanel "entities"
+
+                    ],  # end Tabs children
+                ),  # end Tabs
             ],
         ),
 
@@ -1586,6 +2049,8 @@ layout = dmc.Stack(
         dcc.Store(id=f"{PAGE_ID}-store-volume-cum"),
         dcc.Store(id=f"{PAGE_ID}-store-rvu"),
         dcc.Store(id=f"{PAGE_ID}-store-rvu-cum"),
+        dcc.Store(id=f"{PAGE_ID}-store-dollar"),
+        dcc.Store(id=f"{PAGE_ID}-store-dollar-cum"),
         dcc.Store(id=f"{PAGE_ID}-store-payor-event"),
         dcc.Store(id=f"{PAGE_ID}-store-payor-patient"),
 
@@ -1635,31 +2100,46 @@ _BILLING_FILTER_INPUTS = [
     Input(f"{PAGE_ID}-filter-physician-role", "value"),
     Input(f"{PAGE_ID}-filter-codetype", "value"),
     Input(f"{PAGE_ID}-filter-charge-status", "value"),
-    Input(f"{PAGE_ID}-filter-category", "value"),
-    Input(f"{PAGE_ID}-filter-reviewed", "data"),
-    Input(f"{PAGE_ID}-filter-exported", "data"),
+    Input(f"{PAGE_ID}-cpt-store", "data"),
+    Input(f"{PAGE_ID}-cpt-code-store", "data"),
+    Input(f"{PAGE_ID}-filter-pro-reviewed", "value"),
+    Input(f"{PAGE_ID}-filter-pro-exported", "value"),
+    Input(f"{PAGE_ID}-filter-excl-credited", "checked"),
+    Input(f"{PAGE_ID}-filter-excl-waived", "checked"),
+    Input(f"{PAGE_ID}-filter-hosp-reviewed", "value"),
+    Input(f"{PAGE_ID}-filter-hosp-exported", "value"),
+    Input(f"{PAGE_ID}-filter-hosp-excl-credited", "checked"),
+    Input(f"{PAGE_ID}-filter-hosp-excl-waived", "checked"),
     Input(f"{PAGE_ID}-filter-date-preset", "value"),
 ]
 
 
 def _unpack_billing_filter_args(args):
-    """Unpack the 12 common filter args into kwargs for _load_and_filter_billing."""
+    """Unpack the 19 common filter args into kwargs for _load_and_filter_billing."""
     (_n, start_date, end_date, departments, physician,
-     physician_role, codetype, charge_status, categories,
-     reviewed_filter, exported_filter, date_preset) = args[:12]
+     physician_role, codetype, charge_status, categories, cpt_codes,
+     pro_reviewed, pro_exported, excl_credited, excl_waived,
+     hosp_reviewed, hosp_exported, hosp_excl_credited, hosp_excl_waived,
+     date_preset) = args[:19]
     return dict(
         start_date=start_date, end_date=end_date, departments=departments,
         physician=physician, physician_role=physician_role, codetype=codetype,
-        charge_status=charge_status, categories=categories,
-        reviewed_filter=reviewed_filter, exported_filter=exported_filter,
+        charge_status=charge_status, categories=categories, cpt_codes=cpt_codes,
+        pro_reviewed=pro_reviewed, pro_exported=pro_exported,
+        excl_credited=excl_credited, excl_waived=excl_waived,
+        hosp_reviewed=hosp_reviewed, hosp_exported=hosp_exported,
+        hosp_excl_credited=hosp_excl_credited, hosp_excl_waived=hosp_excl_waived,
         date_preset=date_preset,
     )
 
 
 def _load_and_filter_billing(start_date=None, end_date=None, departments=None,
                              physician=None, physician_role=None, codetype=None,
-                             charge_status=None, categories=None,
-                             reviewed_filter=None, exported_filter=None,
+                             charge_status=None, categories=None, cpt_codes=None,
+                             pro_reviewed=None, pro_exported=None,
+                             excl_credited=True, excl_waived=True,
+                             hosp_reviewed=None, hosp_exported=None,
+                             hosp_excl_credited=True, hosp_excl_waived=True,
                              date_preset=None):
     """Load enriched billing, apply date range + dimension filters.
 
@@ -1693,16 +2173,46 @@ def _load_and_filter_billing(start_date=None, end_date=None, departments=None,
             rc = "AttendingPhysician" if physician_role == "attending" else "SupervisingPhysician"
             if rc in df.columns:
                 m = m & (df[rc] == physician)
-        if codetype and codetype != "all" and "CodeType" in df.columns:
-            m = m & (df["CodeType"] == codetype)
+        # Component filter (pro/hospital/all) does NOT filter rows — it controls
+        # which revenue column the dollar charts use. Revenue columns already
+        # have $0 for non-applicable rows. Row filtering would miscount volume
+        # (e.g., bundled G-codes in 2025 have OPPS_Rate=0 but are real events).
         if charge_status and charge_status != "all":
             m = m & (df["ChargeStatus"] == charge_status)
-        if categories:
+        if cpt_codes:
+            m = m & df["_base_code"].isin(cpt_codes)
+        elif categories:
             m = m & df["Category"].isin(categories)
-        if reviewed_filter and reviewed_filter != "all" and "Reviewed" in df.columns:
-            m = m & (df["Reviewed"] == ("Yes" if reviewed_filter == "yes" else "No"))
-        if exported_filter and exported_filter != "all" and "Exported" in df.columns:
-            m = m & (df["Exported"] == ("Yes" if exported_filter == "yes" else "No"))
+        # Per-component reviewed/exported/exclusion filters
+        # Professional = rows with physician work (wRVU > 0)
+        # Hospital = rows without physician work (pure technical charges)
+        has_rev = "Reviewed" in df.columns
+        has_exp = "Exported" in df.columns
+        has_cred = "Credited" in df.columns
+        has_waived = "Waived" in df.columns
+        has_wrvu = "wRVU" in df.columns
+        is_pro = df["wRVU"] > 0 if has_wrvu else pd.Series(True, index=df.index)
+        is_hosp = ~is_pro
+
+        # Professional: reviewed, exported, exclusions
+        if has_rev and pro_reviewed and pro_reviewed != "all":
+            m = m & (~is_pro | (df["Reviewed"] == ("Yes" if pro_reviewed == "yes" else "No")))
+        if has_exp and pro_exported and pro_exported != "all":
+            m = m & (~is_pro | (df["Exported"] == ("Yes" if pro_exported == "yes" else "No")))
+        if excl_credited and has_cred:
+            m = m & (~is_pro | (df["Credited"] != "Yes"))
+        if excl_waived and has_waived:
+            m = m & (~is_pro | (df["Waived"] != "Yes"))
+
+        # Hospital: reviewed, exported, exclusions
+        if has_rev and hosp_reviewed and hosp_reviewed != "all":
+            m = m & (~is_hosp | (df["Reviewed"] == ("Yes" if hosp_reviewed == "yes" else "No")))
+        if has_exp and hosp_exported and hosp_exported != "all":
+            m = m & (~is_hosp | (df["Exported"] == ("Yes" if hosp_exported == "yes" else "No")))
+        if hosp_excl_credited and has_cred:
+            m = m & (~is_hosp | (df["Credited"] != "Yes"))
+        if hosp_excl_waived and has_waived:
+            m = m & (~is_hosp | (df["Waived"] != "Yes"))
         return m
 
     mask = _dim_mask((df["DateOfService"] >= start) & (df["DateOfService"] <= end))
@@ -1727,6 +2237,7 @@ def _load_and_filter_billing(start_date=None, end_date=None, departments=None,
         "date_preset": _dp,
         "physician_role": physician_role,
         "categories": categories,
+        "component": codetype or "all",
     }
 
 
@@ -1738,18 +2249,35 @@ def _load_and_filter_billing(start_date=None, end_date=None, departments=None,
     Output(f"{PAGE_ID}-kpi-row", "children"),
     Output(f"{PAGE_ID}-dollar-row", "children"),
     Output(f"{PAGE_ID}-store-kpi-sparklines", "data"),
+    Output(f"{PAGE_ID}-store-volume", "data"),
+    Output(f"{PAGE_ID}-store-rvu", "data"),
+    Output(f"{PAGE_ID}-store-dollar", "data"),
+    Output(f"{PAGE_ID}-store-payor-event", "data"),
+    Output(f"{PAGE_ID}-store-payor-patient", "data"),
     *_BILLING_FILTER_INPUTS,
+    running=[
+        (Output(f"{PAGE_ID}-chart-vol-trend-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-chart-rvu-trend-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-chart-dollar-trend-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-chart-payor-event-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-chart-payor-patient-loading", "visible"), True, False),
+    ],
 )
-def _update_billing_kpis(*args):
-    """KPIs, sparklines, and dollar estimate row."""
-    ctx = _unpack_billing_filter_args(args)
-    data = _load_and_filter_billing(**ctx)
+def _update_billing_main(*args):
+    """Single consolidated callback — loads and filters data once for all stores."""
+    filt = _unpack_billing_filter_args(args)
+    data = _load_and_filter_billing_cached(**filt)
+    _empty_payor = {"actual": {"labels": [], "values": [], "colors": []},
+                    "broad": {"labels": [], "values": [], "colors": []}}
     if data is None:
-        return [], [], {}
+        return [], [], {}, None, None, None, _empty_payor, _empty_payor
 
     bf = data["bf"]
     bf_prior = data["bf_prior"]
     start, end = data["start"], data["end"]
+    physician_role = data["physician_role"]
+    categories = data["categories"]
+    component = data["component"]
 
     # KPIs + sparklines
     sparkline_data = {}
@@ -1758,10 +2286,10 @@ def _update_billing_kpis(*args):
     for cat in CATEGORY_NAMES:
         slug = CATEGORY_SLUGS[cat]
         color = CATEGORY_COLORS[cat]
-        curr_count = len(bf[bf["Category"] == cat])
+        curr_count = int(bf.loc[bf["Category"] == cat, "Quantity"].sum())
         if curr_count == 0:
             continue
-        prior_count = len(bf_prior[bf_prior["Category"] == cat])
+        prior_count = int(bf_prior.loc[bf_prior["Category"] == cat, "Quantity"].sum())
         trend, direction = _trend_text(curr_count, prior_count)
         card = kpi_card(
             cat,
@@ -1775,7 +2303,7 @@ def _update_billing_kpis(*args):
 
         # Sparkline raw data
         cat_df = bf[bf["Category"] == cat]
-        spark = _count_spark_raw(cat_df, "DateOfService", start, end)
+        spark = _count_spark_raw(cat_df, "DateOfService", start, end, value_col="Quantity")
         spark["color"] = color
         sparkline_data[slug] = spark
 
@@ -1814,45 +2342,23 @@ def _update_billing_kpis(*args):
             style={"flex": "1 1 0", "minWidth": "140px"},
         )
 
-    cf = bf["DateOfService"].dt.year.map(_CMS_CF).fillna(_CMS_CF_DEFAULT) if not bf.empty else pd.Series(dtype=float)
-
-    # Group revenue: Pro_Total (from 26 row) × CF — includes wRVU + pro PE + pro MP
-    group_dollars = (bf["Pro_Total_RVU"] * cf).sum() if not bf.empty else 0
-
-    # Hospital revenue: TC_Total (from TC row) × CF — 0 for codes with no TC variant
-    hosp_dollars = (bf["TC_Total_RVU"] * cf).sum() if not bf.empty else 0
-
+    # Use pre-computed per-row revenue (from _get_enriched_billing)
+    group_dollars = bf["Pro_Revenue"].sum() if not bf.empty else 0
+    hosp_dollars = bf["Hosp_Revenue"].sum() if not bf.empty else 0
     total_dollars = group_dollars + hosp_dollars
 
-    dollar_children = [
-        _dollar_card("Est. Group Revenue", group_dollars, PRIMARY),
-        _dollar_card("Est. Hospital Revenue", hosp_dollars),
-        _dollar_card("Est. All-In Total", total_dollars, SEMANTIC_COLORS["success"]),
-    ]
+    if component == "pro":
+        dollar_children = [_dollar_card("Est. Professional Revenue", group_dollars, PRIMARY)]
+    elif component == "hospital":
+        dollar_children = [_dollar_card("Est. Hospital Revenue", hosp_dollars, PRIMARY)]
+    else:
+        dollar_children = [
+            _dollar_card("Est. Professional Revenue", group_dollars, PRIMARY),
+            _dollar_card("Est. Hospital Revenue", hosp_dollars),
+            _dollar_card("Est. All-In Total", total_dollars, SEMANTIC_COLORS["success"]),
+        ]
 
-    return kpi_children, dollar_children, sparkline_data
-
-
-# ---------------------------------------------------------------------------
-# Callback 2: Volume Store
-# ---------------------------------------------------------------------------
-
-@callback(
-    Output(f"{PAGE_ID}-store-volume", "data"),
-    *_BILLING_FILTER_INPUTS,
-    running=[(Output(f"{PAGE_ID}-chart-vol-trend-loading", "visible"), True, False)],
-)
-def _update_billing_volume(*args):
-    ctx = _unpack_billing_filter_args(args)
-    data = _load_and_filter_billing(**ctx)
-    if data is None:
-        return None
-
-    bf = data["bf"]
-    start, end = data["start"], data["end"]
-    physician_role = data["physician_role"]
-    categories = data["categories"]
-
+    # ---- Shared dimension setup (computed once for all stores) ----
     dept_names = [d for d in DEPARTMENTS if d in bf["Department"].unique()] if "Department" in bf.columns else []
     _role_col = "AttendingPhysician" if physician_role == "attending" else "SupervisingPhysician"
     if _role_col in bf.columns:
@@ -1861,6 +2367,15 @@ def _update_billing_volume(*args):
     else:
         phys_names, phys_colors = [], {}
     active_cat_names = [c for c in CATEGORY_NAMES if c in bf["Category"].unique()]
+
+    subcat_names, subcat_colors = [], {}
+    cpt_codes_list, cpt_colors = [], {}
+    if categories and len(categories) >= 1:
+        subcat_names = sorted(bf["Subcategory"].dropna().unique())
+        subcat_colors = {s: CHART_COLORWAY[i % len(CHART_COLORWAY)] for i, s in enumerate(subcat_names)}
+    if categories and len(categories) == 1:
+        cpt_codes_list = sorted(bf["_base_code"].dropna().unique())
+        cpt_colors = {c: CHART_COLORWAY[i % len(CHART_COLORWAY)] for i, c in enumerate(cpt_codes_list)}
 
     def _build_all_aggs(group_col, group_names, group_colors, value_col=None, y_title="Count"):
         out = {}
@@ -1872,112 +2387,46 @@ def _update_billing_volume(*args):
             )
         return out
 
-    volume_store = {
-        "category": _build_all_aggs("Category", active_cat_names, CATEGORY_COLORS,
-                                     y_title="Billing Events"),
-        "department": _build_all_aggs("Department", dept_names, DEPARTMENT_COLORS,
-                                       y_title="Billing Events"),
-        "physician": _build_all_aggs(_role_col, phys_names, phys_colors,
-                                      y_title="Billing Events"),
-    }
+    def _build_store(value_col, y_title):
+        store = {
+            "category": _build_all_aggs("Category", active_cat_names, CATEGORY_COLORS,
+                                         value_col=value_col, y_title=y_title),
+            "department": _build_all_aggs("Department", dept_names, DEPARTMENT_COLORS,
+                                           value_col=value_col, y_title=y_title),
+            "physician": _build_all_aggs(_role_col, phys_names, phys_colors,
+                                          value_col=value_col, y_title=y_title),
+        }
+        if subcat_names:
+            store["subcategory"] = _build_all_aggs("Subcategory", subcat_names, subcat_colors,
+                                                    value_col=value_col, y_title=y_title)
+        if cpt_codes_list:
+            store["cpt"] = _build_all_aggs("_base_code", cpt_codes_list, cpt_colors,
+                                            value_col=value_col, y_title=y_title)
+        return store
 
-    if categories and len(categories) == 1:
-        cpt_codes = sorted(bf["_base_code"].dropna().unique())
-        cpt_colors = {c: CHART_COLORWAY[i % len(CHART_COLORWAY)] for i, c in enumerate(cpt_codes)}
-        volume_store["cpt"] = _build_all_aggs("_base_code", cpt_codes, cpt_colors,
-                                               y_title="Billing Events")
+    # ---- Volume Store ----
+    volume_store = _build_store("Quantity", "Billing Units")
 
-    return volume_store
+    # ---- RVU Store (skip when hospital-only — RVUs don't apply to OPPS) ----
+    rvu_store = None if component == "hospital" else _build_store("wRVU", "wRVU")
 
-
-# ---------------------------------------------------------------------------
-# Callback 3: RVU Store
-# ---------------------------------------------------------------------------
-
-@callback(
-    Output(f"{PAGE_ID}-store-rvu", "data"),
-    *_BILLING_FILTER_INPUTS,
-    running=[(Output(f"{PAGE_ID}-chart-rvu-trend-loading", "visible"), True, False)],
-)
-def _update_billing_rvu(*args):
-    ctx = _unpack_billing_filter_args(args)
-    data = _load_and_filter_billing(**ctx)
-    if data is None:
-        return None
-
-    bf = data["bf"]
-    start, end = data["start"], data["end"]
-    physician_role = data["physician_role"]
-    categories = data["categories"]
-
-    dept_names = [d for d in DEPARTMENTS if d in bf["Department"].unique()] if "Department" in bf.columns else []
-    _role_col = "AttendingPhysician" if physician_role == "attending" else "SupervisingPhysician"
-    if _role_col in bf.columns:
-        phys_names = sorted(bf[_role_col].dropna().unique())
-        phys_colors = {p: CHART_COLORWAY[i % len(CHART_COLORWAY)] for i, p in enumerate(phys_names)}
+    # ---- Dollar Store ----
+    if component == "pro":
+        dollar_col, dollar_label = "Pro_Revenue", "Professional Revenue ($)"
+    elif component == "hospital":
+        dollar_col, dollar_label = "Hosp_Revenue", "Hospital Revenue ($)"
     else:
-        phys_names, phys_colors = [], {}
-    active_cat_names = [c for c in CATEGORY_NAMES if c in bf["Category"].unique()]
+        dollar_col, dollar_label = "Total_Revenue", "Total Revenue ($)"
+    dollar_store = _build_store(dollar_col, dollar_label)
 
-    def _build_all_aggs(group_col, group_names, group_colors, value_col=None, y_title="Count"):
-        out = {}
-        for freq in ("W", "M", "Y"):
-            out[freq] = _build_census_data(
-                bf, "DateOfService", start, end,
-                group_col, group_names, group_colors,
-                value_col=value_col, y_title=y_title, freq=freq,
-            )
-        return out
-
-    rvu_store = {
-        "category": _build_all_aggs("Category", active_cat_names, CATEGORY_COLORS,
-                                     value_col="wRVU", y_title="wRVU"),
-        "department": _build_all_aggs("Department", dept_names, DEPARTMENT_COLORS,
-                                       value_col="wRVU", y_title="wRVU"),
-        "physician": _build_all_aggs(_role_col, phys_names, phys_colors,
-                                      value_col="wRVU", y_title="wRVU"),
-    }
-
-    if categories and len(categories) == 1:
-        cpt_codes = sorted(bf["_base_code"].dropna().unique())
-        cpt_colors = {c: CHART_COLORWAY[i % len(CHART_COLORWAY)] for i, c in enumerate(cpt_codes)}
-        rvu_store["cpt"] = _build_all_aggs("_base_code", cpt_codes, cpt_colors,
-                                            value_col="wRVU", y_title="wRVU")
-
-    return rvu_store
-
-
-# ---------------------------------------------------------------------------
-# Callback 4: Payor Stores
-# ---------------------------------------------------------------------------
-
-@callback(
-    Output(f"{PAGE_ID}-store-payor-event", "data"),
-    Output(f"{PAGE_ID}-store-payor-patient", "data"),
-    *_BILLING_FILTER_INPUTS,
-    running=[
-        (Output(f"{PAGE_ID}-chart-payor-event-loading", "visible"), True, False),
-        (Output(f"{PAGE_ID}-chart-payor-patient-loading", "visible"), True, False),
-    ],
-)
-def _update_billing_payor(*args):
-    ctx = _unpack_billing_filter_args(args)
-    data = _load_and_filter_billing(**ctx)
-    if data is None:
-        empty = {"actual": {"labels": [], "values": [], "colors": []},
-                 "broad": {"labels": [], "values": [], "colors": []}}
-        return empty, empty
-
-    bf = data["bf"]
+    # ---- Payor Stores ----
     payor_event = _build_payor_data(bf, "PrimaryInsurance")
 
-    # Per-patient: unique patients in filtered billing data
     from data.loader import load_patients
     try:
         patients = load_patients()
     except Exception:
         patients = pd.DataFrame()
-
     if not patients.empty and "PatientId" in bf.columns:
         pat_ids = bf["PatientId"].unique()
         pat_sub = patients[patients["PatientId"].isin(pat_ids)].copy()
@@ -1989,7 +2438,9 @@ def _update_billing_payor(*args):
     else:
         payor_patient = _build_payor_data(pd.DataFrame(), "PrimaryInsurance")
 
-    return payor_event, payor_patient
+    return (kpi_children, dollar_children, sparkline_data,
+            volume_store, rvu_store, dollar_store,
+            payor_event, payor_patient)
 
 
 # ---------------------------------------------------------------------------
@@ -1999,35 +2450,52 @@ def _update_billing_payor(*args):
 @callback(
     Output(f"{PAGE_ID}-store-volume-cum", "data"),
     Output(f"{PAGE_ID}-store-rvu-cum", "data"),
+    Output(f"{PAGE_ID}-store-dollar-cum", "data"),
     *_BILLING_FILTER_INPUTS,
     Input(f"{PAGE_ID}-volcum-mode", "value"),
     Input(f"{PAGE_ID}-volcum-period-type", "value"),
     Input(f"{PAGE_ID}-volcum-slice", "value"),
-    Input(f"{PAGE_ID}-volcum-settings-prior-periods", "value"),
     Input(f"{PAGE_ID}-rvucum-mode", "value"),
     Input(f"{PAGE_ID}-rvucum-period-type", "value"),
     Input(f"{PAGE_ID}-rvucum-slice", "value"),
-    Input(f"{PAGE_ID}-rvucum-settings-prior-periods", "value"),
+    Input(f"{PAGE_ID}-dollarcum-mode", "value"),
+    Input(f"{PAGE_ID}-dollarcum-period-type", "value"),
+    Input(f"{PAGE_ID}-dollarcum-slice", "value"),
     running=[
         (Output(f"{PAGE_ID}-chart-vol-cum-loading", "visible"), True, False),
         (Output(f"{PAGE_ID}-chart-rvu-cum-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-chart-dollar-cum-loading", "visible"), True, False),
     ],
 )
 def update_cumulative(*args):
     """Cumulative stores only — separate callback so toggle changes are fast."""
-    ctx = _unpack_billing_filter_args(args)
-    (volcum_mode, volcum_period_type, volcum_slice, volcum_prior_periods,
-     rvucum_mode, rvucum_period_type, rvucum_slice, rvucum_prior_periods) = args[12:20]
+    filt = _unpack_billing_filter_args(args)
+    (volcum_mode, volcum_period_type, volcum_slice,
+     rvucum_mode, rvucum_period_type, rvucum_slice,
+     dollarcum_mode, dollarcum_period_type,
+     dollarcum_slice) = args[19:28]
 
-    data = _load_and_filter_billing(**ctx)
+    data = _load_and_filter_billing_cached(**filt)
     if data is None:
-        return None, None
+        return None, None, None
 
     df_all = data["df_all"]
     start, end = data["start"], data["end"]
     physician_role = data["physician_role"]
     categories = data["categories"]
     _dp = data["date_preset"]
+    component = data["component"]
+
+    # RVU cumulative always wRVU (professional only)
+    rvu_col, rvu_label = "wRVU", "Cumulative wRVU"
+
+    # Dollar cumulative: component-aware
+    if component == "pro":
+        dollar_col, dollar_label = "Pro_Revenue", "Cumulative Professional Revenue ($)"
+    elif component == "hospital":
+        dollar_col, dollar_label = "Hosp_Revenue", "Cumulative Hospital Revenue ($)"
+    else:
+        dollar_col, dollar_label = "Total_Revenue", "Cumulative Total Revenue ($)"
 
     # Slice configs
     _role_col = "AttendingPhysician" if physician_role == "attending" else "SupervisingPhysician"
@@ -2045,6 +2513,12 @@ def update_cumulative(*args):
         "physician": (_role_col, phys_names, phys_colors),
     }
 
+    # Subcategory slice (when >= 1 category selected)
+    if categories and len(categories) >= 1:
+        subcat_names = sorted(df_all["Subcategory"].dropna().unique())
+        subcat_colors = {s: CHART_COLORWAY[i % len(CHART_COLORWAY)] for i, s in enumerate(subcat_names)}
+        _slice_cfgs["subcategory"] = ("Subcategory", subcat_names, subcat_colors)
+
     # CPT-code slice for cumulative (only when exactly 1 category selected)
     if categories and len(categories) == 1:
         cpt_codes = sorted(df_all["_base_code"].dropna().unique())
@@ -2053,7 +2527,7 @@ def update_cumulative(*args):
 
     vol_cum = _build_cumulative(
         df_all, "DateOfService", start, end, _dp,
-        y_title="Cumulative Events",
+        value_col="Quantity", y_title="Cumulative Units",
         mode=volcum_mode or "prior",
         period_type=volcum_period_type or "calendar",
         slice_by=volcum_slice or "total",
@@ -2062,142 +2536,140 @@ def update_cumulative(*args):
     )
     rvu_cum = _build_cumulative(
         df_all, "DateOfService", start, end, _dp,
-        value_col="wRVU", y_title="Cumulative wRVU",
+        value_col=rvu_col, y_title=rvu_label,
         mode=rvucum_mode or "prior",
         period_type=rvucum_period_type or "calendar",
         slice_by=rvucum_slice or "total",
         slice_configs=_slice_cfgs,
         max_prior=10,
     )
-    return vol_cum, rvu_cum
+    dollar_cum = _build_cumulative(
+        df_all, "DateOfService", start, end, _dp,
+        value_col=dollar_col, y_title=dollar_label,
+        mode=dollarcum_mode or "prior",
+        period_type=dollarcum_period_type or "calendar",
+        slice_by=dollarcum_slice or "total",
+        slice_configs=_slice_cfgs,
+        max_prior=10,
+    )
+    return vol_cum, rvu_cum, dollar_cum
 
 
 # ---------------------------------------------------------------------------
-# Clientside: Volume & RVU Charts (with slice toggle)
+# Clientside: Deferred chart rendering (staggered rAF + IntersectionObserver)
 # ---------------------------------------------------------------------------
+# See assets/billing_deferred.js — each callback pushes to a render queue
+# instead of returning figures directly. This prevents 8 simultaneous
+# Plotly.react calls from blocking the main thread on page load.
 
-# Wrapper JS: store[sliceMode][agg] → census renderer
-_SLICE_AGG_JS = """
-function(storeData, sliceMode, agg, smoothPct, chartType, currentFig) {
-    if (!storeData) return window.dash_clientside.no_update;
-    var sliceData = storeData[sliceMode || "category"];
-    if (!sliceData) return window.dash_clientside.no_update;
-    var rawData = sliceData[agg || "M"];
-    if (!rawData) return window.dash_clientside.no_update;
-    return window.dash_clientside.census.smoothChartWithType(rawData, smoothPct, chartType, currentFig);
-}
+def _trend_js(chart_id):
+    return f"""
+function(storeData, sliceMode, agg, smoothPct, chartType, stackVal) {{
+    return window.dash_clientside.billingDeferred.renderTrend(
+        '{chart_id}', storeData, sliceMode, agg, smoothPct, chartType, stackVal
+    );
+}}
 """
 
+def _cum_js(chart_id):
+    return f"""
+function(rawData, smoothPct, chartType, stackVal, maxPrior) {{
+    return window.dash_clientside.billingDeferred.renderCum(
+        '{chart_id}', rawData, smoothPct, chartType, stackVal, maxPrior
+    );
+}}
+"""
+
+def _payor_js(chart_id):
+    return f"""
+function(storeData, mode, unit) {{
+    return window.dash_clientside.billingDeferred.renderPayor(
+        '{chart_id}', storeData, mode, unit
+    );
+}}
+"""
+
+# Volume trend
 clientside_callback(
-    _SLICE_AGG_JS,
+    _trend_js(f"{PAGE_ID}-chart-vol-trend"),
     Output(f"{PAGE_ID}-chart-vol-trend", "figure"),
     Input(f"{PAGE_ID}-store-volume", "data"),
     Input(f"{PAGE_ID}-vol-slice", "value"),
     Input(f"{PAGE_ID}-vol-agg", "value"),
     Input(f"{PAGE_ID}-vol-settings-smooth", "value"),
     Input(f"{PAGE_ID}-vol-settings-type", "value"),
-    State(f"{PAGE_ID}-chart-vol-trend", "figure"),
+    Input(f"{PAGE_ID}-vol-settings-stack", "value"),
 )
 
+# RVU trend
 clientside_callback(
-    _SLICE_AGG_JS,
+    _trend_js(f"{PAGE_ID}-chart-rvu-trend"),
     Output(f"{PAGE_ID}-chart-rvu-trend", "figure"),
     Input(f"{PAGE_ID}-store-rvu", "data"),
     Input(f"{PAGE_ID}-rvu-slice", "value"),
     Input(f"{PAGE_ID}-rvu-agg", "value"),
     Input(f"{PAGE_ID}-rvu-settings-smooth", "value"),
     Input(f"{PAGE_ID}-rvu-settings-type", "value"),
-    State(f"{PAGE_ID}-chart-rvu-trend", "figure"),
+    Input(f"{PAGE_ID}-rvu-settings-stack", "value"),
 )
 
-# Cumulative charts (mode/slice handled server-side in store data)
-_CUM_JS = """
-function(rawData, chartType, currentFig) {
-    if (!rawData) return window.dash_clientside.no_update;
-    return window.dash_clientside.cumulative.renderCumulative(rawData, 0, chartType, currentFig);
-}
-"""
-
+# Volume cumulative
 clientside_callback(
-    _CUM_JS,
+    _cum_js(f"{PAGE_ID}-chart-vol-cum"),
     Output(f"{PAGE_ID}-chart-vol-cum", "figure"),
     Input(f"{PAGE_ID}-store-volume-cum", "data"),
+    Input(f"{PAGE_ID}-volcum-settings-smooth", "value"),
     Input(f"{PAGE_ID}-volcum-settings-type", "value"),
-    State(f"{PAGE_ID}-chart-vol-cum", "figure"),
+    Input(f"{PAGE_ID}-volcum-settings-stack", "value"),
+    Input(f"{PAGE_ID}-volcum-settings-prior-periods", "value"),
 )
 
+# RVU cumulative
 clientside_callback(
-    _CUM_JS,
+    _cum_js(f"{PAGE_ID}-chart-rvu-cum"),
     Output(f"{PAGE_ID}-chart-rvu-cum", "figure"),
     Input(f"{PAGE_ID}-store-rvu-cum", "data"),
+    Input(f"{PAGE_ID}-rvucum-settings-smooth", "value"),
     Input(f"{PAGE_ID}-rvucum-settings-type", "value"),
-    State(f"{PAGE_ID}-chart-rvu-cum", "figure"),
+    Input(f"{PAGE_ID}-rvucum-settings-stack", "value"),
+    Input(f"{PAGE_ID}-rvucum-settings-prior-periods", "value"),
 )
 
-
-# ---------------------------------------------------------------------------
-# Clientside: Payor Charts
-# ---------------------------------------------------------------------------
-
-_PAYOR_BAR_JS = """
-function(storeData, mode, unit) {
-    if (!storeData) return window.dash_clientside.no_update;
-    var d = storeData[mode] || storeData["actual"];
-    if (!d || !d.labels || d.labels.length === 0) {
-        return {data: [], layout: Object.assign({}, window.dmc_default_layout || {}, {
-            xaxis: {visible: false}, yaxis: {visible: false},
-            annotations: [{text: "No payor data", xref: "paper", yref: "paper",
-                x: 0.5, y: 0.5, showarrow: false, font: {size: 14, color: "#9CA3AF"}}],
-            height: 300, margin: {l: 40, r: 20, t: 8, b: 2}
-        })};
-    }
-    var labels = d.labels.slice().reverse();
-    var rawValues = d.values.slice().reverse();
-    var colors = d.colors.slice().reverse();
-    var isPct = unit === "pct";
-    var total = 0;
-    for (var i = 0; i < rawValues.length; i++) total += rawValues[i];
-    var values = isPct ? rawValues.map(function(v) { return total > 0 ? (v / total * 100) : 0; }) : rawValues;
-    var hoverFmt = isPct
-        ? "%{y}: %{x:.1f}%<extra></extra>"
-        : "%{y}: %{x:,}<extra></extra>";
-    var textVals = isPct
-        ? values.map(function(v) { return v.toFixed(1) + "%"; })
-        : null;
-    return {
-        data: [{
-            y: labels, x: values, orientation: "h", type: "bar",
-            marker: {color: colors},
-            text: textVals,
-            textposition: isPct ? "outside" : "none",
-            cliponaxis: false,
-            hovertemplate: hoverFmt
-        }],
-        layout: Object.assign({}, window.dmc_default_layout || {}, {
-            height: 380,
-            margin: {l: 160, r: 16, t: 8, b: 18},
-            xaxis: {
-                title: {text: ""},
-                showgrid: true,
-                gridcolor: "#F0F0F0",
-                ticksuffix: isPct ? "%" : ""
-            },
-            yaxis: {showgrid: false, automargin: true},
-        })
-    };
-}
-"""
-
+# Dollar trend
 clientside_callback(
-    _PAYOR_BAR_JS,
+    _trend_js(f"{PAGE_ID}-chart-dollar-trend"),
+    Output(f"{PAGE_ID}-chart-dollar-trend", "figure"),
+    Input(f"{PAGE_ID}-store-dollar", "data"),
+    Input(f"{PAGE_ID}-dollar-slice", "value"),
+    Input(f"{PAGE_ID}-dollar-agg", "value"),
+    Input(f"{PAGE_ID}-dollar-settings-smooth", "value"),
+    Input(f"{PAGE_ID}-dollar-settings-type", "value"),
+    Input(f"{PAGE_ID}-dollar-settings-stack", "value"),
+)
+
+# Dollar cumulative
+clientside_callback(
+    _cum_js(f"{PAGE_ID}-chart-dollar-cum"),
+    Output(f"{PAGE_ID}-chart-dollar-cum", "figure"),
+    Input(f"{PAGE_ID}-store-dollar-cum", "data"),
+    Input(f"{PAGE_ID}-dollarcum-settings-smooth", "value"),
+    Input(f"{PAGE_ID}-dollarcum-settings-type", "value"),
+    Input(f"{PAGE_ID}-dollarcum-settings-stack", "value"),
+    Input(f"{PAGE_ID}-dollarcum-settings-prior-periods", "value"),
+)
+
+# Payor event chart
+clientside_callback(
+    _payor_js(f"{PAGE_ID}-chart-payor-event"),
     Output(f"{PAGE_ID}-chart-payor-event", "figure"),
     Input(f"{PAGE_ID}-store-payor-event", "data"),
     Input(f"{PAGE_ID}-payor-event-mode", "value"),
     Input(f"{PAGE_ID}-payor-event-unit", "value"),
 )
 
+# Payor patient chart
 clientside_callback(
-    _PAYOR_BAR_JS,
+    _payor_js(f"{PAGE_ID}-chart-payor-patient"),
     Output(f"{PAGE_ID}-chart-payor-patient", "figure"),
     Input(f"{PAGE_ID}-store-payor-patient", "data"),
     Input(f"{PAGE_ID}-payor-patient-mode", "value"),
@@ -2229,6 +2701,7 @@ _HIDE_STACK_JS = """function(sliceVal, chartType) {
 for _slice_id, _settings_id in [
     (f"{PAGE_ID}-vol-slice", f"{PAGE_ID}-vol"),
     (f"{PAGE_ID}-rvu-slice", f"{PAGE_ID}-rvu"),
+    (f"{PAGE_ID}-dollar-slice", f"{PAGE_ID}-dollar"),
 ]:
     clientside_callback(
         _HIDE_STACK_JS,
@@ -2242,6 +2715,7 @@ for _slice_id, _settings_id in [
 for _cum_mode, _cum_slice, _cum_settings in [
     (f"{PAGE_ID}-volcum-mode", f"{PAGE_ID}-volcum-slice", f"{PAGE_ID}-volcum"),
     (f"{PAGE_ID}-rvucum-mode", f"{PAGE_ID}-rvucum-slice", f"{PAGE_ID}-rvucum"),
+    (f"{PAGE_ID}-dollarcum-mode", f"{PAGE_ID}-dollarcum-slice", f"{PAGE_ID}-dollarcum"),
 ]:
     clientside_callback(
         """function(mode, sliceVal, chartType) {
@@ -2283,27 +2757,37 @@ register_chart_callbacks([
     (f"{PAGE_ID}-volcum", f"{PAGE_ID}-chart-vol-cum"),
     (f"{PAGE_ID}-rvu", f"{PAGE_ID}-chart-rvu-trend"),
     (f"{PAGE_ID}-rvucum", f"{PAGE_ID}-chart-rvu-cum"),
+    (f"{PAGE_ID}-dollar", f"{PAGE_ID}-chart-dollar-trend"),
+    (f"{PAGE_ID}-dollarcum", f"{PAGE_ID}-chart-dollar-cum"),
 ])
 
-# Cumulative control visibility: hide slice toggle when "prior", show when "slice"
-_CUM_VIS_JS = """function(mode) {
+# Cumulative control visibility: hide slice toggle when "prior", show when "slice".
+# When switching to slice mode, auto-select "category" if currently on "total".
+_CUM_VIS_JS = """function(mode, sliceVal) {
     if (mode === "prior") {
-        return [{}, {"display": "none"}];
+        return [{}, {"display": "none"}, "total"];
     }
-    return [{"display": "none"}, {}];
+    var newSlice = (!sliceVal || sliceVal === "total") ? "category" : window.dash_clientside.no_update;
+    return [{"display": "none"}, {}, newSlice];
 }"""
 
 clientside_callback(
     _CUM_VIS_JS,
     Output(f"{PAGE_ID}-volcum-period-type", "style"),
     Output(f"{PAGE_ID}-volcum-slice", "style"),
+    Output(f"{PAGE_ID}-volcum-slice", "value", allow_duplicate=True),
     Input(f"{PAGE_ID}-volcum-mode", "value"),
+    State(f"{PAGE_ID}-volcum-slice", "value"),
+    prevent_initial_call="initial_duplicate",
 )
 clientside_callback(
     _CUM_VIS_JS,
     Output(f"{PAGE_ID}-rvucum-period-type", "style"),
     Output(f"{PAGE_ID}-rvucum-slice", "style"),
+    Output(f"{PAGE_ID}-rvucum-slice", "value", allow_duplicate=True),
     Input(f"{PAGE_ID}-rvucum-mode", "value"),
+    State(f"{PAGE_ID}-rvucum-slice", "value"),
+    prevent_initial_call="initial_duplicate",
 )
 
 # Disable Calendar when period > 1 year; cap prior-periods slider to available data (Volume)
@@ -2334,33 +2818,69 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
+# Dollar cumulative control visibility
+clientside_callback(
+    _CUM_VIS_JS,
+    Output(f"{PAGE_ID}-dollarcum-period-type", "style"),
+    Output(f"{PAGE_ID}-dollarcum-slice", "style"),
+    Output(f"{PAGE_ID}-dollarcum-slice", "value", allow_duplicate=True),
+    Input(f"{PAGE_ID}-dollarcum-mode", "value"),
+    State(f"{PAGE_ID}-dollarcum-slice", "value"),
+    prevent_initial_call="initial_duplicate",
+)
+
+# Dollar cumulative prior controls
+clientside_callback(
+    """function(storeData, currentPtValue) {
+        return window.dash_clientside.cumulative.updatePriorControls(storeData, currentPtValue);
+    }""",
+    Output(f"{PAGE_ID}-dollarcum-period-type", "data"),
+    Output(f"{PAGE_ID}-dollarcum-period-type", "value", allow_duplicate=True),
+    Output(f"{PAGE_ID}-dollarcum-settings-prior-periods", "max"),
+    Output(f"{PAGE_ID}-dollarcum-settings-prior-periods", "marks"),
+    Input(f"{PAGE_ID}-store-dollar-cum", "data"),
+    State(f"{PAGE_ID}-dollarcum-period-type", "value"),
+    prevent_initial_call=True,
+)
+
 
 # ---------------------------------------------------------------------------
 # CPT slice option: show only when exactly 1 category is selected
 # ---------------------------------------------------------------------------
 
-_CPT_SLICE_VIS_JS = """
-function(categories, currentVal) {
+def _make_slice_vis_js(include_total=False):
+    total_entry = '{value: "total", label: "Total"},' if include_total else ''
+    default_val = '"total"' if include_total else '"category"'
+    return f"""
+function(categories, currentVal) {{
     var base = [
-        {value: "category", label: "Category"},
-        {value: "department", label: "Site"},
-        {value: "physician", label: "MD"}
+        {total_entry}
+        {{value: "category", label: "Category"}}
     ];
-    var show = categories && categories.length === 1;
-    if (show) {
-        base.push({value: "cpt", label: "CPT"});
-        return [base, currentVal];
-    }
-    // Hide CPT — if currently selected, reset to category
-    return [base, currentVal === "cpt" ? "category" : currentVal];
-}
+    var hasCats = categories && categories.length >= 1;
+    var exactlyOne = categories && categories.length === 1;
+    if (hasCats) {{
+        base.push({{value: "subcategory", label: "Sub-Cat"}});
+    }}
+    base.push({{value: "department", label: "Site"}});
+    base.push({{value: "physician", label: "MD"}});
+    if (exactlyOne) {{
+        base.push({{value: "cpt", label: "CPT"}});
+    }}
+    var validValues = base.map(function(b) {{ return b.value; }});
+    var newVal = validValues.indexOf(currentVal) >= 0 ? currentVal : {default_val};
+    return [base, newVal];
+}}
 """
+
+_CPT_SLICE_VIS_JS = _make_slice_vis_js(include_total=False)
+_CPT_SLICE_VIS_CUM_JS = _make_slice_vis_js(include_total=True)
 
 clientside_callback(
     _CPT_SLICE_VIS_JS,
     Output(f"{PAGE_ID}-vol-slice", "data"),
     Output(f"{PAGE_ID}-vol-slice", "value"),
-    Input(f"{PAGE_ID}-filter-category", "value"),
+    Input(f"{PAGE_ID}-cpt-store", "data"),
     State(f"{PAGE_ID}-vol-slice", "value"),
 )
 
@@ -2368,24 +2888,40 @@ clientside_callback(
     _CPT_SLICE_VIS_JS,
     Output(f"{PAGE_ID}-rvu-slice", "data"),
     Output(f"{PAGE_ID}-rvu-slice", "value"),
-    Input(f"{PAGE_ID}-filter-category", "value"),
+    Input(f"{PAGE_ID}-cpt-store", "data"),
     State(f"{PAGE_ID}-rvu-slice", "value"),
 )
 
 clientside_callback(
-    _CPT_SLICE_VIS_JS,
+    _CPT_SLICE_VIS_CUM_JS,
     Output(f"{PAGE_ID}-volcum-slice", "data"),
     Output(f"{PAGE_ID}-volcum-slice", "value"),
-    Input(f"{PAGE_ID}-filter-category", "value"),
+    Input(f"{PAGE_ID}-cpt-store", "data"),
     State(f"{PAGE_ID}-volcum-slice", "value"),
 )
 
 clientside_callback(
-    _CPT_SLICE_VIS_JS,
+    _CPT_SLICE_VIS_CUM_JS,
     Output(f"{PAGE_ID}-rvucum-slice", "data"),
     Output(f"{PAGE_ID}-rvucum-slice", "value"),
-    Input(f"{PAGE_ID}-filter-category", "value"),
+    Input(f"{PAGE_ID}-cpt-store", "data"),
     State(f"{PAGE_ID}-rvucum-slice", "value"),
+)
+
+clientside_callback(
+    _CPT_SLICE_VIS_JS,
+    Output(f"{PAGE_ID}-dollar-slice", "data"),
+    Output(f"{PAGE_ID}-dollar-slice", "value"),
+    Input(f"{PAGE_ID}-cpt-store", "data"),
+    State(f"{PAGE_ID}-dollar-slice", "value"),
+)
+
+clientside_callback(
+    _CPT_SLICE_VIS_CUM_JS,
+    Output(f"{PAGE_ID}-dollarcum-slice", "data"),
+    Output(f"{PAGE_ID}-dollarcum-slice", "value"),
+    Input(f"{PAGE_ID}-cpt-store", "data"),
+    State(f"{PAGE_ID}-dollarcum-slice", "value"),
 )
 
 
@@ -2428,13 +2964,10 @@ clientside_callback(
     Input(f"{PAGE_ID}-filter-physician-role", "value"),
     Input(f"{PAGE_ID}-filter-codetype", "value"),
     Input(f"{PAGE_ID}-filter-charge-status", "value"),
-    Input(f"{PAGE_ID}-filter-category", "value"),
-    Input(f"{PAGE_ID}-filter-reviewed", "data"),
-    Input(f"{PAGE_ID}-filter-exported", "data"),
+    Input(f"{PAGE_ID}-cpt-store", "data"),
 )
 def _populate_physicians(start_date, end_date, departments, role,
-                         codetype, charge_status, categories,
-                         reviewed_filter, exported_filter):
+                         _component, charge_status, categories):
     try:
         billing = _get_enriched_billing()
     except Exception:
@@ -2453,10 +2986,6 @@ def _populate_physicians(start_date, end_date, departments, role,
     if departments and "Department" in billing.columns:
         billing = billing[billing["Department"].isin(departments)]
 
-    # Code type
-    if codetype and codetype != "all" and "CodeType" in billing.columns:
-        billing = billing[billing["CodeType"] == codetype]
-
     # Charge status
     if charge_status and charge_status != "all" and "ChargeStatus" in billing.columns:
         billing = billing[billing["ChargeStatus"] == charge_status]
@@ -2464,14 +2993,6 @@ def _populate_physicians(start_date, end_date, departments, role,
     # Categories
     if categories and "Category" in billing.columns:
         billing = billing[billing["Category"].isin(categories)]
-
-    # Reviewed
-    if reviewed_filter and reviewed_filter != "all" and "Reviewed" in billing.columns:
-        billing = billing[billing["Reviewed"] == ("Yes" if reviewed_filter == "yes" else "No")]
-
-    # Exported
-    if exported_filter and exported_filter != "all" and "Exported" in billing.columns:
-        billing = billing[billing["Exported"] == ("Yes" if exported_filter == "yes" else "No")]
 
     # Use the selected role column
     col = "AttendingPhysician" if role == "attending" else "SupervisingPhysician"
@@ -2483,79 +3004,84 @@ def _populate_physicians(start_date, end_date, departments, role,
 
 
 # ---------------------------------------------------------------------------
-# Chip Dropdown: Category (trigger label, clear, select all/none)
+# CPT Accordion filter callbacks
+# ---------------------------------------------------------------------------
+register_cpt_callbacks(PAGE_ID)
+
+
+# ---------------------------------------------------------------------------
+# Hide RVU row when Hospital component selected (RVUs don't apply to OPPS)
+# ---------------------------------------------------------------------------
+clientside_callback(
+    """function(component) {
+        return component === "hospital" ? {"display": "none"} : {};
+    }""",
+    Output(f"{PAGE_ID}-rvu-row", "style"),
+    Input(f"{PAGE_ID}-filter-codetype", "value"),
+)
+
+
+# ---------------------------------------------------------------------------
+# Chip Dropdown: Status (trigger label, clear)
 # ---------------------------------------------------------------------------
 
-# Trigger label
+# Trigger label — show "Status" normally, count non-default filters
 clientside_callback(
-    """function(vals) {
-        if (!vals || vals.length === 0) return "Category";
-        return vals.length + " selected";
+    """function(pr, pe, ec, ew, hr, he, hec, hew) {
+        var active = 0;
+        if (pr && pr !== "yes") active++;
+        if (pe && pe !== "all") active++;
+        if (!ec) active++;
+        if (!ew) active++;
+        if (hr && hr !== "yes") active++;
+        if (he && he !== "yes") active++;
+        if (!hec) active++;
+        if (!hew) active++;
+        return active > 0 ? "Status (" + active + ")" : "Status";
     }""",
-    Output(f"{PAGE_ID}-category-trigger", "children"),
-    Input(f"{PAGE_ID}-filter-category", "value"),
+    Output(f"{PAGE_ID}-status-trigger", "children"),
+    Input(f"{PAGE_ID}-filter-pro-reviewed", "value"),
+    Input(f"{PAGE_ID}-filter-pro-exported", "value"),
+    Input(f"{PAGE_ID}-filter-excl-credited", "checked"),
+    Input(f"{PAGE_ID}-filter-excl-waived", "checked"),
+    Input(f"{PAGE_ID}-filter-hosp-reviewed", "value"),
+    Input(f"{PAGE_ID}-filter-hosp-exported", "value"),
+    Input(f"{PAGE_ID}-filter-hosp-excl-credited", "checked"),
+    Input(f"{PAGE_ID}-filter-hosp-excl-waived", "checked"),
 )
 
 # Clear button visibility
 clientside_callback(
-    """function(vals) { return vals && vals.length > 0 ? {"display": "inline-flex"} : {"display": "none"}; }""",
-    Output(f"{PAGE_ID}-category-clear", "style"),
-    Input(f"{PAGE_ID}-filter-category", "value"),
+    """function(pr, pe, ec, ew, hr, he, hec, hew) {
+        var active = (pr !== "yes") || (pe !== "all") || !ec || !ew ||
+                     (hr !== "yes") || (he !== "yes") || !hec || !hew;
+        return active ? {"display": "inline-flex"} : {"display": "none"};
+    }""",
+    Output(f"{PAGE_ID}-status-clear", "style"),
+    Input(f"{PAGE_ID}-filter-pro-reviewed", "value"),
+    Input(f"{PAGE_ID}-filter-pro-exported", "value"),
+    Input(f"{PAGE_ID}-filter-excl-credited", "checked"),
+    Input(f"{PAGE_ID}-filter-excl-waived", "checked"),
+    Input(f"{PAGE_ID}-filter-hosp-reviewed", "value"),
+    Input(f"{PAGE_ID}-filter-hosp-exported", "value"),
+    Input(f"{PAGE_ID}-filter-hosp-excl-credited", "checked"),
+    Input(f"{PAGE_ID}-filter-hosp-excl-waived", "checked"),
 )
 
-# Clear button action
+# Clear button action — reset all status filters to defaults
 clientside_callback(
-    """function(n) { return []; }""",
-    Output(f"{PAGE_ID}-filter-category", "value", allow_duplicate=True),
-    Input(f"{PAGE_ID}-category-clear", "n_clicks"),
+    """function(n) { return ["yes", "all", true, true, "yes", "yes", true, true]; }""",
+    Output(f"{PAGE_ID}-filter-pro-reviewed", "value", allow_duplicate=True),
+    Output(f"{PAGE_ID}-filter-pro-exported", "value", allow_duplicate=True),
+    Output(f"{PAGE_ID}-filter-excl-credited", "checked", allow_duplicate=True),
+    Output(f"{PAGE_ID}-filter-excl-waived", "checked", allow_duplicate=True),
+    Output(f"{PAGE_ID}-filter-hosp-reviewed", "value", allow_duplicate=True),
+    Output(f"{PAGE_ID}-filter-hosp-exported", "value", allow_duplicate=True),
+    Output(f"{PAGE_ID}-filter-hosp-excl-credited", "checked", allow_duplicate=True),
+    Output(f"{PAGE_ID}-filter-hosp-excl-waived", "checked", allow_duplicate=True),
+    Input(f"{PAGE_ID}-status-clear", "n_clicks"),
     prevent_initial_call=True,
 )
-
-# Select All
-_ALL_CATS = [c for c in CATEGORY_NAMES]
-clientside_callback(
-    "function(n) { return " + str(_ALL_CATS).replace("'", '"') + "; }",
-    Output(f"{PAGE_ID}-filter-category", "value", allow_duplicate=True),
-    Input(f"{PAGE_ID}-category-all", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-# Select None
-clientside_callback(
-    """function(n) { return []; }""",
-    Output(f"{PAGE_ID}-filter-category", "value", allow_duplicate=True),
-    Input(f"{PAGE_ID}-category-none", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-
-# ---------------------------------------------------------------------------
-# Reviewed / Exported cycling buttons
-# ---------------------------------------------------------------------------
-_CYCLE_JS = """
-function(n, current) {
-    var cycle = {"all": "yes", "yes": "no", "no": "all"};
-    var next = cycle[current || "all"];
-    var labels = {"all": "%s", "yes": "%s: Yes", "no": "%s: No"};
-    var variants = {"all": "default", "yes": "filled", "no": "light"};
-    var colors = {"all": "gray", "yes": "green", "no": "red"};
-    return [next, labels[next], variants[next], colors[next]];
-}
-"""
-
-for _col in ("Reviewed", "Exported"):
-    _btn_id = f"{PAGE_ID}-btn-{_col.lower()}"
-    _store_id = f"{PAGE_ID}-filter-{_col.lower()}"
-    clientside_callback(
-        _CYCLE_JS % (_col, _col, _col),
-        Output(_store_id, "data"),
-        Output(_btn_id, "children"),
-        Output(_btn_id, "variant"),
-        Output(_btn_id, "color"),
-        Input(_btn_id, "n_clicks"),
-        State(_store_id, "data"),
-        prevent_initial_call=True,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -2818,3 +3344,344 @@ def _irm_history_add(n, payor, eff_date, pct, notes):
     # Reload history
     history = get_rate_history(payor)
     return history, "", 100, ""
+
+
+# ---------------------------------------------------------------------------
+# Payor Mapping (PM) Callbacks
+# ---------------------------------------------------------------------------
+
+def _seed_payor_mappings_if_needed():
+    """Auto-populate payor_mappings for any raw names not yet in the DB.
+
+    Uses existing _broad_payor() for category and difflib for standardized name.
+    """
+    import difflib
+
+    try:
+        df = _get_enriched_billing()
+    except Exception:
+        return
+
+    if df.empty or "PrimaryInsurance" not in df.columns:
+        return
+
+    raw_names = df["PrimaryInsurance"].dropna().unique().tolist()
+    raw_names = [n for n in raw_names if isinstance(n, str) and n.strip() and n != "Unknown"]
+
+    # Get existing mappings to skip them
+    existing = {r["raw_name"] for r in get_all_payor_mappings()}
+    new_names = [n for n in raw_names if n not in existing]
+    if not new_names:
+        return
+
+    # Get canonical payor names for fuzzy matching
+    canonical = [r["payor"] for r in get_all_insurance_rates()]
+    canonical_lower = {p.lower(): p for p in canonical}
+
+    rows = []
+    for raw in new_names:
+        broad = _broad_payor(raw)
+        # Fuzzy-match to canonical payor
+        matches = difflib.get_close_matches(
+            raw.lower(), canonical_lower.keys(), n=1, cutoff=0.4,
+        )
+        std = canonical_lower[matches[0]] if matches else ""
+        rows.append({
+            "raw_name": raw,
+            "standardized_payor": std,
+            "broad_category": broad,
+        })
+
+    seed_payor_mappings(rows)
+
+
+@callback(
+    Output(f"{PAGE_ID}-pm-grid", "rowData"),
+    Output(f"{PAGE_ID}-pm-grid", "columnDefs"),
+    Output(f"{PAGE_ID}-pm-count", "children"),
+    Output(f"{PAGE_ID}-pm-full-store", "data"),
+    Input(f"{PAGE_ID}-irm-tabs", "value"),
+    Input(f"{PAGE_ID}-irm-modal", "opened"),
+    prevent_initial_call=True,
+)
+def _pm_load(tab, modal_opened):
+    """Load payor mapping grid when tab is selected or modal opens."""
+    if tab != "mapping" and not modal_opened:
+        return (dash.no_update,) * 4
+    # Only load when on the mapping tab
+    if tab != "mapping":
+        return (dash.no_update,) * 4
+
+    # Seed any new raw names
+    _seed_payor_mappings_if_needed()
+
+    # Load all mappings
+    mappings = get_all_payor_mappings()
+    mapping_dict = {m["raw_name"]: m for m in mappings}
+
+    # Get event counts from billing data
+    try:
+        df = _get_enriched_billing()
+        if not df.empty and "PrimaryInsurance" in df.columns:
+            counts = df["PrimaryInsurance"].value_counts().to_dict()
+        else:
+            counts = {}
+    except Exception:
+        counts = {}
+
+    # Build grid rows
+    rows = []
+    for m in mappings:
+        rows.append({
+            "raw_name": m["raw_name"],
+            "event_count": counts.get(m["raw_name"], 0),
+            "standardized_payor": m["standardized_payor"],
+            "broad_category": m["broad_category"],
+            "phdsc_category": m.get("phdsc_category", "9"),
+            "reviewed": bool(m["reviewed"]),
+        })
+
+    # Sort by event_count desc by default
+    rows.sort(key=lambda r: r["event_count"], reverse=True)
+
+    # Get canonical payors for the editor dropdown
+    canonical = sorted([r["payor"] for r in get_all_insurance_rates()])
+
+    # Build column defs with dynamic cellEditorParams
+    col_defs = [
+        {"field": "raw_name", "headerName": "Raw Insurance Name",
+         "editable": False, "flex": 2, "minWidth": 250,
+         "cellRenderer": "RawInsuranceSearch",
+         "filter": "agTextColumnFilter", "floatingFilter": True,
+         "cellStyle": {"fontSize": "12px"}},
+        {"field": "event_count", "headerName": "Events",
+         "editable": False, "flex": 0.4, "minWidth": 70,
+         "type": "numericColumn", "sort": "desc",
+         "filter": "agNumberColumnFilter"},
+        {"field": "standardized_payor", "headerName": "Standardized Payor",
+         "editable": True, "flex": 1.3, "minWidth": 180,
+         "cellEditor": "PayorMappingEditor",
+         "cellEditorPopup": True,
+         "cellEditorPopupPosition": "under",
+         "cellEditorParams": {"values": canonical},
+         "cellRenderer": "PayorBadge",
+         "cellStyle": {"cursor": "pointer"},
+         "filter": "agTextColumnFilter", "floatingFilter": True},
+        {"field": "broad_category", "headerName": "Category",
+         "editable": True, "flex": 0.7, "minWidth": 130,
+         "cellEditor": "agSelectCellEditor",
+         "cellEditorParams": {"values": [
+             "Medicare", "Medicaid", "Private", "Military/VA",
+             "Workers Comp", "Tribal/IHS", "Self Pay", "Other/Unknown",
+         ]},
+         "cellRenderer": "BroadCategoryBadge",
+         "filter": "agTextColumnFilter", "floatingFilter": True},
+        {"field": "phdsc_category", "headerName": "PHDSC",
+         "editable": True, "flex": 0.5, "minWidth": 100,
+         "cellEditor": "agSelectCellEditor",
+         "cellEditorParams": {"values": [
+             "1 - Medicare", "2 - Medicaid/CHIP",
+             "3 - Other Govt", "4 - Corrections",
+             "5 - Private", "6 - BCBS",
+             "8 - No Payment", "9 - Other",
+         ]},
+         "filter": "agTextColumnFilter", "floatingFilter": True},
+        {"field": "reviewed", "headerName": "Reviewed",
+         "editable": True, "flex": 0.3, "minWidth": 80,
+         "cellDataType": "boolean",
+         "cellStyle": {"textAlign": "center"}},
+    ]
+
+    mapped = sum(1 for r in rows if r["standardized_payor"])
+    count_text = f"{mapped} mapped / {len(rows)} total"
+    return rows, col_defs, count_text, rows
+
+
+def _apply_pm_filter(full_data, filter_val):
+    """Apply the active filter to the full mapping data."""
+    if not full_data:
+        return full_data
+    if filter_val == "unreviewed":
+        return [r for r in full_data if not r.get("reviewed")]
+    elif filter_val == "unmapped":
+        return [r for r in full_data if not r.get("standardized_payor")]
+    return full_data
+
+
+@callback(
+    Output(f"{PAGE_ID}-pm-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-pm-count", "children", allow_duplicate=True),
+    Output(f"{PAGE_ID}-pm-full-store", "data", allow_duplicate=True),
+    Input(f"{PAGE_ID}-pm-grid", "cellValueChanged"),
+    State(f"{PAGE_ID}-pm-full-store", "data"),
+    State(f"{PAGE_ID}-pm-filter", "value"),
+    prevent_initial_call=True,
+)
+def _pm_save_edit(changed, full_data, active_filter):
+    """Persist cell edits to SQLite and re-apply active filter."""
+    if not changed:
+        return (dash.no_update,) * 3
+
+    row = changed[0].get("data", {}) if isinstance(changed, list) else changed.get("data", {})
+    raw = row.get("raw_name", "").strip()
+    if not raw:
+        return (dash.no_update,) * 3
+
+    upsert_payor_mapping(
+        raw_name=raw,
+        standardized_payor=row.get("standardized_payor", ""),
+        broad_category=row.get("broad_category", "Other/Unknown"),
+        phdsc_category=row.get("phdsc_category", "9"),
+        reviewed=1 if row.get("reviewed") else 0,
+    )
+
+    # Update the full store
+    if full_data:
+        for r in full_data:
+            if r["raw_name"] == raw:
+                r["standardized_payor"] = row.get("standardized_payor", "")
+                r["broad_category"] = row.get("broad_category", "Other/Unknown")
+                r["phdsc_category"] = row.get("phdsc_category", "9")
+                r["reviewed"] = bool(row.get("reviewed"))
+                break
+
+    mapped = sum(1 for r in (full_data or []) if r.get("standardized_payor"))
+    count_text = f"{mapped} mapped / {len(full_data or [])} total"
+    visible = _apply_pm_filter(full_data, active_filter)
+    return visible, count_text, full_data
+
+
+# Filter toggle: All / Unreviewed / Unmapped
+@callback(
+    Output(f"{PAGE_ID}-pm-grid", "rowData", allow_duplicate=True),
+    Input(f"{PAGE_ID}-pm-filter", "value"),
+    State(f"{PAGE_ID}-pm-full-store", "data"),
+    prevent_initial_call=True,
+)
+def _pm_filter(filter_val, full_data):
+    """Filter the mapping grid."""
+    if not full_data:
+        return dash.no_update
+    return _apply_pm_filter(full_data, filter_val)
+
+
+# ---------------------------------------------------------------------------
+# Payor Entity (PE) Callbacks
+# ---------------------------------------------------------------------------
+
+def _build_pe_grid_data():
+    """Build entity grid rows from DB."""
+    rows = get_standardized_payor_counts()
+    for r in rows:
+        r["original_name"] = r["name"]
+    return rows
+
+
+@callback(
+    Output(f"{PAGE_ID}-pe-grid", "rowData"),
+    Output(f"{PAGE_ID}-pe-count", "children"),
+    Input(f"{PAGE_ID}-irm-tabs", "value"),
+    Input(f"{PAGE_ID}-irm-modal", "opened"),
+    prevent_initial_call=True,
+)
+def _pe_load(tab, modal_opened):
+    """Load payor entities grid when tab is selected."""
+    if tab != "entities":
+        return (dash.no_update,) * 2
+    rows = _build_pe_grid_data()
+    return rows, f"{len(rows)} payors"
+
+
+@callback(
+    Output(f"{PAGE_ID}-pe-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-pe-count", "children", allow_duplicate=True),
+    Output(f"{PAGE_ID}-pm-full-store", "data", allow_duplicate=True),
+    Input(f"{PAGE_ID}-pe-grid", "cellValueChanged"),
+    State(f"{PAGE_ID}-pm-full-store", "data"),
+    prevent_initial_call=True,
+)
+def _pe_rename(changed, full_data):
+    """Rename a standardized payor — propagates to all mappings."""
+    if not changed:
+        return (dash.no_update,) * 3
+
+    row = changed[0].get("data", {}) if isinstance(changed, list) else changed.get("data", {})
+    old_name = row.get("original_name", "")
+    new_name = (row.get("name", "") or "").strip()
+
+    if not old_name or not new_name or old_name == new_name:
+        return (dash.no_update,) * 3
+
+    rename_standardized_payor(old_name, new_name)
+
+    # Update the mapping store so the mapping grid reflects the rename
+    if full_data:
+        for r in full_data:
+            if r.get("standardized_payor") == old_name:
+                r["standardized_payor"] = new_name
+
+    # Rebuild entity grid from DB
+    pe_rows = _build_pe_grid_data()
+    return pe_rows, f"{len(pe_rows)} payors", full_data or dash.no_update
+
+
+@callback(
+    Output(f"{PAGE_ID}-pe-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-pe-count", "children", allow_duplicate=True),
+    Output(f"{PAGE_ID}-pm-full-store", "data", allow_duplicate=True),
+    Input(f"{PAGE_ID}-pe-grid", "cellRendererData"),
+    State(f"{PAGE_ID}-pm-full-store", "data"),
+    prevent_initial_call=True,
+)
+def _pe_delete(renderer_data, full_data):
+    """Delete a standardized payor — clears from all mappings."""
+    if not renderer_data:
+        return (dash.no_update,) * 3
+
+    data = renderer_data.get("value", renderer_data) if isinstance(renderer_data, dict) else {}
+    # cellRendererData from setData comes through differently
+    action = ""
+    name = ""
+    if isinstance(renderer_data, dict):
+        action = renderer_data.get("_action", "")
+        name = renderer_data.get("name", "")
+
+    if action != "delete" or not name:
+        return (dash.no_update,) * 3
+
+    delete_standardized_payor(name)
+
+    # Update the mapping store
+    if full_data:
+        for r in full_data:
+            if r.get("standardized_payor") == name:
+                r["standardized_payor"] = ""
+
+    pe_rows = _build_pe_grid_data()
+    return pe_rows, f"{len(pe_rows)} payors", full_data or dash.no_update
+
+
+@callback(
+    Output(f"{PAGE_ID}-pe-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-pe-count", "children", allow_duplicate=True),
+    Output(f"{PAGE_ID}-pe-new-name", "value"),
+    Input(f"{PAGE_ID}-pe-add-btn", "n_clicks"),
+    State(f"{PAGE_ID}-pe-new-name", "value"),
+    prevent_initial_call=True,
+)
+def _pe_add(n, new_name):
+    """Add a new standardized payor entity."""
+    if not n or not new_name or not new_name.strip():
+        return (dash.no_update,) * 3
+
+    new_name = new_name.strip()
+    # Add to the insurance_rates table so it shows up in the dropdown
+    # (only if it doesn't already exist)
+    existing = {r["payor"] for r in get_all_insurance_rates()}
+    if new_name not in existing:
+        upsert_insurance_rate(payor=new_name, pct_medicare=100.0, source="manual")
+
+    # Also create a dummy mapping entry so it shows up in entity counts
+    # (it will appear in the dropdown for the mapping grid)
+    pe_rows = _build_pe_grid_data()
+    return pe_rows, f"{len(pe_rows)} payors", ""

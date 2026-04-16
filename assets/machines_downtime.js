@@ -53,6 +53,83 @@ function _aggregateDates(rawDates, valueSets, agg) {
 
 window.dash_clientside = window.dash_clientside || {};
 
+// Skeleton placeholder helpers for loading state
+var _skeletonBar = function(w, h, x, y) {
+    return '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h +
+           '" rx="4" fill="#E5E7EB" class="machines-skeleton-pulse"/>';
+};
+
+window.dash_clientside._machinesSkeletonCards = function() {
+    // 3 skeleton cards mimicking year card shape
+    var cards = '';
+    for (var i = 0; i < 3; i++) {
+        var xOff = i * 236;
+        cards += '<g transform="translate(' + xOff + ',0)">' +
+            '<rect x="0" y="0" width="220" height="146" rx="8" fill="none" stroke="#E5E7EB" stroke-width="1"/>' +
+            _skeletonBar(80, 14, 12, 12) +
+            _skeletonBar(40, 10, 168, 14) +
+            _skeletonBar(196, 72, 12, 40) +
+            _skeletonBar(60, 10, 12, 124) +
+            _skeletonBar(60, 10, 148, 124) +
+            '</g>';
+    }
+    return '<svg width="100%" height="160" viewBox="0 0 708 160" preserveAspectRatio="xMinYMid meet">' +
+        '<style>.machines-skeleton-pulse{animation:machines-sk-pulse 1.5s ease-in-out infinite}' +
+        '@keyframes machines-sk-pulse{0%,100%{opacity:.4}50%{opacity:1}}</style>' +
+        cards + '</svg>';
+};
+
+window.dash_clientside._machinesSkeletonStrip = function() {
+    // Skeleton mimicking the strip chart — vertical bars at varying heights
+    var bars = '';
+    var cols = 30;
+    var colW = 14;
+    var gap = 2;
+    // Deterministic pseudo-random heights
+    var heights = [60,45,70,55,80,50,65,75,48,72,58,68,52,78,42,62,74,56,66,46,76,54,64,44,70,50,60,72,48,68];
+    for (var i = 0; i < cols; i++) {
+        var h = heights[i];
+        var x = i * (colW + gap);
+        var y = 100 - h;
+        bars += _skeletonBar(colW, h, x, y);
+    }
+    return '<svg width="100%" height="120" viewBox="0 0 ' + (cols * (colW + gap)) + ' 120" preserveAspectRatio="xMinYMid meet">' +
+        '<style>.machines-skeleton-pulse{animation:machines-sk-pulse 1.5s ease-in-out infinite}' +
+        '@keyframes machines-sk-pulse{0%,100%{opacity:.4}50%{opacity:1}}</style>' +
+        bars + '</svg>';
+};
+
+window.dash_clientside._machinesSkeletonHeatmap = function() {
+    // Single horizontal row of 12 month grids — matches real heatmap layout
+    var svg = '';
+    var cellW = 14, cellH = 14, cellGap = 2;
+    var cols = 5, rows = 6; // weekdays × max weeks per month
+    var monthGap = 6;
+    var labelH = 16;
+    var monthW = cols * (cellW + cellGap);
+    var monthH = labelH + rows * (cellH + cellGap);
+    var months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+    for (var m = 0; m < 12; m++) {
+        var ox = m * (monthW + monthGap);
+        // Month label
+        svg += '<text x="' + (ox + monthW / 2) + '" y="' + 11 + '" text-anchor="middle" font-size="10" fill="#CED4DA">' + months[m] + '</text>';
+        for (var r = 0; r < rows; r++) {
+            for (var c = 0; c < cols; c++) {
+                var cx = ox + c * (cellW + cellGap);
+                var cy = labelH + r * (cellH + cellGap);
+                svg += _skeletonBar(cellW, cellH, cx, cy);
+            }
+        }
+    }
+    var totalW = 12 * (monthW + monthGap);
+    var totalH = monthH;
+    return '<svg width="100%" viewBox="0 0 ' + totalW + ' ' + totalH + '" preserveAspectRatio="none" style="display:block;">' +
+        '<style>.machines-skeleton-pulse{animation:machines-sk-pulse 1.5s ease-in-out infinite}' +
+        '@keyframes machines-sk-pulse{0%,100%{opacity:.4}50%{opacity:1}}</style>' +
+        svg + '</svg>';
+};
+
 window.dash_clientside.machinesDowntime = {
 
     // -----------------------------------------------------------------------
@@ -135,7 +212,12 @@ window.dash_clientside.machinesDowntime = {
         var container = document.getElementById("machines-year-cards-container");
         if (!container) return window.dash_clientside.no_update;
 
-        if (!agg || !agg.yearly || agg.yearly.length === 0) {
+        // null = initial load (show skeleton), object = loaded
+        if (agg === null || agg === undefined) {
+            container.innerHTML = window.dash_clientside._machinesSkeletonCards();
+            return window.dash_clientside.no_update;
+        }
+        if (!agg.yearly || agg.yearly.length === 0) {
             container.innerHTML = '<div style="text-align:center;color:#9CA3AF;padding:40px;">No downtime data</div>';
             return window.dash_clientside.no_update;
         }
@@ -146,12 +228,21 @@ window.dash_clientside.machinesDowntime = {
         var barH = 72;
         var monthLabels = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
-        // Find global max monthly hours for consistent bar scaling
+        // True max for bar height scaling
         var globalMax = 1;
         for (var i = 0; i < years.length; i++) {
             for (var m = 0; m < 12; m++) {
                 if (years[i].monthly[m] > globalMax) globalMax = years[i].monthly[m];
             }
+        }
+        // Color interpolation: low values = light amber, high = dark red
+        function barColor(val) {
+            var t = Math.min(val / globalMax, 1);
+            // Interpolate from #FFC107 (amber) to #D32F2F (red)
+            var r = Math.round(255 - t * (255 - 211));
+            var g = Math.round(193 - t * (193 - 47));
+            var b = Math.round(7 + t * (47 - 7));
+            return "rgb(" + r + "," + g + "," + b + ")";
         }
 
         // Outer wrapper for positioning tooltip; inner div scrolls
@@ -196,7 +287,7 @@ window.dash_clientside.machinesDowntime = {
                 if (bh < 0.5 && yr.monthly[m] > 0) bh = 0.5;
                 var by = barTop + barH - bh;
                 svg += '<rect class="yr-bar" x="' + bx + '" y="' + by + '" width="' + Math.max(barW - 1, 1) +
-                       '" height="' + bh + '" fill="' + hexToRgba(accentColor, 0.5) + '" rx="1" ' +
+                       '" height="' + bh + '" fill="' + barColor(yr.monthly[m]) + '" rx="1" ' +
                        'data-tip="' + monthLabels[m] + ': ' + yr.monthly[m].toFixed(1) + ' hrs" ' +
                        'style="cursor:pointer;"/>';
             }
@@ -280,17 +371,22 @@ window.dash_clientside.machinesDowntime = {
     // Level 2: Month heatmap — 12 mini calendars in a single horizontal row
     // Each month: columns = M T W T F, rows = weeks (traditional calendar)
     // -----------------------------------------------------------------------
-    renderMonthHeatmap: function(agg, drill) {
+    renderMonthHeatmap: function(daily, drill) {
         var container = document.getElementById("machines-month-heatmap-container");
         if (!container) return window.dash_clientside.no_update;
 
-        if (!agg || !agg.daily || !drill || drill.level !== 2 || !drill.year) {
+        if (!drill || drill.level !== 2 || !drill.year) {
             container.innerHTML = "";
             return window.dash_clientside.no_update;
         }
 
+        // Daily data loading — show skeleton placeholder
+        if (!daily || !Array.isArray(daily) || daily.length === 0) {
+            container.innerHTML = window.dash_clientside._machinesSkeletonHeatmap();
+            return window.dash_clientside.no_update;
+        }
+
         var year = drill.year;
-        var daily = agg.daily;
         var monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
         var dayLabels = ["M","T","W","T","F"];
 
@@ -465,7 +561,7 @@ window.dash_clientside.machinesDowntime = {
     // -----------------------------------------------------------------------
     // Level 3: Daily timeline strip (SVG)
     // -----------------------------------------------------------------------
-    showTimelineLoading: function(drill, machines, confidence, gapThreshold) {
+    showTimelineLoading: function(drill, machines, filterRules) {
         if (!drill || drill.level !== 3) return window.dash_clientside.no_update;
         var container = document.getElementById("machines-timeline-svg-container");
         if (!container) return window.dash_clientside.no_update;
@@ -491,7 +587,7 @@ window.dash_clientside.machinesDowntime = {
         return "machines-timeline-container";
     },
 
-    renderTimelineStrip: function(data) {
+    renderTimelineStrip: function(data, showUnmatched) {
         var container = document.getElementById("machines-timeline-svg-container");
         if (!container) return window.dash_clientside.no_update;
 
@@ -565,8 +661,11 @@ window.dash_clientside.machinesDowntime = {
             return margin.top + idx * rowHeight;
         }
 
-        var confColors = {High: "rgba(211,47,47,0.35)", Medium: "rgba(255,152,0,0.35)", Low: "rgba(255,193,7,0.25)"};
-        var confColorsHover = {High: "rgba(211,47,47,0.55)", Medium: "rgba(255,152,0,0.55)", Low: "rgba(255,193,7,0.45)"};
+        // Gap coloring: matched (by filter) = red, unmatched = faded gray
+        var gapMatchedFill = "rgba(211,47,47,0.35)";
+        var gapMatchedStroke = "#D32F2F";
+        var gapUnmatchedFill = "rgba(156,163,175,0.18)";
+        var gapUnmatchedStroke = "rgba(156,163,175,0.4)";
         var statusColors = {NORMAL: "#4CAF50", MACHINE: "#D32F2F", OPERATOR: "#FF9800", UNKNOWN: "#9E9E9E"};
         var statusLabels = {NORMAL: "Normal", MACHINE: "Machine Termination", OPERATOR: "Operator Termination", UNKNOWN: "Unknown"};
 
@@ -600,17 +699,27 @@ window.dash_clientside.machinesDowntime = {
         }
 
         // Gap bands — with data attributes for hover
+        // Full-day gaps always render (too important to hide); intraday gaps respect the toggle
+        var hideUnmatched = showUnmatched === false;
         for (var g = 0; g < gaps.length; g++) {
             var gap = gaps[g];
+            if (hideUnmatched && gap.matched === false && !gap.fullDay) continue;
             var gy = machineY(gap.machine);
 
+            var isMatched = gap.matched !== false;  // default true for backward compat
+            var fillColor = isMatched ? gapMatchedFill : gapUnmatchedFill;
+            var hoverFill = isMatched ? "rgba(211,47,47,0.55)" : "rgba(156,163,175,0.35)";
+            var strokeColor = isMatched ? gapMatchedStroke : gapUnmatchedStroke;
+            var textColor = isMatched ? "#D32F2F" : "#9CA3AF";
+
             if (gap.fullDay) {
-                // Full-day outage — render as full-width red band
+                // Full-day outage — render as full-width band
                 svg += '<rect class="tl-gap" x="' + margin.left + '" y="' + (gy + 2) + '" width="' + chartW + '" height="' + (rowHeight - 4) + '" ' +
-                       'fill="rgba(211,47,47,0.25)" rx="3" stroke="#D32F2F" stroke-width="1" stroke-opacity="0.5" ' +
-                       'data-tip="Full day down" data-conf="FullDay" style="cursor:pointer;transition:fill 0.15s;"/>';
+                       'fill="' + fillColor + '" rx="3" stroke="' + strokeColor + '" stroke-width="1" stroke-opacity="0.5" ' +
+                       'data-tip="Full day down" data-fill="' + fillColor + '" data-hover="' + hoverFill + '" ' +
+                       'style="cursor:pointer;transition:fill 0.15s;"/>';
                 svg += '<text x="' + (margin.left + chartW / 2) + '" y="' + (gy + rowHeight / 2 + 5) + '" ' +
-                       'text-anchor="middle" font-size="14" fill="#D32F2F" font-weight="600" pointer-events="none">' +
+                       'text-anchor="middle" font-size="14" fill="' + textColor + '" font-weight="600" pointer-events="none">' +
                        'Full Day Down</text>';
                 continue;
             }
@@ -618,8 +727,7 @@ window.dash_clientside.machinesDowntime = {
             var gx1 = timeToX(gap.start);
             var gx2 = timeToX(gap.end);
             if (gx1 !== null && gx2 !== null && gx2 > gx1) {
-                var gColor = confColors[gap.confidence] || confColors.Low;
-                var tipLines = [gap.minutes + ' min ' + gap.confidence.toLowerCase() + ' confidence gap'];
+                var tipLines = [gap.minutes + ' min gap' + (isMatched ? '' : ' (unmatched)')];
                 if (gap.cancelled > 0) {
                     var cancelText = gap.cancelled + ' cancelled';
                     if (gap.outcomes && Object.keys(gap.outcomes).length > 0) {
@@ -637,14 +745,15 @@ window.dash_clientside.machinesDowntime = {
                 if (gap.nextPatient) tipLines.push('Next: ' + gap.nextPatient);
                 if (gap.reroute) tipLines.push('Rerouted to: ' + gap.reroute);
                 svg += '<rect class="tl-gap" x="' + gx1 + '" y="' + (gy + 2) + '" width="' + (gx2 - gx1) + '" height="' + (rowHeight - 4) + '" ' +
-                       'fill="' + gColor + '" rx="3" stroke="' + (gap.confidence === "High" ? "#D32F2F" : gap.confidence === "Medium" ? "#FF9800" : "#FFC107") + '" stroke-width="1" stroke-opacity="0.5" ' +
+                       'fill="' + fillColor + '" rx="3" stroke="' + strokeColor + '" stroke-width="1" stroke-opacity="0.5" ' +
                        'data-tip="' + tipLines.join('&#10;').replace(/"/g, '&quot;') + '" ' +
-                       'data-conf="' + gap.confidence + '" style="cursor:pointer;transition:fill 0.15s;"/>';
+                       'data-fill="' + fillColor + '" data-hover="' + hoverFill + '" ' +
+                       'style="cursor:pointer;transition:fill 0.15s;"/>';
 
                 // Duration label inside gap if wide enough
                 if (gx2 - gx1 > 30) {
                     svg += '<text x="' + ((gx1 + gx2) / 2) + '" y="' + (gy + rowHeight / 2 + 5) + '" ' +
-                           'text-anchor="middle" font-size="14" fill="white" font-weight="600" pointer-events="none">' +
+                           'text-anchor="middle" font-size="14" fill="' + textColor + '" font-weight="600" pointer-events="none">' +
                            gap.minutes + 'm</text>';
                 }
             }
@@ -656,10 +765,20 @@ window.dash_clientside.machinesDowntime = {
             var fx = timeToX(field.start);
             var fy = machineY(field.machine);
             if (fx !== null) {
-                var fColor = statusColors[field.status] || statusColors.NORMAL;
-                var fWidth = field.status === "MACHINE" ? 5 : (field.type === "Image" ? 2 : 3);
-                var fOpacity = field.type === "Image" ? 0.5 : 1.0;
-                var fTip = (field.type === "Image" ? "[Image] " : "") +
+                var isImage = field.type === "Image" || field.type === "PortFilm";
+                var imageLabel = "";
+                if (isImage) {
+                    // Skip ImagePI (duplicates PortFilm), DRR, and SI records
+                    var it = field.imageType || "";
+                    if (it === "ImagePI" || it === "ImageDRR" || it === "ImageSI") continue;
+                    if (field.type === "PortFilm" || field.category === "PortFilm") imageLabel = "Port Film";
+                    else if (it === "Image" || field.category === "Imaging") imageLabel = "CBCT";
+                    else continue;  // skip any other unknown image types
+                }
+                var fColor = isImage ? "#1976D2" : (statusColors[field.status] || statusColors.NORMAL);
+                var fWidth = field.status === "MACHINE" ? 5 : (isImage ? 2 : 3);
+                var fOpacity = isImage ? 0.6 : 1.0;
+                var fTip = (isImage ? "[" + imageLabel + "] " : "") +
                            field.patient + (field.fieldId ? ' | ' + field.fieldId : '') +
                            (field.status ? ' | ' + (statusLabels[field.status] || field.status) : '');
 
@@ -726,8 +845,7 @@ window.dash_clientside.machinesDowntime = {
 
         // Attach hover listeners for gaps and fields
         var tooltip = container.querySelector("#tl-tooltip");
-        var confHover = {High: "rgba(211,47,47,0.55)", Medium: "rgba(255,152,0,0.55)", Low: "rgba(255,193,7,0.45)", FullDay: "rgba(211,47,47,0.45)"};
-        var confBase = {High: "rgba(211,47,47,0.35)", Medium: "rgba(255,152,0,0.35)", Low: "rgba(255,193,7,0.25)", FullDay: "rgba(211,47,47,0.25)"};
+        // Gap hover/restore colors read from data attributes on each rect
 
         function showTip(evt, text) {
             if (!tooltip) return;
@@ -751,15 +869,13 @@ window.dash_clientside.machinesDowntime = {
         for (var gi2 = 0; gi2 < gapEls.length; gi2++) {
             (function(el) {
                 el.addEventListener("mouseenter", function(e) {
-                    var conf = el.getAttribute("data-conf");
-                    el.setAttribute("fill", confHover[conf] || confHover.Low);
+                    el.setAttribute("fill", el.getAttribute("data-hover") || el.getAttribute("fill"));
                     el.setAttribute("stroke-width", "2");
                     showTip(e, el.getAttribute("data-tip"));
                 });
                 el.addEventListener("mousemove", function(e) { showTip(e, el.getAttribute("data-tip")); });
                 el.addEventListener("mouseleave", function() {
-                    var conf = el.getAttribute("data-conf");
-                    el.setAttribute("fill", confBase[conf] || confBase.Low);
+                    el.setAttribute("fill", el.getAttribute("data-fill") || el.getAttribute("fill"));
                     el.setAttribute("stroke-width", "1");
                     hideTip();
                 });
@@ -798,7 +914,7 @@ window.dash_clientside.machinesDowntime = {
     // -----------------------------------------------------------------------
     // Downtime trend chart — daily data with D/W/M aggregation
     // -----------------------------------------------------------------------
-    renderTrend: function(data, smoothPct, chartType, agg, currentFig) {
+    renderTrend: function(data, smoothPct, chartType, agg, stackMode, metric, currentFig) {
         if (!data || !data.dates || data.dates.length === 0) {
             return {
                 data: [],
@@ -813,7 +929,8 @@ window.dash_clientside.machinesDowntime = {
         }
 
         var rawDates = data.dates;
-        var series = data.series;
+        var isEvents = metric === "events";
+        var series = isEvents && data.eventsSeries ? data.eventsSeries : data.series;
         agg = agg || "W";
 
         // Aggregate dates and values by period
@@ -836,6 +953,7 @@ window.dash_clientside.machinesDowntime = {
 
         var isBar = !chartType || chartType === "bar";
         var isArea = chartType === "area";
+        var isStacked = stackMode !== "grouped";
         var dateFmt = agg === "M" ? "%b %Y" : "%b %d, %Y";
 
         for (var s = 0; s < series.length; s++) {
@@ -846,7 +964,7 @@ window.dash_clientside.machinesDowntime = {
             var trace = {
                 x: dates, y: vals,
                 name: ser.name,
-                hovertemplate: ser.name + "<br>%{x|" + dateFmt + "}: %{y:.1f} hrs<extra></extra>",
+                hovertemplate: ser.name + "<br>%{x|" + dateFmt + "}: %{y:" + (isEvents ? ".0f" : ".1f") + "}" + (isEvents ? " events" : " hrs") + "<extra></extra>",
             };
 
             if (isBar) {
@@ -855,10 +973,15 @@ window.dash_clientside.machinesDowntime = {
             } else if (isArea) {
                 trace.type = "scatter";
                 trace.mode = "lines";
-                trace.fill = "tonexty";
                 trace.line = {color: ser.color, width: 1.5};
-                trace.fillcolor = hexToRgba(ser.color, 0.3);
-                trace.stackgroup = "one";
+                if (isStacked) {
+                    trace.fill = "tonexty";
+                    trace.fillcolor = hexToRgba(ser.color, 0.3);
+                    trace.stackgroup = "one";
+                } else {
+                    trace.fill = "tozeroy";
+                    trace.fillcolor = hexToRgba(ser.color, 0.15);
+                }
             } else {
                 trace.type = "scatter";
                 trace.mode = "lines+markers";
@@ -875,9 +998,9 @@ window.dash_clientside.machinesDowntime = {
             layout: {
                 autosize: true,
                 margin: {l: 50, r: 20, t: 10, b: 40},
-                barmode: "stack",
+                barmode: isStacked ? "stack" : "group",
                 xaxis: {gridcolor: "#F3F4F6", zeroline: false},
-                yaxis: {title: "Downtime Hours", gridcolor: "#F3F4F6", zeroline: false, rangemode: "tozero"},
+                yaxis: {title: isEvents ? "Events" : "Downtime Hours", gridcolor: "#F3F4F6", zeroline: false, rangemode: "tozero"},
                 plot_bgcolor: "rgba(0,0,0,0)",
                 paper_bgcolor: "rgba(0,0,0,0)",
                 legend: {orientation: "h", y: 1.12, x: 0.5, xanchor: "center"},
@@ -891,7 +1014,7 @@ window.dash_clientside.machinesDowntime = {
     // -----------------------------------------------------------------------
     // Patient impact chart — daily data with D/W/M aggregation
     // -----------------------------------------------------------------------
-    renderPatientImpact: function(data, smoothPct, chartType, agg, mode, _currentFig) {
+    renderPatientImpact: function(data, smoothPct, chartType, agg, mode, stackMode, _currentFig) {
         if (!data || !data.dates || data.dates.length === 0) {
             return {
                 data: [],
@@ -918,6 +1041,7 @@ window.dash_clientside.machinesDowntime = {
         var windowSize = Math.max(1, Math.floor((smoothPct || 0) / 3) + 1);
         var isBar = !chartType || chartType === "bar";
         var isArea = chartType === "area";
+        var isStacked = stackMode !== "grouped";
         var traces = [];
 
         if (isCourse) {
@@ -953,12 +1077,15 @@ window.dash_clientside.machinesDowntime = {
                 traces.push({x: dates, y: rerouted, name: "Rerouted", type: "bar", marker: {color: "#FF9800"},
                     hovertemplate: "Rerouted: %{y:.0f}<extra></extra>"});
             } else if (isArea) {
+                var areaFill = isStacked ? "tonexty" : "tozeroy";
+                var areaAlpha = isStacked ? 0.3 : 0.15;
+                var sg = isStacked ? "one" : undefined;
                 traces.push({x: dates, y: cancelled, name: "Cancelled", type: "scatter", mode: "lines",
-                    fill: "tonexty", line: {color: "#D32F2F", width: 1.5}, fillcolor: hexToRgba("#D32F2F", 0.3),
-                    stackgroup: "one", hovertemplate: "Cancelled: %{y:.0f}<extra></extra>"});
+                    fill: areaFill, line: {color: "#D32F2F", width: 1.5}, fillcolor: hexToRgba("#D32F2F", areaAlpha),
+                    stackgroup: sg, hovertemplate: "Cancelled: %{y:.0f}<extra></extra>"});
                 traces.push({x: dates, y: rerouted, name: "Rerouted", type: "scatter", mode: "lines",
-                    fill: "tonexty", line: {color: "#FF9800", width: 1.5}, fillcolor: hexToRgba("#FF9800", 0.3),
-                    stackgroup: "one", hovertemplate: "Rerouted: %{y:.0f}<extra></extra>"});
+                    fill: areaFill, line: {color: "#FF9800", width: 1.5}, fillcolor: hexToRgba("#FF9800", areaAlpha),
+                    stackgroup: sg, hovertemplate: "Rerouted: %{y:.0f}<extra></extra>"});
             } else {
                 traces.push({x: dates, y: cancelled, name: "Cancelled", type: "scatter", mode: "lines+markers",
                     line: {color: "#D32F2F", width: 2}, marker: {size: 4}, hovertemplate: "Cancelled: %{y:.0f}<extra></extra>"});
@@ -974,7 +1101,7 @@ window.dash_clientside.machinesDowntime = {
             layout: {
                 autosize: true,
                 margin: {l: 50, r: 20, t: 10, b: 40},
-                barmode: "stack",
+                barmode: isStacked ? "stack" : "group",
                 xaxis: {gridcolor: "#F3F4F6", zeroline: false},
                 yaxis: {title: yTitle, gridcolor: "#F3F4F6", zeroline: false, rangemode: "tozero"},
                 plot_bgcolor: "rgba(0,0,0,0)",
@@ -999,7 +1126,12 @@ window.dash_clientside.machinesDowntime = {
         var container = document.getElementById("machines-strip-svg-container");
         if (!container) return window.dash_clientside.no_update;
 
-        if (!data || !data.machines || data.machines.length === 0) {
+        // null = initial load (show skeleton), object = loaded
+        if (data === null || data === undefined) {
+            container.innerHTML = window.dash_clientside._machinesSkeletonStrip();
+            return window.dash_clientside.no_update;
+        }
+        if (!data.machines || data.machines.length === 0) {
             container.innerHTML = '<div style="text-align:center;color:#9CA3AF;padding:40px;">No strip data available</div>';
             return window.dash_clientside.no_update;
         }

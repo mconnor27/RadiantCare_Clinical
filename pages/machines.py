@@ -4,7 +4,7 @@ patient impact, and course-level disruption across all treatment machines."""
 import dash
 import dash_mantine_components as dmc
 import dash_ag_grid as dag
-from dash import callback, clientside_callback, ClientsideFunction, Input, Output, State, dcc, html, no_update
+from dash import callback, clientside_callback, ClientsideFunction, Input, Output, State, dcc, html, no_update, ctx, ALL
 from dash_iconify import DashIconify
 import plotly.graph_objects as go
 import pandas as pd
@@ -12,12 +12,13 @@ import numpy as np
 from datetime import timedelta
 
 from config.settings import (
-    DEPARTMENT_COLORS, CHART_COLORWAY, PRIMARY, MACHINE_DEPT,
+    DEPARTMENT_COLORS, CHART_COLORWAY, PRIMARY, MACHINE_DEPT, MACHINE_COLORS,
     DEFAULT_LAYOUT, FONT_FAMILY, NEUTRAL, SEMANTIC_COLORS,
     DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, DEFAULT_GRID_STYLE, DEFAULT_GRID_CLASS,
 )
 from components.kpi_card import kpi_card, kpi_placeholder
 from components.chart_card import chart_card, register_chart_callbacks
+from components.detail_table import detail_table
 from utils.charts import apply_default_layout, empty_figure
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, SLIDER_MARKS, DEFAULT_SLIDER,
@@ -33,9 +34,6 @@ dash.register_page(__name__, path="/machines", name="Machine Downtime", order=8)
 ALL_MACHINES = ["TrueBeamNorth", "21EX", "21iX_CEN", "21iX_AB", "6EX"]
 ACTIVE_MACHINES = ["TrueBeamNorth", "21EX", "21iX_CEN", "21iX_AB"]
 
-MACHINE_COLORS = {m: DEPARTMENT_COLORS.get(d, CHART_COLORWAY[0])
-                  for m, d in MACHINE_DEPT.items()}
-
 CONFIDENCE_COLORS = {"High": "#D32F2F", "Medium": "#FF9800", "Low": "#FFC107"}
 
 PAGE_ID = "machines"
@@ -43,6 +41,98 @@ PAGE_ID = "machines"
 
 def _machine_color(machine):
     return MACHINE_COLORS.get(machine, CHART_COLORWAY[0])
+
+
+# ---------------------------------------------------------------------------
+# Condition Builder — field registry, operator labels, presets
+# ---------------------------------------------------------------------------
+
+FILTER_FIELDS = {
+    "GapMinutes":      {"label": "Duration (min)",    "type": "slider",  "ops": [">=", "<=", ">", "<", "between"],
+                        "slider_min": 10, "slider_max": 180, "slider_step": 5},
+    "RowType":         {"label": "Event Type",        "type": "multi",   "ops": ["is_any_of"],
+                        "options": [
+                            {"value": "Gap", "label": "Intraday Gap"},
+                            {"value": "StartOfDay", "label": "Start of Day"},
+                            {"value": "EndOfDay", "label": "End of Day"},
+                            {"value": "FullDay", "label": "Full Day Down"},
+                        ]},
+    "DowntimeType":    {"label": "Downtime Type",     "type": "multi",   "ops": ["is_any_of"],
+                        "options": [
+                            {"value": "Equipment Fault", "label": "Equipment Fault"},
+                            {"value": "Vendor Response", "label": "Vendor Response"},
+                            {"value": "Patient Logistics", "label": "Patient Logistics"},
+                            {"value": "Unclassified", "label": "Unclassified"},
+                        ]},
+    "LocalConfidence": {"label": "Confidence",        "type": "multi",   "ops": ["is_any_of"],
+                        "options": [
+                            {"value": "High", "label": "High"},
+                            {"value": "Medium", "label": "Medium"},
+                            {"value": "Low", "label": "Low"},
+                        ]},
+    "CancelledInGap":  {"label": "Cancelled Appts",   "type": "slider",  "ops": [">=", "<=", ">", "<", "=="],
+                        "slider_min": 0, "slider_max": 10, "slider_step": 1},
+    "MachineErrorsNearGap": {"label": "Machine Errors", "type": "number", "ops": [">=", "<=", ">", "<", "=="]},
+    "LastFieldTerminationStatus": {"label": "Termination", "type": "select", "ops": ["=="],
+                        "options": [
+                            {"value": "MACHINE", "label": "Machine"},
+                        ]},
+    "EventNote":       {"label": "Downtime Note",     "type": "exists",  "ops": ["exists", "not_exists"]},
+    "MUDeliveredPct":  {"label": "MU Delivered %",     "type": "slider",  "ops": ["<=", ">=", "<", ">", "between"],
+                        "slider_min": 0, "slider_max": 100, "slider_step": 5},
+    "RerouteMachine":  {"label": "Reroute",           "type": "exists",  "ops": ["exists", "not_exists"]},
+}
+
+OP_LABELS = {
+    ">=": ">=", "<=": "<=", ">": ">", "<": "<", "==": "is", "between": "between",
+    "is_any_of": "is any of", "exists": "exists", "not_exists": "does not exist",
+}
+
+FIELD_OPTIONS = [{"value": k, "label": v["label"]} for k, v in FILTER_FIELDS.items()]
+
+DEFAULT_FILTER_RULES = {
+    "groupJoin": "OR",
+    "groups": [
+        {"join": "AND", "rules": [
+            {"field": "EventNote", "op": "exists", "value": True},
+            {"field": "CancelledInGap", "op": ">=", "value": 1},
+        ]},
+        {"join": "OR", "rules": [
+            {"field": "LastFieldTerminationStatus", "op": "==", "value": "MACHINE"},
+        ]},
+        {"join": "OR", "rules": [
+            {"field": "RowType", "op": "is_any_of", "value": ["FullDay"]},
+        ]},
+    ],
+}
+
+FILTER_PRESETS = {
+    "cancelled": {
+        "groupJoin": "AND",
+        "groups": [
+            {"join": "AND", "rules": [
+                {"field": "EventNote", "op": "exists", "value": True},
+                {"field": "CancelledInGap", "op": ">=", "value": 1},
+            ]},
+        ],
+    },
+    "probable": {
+        "groupJoin": "OR",
+        "groups": [
+            {"join": "AND", "rules": [
+                {"field": "EventNote", "op": "exists", "value": True},
+                {"field": "CancelledInGap", "op": ">=", "value": 1},
+            ]},
+            {"join": "OR", "rules": [
+                {"field": "LastFieldTerminationStatus", "op": "==", "value": "MACHINE"},
+            ]},
+            {"join": "OR", "rules": [
+                {"field": "RowType", "op": "is_any_of", "value": ["FullDay"]},
+            ]},
+        ],
+    },
+    "clear": {"groupJoin": "AND", "groups": []},
+}
 
 
 # ---------------------------------------------------------------------------
@@ -57,7 +147,28 @@ layout = dmc.Stack(
         dmc.Box(
             className="page-sticky-header",
             children=[
-                dmc.Title("Machine Downtime", order=2, className="page-title"),
+                html.Div(
+                    style={"position": "relative"},
+                    children=[
+                        dmc.Title("Machine Downtime", order=2, className="page-title"),
+                        html.Div(
+                            id=f"{PAGE_ID}-grid-filter-badge",
+                            children=dmc.Tooltip(
+                                label="Table column filters are active — charts reflect the filtered subset",
+                                position="left", withArrow=True, multiline=True, w=220,
+                                children=dmc.Badge(
+                                    "Table Filtered",
+                                    color="red", variant="filled", size="md",
+                                    leftSection=DashIconify(icon="mdi:filter", width=14),
+                                ),
+                            ),
+                            style={
+                                "position": "absolute", "top": -4, "right": 8,
+                                "zIndex": 10, "display": "none", "cursor": "pointer",
+                            },
+                        ),
+                    ],
+                ),
                 dmc.Paper(
                     children=[
                         dmc.Group(
@@ -78,7 +189,7 @@ layout = dmc.Stack(
                                         multiple=True,
                                     ),
                                 ]),
-                                # Signal filters — custom panel (chip_dropdown.js wires the toggle)
+                                # Signal filters — condition builder panel
                                 html.Div(
                                     style={"position": "relative", "display": "inline-block"},
                                     children=[
@@ -99,75 +210,24 @@ layout = dmc.Stack(
                                             shadow="md",
                                             withBorder=True,
                                             radius="md",
-                                            className="wf-chip-dropdown",
-                                            style={"display": "none", "minWidth": "320px"},
+                                            className="wf-chip-dropdown mcb-panel",
+                                            style={"display": "none"},
                                             children=[
-                                                # Event Type
-                                                dmc.Text("Event Type", size="xs", fw=600, c="#6B7280"),
-                                                dmc.ChipGroup(
-                                                    id=f"{PAGE_ID}-filter-rowtype",
-                                                    value=["Gap", "StartOfDay", "EndOfDay", "FullDay"],
-                                                    multiple=True,
-                                                    children=[
-                                                        dmc.Chip("Intraday Gap", value="Gap", size="xs"),
-                                                        dmc.Chip("Start of Day", value="StartOfDay", size="xs"),
-                                                        dmc.Chip("End of Day", value="EndOfDay", size="xs"),
-                                                        dmc.Chip("Full Day Down", value="FullDay", size="xs"),
-                                                    ],
-                                                ),
-                                                dmc.Divider(my="sm"),
-                                                # Min Gap Duration
-                                                dmc.Text("Min Gap Duration", size="xs", fw=600, c="#6B7280"),
-                                                dmc.Box(
-                                                    dmc.Slider(
-                                                        id=f"{PAGE_ID}-filter-gap-threshold",
-                                                        min=0, max=60, step=5, value=15,
-                                                        size="sm",
-                                                        marks=[
-                                                            {"value": 0, "label": "0m"},
-                                                            {"value": 15, "label": "15m"},
-                                                            {"value": 30, "label": "30m"},
-                                                            {"value": 60, "label": "60m"},
-                                                        ],
-                                                        styles={"markLabel": {"fontSize": "10px"}},
-                                                    ),
-                                                    mt=4, mb=20, style={"width": "100%"},
-                                                ),
-                                                dmc.Divider(my="sm"),
-                                                # Min Cancellations
-                                                dmc.Text("Min Cancellations", size="xs", fw=600, c="#6B7280"),
-                                                dmc.Box(
-                                                    dmc.Slider(
-                                                        id=f"{PAGE_ID}-filter-min-cancellations",
-                                                        min=0, max=10, step=1, value=0,
-                                                        size="sm",
-                                                        marks=[
-                                                            {"value": 0, "label": "Any"},
-                                                            {"value": 1, "label": "1+"},
-                                                            {"value": 5, "label": "5+"},
-                                                            {"value": 10, "label": "10+"},
-                                                        ],
-                                                        styles={"markLabel": {"fontSize": "10px"}},
-                                                    ),
-                                                    mt=4, mb=20, style={"width": "100%"},
-                                                ),
-                                                dmc.Divider(my="sm"),
-                                                # Require Signals
-                                                dmc.Text("Require", size="xs", fw=600, c="#6B7280"),
-                                                dmc.Stack(gap=4, mt=4, children=[
-                                                    dmc.Switch(
-                                                        id=f"{PAGE_ID}-filter-require-note",
-                                                        label="Has downtime note",
-                                                        size="xs",
-                                                        checked=False,
-                                                    ),
-                                                    dmc.Switch(
-                                                        id=f"{PAGE_ID}-filter-require-termination",
-                                                        label="Machine termination signal",
-                                                        size="xs",
-                                                        checked=False,
-                                                    ),
+                                                # Preset buttons
+                                                dmc.Group(gap=6, mb="xs", className="mcb-preset-row", children=[
+                                                    dmc.Button("Probable Downtime", id=f"{PAGE_ID}-preset-probable",
+                                                               size="compact-xs", variant="light", color="orange",
+                                                               leftSection=DashIconify(icon="mdi:alert-circle-outline", width=14)),
+                                                    dmc.Button("Cancelled Appts", id=f"{PAGE_ID}-preset-cancelled",
+                                                               size="compact-xs", variant="light", color="red",
+                                                               leftSection=DashIconify(icon="mdi:calendar-remove", width=14)),
+                                                    dmc.Button("Clear", id=f"{PAGE_ID}-preset-clear",
+                                                               size="compact-xs", variant="subtle", color="gray",
+                                                               leftSection=DashIconify(icon="mdi:close", width=14)),
                                                 ]),
+                                                dmc.Divider(my="xs"),
+                                                # Builder container — rebuilt dynamically
+                                                html.Div(id=f"{PAGE_ID}-builder-container"),
                                             ],
                                         ),
                                     ],
@@ -246,7 +306,14 @@ layout = dmc.Stack(
         # --- Narrative summary ---
         dmc.Paper(
             dmc.Text(id=f"{PAGE_ID}-narrative", size="sm", c=NEUTRAL["text_primary"],
-                     style={"lineHeight": 1.7}),
+                     style={"lineHeight": 1.7},
+                     children=[
+                         dmc.Stack(gap=6, children=[
+                             dmc.Skeleton(height=12, width="90%", radius="sm"),
+                             dmc.Skeleton(height=12, width="75%", radius="sm"),
+                             dmc.Skeleton(height=12, width="60%", radius="sm"),
+                         ]),
+                     ]),
             p="md", radius="md", shadow="xs", withBorder=True,
             style={"borderLeft": f"4px solid {PRIMARY}"},
         ),
@@ -257,7 +324,23 @@ layout = dmc.Stack(
         # --- Drill-down containers ---
         # Level 1: Year overview cards (SVG rendered by clientside)
         dmc.Box(id=f"{PAGE_ID}-level1-container", children=[
-            html.Div(id=f"{PAGE_ID}-year-cards-container"),
+            html.Div(id=f"{PAGE_ID}-year-cards-container", children=[
+                dmc.Group(gap="md", wrap="nowrap", style={"overflowX": "auto"}, children=[
+                    dmc.Paper(
+                        dmc.Stack(gap=8, children=[
+                            dmc.Skeleton(height=14, width="50%", radius="sm"),
+                            dmc.Skeleton(height=72, radius="sm"),
+                            dmc.Group(gap="xs", children=[
+                                dmc.Skeleton(height=10, width="40%", radius="sm"),
+                                dmc.Skeleton(height=10, width="40%", radius="sm"),
+                            ]),
+                        ]),
+                        p="sm", radius="md", withBorder=True,
+                        style={"minWidth": 200, "height": 146, "flex": "1"},
+                    )
+                    for _ in range(7)
+                ]),
+            ]),
         ]),
 
         # Level 2: Month heatmap (SVG rendered)
@@ -276,6 +359,13 @@ layout = dmc.Stack(
                 dmc.ActionIcon(
                     DashIconify(icon="tabler:chevron-right", width=18),
                     id=f"{PAGE_ID}-timeline-next", variant="subtle", color="gray", size="sm",
+                ),
+                dmc.Switch(
+                    id=f"{PAGE_ID}-timeline-show-unmatched",
+                    label="Show unmatched gaps",
+                    size="xs",
+                    checked=False,
+                    ml="md",
                 ),
             ]),
             html.Div(id=f"{PAGE_ID}-timeline-svg-container", className="machines-timeline-container"),
@@ -302,7 +392,15 @@ layout = dmc.Stack(
                     "Each column = one workday  |  Y-axis = time of day  |  Click a day to drill in",
                     size="xs", c="#9CA3AF", mb=4,
                 ),
-                html.Div(id=f"{PAGE_ID}-strip-svg-container", className="machines-strip-container"),
+                html.Div(id=f"{PAGE_ID}-strip-svg-container", className="machines-strip-container",
+                         children=[
+                             dmc.Stack(gap=4, children=[
+                                 dmc.Skeleton(height=20, radius="sm"),
+                                 dmc.Skeleton(height=20, radius="sm"),
+                                 dmc.Skeleton(height=20, radius="sm"),
+                                 dmc.Skeleton(height=20, radius="sm"),
+                             ]),
+                         ]),
             ],
             p="sm", radius="md", shadow="xs", withBorder=True,
         ),
@@ -317,7 +415,18 @@ layout = dmc.Stack(
                         {"value": "area", "label": "Area"},
                         {"value": "bar", "label": "Bar"},
                     ],
+                    chart_type_default="area",
                     smooth_max=40, smooth_default=10, store_data=True,
+                    extra_controls_left=[
+                        dmc.SegmentedControl(
+                            id=f"{PAGE_ID}-trend-metric",
+                            data=[
+                                {"value": "hours", "label": "Hours"},
+                                {"value": "events", "label": "Events"},
+                            ],
+                            value="hours", size="xs",
+                        ),
+                    ],
                     extra_controls=[
                         dmc.SegmentedControl(
                             id=f"{PAGE_ID}-trend-agg",
@@ -326,7 +435,7 @@ layout = dmc.Stack(
                                 {"value": "W", "label": "Weekly"},
                                 {"value": "M", "label": "Monthly"},
                             ],
-                            value="W", size="xs",
+                            value="M", size="xs",
                         ),
                     ],
                 ),
@@ -340,7 +449,8 @@ layout = dmc.Stack(
                         {"value": "area", "label": "Area"},
                         {"value": "bar", "label": "Bar"},
                     ],
-                    smooth_max=30, smooth_default=5, store_data=True,
+                    chart_type_default="area",
+                    smooth_max=30, smooth_default=4, store_data=True,
                     extra_controls_left=[
                         dmc.SegmentedControl(
                             id=f"{PAGE_ID}-patient-impact-mode",
@@ -359,7 +469,7 @@ layout = dmc.Stack(
                                 {"value": "W", "label": "Weekly"},
                                 {"value": "M", "label": "Monthly"},
                             ],
-                            value="W", size="xs",
+                            value="M", size="xs",
                         ),
                     ],
                 ),
@@ -368,44 +478,32 @@ layout = dmc.Stack(
         ]),
 
         # --- Detail table ---
-        dmc.Paper(
-            children=[
-                dmc.Group(justify="space-between", mb="sm", children=[
-                    dmc.Text("Downtime Gap Detail", size="sm", fw=500, c=NEUTRAL["text_secondary"]),
-                ]),
-                dag.AgGrid(
-                    id=f"{PAGE_ID}-detail-table",
-                    rowData=[],
-                    columnDefs=[
-                        {"field": "Date", "headerName": "Date", "width": 110},
-                        {"field": "Machine", "headerName": "Machine", "width": 120},
-                        {"field": "Site", "headerName": "Site", "width": 100},
-                        {"field": "Start", "headerName": "Start", "width": 90},
-                        {"field": "End", "headerName": "End", "width": 90},
-                        {"field": "Minutes", "headerName": "Duration", "width": 90, "type": "numericColumn"},
-                        {"field": "Type", "headerName": "Type", "width": 130},
-                        {"field": "Confidence", "headerName": "Confidence", "width": 110},
-                        {"field": "Cancellations", "headerName": "Cancelled", "width": 95, "type": "numericColumn"},
-                        {"field": "Errors", "headerName": "Errors", "width": 80, "type": "numericColumn"},
-                        {"field": "Reroute", "headerName": "Reroute To", "width": 110},
-                        {"field": "PrevPatient", "headerName": "Prev Patient", "width": 140},
-                        {"field": "NextPatient", "headerName": "Next Patient", "width": 140},
-                    ],
-                    defaultColDef={**DEFAULT_COLUMN_DEFS, "sortable": True, "filter": True},
-                    columnSize="autoSize",
-                    dashGridOptions={**DEFAULT_GRID_OPTIONS, "paginationPageSize": 25},
-                    style=DEFAULT_GRID_STYLE,
-                    className=DEFAULT_GRID_CLASS,
+        detail_table(
+            f"{PAGE_ID}-detail-table",
+            title="Downtime Gap Detail",
+            export_id=f"{PAGE_ID}-table-export",
+            column_size="autoSize",
+            extra_controls=[
+                dmc.Button(
+                    "Clear Filters",
+                    id=f"{PAGE_ID}-table-clear-filters",
+                    size="compact-xs",
+                    variant="light",
+                    color="red",
+                    leftSection=DashIconify(icon="mdi:filter-remove", width=14),
+                    style={"display": "none"},
                 ),
             ],
-            p="sm", radius="md", shadow="xs", withBorder=True,
         ),
 
         # --- Stores ---
         dcc.Store(id=f"{PAGE_ID}-store-drill", data={"level": 1, "year": None, "month": None, "day": None}),
-        dcc.Store(id=f"{PAGE_ID}-store-gaps-agg", data={}),
+        dcc.Store(id=f"{PAGE_ID}-store-filter-rules", data=DEFAULT_FILTER_RULES),
+        dcc.Store(id=f"{PAGE_ID}-store-gaps-agg", data=None),
+        dcc.Store(id=f"{PAGE_ID}-store-gaps-daily", data=None),
         dcc.Store(id=f"{PAGE_ID}-store-timeline", data={}),
-        dcc.Store(id=f"{PAGE_ID}-store-strip", data={}),
+        dcc.Store(id=f"{PAGE_ID}-store-strip", data=None),
+        dcc.Store(id=f"{PAGE_ID}-table-filter-rows"),
         dcc.Store(id=f"{PAGE_ID}-store-year-click", data=None),
         dcc.Store(id=f"{PAGE_ID}-store-day-click", data=None),
         dcc.Store(id=f"{PAGE_ID}-store-kpi-sparklines", data={}),
@@ -420,9 +518,458 @@ layout = dmc.Stack(
 # Register chart settings callbacks
 # ---------------------------------------------------------------------------
 register_chart_callbacks([
-    f"{PAGE_ID}-chart-trend",
-    f"{PAGE_ID}-chart-patient-impact",
+    (f"{PAGE_ID}-chart-trend", f"{PAGE_ID}-chart-trend", f"{PAGE_ID}-chart-trend-store"),
+    {"sid": f"{PAGE_ID}-chart-patient-impact", "gid": f"{PAGE_ID}-chart-patient-impact",
+     "store_id": f"{PAGE_ID}-chart-patient-impact-store", "show_grouping": False},
 ])
+
+
+# ---------------------------------------------------------------------------
+# Condition Builder — layout helpers
+# ---------------------------------------------------------------------------
+
+def _build_condition_row(rule, index_str):
+    """Render a single condition row with field/op/value selects + remove button."""
+    field = rule.get("field")
+    op = rule.get("op")
+    value = rule.get("value")
+
+    field_meta = FILTER_FIELDS.get(field, {}) if field else {}
+    ops = field_meta.get("ops", [])
+    op_data = [{"value": o, "label": OP_LABELS.get(o, o)} for o in ops]
+
+    # Value widget depends on field type
+    value_widget = html.Div()  # placeholder for exists / not_exists / no field
+    ftype = field_meta.get("type", "")
+
+    if ftype == "slider":
+        s_min = field_meta.get("slider_min", 0)
+        s_max = field_meta.get("slider_max", 100)
+        s_step = field_meta.get("slider_step", 1)
+        if op == "between":
+            lo = value[0] if isinstance(value, list) and len(value) > 0 else s_min
+            hi = value[1] if isinstance(value, list) and len(value) > 1 else s_max
+            value_widget = dmc.Box(className="mcb-value-widget", style={"minWidth": 160}, children=[
+                dmc.RangeSlider(
+                    id={"type": "mcb-value", "index": index_str},
+                    min=s_min, max=s_max, step=s_step,
+                    value=[lo or s_min, hi or s_max],
+                    size="sm", color="violet",
+                    marks=[{"value": s_min, "label": str(s_min)}, {"value": s_max, "label": str(s_max)}],
+                    styles={"markLabel": {"fontSize": "10px"}},
+                ),
+                dmc.NumberInput(
+                    id={"type": "mcb-value2", "index": index_str},
+                    value=None, size="xs", style={"display": "none"},
+                ),
+            ])
+        else:
+            val = value if value is not None else (s_max if op in ("<=", "<") else s_min)
+            value_widget = dmc.Box(className="mcb-value-widget", style={"minWidth": 160}, children=[
+                dmc.Slider(
+                    id={"type": "mcb-value", "index": index_str},
+                    min=s_min, max=s_max, step=s_step,
+                    value=val, size="sm", color="violet",
+                    marks=[{"value": s_min, "label": str(s_min)}, {"value": s_max, "label": str(s_max)}],
+                    styles={"markLabel": {"fontSize": "10px"}},
+                ),
+                dmc.NumberInput(
+                    id={"type": "mcb-value2", "index": index_str},
+                    value=None, size="xs", style={"display": "none"},
+                ),
+            ])
+    elif ftype == "number" and op == "between":
+        lo = value[0] if isinstance(value, list) and len(value) > 0 else None
+        hi = value[1] if isinstance(value, list) and len(value) > 1 else None
+        value_widget = dmc.Group(gap=4, wrap="nowrap", className="mcb-value-widget", children=[
+            dmc.NumberInput(
+                id={"type": "mcb-value", "index": index_str},
+                value=lo, size="xs", placeholder="min",
+                style={"flex": "1"},
+            ),
+            dmc.NumberInput(
+                id={"type": "mcb-value2", "index": index_str},
+                value=hi, size="xs", placeholder="max",
+                style={"flex": "1"},
+            ),
+        ])
+    elif ftype == "number":
+        value_widget = dmc.NumberInput(
+            id={"type": "mcb-value", "index": index_str},
+            value=value, size="xs", placeholder="0",
+            className="mcb-value-widget",
+        )
+    elif ftype == "multi":
+        value_widget = dmc.MultiSelect(
+            id={"type": "mcb-value", "index": index_str},
+            data=field_meta.get("options", []),
+            value=value if isinstance(value, list) else [],
+            size="xs", placeholder="Select...",
+            className="mcb-value-widget",
+            comboboxProps={"zIndex": 10000, "offset": 2}, maxDropdownHeight=300,
+        )
+    elif ftype == "select":
+        value_widget = dmc.Select(
+            id={"type": "mcb-value", "index": index_str},
+            data=field_meta.get("options", []),
+            value=value if isinstance(value, str) else None,
+            size="xs", placeholder="Select...",
+            className="mcb-value-widget",
+            comboboxProps={"zIndex": 10000, "offset": 2}, maxDropdownHeight=300,
+        )
+    else:
+        # exists/not_exists or no field — hidden placeholder to keep pattern-matching happy
+        value_widget = dmc.Select(
+            id={"type": "mcb-value", "index": index_str},
+            data=[], value=None, size="xs",
+            style={"display": "none"},
+            className="mcb-value-widget",
+        )
+
+    # For between, we need the value2 ID to exist even when not between
+    between_extra = []
+    if not (ftype == "number" and op == "between"):
+        between_extra = [dmc.NumberInput(
+            id={"type": "mcb-value2", "index": index_str},
+            value=None, size="xs",
+            style={"display": "none"},
+        )]
+
+    return dmc.Group(
+        gap=6, wrap="nowrap", align="center", className="mcb-condition-row",
+        children=[
+            dmc.Select(
+                id={"type": "mcb-field", "index": index_str},
+                data=FIELD_OPTIONS,
+                value=field,
+                size="xs", placeholder="Field...",
+                className="mcb-field-select",
+                comboboxProps={"zIndex": 10000, "offset": 2}, maxDropdownHeight=300,
+            ),
+            dmc.Select(
+                id={"type": "mcb-op", "index": index_str},
+                data=op_data,
+                value=op if op in [o["value"] for o in op_data] else (op_data[0]["value"] if op_data else None),
+                size="xs", placeholder="Op",
+                className="mcb-op-select",
+                comboboxProps={"zIndex": 10000, "offset": 2}, maxDropdownHeight=300,
+            ),
+            value_widget,
+            *between_extra,
+            dmc.ActionIcon(
+                DashIconify(icon="mdi:close", width=14),
+                id={"type": "mcb-remove", "index": index_str},
+                variant="subtle", color="gray", size="xs",
+            ),
+        ],
+    )
+
+
+def _build_group_card(group, group_idx):
+    """Render a single group card with its ALL/ANY header and condition rows."""
+    join_val = group.get("join", "AND")
+    rules = group.get("rules", [])
+
+    rows = []
+    for i, rule in enumerate(rules):
+        idx_str = f"{group_idx}-{i}"
+        rows.append(_build_condition_row(rule, idx_str))
+
+    header = dmc.Group(
+        gap=8, wrap="nowrap", align="center", mb=6,
+        children=[
+            dmc.SegmentedControl(
+                id={"type": "mcb-join", "index": str(group_idx)},
+                data=[
+                    {"value": "AND", "label": "ALL"},
+                    {"value": "OR", "label": "ANY"},
+                ],
+                value=join_val, size="xs", color="violet",
+            ),
+            dmc.Text("of these", size="xs", c="#9CA3AF"),
+            dmc.Button(
+                "Condition",
+                id={"type": "mcb-add-rule", "index": str(group_idx)},
+                size="compact-xs", variant="subtle", color="gray",
+                leftSection=DashIconify(icon="mdi:plus", width=14),
+            ),
+            dmc.ActionIcon(
+                DashIconify(icon="mdi:close", width=16),
+                id={"type": "mcb-remove-group", "index": str(group_idx)},
+                variant="subtle", color="gray", size="xs",
+                ml="auto",
+            ),
+        ],
+    )
+
+    return dmc.Paper(
+        children=[header, *rows],
+        p="xs", radius="md", withBorder=True,
+        className="mcb-group-card",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Condition Builder — callbacks
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output(f"{PAGE_ID}-builder-container", "children"),
+    Input(f"{PAGE_ID}-store-filter-rules", "data"),
+)
+def render_condition_builder(rules_data):
+    """Rebuild the condition builder UI from the filter rules store."""
+    if not rules_data:
+        rules_data = {"groupJoin": "AND", "groups": []}
+
+    groups = rules_data.get("groups", [])
+    group_join = rules_data.get("groupJoin", "AND")
+
+    children = []
+
+    # Top bar: group join toggle + add group button (only show toggle if >1 group)
+    top_children = []
+    if len(groups) > 1:
+        top_children.extend([
+            dmc.Text("Groups match by", size="xs", c="#9CA3AF"),
+            dmc.SegmentedControl(
+                id=f"{PAGE_ID}-group-join",
+                data=[
+                    {"value": "AND", "label": "ALL"},
+                    {"value": "OR", "label": "ANY"},
+                ],
+                value=group_join, size="xs", color="orange",
+            ),
+        ])
+    else:
+        # Hidden placeholder for the group join toggle
+        top_children.append(
+            dmc.SegmentedControl(
+                id=f"{PAGE_ID}-group-join",
+                data=[{"value": "AND", "label": "ALL"}, {"value": "OR", "label": "ANY"}],
+                value=group_join, size="xs",
+                style={"display": "none"},
+            ),
+        )
+
+    top_children.append(
+        dmc.Button(
+            "Group",
+            id=f"{PAGE_ID}-add-group",
+            size="compact-xs", variant="subtle", color="violet",
+            leftSection=DashIconify(icon="mdi:plus-circle-outline", width=14),
+            ml="auto",
+        ),
+    )
+
+    children.append(dmc.Group(gap=8, align="center", mb="xs", children=top_children))
+
+    # Render each group card with connector labels between them
+    for i, group in enumerate(groups):
+        if i > 0 and len(groups) > 1:
+            connector_label = "OR" if group_join == "OR" else "AND"
+            connector_color = "#E8590C" if group_join == "OR" else "#7C2A83"
+            children.append(
+                dmc.Text(
+                    connector_label, size="xs", fw=700, c=connector_color,
+                    ta="center", my=2,
+                )
+            )
+        children.append(_build_group_card(group, i))
+
+    if not groups:
+        children.append(
+            dmc.Text("No filter groups. Click + Group to add one.", size="xs", c="#9CA3AF", ta="center", py="md")
+        )
+
+    return dmc.Stack(gap=4, children=children)
+
+
+def _collect_groups_from_components(fields, ops, values, values2, joins,
+                                    field_ids, op_ids, value_ids, value2_ids, join_ids):
+    """Reconstruct the groups list from pattern-matching component values."""
+    # Build flat map: "groupIdx-ruleIdx" → {field, op, value}
+    conditions = {}
+    for fid, f_val in zip(field_ids, fields):
+        conditions.setdefault(fid["index"], {})["field"] = f_val
+    for oid, o_val in zip(op_ids, ops):
+        conditions.setdefault(oid["index"], {})["op"] = o_val
+    for vid, v_val in zip(value_ids, values):
+        conditions.setdefault(vid["index"], {})["value"] = v_val
+    for vid, v_val in zip(value2_ids, values2):
+        conditions.setdefault(vid["index"], {})["value2"] = v_val
+
+    # Build join map: group_idx → join value
+    join_map = {}
+    for jid, j_val in zip(join_ids, joins):
+        join_map[jid["index"]] = j_val
+
+    # Find all group indices
+    group_indices = sorted({idx.split("-")[0] for idx in conditions}, key=lambda x: int(x))
+
+    groups = []
+    for gi in group_indices:
+        group_join = join_map.get(gi, "AND")
+        rule_indices = sorted(
+            [idx for idx in conditions if idx.startswith(f"{gi}-")],
+            key=lambda x: int(x.split("-")[1]),
+        )
+        rules = []
+        for ri in rule_indices:
+            cond = conditions[ri]
+            rule = {"field": cond.get("field"), "op": cond.get("op")}
+            if cond.get("op") == "between" and cond.get("value2") is not None:
+                rule["value"] = [cond.get("value"), cond.get("value2")]
+            else:
+                rule["value"] = cond.get("value")
+            rules.append(rule)
+        groups.append({"join": group_join, "rules": rules})
+
+    return groups
+
+
+@callback(
+    Output(f"{PAGE_ID}-store-filter-rules", "data", allow_duplicate=True),
+    # Value changes
+    Input({"type": "mcb-field", "index": ALL}, "value"),
+    Input({"type": "mcb-op", "index": ALL}, "value"),
+    Input({"type": "mcb-value", "index": ALL}, "value"),
+    Input({"type": "mcb-value2", "index": ALL}, "value"),
+    Input({"type": "mcb-join", "index": ALL}, "value"),
+    # Structural buttons
+    Input({"type": "mcb-add-rule", "index": ALL}, "n_clicks"),
+    Input({"type": "mcb-remove", "index": ALL}, "n_clicks"),
+    Input({"type": "mcb-remove-group", "index": ALL}, "n_clicks"),
+    # Top-level controls
+    Input(f"{PAGE_ID}-group-join", "value"),
+    Input(f"{PAGE_ID}-add-group", "n_clicks"),
+    State(f"{PAGE_ID}-store-filter-rules", "data"),
+    prevent_initial_call=True,
+)
+def update_filter_rules(fields, ops, values, values2, joins,
+                        add_rule_clicks, remove_clicks, remove_group_clicks,
+                        group_join_val, add_group_clicks,
+                        current_rules):
+    """Handle all condition builder interactions → update the filter rules store."""
+    triggered = ctx.triggered_id
+    if not triggered:
+        return no_update
+
+    current_rules = current_rules or {"groupJoin": "AND", "groups": []}
+
+    # Top-level group join toggle
+    if triggered == f"{PAGE_ID}-group-join":
+        current_rules["groupJoin"] = group_join_val or "AND"
+        return current_rules
+
+    # Add new group
+    if triggered == f"{PAGE_ID}-add-group":
+        current_rules["groups"].append({
+            "join": "AND",
+            "rules": [{"field": None, "op": None, "value": None}],
+        })
+        return current_rules
+
+    if not isinstance(triggered, dict):
+        return no_update
+
+    action_type = triggered.get("type", "")
+    action_index = triggered.get("index", "")
+
+    # Collect current state from components
+    field_ids = [item["id"] for item in ctx.inputs_list[0]]
+    op_ids = [item["id"] for item in ctx.inputs_list[1]]
+    value_ids = [item["id"] for item in ctx.inputs_list[2]]
+    value2_ids = [item["id"] for item in ctx.inputs_list[3]]
+    join_ids = [item["id"] for item in ctx.inputs_list[4]]
+
+    groups = _collect_groups_from_components(
+        fields, ops, values, values2, joins,
+        field_ids, op_ids, value_ids, value2_ids, join_ids,
+    )
+    result = {"groupJoin": current_rules.get("groupJoin", "AND"), "groups": groups}
+
+    # Field change — reset op/value
+    if action_type == "mcb-field":
+        gi, ri = action_index.split("-")
+        gi, ri = int(gi), int(ri)
+        if gi < len(result["groups"]) and ri < len(result["groups"][gi]["rules"]):
+            rule = result["groups"][gi]["rules"][ri]
+            field = rule.get("field")
+            if field and field in FILTER_FIELDS:
+                meta = FILTER_FIELDS[field]
+                rule["op"] = meta["ops"][0] if meta["ops"] else None
+                ftype = meta["type"]
+                if ftype == "exists":
+                    rule["value"] = True
+                elif ftype == "multi":
+                    rule["value"] = []
+                elif ftype == "slider":
+                    rule["value"] = meta.get("slider_max", 100) if rule["op"] in ("<=", "<") else meta.get("slider_min", 0)
+                else:
+                    rule["value"] = None
+
+    # Add rule to group
+    if action_type == "mcb-add-rule":
+        gi = int(action_index)
+        if gi < len(result["groups"]):
+            result["groups"][gi]["rules"].append({"field": None, "op": None, "value": None})
+
+    # Remove rule
+    if action_type == "mcb-remove":
+        gi, ri = action_index.split("-")
+        gi, ri = int(gi), int(ri)
+        if gi < len(result["groups"]) and ri < len(result["groups"][gi]["rules"]):
+            result["groups"][gi]["rules"].pop(ri)
+            if not result["groups"][gi]["rules"]:
+                result["groups"].pop(gi)
+
+    # Remove group
+    if action_type == "mcb-remove-group":
+        gi = int(action_index)
+        if gi < len(result["groups"]):
+            result["groups"].pop(gi)
+
+    return result
+
+
+# Preset buttons
+@callback(
+    Output(f"{PAGE_ID}-store-filter-rules", "data", allow_duplicate=True),
+    Input(f"{PAGE_ID}-preset-cancelled", "n_clicks"),
+    Input(f"{PAGE_ID}-preset-probable", "n_clicks"),
+    Input(f"{PAGE_ID}-preset-clear", "n_clicks"),
+    prevent_initial_call=True,
+)
+def apply_preset(_c1, _c2, _c3):
+    triggered = ctx.triggered_id
+    if not triggered:
+        return no_update
+    key = triggered.replace(f"{PAGE_ID}-preset-", "")
+    import copy
+    return copy.deepcopy(FILTER_PRESETS.get(key, DEFAULT_FILTER_RULES))
+
+
+# Filter label — show rule count on trigger button
+clientside_callback(
+    """function(filterRules) {
+        if (!filterRules || !filterRules.groups || filterRules.groups.length === 0) {
+            return "Filters";
+        }
+        var count = 0;
+        filterRules.groups.forEach(function(g) {
+            (g.rules || []).forEach(function(r) {
+                if (r.field) count++;
+            });
+        });
+        if (count === 0) return "Filters";
+        var nGroups = filterRules.groups.length;
+        if (nGroups > 1) return "Filters (" + count + " rules, " + nGroups + " groups)";
+        return "Filters (" + count + ")";
+    }""",
+    Output(f"{PAGE_ID}-filter-trigger-label", "children"),
+    Input(f"{PAGE_ID}-store-filter-rules", "data"),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -472,41 +1019,134 @@ def _apply_lifespan_filter(df):
 _ALL_ROW_TYPES = {"Gap", "StartOfDay", "EndOfDay", "FullDay"}
 
 
-def _filter_gaps(df, machines, row_types, gap_threshold, slider_val,
-                 min_cancellations=0, require_note=False,
-                 require_termination=False):
-    """Apply all filters to gaps dataframe."""
+# ---------------------------------------------------------------------------
+# Condition Builder — evaluation engine
+# ---------------------------------------------------------------------------
+
+def _evaluate_condition(df, rule):
+    """Evaluate a single condition rule, returning a boolean Series or None if incomplete."""
+    field = rule.get("field")
+    op = rule.get("op")
+    value = rule.get("value")
+
+    if not field or not op:
+        return None
+    if field not in df.columns:
+        return None
+
+    col = df[field]
+
+    # For GapMinutes, only apply to Gap rows — other RowTypes always pass
+    if field == "GapMinutes" and op in (">=", "<=", ">", "<", "between"):
+        gap_mask = df["RowType"] == "Gap"
+        if op == ">=":
+            return ~gap_mask | (col.fillna(0) >= (value or 0))
+        elif op == "<=":
+            return ~gap_mask | (col.fillna(0) <= (value or 0))
+        elif op == ">":
+            return ~gap_mask | (col.fillna(0) > (value or 0))
+        elif op == "<":
+            return ~gap_mask | (col.fillna(0) < (value or 0))
+        elif op == "between":
+            if not isinstance(value, list) or len(value) < 2:
+                return None
+            lo, hi = value[0] or 0, value[1] or 0
+            return ~gap_mask | ((col.fillna(0) >= lo) & (col.fillna(0) <= hi))
+
+    if op == ">=":
+        return col.notna() & (col >= (value or 0))
+    elif op == "<=":
+        return col.notna() & (col <= (value or 0))
+    elif op == ">":
+        return col.notna() & (col > (value or 0))
+    elif op == "<":
+        return col.notna() & (col < (value or 0))
+    elif op == "==":
+        return col == value
+    elif op == "between":
+        if not isinstance(value, list) or len(value) < 2:
+            return None
+        lo, hi = value[0] or 0, value[1] or 0
+        return col.notna() & (col >= lo) & (col <= hi)
+    elif op == "is_any_of":
+        if not value:
+            return None
+        return col.isin(value)
+    elif op == "exists":
+        return col.notna() & (col.astype(str) != "") & (col.astype(str).str.lower() != "none")
+    elif op == "not_exists":
+        return col.isna() | (col.astype(str) == "") | (col.astype(str).str.lower() == "none")
+
+    return None
+
+
+def _evaluate_group(df, group):
+    """Evaluate a single group's rules against a DataFrame, returning a boolean mask."""
+    if df.empty or not group or not group.get("rules"):
+        return pd.Series(True, index=df.index)
+
+    masks = []
+    for rule in group["rules"]:
+        mask = _evaluate_condition(df, rule)
+        if mask is not None:
+            masks.append(mask)
+
+    if not masks:
+        return pd.Series(True, index=df.index)
+
+    combined = masks[0]
+    if group.get("join") == "OR":
+        for m in masks[1:]:
+            combined = combined | m
+    else:
+        for m in masks[1:]:
+            combined = combined & m
+
+    return combined
+
+
+def _evaluate_filter_rules(df, filter_rules):
+    """Evaluate the full filter rules (multiple peer groups joined by groupJoin)."""
+    if df.empty or not filter_rules:
+        return pd.Series(True, index=df.index)
+
+    groups = filter_rules.get("groups", [])
+    if not groups:
+        return pd.Series(True, index=df.index)
+
+    group_masks = []
+    for group in groups:
+        group_masks.append(_evaluate_group(df, group))
+
+    if not group_masks:
+        return pd.Series(True, index=df.index)
+
+    combined = group_masks[0]
+    if filter_rules.get("groupJoin") == "OR":
+        for m in group_masks[1:]:
+            combined = combined | m
+    else:
+        for m in group_masks[1:]:
+            combined = combined & m
+
+    return combined
+
+
+def _filter_gaps(df, machines, filter_rules, slider_val):
+    """Apply machine filter, condition builder rules, and date filter."""
     if df.empty:
         return df
 
     df = _apply_lifespan_filter(df.copy())
 
-    # Machine filter
+    # Machine filter (from chips — separate from condition builder)
     if machines:
         df = df[df["Machine"].isin(machines)]
 
-    # Row type filter
-    if row_types:
-        df = df[df["RowType"].isin(row_types)]
-
-    # Require machine termination prior to gap
-    if require_termination and "LastFieldTerminationStatus" in df.columns:
-        df = df[df["LastFieldTerminationStatus"] == "MACHINE"]
-
-    # Min cancellations — require at least N cancellations in the gap window
-    if min_cancellations and min_cancellations > 0 and "CancelledInGap" in df.columns:
-        df = df[df["CancelledInGap"].fillna(0) >= min_cancellations]
-
-    # Require downtime note (only meaningful when min_cancellations > 0)
-    if require_note and min_cancellations and min_cancellations > 0:
-        note_col = "EventNote" if "EventNote" in df.columns else "DowntimeNoteMatch"
-        df = df[df[note_col].notna() & (df[note_col] != "")]
-
-    # Gap threshold (only for Gap rows, not FullDay/EndOfDay/StartOfDay)
-    if gap_threshold and gap_threshold > 0:
-        gap_mask = df["RowType"] == "Gap"
-        threshold_mask = ~gap_mask | (df["GapMinutes"] >= gap_threshold)
-        df = df[threshold_mask]
+    # Apply condition builder rules
+    if filter_rules and filter_rules.get("groups"):
+        mask = _evaluate_filter_rules(df, filter_rules)
+        df = df[mask]
 
     # Date filter from slider
     if slider_val:
@@ -524,43 +1164,75 @@ def _build_yearly_summary(df):
 
     holidays = _get_holidays_set()
     df = df.copy()
-    df["Year"] = df["DowntimeDate"].dt.year
+
+    # Use pre-deduped events from cache when possible
+    gap_evt, _ = _get_deduped_events(df)
+
+    # Filter fullday rows — exclude weekends/holidays
+    fd_rows = df[df["RowType"] == "FullDay"]
+    if not fd_rows.empty:
+        _wd = fd_rows["DowntimeDate"].dt.dayofweek
+        fd_rows = fd_rows[(_wd < 5) & (~fd_rows["DowntimeDate"].dt.normalize().isin(holidays))]
+
+    # Aggregate gap events by year
+    if not gap_evt.empty:
+        gap_evt = gap_evt.copy()
+        gap_evt["_year"] = gap_evt["DowntimeDate"].dt.year
+        gap_evt["_month"] = gap_evt["DowntimeDate"].dt.month
+        gap_by_year = gap_evt.groupby("_year").agg(
+            gap_hours=("GapMinutes", "sum"),
+            gapCount=("RowKey", "count"),
+        )
+        gap_by_year["gap_hours"] = gap_by_year["gap_hours"] / 60
+        # Monthly breakdown via pivot
+        monthly_pivot = gap_evt.groupby(["_year", "_month"])["GapMinutes"].sum().unstack(fill_value=0) / 60
+    else:
+        gap_by_year = pd.DataFrame(columns=["gap_hours", "gapCount"])
+        monthly_pivot = pd.DataFrame()
+
+    # Aggregate fullday by year
+    if not fd_rows.empty:
+        fd_unique = fd_rows.drop_duplicates(subset=["Machine", "DowntimeDate"])
+        fd_by_year = fd_unique.groupby(fd_unique["DowntimeDate"].dt.year).size().rename("fullDayCount")
+    else:
+        fd_by_year = pd.Series(dtype=int, name="fullDayCount")
+
+    # Operating hours per year (from all rows)
+    df["_year"] = df["DowntimeDate"].dt.year
+    year_stats = df.groupby("_year").agg(
+        machines=("Machine", "nunique"),
+        workdays=("DowntimeDate", lambda x: x.dt.normalize().nunique()),
+    )
+
+    all_years = sorted(set(gap_by_year.index) | set(fd_by_year.index) | set(year_stats.index), reverse=True)
 
     yearly = []
-    for year, grp in df.groupby("Year"):
-        gap_rows = grp[grp["RowType"].isin(["Gap", "StartOfDay", "EndOfDay"])]
-        gap_rows_evt = _dedup_events(gap_rows)  # one row per event for GapMinutes / counts
-        fullday_rows = grp[grp["RowType"] == "FullDay"]
-        # Exclude weekends/holidays
-        if not fullday_rows.empty:
-            _wd = fullday_rows["DowntimeDate"].dt.dayofweek
-            fullday_rows = fullday_rows[(_wd < 5) & (~fullday_rows["DowntimeDate"].dt.normalize().isin(holidays))]
+    for year in all_years:
+        gap_hours = float(gap_by_year.at[year, "gap_hours"]) if year in gap_by_year.index else 0.0
+        gap_count = int(gap_by_year.at[year, "gapCount"]) if year in gap_by_year.index else 0
+        fd_count = int(fd_by_year.get(year, 0))
+        total_hours = gap_hours + fd_count * 10
 
-        total_gap_hours = gap_rows_evt["GapMinutes"].sum() / 60 if not gap_rows_evt.empty else 0
-        fullday_count = fullday_rows.groupby(["Machine", "DowntimeDate"]).ngroups if not fullday_rows.empty else 0
-        total_hours = total_gap_hours + fullday_count * 10
+        n_machines = int(year_stats.at[year, "machines"]) if year in year_stats.index else 1
+        workdays = int(year_stats.at[year, "workdays"]) if year in year_stats.index else 1
+        op_hours = max(workdays * 10 * n_machines, 1)
+        availability = max(0, (1 - total_hours / op_hours)) * 100
 
-        # Operating hours: ~250 workdays * 10 hrs * machines active that year
-        machines_active = grp["Machine"].nunique()
-        workdays = grp["DowntimeDate"].dt.normalize().nunique()
-        operating_hours = workdays * 10 * machines_active if machines_active > 0 else 1
-        availability = max(0, (1 - total_hours / operating_hours)) * 100
-
-        # Monthly breakdown
         monthly = [0.0] * 12
-        for m, mg in gap_rows_evt.groupby(gap_rows_evt["DowntimeDate"].dt.month):
-            monthly[int(m) - 1] = mg["GapMinutes"].sum() / 60
+        if year in monthly_pivot.index:
+            for m in monthly_pivot.columns:
+                monthly[int(m) - 1] = float(monthly_pivot.at[year, m])
 
         yearly.append({
             "year": int(year),
-            "hours": round(float(total_hours), 1),
-            "availability": round(float(availability), 1),
-            "gapCount": int(len(gap_rows_evt)),
-            "fullDayCount": int(fullday_count),
-            "monthly": [round(float(v), 1) for v in monthly],
+            "hours": round(total_hours, 1),
+            "availability": round(availability, 1),
+            "gapCount": gap_count,
+            "fullDayCount": fd_count,
+            "monthly": [round(v, 1) for v in monthly],
         })
 
-    return sorted(yearly, key=lambda x: x["year"], reverse=True)
+    return yearly
 
 
 def _build_daily_summary(df):
@@ -573,94 +1245,119 @@ def _build_daily_summary(df):
     if gap_rows.empty and fd_rows.empty:
         return []
 
-    records = []
-    if not gap_rows.empty:
-        gap_rows_evt = _dedup_events(gap_rows)  # one row per event for event-level columns
-        daily = gap_rows_evt.groupby(gap_rows_evt["DowntimeDate"].dt.normalize()).agg(
+    # Use pre-deduped events from cache, then aggregate
+    gap_evt, fd_evt = _get_deduped_events(df)
+    gap_daily = pd.DataFrame()
+    if not gap_evt.empty:
+        gap_evt = gap_evt.copy()
+        gap_evt["_date"] = gap_evt["DowntimeDate"].dt.normalize()
+        gap_daily = gap_evt.groupby("_date").agg(
             minutes=("GapMinutes", "sum"),
             gapCount=("RowKey", "count"),
-            machines=("Machine", lambda x: list(x.unique())),
+            machines=("Machine", "unique"),
             cancelled=("CancelledInGap", "sum"),
             errors=("MachineErrorsNearGap", "sum"),
-        ).reset_index()
-        for _, row in daily.iterrows():
-            records.append({
-                "date": row["DowntimeDate"].strftime("%Y-%m-%d"),
-                "minutes": round(float(row["minutes"]), 1),
-                "gapCount": int(row["gapCount"]),
-                "machines": list(row["machines"]),
-                "cancelled": int(row["cancelled"]),
-                "errors": int(row["errors"]),
-                "fullDay": False,
-            })
+        )
+        gap_daily["fullDay"] = False
 
-    # Add full-day outage days (10 hrs = 600 min per machine)
-    if not fd_rows.empty:
-        fd_rows_evt = _dedup_events(fd_rows)  # dedup before summing event-level columns
-        fd_daily = fd_rows_evt.groupby(fd_rows_evt["DowntimeDate"].dt.normalize()).agg(
-            machines=("Machine", lambda x: list(x.unique())),
+    fd_daily = pd.DataFrame()
+    if not fd_evt.empty:
+        fd_evt = fd_evt.copy()
+        fd_evt["_date"] = fd_evt["DowntimeDate"].dt.normalize()
+        fd_daily = fd_evt.groupby("_date").agg(
+            machines=("Machine", "unique"),
             cancelled=("CancelledInGap", "sum"),
             errors=("MachineErrorsNearGap", "sum"),
-        ).reset_index()
-        existing_dates = {r["date"] for r in records}
-        for _, row in fd_daily.iterrows():
-            dstr = row["DowntimeDate"].strftime("%Y-%m-%d")
-            n_machines = len(row["machines"])
-            if dstr in existing_dates:
-                # Merge into existing record
-                for rec in records:
-                    if rec["date"] == dstr:
-                        rec["minutes"] += 600 * n_machines
-                        rec["machines"] = list(set(rec["machines"] + row["machines"]))
-                        rec["cancelled"] += int(row["cancelled"])
-                        rec["fullDay"] = True
-                        break
-            else:
-                records.append({
-                    "date": dstr,
-                    "minutes": 600.0 * n_machines,
-                    "gapCount": n_machines,
-                    "machines": list(row["machines"]),
-                    "cancelled": int(row["cancelled"]),
-                    "errors": int(row["errors"]),
-                    "fullDay": True,
-                })
+        )
+        fd_daily["minutes"] = fd_daily["machines"].apply(len) * 600.0
+        fd_daily["gapCount"] = fd_daily["machines"].apply(len)
+        fd_daily["fullDay"] = True
 
-    return [r for r in sorted(records, key=lambda x: x["date"])
-    ]
+    # Merge gap and fullday summaries
+    if not gap_daily.empty and not fd_daily.empty:
+        # For dates that have both gap and fullday entries, combine them
+        both = gap_daily.index.intersection(fd_daily.index)
+        for d in both:
+            gap_daily.at[d, "minutes"] += fd_daily.at[d, "minutes"]
+            gap_daily.at[d, "machines"] = np.unique(
+                np.concatenate([gap_daily.at[d, "machines"], fd_daily.at[d, "machines"]])
+            )
+            gap_daily.at[d, "cancelled"] += fd_daily.at[d, "cancelled"]
+            gap_daily.at[d, "fullDay"] = True
+        fd_only = fd_daily.drop(both)
+        combined = pd.concat([gap_daily, fd_only]).sort_index()
+    elif not gap_daily.empty:
+        combined = gap_daily.sort_index()
+    else:
+        combined = fd_daily.sort_index()
+
+    # Convert to list of dicts (vectorized)
+    records = []
+    for date_val, row in combined.iterrows():
+        records.append({
+            "date": date_val.strftime("%Y-%m-%d"),
+            "minutes": round(float(row["minutes"]), 1),
+            "gapCount": int(row["gapCount"]),
+            "machines": list(row["machines"]),
+            "cancelled": int(row["cancelled"]),
+            "errors": int(row["errors"]),
+            "fullDay": bool(row["fullDay"]),
+        })
+
+    return records
 
 
 
 def _build_trend_data(df):
-    """Compute daily downtime data — clientside JS handles D/W/M aggregation."""
+    """Compute daily downtime data — clientside JS handles D/W/M aggregation.
+
+    Uses neighbor-interpolated gap minutes (pre-computed in cache) matching
+    the strip's visual rendering for all gap types including FullDay.
+    """
     if df.empty:
-        return {"dates": [], "series": []}
+        return {"dates": [], "series": [], "eventsSeries": []}
 
-    gap_rows = df[df["RowType"].isin(["Gap", "StartOfDay", "EndOfDay"])].copy()
-    if gap_rows.empty:
-        return {"dates": [], "series": []}
+    gap_evt, fd_evt = _get_deduped_events(df)
+    # Both already have interpolated GapMinutes from cache
 
-    gap_rows = _dedup_events(gap_rows)  # one row per event — GapMinutes is event-level
-    gap_rows["Date"] = gap_rows["DowntimeDate"].dt.normalize()
-    machines = sorted(gap_rows["Machine"].unique())
-    all_dates = sorted(gap_rows["Date"].unique())
+    # Combine gap events + fullday events
+    parts = []
+    if not gap_evt.empty:
+        parts.append(gap_evt[["Machine", "DowntimeDate", "GapMinutes"]])
+    if not fd_evt.empty:
+        parts.append(fd_evt[["Machine", "DowntimeDate", "GapMinutes"]])
+    if not parts:
+        return {"dates": [], "series": [], "eventsSeries": []}
+
+    combined = pd.concat(parts, ignore_index=True)
+    combined["Date"] = combined["DowntimeDate"].dt.normalize()
+    machines = sorted(combined["Machine"].unique())
+    all_dates = sorted(combined["Date"].unique())
     date_labels = [d.strftime("%Y-%m-%d") for d in all_dates]
 
-    series = []
+    hours_series = []
+    events_series = []
     for machine in machines:
-        mdf = gap_rows[gap_rows["Machine"] == machine]
-        daily = mdf.groupby("Date")["GapMinutes"].sum() / 60
-        values = [round(float(daily.get(d, 0)), 2) for d in all_dates]
+        mdf = combined[combined["Machine"] == machine]
+        daily_hrs = mdf.groupby("Date")["GapMinutes"].sum() / 60
+        daily_cnt = mdf.groupby("Date").size()
         dept = MACHINE_DEPT.get(machine, "Unknown")
-        series.append({
+        color = DEPARTMENT_COLORS.get(dept, CHART_COLORWAY[0])
+        hours_series.append({
             "name": machine,
-            "values": values,
-            "color": DEPARTMENT_COLORS.get(dept, CHART_COLORWAY[0]),
+            "values": [round(float(daily_hrs.get(d, 0)), 2) for d in all_dates],
+            "color": color,
+        })
+        events_series.append({
+            "name": machine,
+            "values": [int(daily_cnt.get(d, 0)) for d in all_dates],
+            "color": color,
         })
 
     return {
         "dates": date_labels,
-        "series": series,
+        "series": hours_series,
+        "eventsSeries": events_series,
     }
 
 
@@ -670,22 +1367,24 @@ def _build_patient_impact_data(df):
     if df.empty:
         return empty
 
+    # Patient-level rows for reroute counts, deduped events for cancellation counts
     gap_rows = df[df["RowType"].isin(["Gap", "StartOfDay", "EndOfDay"])].copy()
     if gap_rows.empty:
         return empty
 
     gap_rows["Date"] = gap_rows["DowntimeDate"].dt.normalize()
-    gap_rows_evt = _dedup_events(gap_rows)  # event-level dedup for CancelledInGap
+    gap_rows_evt, _ = _get_deduped_events(df)
+    gap_rows_evt = gap_rows_evt.copy() if not gap_rows_evt.empty else pd.DataFrame()
+    if not gap_rows_evt.empty:
+        gap_rows_evt["Date"] = gap_rows_evt["DowntimeDate"].dt.normalize()
     all_dates = sorted(gap_rows["Date"].unique())
     date_labels = [d.strftime("%Y-%m-%d") for d in all_dates]
 
-    cancelled = []
-    rerouted = []
-    for d in all_dates:
-        dg_evt = gap_rows_evt[gap_rows_evt["Date"] == d]
-        dg = gap_rows[gap_rows["Date"] == d]
-        cancelled.append(int(dg_evt["CancelledInGap"].sum()))
-        rerouted.append(int(dg["RerouteMachine"].notna().sum()))
+    # Vectorized aggregation instead of per-date loop
+    daily_cancel = gap_rows_evt.groupby("Date")["CancelledInGap"].sum()
+    daily_reroute = gap_rows.groupby("Date")["RerouteMachine"].apply(lambda x: (x.notna() & (x != "")).sum())
+    cancelled = [int(daily_cancel.get(d, 0)) for d in all_dates]
+    rerouted = [int(daily_reroute.get(d, 0)) for d in all_dates]
 
     # Course impact: unique courses interrupted per day
     # Index each course by the date of its first cancellation (not rerouted)
@@ -719,21 +1418,24 @@ def _build_detail_table(df):
 
     tdf = df.sort_values("DowntimeDate", ascending=False).head(500)
     records = []
-    for _, row in tdf.iterrows():
+    for i, (_, row) in enumerate(tdf.iterrows()):
         records.append({
-            "Date": row["DowntimeDate"].strftime("%Y-%m-%d") if pd.notna(row["DowntimeDate"]) else "--",
-            "Machine": row.get("Machine") or "--",
-            "Site": row.get("Site") or "--",
-            "Start": str(row.get("GapStartTime", ""))[:8] if pd.notna(row.get("GapStartTime")) else "--",
-            "End": str(row.get("GapEndTime", ""))[:8] if pd.notna(row.get("GapEndTime")) else "--",
-            "Minutes": str(int(row["GapMinutes"])) if pd.notna(row.get("GapMinutes")) else "--",
-            "Type": row.get("DowntimeType") or row.get("GapClassification") or "--",
-            "Confidence": row.get("LocalConfidence") or row.get("DowntimeConfidence") or "--",
+            "_row_idx": i,
+            "Date": row["DowntimeDate"].strftime("%Y-%m-%d") if pd.notna(row["DowntimeDate"]) else "\u2013",
+            "Patient": str(row.get("PatientName") or row.get("PatientFullName", "")) if pd.notna(row.get("PatientName") or row.get("PatientFullName")) else "\u2013",
+            "Machine": row.get("Machine") or "\u2013",
+            "Start": str(row.get("GapStartTime", ""))[:5] if pd.notna(row.get("GapStartTime")) else "\u2013",
+            "End": str(row.get("GapEndTime", ""))[:5] if pd.notna(row.get("GapEndTime")) else "\u2013",
+            "Minutes": str(int(row["GapMinutes"])) if pd.notna(row.get("GapMinutes")) else "\u2013",
+            "Type": row.get("DowntimeType") or "\u2013",
+            "Classification": row.get("GapClassification") or "\u2013",
             "Cancellations": str(int(row["CancelledInGap"])) if pd.notna(row.get("CancelledInGap")) else "0",
             "Errors": str(int(row["MachineErrorsNearGap"])) if pd.notna(row.get("MachineErrorsNearGap")) else "0",
-            "Reroute": str(row["RerouteMachine"]) if pd.notna(row.get("RerouteMachine")) else "--",
-            "PrevPatient": str(row.get("PrevPatientName", "")) if pd.notna(row.get("PrevPatientName")) else "--",
-            "NextPatient": str(row.get("NextPatientName", "")) if pd.notna(row.get("NextPatientName")) else "--",
+            "Reroute": str(row["RerouteMachine"]) if pd.notna(row.get("RerouteMachine")) and row.get("RerouteMachine") != "" else "\u2013",
+            "Outcome": str(row.get("PatientOutcome", "")) if pd.notna(row.get("PatientOutcome")) else "\u2013",
+            "CourseName": str(row.get("CourseName", "")) if pd.notna(row.get("CourseName")) else "\u2013",
+            "DowntimeNote": str(row.get("DowntimeNoteMatch", "")) if pd.notna(row.get("DowntimeNoteMatch")) else "\u2013",
+            "AppointmentNote": str(row.get("AppointmentNote", "")) if pd.notna(row.get("AppointmentNote")) else "\u2013",
         })
     return records
 
@@ -785,27 +1487,15 @@ def _dedup_events(df):
     if not keys:
         return df
 
-    deduped = df.drop_duplicates(subset=keys).copy()
-
-    # Propagate best DowntimeNoteMatch from A-branch rows
-    if "DowntimeNoteMatch" in df.columns:
-        note_best = (
-            df[df["DowntimeNoteMatch"].notna()]
-            .drop_duplicates(subset=keys)[keys + ["DowntimeNoteMatch"]]
-        )
-        if not note_best.empty:
-            deduped = deduped.drop(columns=["DowntimeNoteMatch"])
-            deduped = deduped.merge(note_best, on=keys, how="left")
-
-    # Propagate highest LocalConfidence from any row in the event group
-    if "LocalConfidence" in df.columns:
-        conf_best = (
-            df.assign(_co=df["LocalConfidence"].map(_CONFIDENCE_ORDER).fillna(0))
-            .sort_values("_co", ascending=False)
-            .drop_duplicates(subset=keys)[keys + ["LocalConfidence"]]
-        )
-        deduped = deduped.drop(columns=["LocalConfidence"], errors="ignore")
-        deduped = deduped.merge(conf_best, on=keys, how="left")
+    # Sort so rows with non-null notes and highest confidence come first,
+    # then a single drop_duplicates keeps the best row per event.
+    df_sorted = df.copy()
+    has_note = df_sorted["DowntimeNoteMatch"].notna() if "DowntimeNoteMatch" in df_sorted.columns else pd.Series(False, index=df_sorted.index)
+    conf_rank = df_sorted["LocalConfidence"].map(_CONFIDENCE_ORDER).fillna(0) if "LocalConfidence" in df_sorted.columns else pd.Series(0, index=df_sorted.index)
+    df_sorted["_note_rank"] = has_note.astype(int)
+    df_sorted["_conf_rank"] = conf_rank
+    df_sorted = df_sorted.sort_values(["_note_rank", "_conf_rank"], ascending=False)
+    deduped = df_sorted.drop_duplicates(subset=keys).drop(columns=["_note_rank", "_conf_rank"])
 
     return deduped
 
@@ -896,9 +1586,9 @@ def _compute_true_availability(df_events, start, end, machines, holidays):
     # operating window to both the denominator (they count as lost operating time)
     # and to the downtime total.
     fullday_est_min = 0.0
-    fd_rows = df_events[df_events["RowType"] == "FullDay"] if not df_events.empty else pd.DataFrame()
-    if not fd_rows.empty:
-        fd_evt = _dedup_events(fd_rows).copy()
+    gap_evt, fd_evt = _get_deduped_events(df_events) if not df_events.empty else (pd.DataFrame(), pd.DataFrame())
+    if not fd_evt.empty:
+        fd_evt = fd_evt.copy()
         fd_evt["_med"] = fd_evt["Machine"].map(machine_median_min).fillna(600)
         fullday_est_min = float(fd_evt["_med"].sum())
         total_op_min += fullday_est_min
@@ -906,8 +1596,7 @@ def _compute_true_availability(df_events, start, end, machines, holidays):
     if total_op_min <= 0:
         return 100.0, 0.0
 
-    gap_rows = df_events[df_events["RowType"].isin(["Gap", "StartOfDay", "EndOfDay"])] if not df_events.empty else pd.DataFrame()
-    gap_min = float(_dedup_events(gap_rows)["GapMinutes"].sum()) if not gap_rows.empty else 0.0
+    gap_min = float(gap_evt["GapMinutes"].sum()) if not gap_evt.empty else 0.0
 
     total_downtime_min = gap_min + fullday_est_min
     availability = max(0.0, (1.0 - total_downtime_min / total_op_min)) * 100.0
@@ -937,21 +1626,20 @@ def _compute_local_confidence(df):
         return df
     df = df.copy()
 
-    def _score(row):
-        if row.get("RowType") == "FullDay":
-            if pd.notna(row.get("DowntimeNoteMatch")):
-                return "High"
-            if (row.get("CancelledInGap") or 0) > 0:
-                return "Medium"
-            return "Low"
-        # Gap / StartOfDay / EndOfDay
-        if pd.notna(row.get("DowntimeNoteMatch")):
-            return "High"
-        if row.get("LastFieldTerminationStatus") == "MACHINE":
-            return "Medium"
-        return "Low"
+    has_note = df["DowntimeNoteMatch"].notna()
+    is_fullday = df["RowType"] == "FullDay"
+    has_cancellations = df["CancelledInGap"].fillna(0) > 0
+    is_machine_term = df.get("LastFieldTerminationStatus", pd.Series("", index=df.index)) == "MACHINE"
 
-    df["LocalConfidence"] = df.apply(_score, axis=1)
+    # Vectorized scoring with np.select (order matters — first match wins)
+    conditions = [
+        has_note,                                # High for any row with a note
+        is_fullday & has_cancellations,          # Medium for FullDay with cancellations
+        ~is_fullday & is_machine_term,           # Medium for Gap/SOD/EOD with machine termination
+    ]
+    choices = ["High", "Medium", "Medium"]
+    df["LocalConfidence"] = np.select(conditions, choices, default="Low")
+
     return df
 
 
@@ -984,6 +1672,245 @@ def _propagate_event_note(df):
     else:
         df["EventNote"] = np.nan
     return df
+
+
+# ---------------------------------------------------------------------------
+# Cached transformed dataset — avoids recomputing on every callback
+# ---------------------------------------------------------------------------
+
+_transformed_cache = {"hash": None, "df": None, "gap_evt": None, "fd_evt": None}
+
+
+def _get_transformed_gaps():
+    """Return the fully transformed downtime gaps dataframe, cached across callbacks.
+
+    Cache invalidates when the underlying loader returns a new object
+    (i.e., after load_downtime_gaps.cache_clear() or app restart).
+    On cold start, tries to load pre-computed results from disk parquet cache
+    (transform + dedup + interpolation) to avoid the full 4+ second rebuild.
+    """
+    from data.loader import load_downtime_gaps, _read_parquet_cache, _write_parquet_cache
+    from pathlib import Path
+    from config.settings import DATA_INCREMENTAL
+
+    raw = load_downtime_gaps()
+    raw_id = id(raw)
+    if _transformed_cache["hash"] != raw_id:
+        # Try disk cache first — check if parquet is newer than source CSVs
+        _src_files = sorted((DATA_INCREMENTAL / "MachineDowntimeGaps").glob("*.csv"))
+        df_cached = _read_parquet_cache("DowntimeGaps_transformed", _src_files)
+        gap_cached = _read_parquet_cache("DowntimeGaps_gap_evt", _src_files)
+        fd_cached = _read_parquet_cache("DowntimeGaps_fd_evt", _src_files)
+
+        if df_cached is not None and gap_cached is not None and fd_cached is not None:
+            df = df_cached
+            gap_evt = gap_cached
+            fd_evt = fd_cached
+        else:
+            # Full rebuild
+            df = _compute_downtime_type(
+                _compute_local_confidence(
+                    _propagate_event_note(raw.copy())
+                )
+            )
+            # Compute MU Delivered % from last field before gap
+            if "LastFieldPlannedMU" in df.columns and "LastFieldDeliveredMU" in df.columns:
+                planned = df["LastFieldPlannedMU"].fillna(0)
+                delivered = df["LastFieldDeliveredMU"].fillna(0)
+                df["MUDeliveredPct"] = np.where(planned > 0, (delivered / planned * 100).round(1), np.nan)
+            gap_rows = df[df["RowType"].isin(["Gap", "StartOfDay", "EndOfDay"])]
+            fd_rows = df[df["RowType"] == "FullDay"]
+            gap_evt = _dedup_events(gap_rows) if not gap_rows.empty else pd.DataFrame()
+            fd_evt = _dedup_events(fd_rows) if not fd_rows.empty else pd.DataFrame()
+            # Apply interpolated gap minutes so all consumers get consistent values
+            if not gap_evt.empty or not fd_evt.empty:
+                interp_map = _compute_interpolated_gap_minutes(gap_evt, fd_evt)
+                gap_evt, fd_evt = _apply_interpolated_minutes(gap_evt, fd_evt, interp_map)
+            # Persist to disk — convert object columns to strings for parquet compatibility
+            # (datetime.time objects in mixed-type columns cause pyarrow errors)
+            def _prep_for_parquet(frame):
+                if frame.empty:
+                    return frame
+                frame = frame.copy()
+                for col in frame.columns:
+                    if frame[col].dtype == object:
+                        frame[col] = frame[col].astype(str).replace({"NaT": "", "None": "", "nan": ""})
+                return frame
+            _write_parquet_cache("DowntimeGaps_transformed", _prep_for_parquet(df))
+            _write_parquet_cache("DowntimeGaps_gap_evt", _prep_for_parquet(gap_evt))
+            _write_parquet_cache("DowntimeGaps_fd_evt", fd_evt)
+
+        _transformed_cache["hash"] = raw_id
+        _transformed_cache["df"] = df
+        _transformed_cache["gap_evt"] = gap_evt
+        _transformed_cache["fd_evt"] = fd_evt
+    return _transformed_cache["df"]
+
+
+def _get_deduped_events(df):
+    """Return pre-deduped gap and fullday event DataFrames, filtered to match df.
+
+    Uses the cached full-dataset dedup and filters down to the rows present in df,
+    avoiding redundant dedup computation. Falls back to direct dedup for subsets
+    that don't align with the cached data (e.g., prior-period slices).
+    """
+    full_gap_evt = _transformed_cache.get("gap_evt")
+    full_fd_evt = _transformed_cache.get("fd_evt")
+    full_df = _transformed_cache.get("df")
+
+    if full_gap_evt is None or full_fd_evt is None:
+        # Cache not populated — fall back to direct dedup
+        gap_rows = df[df["RowType"].isin(["Gap", "StartOfDay", "EndOfDay"])]
+        fd_rows = df[df["RowType"] == "FullDay"]
+        return (
+            _dedup_events(gap_rows) if not gap_rows.empty else pd.DataFrame(),
+            _dedup_events(fd_rows) if not fd_rows.empty else pd.DataFrame(),
+        )
+
+    # Fast path: if df is the full cached dataset (same object), return cached directly
+    if full_df is not None and df is full_df:
+        return full_gap_evt, full_fd_evt
+
+    # Fast path: if df has the same length as full dataset, likely the same
+    if full_df is not None and len(df) == len(full_df):
+        return full_gap_evt, full_fd_evt
+
+    # Filter cached deduped rows to only those present in df (by index intersection)
+    df_idx = df.index
+    gap_evt = full_gap_evt.loc[full_gap_evt.index.intersection(df_idx)] if not full_gap_evt.empty else pd.DataFrame()
+    fd_evt = full_fd_evt.loc[full_fd_evt.index.intersection(df_idx)] if not full_fd_evt.empty else pd.DataFrame()
+    return gap_evt, fd_evt
+
+
+def _compute_interpolated_gap_minutes(gap_evt, fd_evt):
+    """Compute interpolated gap minutes matching the strip's visual rendering.
+
+    For each gap event, returns an adjusted GapMinutes value:
+    - Intraday Gap: uses source GapMinutes as-is.
+    - EndOfDay: interpolates the gap end from neighboring days' latest treatment
+      time, then recomputes duration from gap start to interpolated end.
+    - StartOfDay: interpolates the gap start from neighboring days' earliest
+      treatment time, then recomputes duration from interpolated start to gap end.
+    - FullDay: interpolates the full operating window from neighbor days.
+
+    Returns a dict: {(Machine, DowntimeDate_str, RowType, GapStartTime_str): minutes}
+    """
+    from data.loader import load_treatment_detail
+
+    td = load_treatment_detail()
+    if td.empty:
+        return {}
+
+    td = td.copy()
+    td["_date"] = td["ScheduledDateTime"].dt.normalize()
+    td["_start_min"] = td["TreatmentStartTime"].dt.hour * 60 + td["TreatmentStartTime"].dt.minute
+    td["_end_min"] = td["TreatmentEndTime"].dt.hour * 60 + td["TreatmentEndTime"].dt.minute
+
+    # Per-machine per-day treatment windows
+    tx_daily = td.groupby(["Machine", "_date"]).agg(
+        ft=("_start_min", "min"),
+        lt=("_end_min", "max"),
+    ).reset_index()
+
+    # Build sorted arrays per machine for O(log n) neighbor lookups
+    machine_tx = {}
+    for machine, grp in tx_daily.groupby("Machine"):
+        grp = grp.sort_values("_date")
+        dates = grp["_date"].values.astype("datetime64[ns]")
+        fts = grp["ft"].values.astype(int)
+        lts = grp["lt"].values.astype(int)
+        machine_tx[machine] = (dates, fts, lts)
+
+    def _neighbor_interp(machine, target_date):
+        """Find nearest prev/next treatment day via binary search, return interpolated (ft, lt)."""
+        if machine not in machine_tx:
+            return 480, 1020
+        dates, fts, lts = machine_tx[machine]
+        td64 = np.datetime64(target_date)
+        idx = np.searchsorted(dates, td64)
+
+        prev_ft, prev_lt = (None, None)
+        if idx > 0:
+            prev_ft, prev_lt = int(fts[idx - 1]), int(lts[idx - 1])
+
+        next_ft, next_lt = (None, None)
+        # idx might point at the target date itself (if it has treatments); skip it
+        ni = idx
+        if ni < len(dates) and dates[ni] == td64:
+            ni += 1
+        if ni < len(dates):
+            next_ft, next_lt = int(fts[ni]), int(lts[ni])
+
+        if prev_ft is not None and next_ft is not None:
+            return round((prev_ft + next_ft) / 2), round((prev_lt + next_lt) / 2)
+        elif prev_ft is not None:
+            return prev_ft, prev_lt
+        elif next_ft is not None:
+            return next_ft, next_lt
+        return 480, 1020
+
+    result = {}
+
+    # Process FullDay events — interpolate full window from neighbors
+    if not fd_evt.empty:
+        for machine, dt in fd_evt[["Machine", "DowntimeDate"]].drop_duplicates().itertuples(index=False):
+            dt_n = dt.normalize()
+            ds = dt_n.strftime("%Y-%m-%d")
+            interp_ft, interp_lt = _neighbor_interp(machine, dt_n)
+            result[(machine, ds, "FullDay", "")] = max(0, interp_lt - interp_ft)
+
+    # Process EndOfDay / StartOfDay gaps — interpolate boundary from neighbors
+    if not gap_evt.empty:
+        boundary = gap_evt[gap_evt["RowType"].isin(["EndOfDay", "StartOfDay"])].copy()
+        if not boundary.empty:
+            boundary["_gs"] = boundary["GapStartTime"].apply(_time_str_to_min)
+            boundary["_ge"] = boundary["GapEndTime"].apply(_time_str_to_min)
+            for row_type, machine, dt, gs, ge, gs_raw in zip(
+                boundary["RowType"], boundary["Machine"], boundary["DowntimeDate"],
+                boundary["_gs"], boundary["_ge"], boundary["GapStartTime"],
+            ):
+                dt_n = dt.normalize()
+                ds = dt_n.strftime("%Y-%m-%d")
+                gs_str = str(gs_raw)[:8] if pd.notna(gs_raw) else ""
+                interp_ft, interp_lt = _neighbor_interp(machine, dt_n)
+
+                if row_type == "EndOfDay" and gs is not None:
+                    result[(machine, ds, "EndOfDay", gs_str)] = max(0, interp_lt - int(gs))
+                elif row_type == "StartOfDay" and ge is not None:
+                    result[(machine, ds, "StartOfDay", gs_str)] = max(0, int(ge) - interp_ft)
+
+    return result
+
+
+def _apply_interpolated_minutes(gap_evt, fd_evt, interp_map):
+    """Apply interpolated minutes to gap and fullday event dataframes.
+
+    Returns (gap_evt_with_adjusted_minutes, fd_evt_with_minutes).
+    """
+    if not gap_evt.empty:
+        gap_evt = gap_evt.copy()
+        is_boundary = gap_evt["RowType"].isin(["EndOfDay", "StartOfDay"])
+        if is_boundary.any():
+            keys = (
+                gap_evt.loc[is_boundary, "Machine"]
+                + "|" + gap_evt.loc[is_boundary, "DowntimeDate"].dt.strftime("%Y-%m-%d")
+                + "|" + gap_evt.loc[is_boundary, "RowType"]
+                + "|" + gap_evt.loc[is_boundary, "GapStartTime"].fillna("").astype(str).str[:8]
+            )
+            # Build a fast lookup from the interp_map
+            flat_map = {f"{m}|{d}|{rt}|{gs}": v for (m, d, rt, gs), v in interp_map.items()
+                        if rt in ("EndOfDay", "StartOfDay")}
+            gap_evt.loc[is_boundary, "GapMinutes"] = keys.map(flat_map).fillna(
+                gap_evt.loc[is_boundary, "GapMinutes"]
+            ).astype(float)
+
+    if not fd_evt.empty:
+        fd_evt = fd_evt.copy()
+        keys = fd_evt["Machine"] + "|" + fd_evt["DowntimeDate"].dt.strftime("%Y-%m-%d") + "|FullDay|"
+        flat_map = {f"{m}|{d}|FullDay|": v for (m, d, rt, gs), v in interp_map.items() if rt == "FullDay"}
+        fd_evt["GapMinutes"] = keys.map(flat_map).fillna(600).astype(float)
+
+    return gap_evt, fd_evt
 
 
 def _build_strip_data(gaps_df, machines, start_date, end_date):
@@ -1042,7 +1969,10 @@ def _build_strip_data(gaps_df, machines, start_date, end_date):
 
     if not gaps_df.empty:
         # Include Gap, EndOfDay, and StartOfDay rows — all have valid start/end times
-        gap_rows = gaps_df[gaps_df["RowType"].isin(["Gap", "EndOfDay", "StartOfDay"])].copy()
+        # Dedup to one row per event to avoid rendering duplicate overlays
+        gap_rows = gaps_df[gaps_df["RowType"].isin(["Gap", "EndOfDay", "StartOfDay"])]
+        gap_rows = _dedup_events(gap_rows) if not gap_rows.empty else gap_rows
+        gap_rows = gap_rows.copy()
         if not gap_rows.empty:
             gap_rows["_gs"] = gap_rows["GapStartTime"].apply(_time_str_to_min)
             gap_rows["_ge"] = gap_rows["GapEndTime"].apply(_time_str_to_min)
@@ -1128,48 +2058,57 @@ def _build_strip_data(gaps_df, machines, start_date, end_date):
     Output(f"{PAGE_ID}-store-gaps-agg", "data"),
     Output(f"{PAGE_ID}-chart-trend-store", "data"),
     Output(f"{PAGE_ID}-chart-patient-impact-store", "data"),
+    Output(f"{PAGE_ID}-detail-table", "columnDefs"),
     Output(f"{PAGE_ID}-detail-table", "rowData"),
     Output(f"{PAGE_ID}-store-kpi-sparklines", "data"),
     Input(f"{PAGE_ID}-interval", "n_intervals"),
     Input(f"{PAGE_ID}-filter-machine", "value"),
-    Input(f"{PAGE_ID}-filter-rowtype", "value"),
-    Input(f"{PAGE_ID}-filter-gap-threshold", "value"),
+    Input(f"{PAGE_ID}-store-filter-rules", "data"),
     Input(f"{PAGE_ID}-date-slider", "value"),
     Input(f"{PAGE_ID}-filter-date-preset", "value"),
-    Input(f"{PAGE_ID}-filter-min-cancellations", "value"),
-    Input(f"{PAGE_ID}-filter-require-note", "checked"),
-    Input(f"{PAGE_ID}-filter-require-termination", "checked"),
+    Input(f"{PAGE_ID}-table-filter-rows", "data"),
     running=[
         (Output(f"{PAGE_ID}-chart-trend-loading", "visible"), True, False),
         (Output(f"{PAGE_ID}-chart-patient-impact-loading", "visible"), True, False),
     ],
 )
-def update_main_data(_n, machines, row_types, gap_threshold, slider_val, date_preset,
-                     min_cancel, req_note, req_term):
-    from data.loader import load_downtime_gaps
-
+def update_main_data(_n, machines, filter_rules, slider_val, date_preset, grid_filter_rows):
     # Resolve date range early — needed for availability and prior-period calcs
     start = idx_to_date(slider_val[0]) if slider_val else None
     end = idx_to_date(slider_val[1], end_of_month=True) if slider_val else None
 
-    df_all = _compute_downtime_type(_compute_local_confidence(_propagate_event_note(load_downtime_gaps())))
+    df_all = _get_transformed_gaps()
     # Apply lifespan + non-date filters to full dataset (for prior period / heatmap)
-    df_all_filtered = _filter_gaps(df_all, machines, row_types, gap_threshold, slider_val=None,
-                                   min_cancellations=min_cancel, require_note=req_note,
-                                   require_termination=req_term)
+    df_all_filtered = _filter_gaps(df_all, machines, filter_rules, slider_val=None)
 
-    df = _filter_gaps(df_all, machines, row_types, gap_threshold, slider_val,
-                      min_cancellations=min_cancel, require_note=req_note,
-                      require_termination=req_term)
+    df = _filter_gaps(df_all, machines, filter_rules, slider_val)
+
+    # Table gets the full filtered df; KPIs/charts may be further filtered by grid column filters
+    df_for_table = df
+    triggered_by_grid = (
+        ctx.triggered_id == f"{PAGE_ID}-table-filter-rows"
+    )
+    if grid_filter_rows is not None and isinstance(grid_filter_rows, list) and len(grid_filter_rows) > 0:
+        # The table is built from df sorted desc by date, head 500.
+        # _row_idx in the grid corresponds to position in that sorted/sliced result.
+        # We need to map those indices back to df rows.
+        tdf = df.sort_values("DowntimeDate", ascending=False).head(500)
+        grid_idx_set = set(grid_filter_rows)
+        # Select only the rows at those positions in tdf
+        selected_positions = [i for i in range(len(tdf)) if i in grid_idx_set]
+        if selected_positions:
+            df = tdf.iloc[selected_positions]
 
     # --- KPIs ---
     holidays = _get_holidays_set()
 
     gap_rows = df[df["RowType"].isin(["Gap", "StartOfDay", "EndOfDay"])] if not df.empty else pd.DataFrame()
-    # Deduplicated to one row per event — for event-level columns (GapMinutes, CancelledInGap, etc.)
-    # Keep gap_rows (patient-level) for reroute_count, courses_interrupted, and patient sparklines.
-    gap_rows_evt = _dedup_events(gap_rows) if not gap_rows.empty else gap_rows
     fullday_rows = df[df["RowType"] == "FullDay"] if not df.empty else pd.DataFrame()
+    # Deduplicated to one row per event — uses cached pre-dedup when possible.
+    # Keep gap_rows (patient-level) for reroute_count, courses_interrupted, and patient sparklines.
+    gap_rows_evt, fd_rows_evt = _get_deduped_events(df) if not df.empty else (pd.DataFrame(), pd.DataFrame())
+    # gap_rows_evt and fd_rows_evt already have interpolated GapMinutes from cache
+
     # Exclude weekends and holidays — no treatments expected, not real outages
     if not fullday_rows.empty:
         _wd = fullday_rows["DowntimeDate"].dt.dayofweek
@@ -1177,6 +2116,7 @@ def update_main_data(_n, machines, row_types, gap_threshold, slider_val, date_pr
         fullday_rows = fullday_rows[_is_workday]
 
     gap_hours = gap_rows_evt["GapMinutes"].sum() / 60 if not gap_rows_evt.empty else 0
+    fullday_hours = fd_rows_evt["GapMinutes"].sum() / 60 if not fd_rows_evt.empty else 0
     fullday_count = fullday_rows.groupby(["Machine", "DowntimeDate"]).ngroups if not fullday_rows.empty else 0
 
     # Availability — use actual treatment operating windows from Treatment-Detail.
@@ -1189,19 +2129,18 @@ def update_main_data(_n, machines, row_types, gap_threshold, slider_val, date_pr
         if holidays and len(all_bdays):
             all_bdays = all_bdays[~all_bdays.isin(holidays)]
         op_hours = len(all_bdays) * 10 * n_machines if len(all_bdays) > 0 else 1
-        fullday_est_hours = fullday_count * 10
+        fullday_est_hours = fullday_hours
         availability = max(0, (1 - (gap_hours + fullday_est_hours) / op_hours)) * 100
 
-    total_hours = gap_hours + (fullday_est_hours if fullday_est_hours is not None else fullday_count * 10)
+    total_hours = gap_hours + (fullday_est_hours if fullday_est_hours is not None else fullday_hours)
 
     event_count = len(gap_rows_evt)
     # Include cancellations from full-day outages — those rows carry CancelledInGap too
-    fd_rows_evt = _dedup_events(fullday_rows) if not fullday_rows.empty else fullday_rows
     cancelled_total = (
         (int(gap_rows_evt["CancelledInGap"].sum()) if not gap_rows_evt.empty else 0)
         + (int(fd_rows_evt["CancelledInGap"].sum()) if not fd_rows_evt.empty else 0)
     )
-    reroute_count = int(gap_rows["RerouteMachine"].notna().sum()) if not gap_rows.empty else 0
+    reroute_count = int((gap_rows["RerouteMachine"].notna() & (gap_rows["RerouteMachine"] != "")).sum()) if not gap_rows.empty else 0
     # Count courses interrupted (cancellations not undone by reroute)
     _ci_gaps = df[
         (df["RowType"].isin(["Gap", "StartOfDay", "EndOfDay"])) & (df["CancelledInGap"] > 0) & (df["PatientOutcome"] != "Rerouted")
@@ -1270,10 +2209,14 @@ def update_main_data(_n, machines, row_types, gap_threshold, slider_val, date_pr
     _t_courses = (None, None)
 
     if trend_label and (not prior_gap_rows.empty or not prior_fullday_rows.empty):
-        prior_gap_rows_evt = _dedup_events(prior_gap_rows) if not prior_gap_rows.empty else prior_gap_rows
+        prior_gap_rows_evt, p_fd_evt = _get_deduped_events(
+            pd.concat([prior_gap_rows, prior_fullday_rows]) if not prior_gap_rows.empty or not prior_fullday_rows.empty else pd.DataFrame()
+        )
+        # Prior period deduped events already have interpolated minutes from cache
         p_gap_hours = prior_gap_rows_evt["GapMinutes"].sum() / 60 if not prior_gap_rows_evt.empty else 0
+        p_fd_hours = p_fd_evt["GapMinutes"].sum() / 60 if not p_fd_evt.empty else 0
         p_fullday_count = prior_fullday_rows.groupby(["Machine", "DowntimeDate"]).ngroups if not prior_fullday_rows.empty else 0
-        p_total_hours = p_gap_hours + p_fullday_count * 10
+        p_total_hours = p_gap_hours + p_fd_hours
         _t_hours = _trend(total_hours, p_total_hours, invert=True)
 
         # Prior availability
@@ -1292,14 +2235,13 @@ def update_main_data(_n, machines, row_types, gap_threshold, slider_val, date_pr
 
         _t_fullday = _trend(fullday_count, p_fullday_count, invert=True)
 
-        p_fd_evt = _dedup_events(prior_fullday_rows) if not prior_fullday_rows.empty else prior_fullday_rows
         p_cancelled = (
             (int(prior_gap_rows_evt["CancelledInGap"].sum()) if not prior_gap_rows_evt.empty else 0)
             + (int(p_fd_evt["CancelledInGap"].sum()) if not p_fd_evt.empty else 0)
         )
         _t_cancelled = _trend(cancelled_total, p_cancelled, invert=True)
 
-        p_reroute = int(prior_gap_rows["RerouteMachine"].notna().sum()) if not prior_gap_rows.empty else 0
+        p_reroute = int((prior_gap_rows["RerouteMachine"].notna() & (prior_gap_rows["RerouteMachine"] != "")).sum()) if not prior_gap_rows.empty else 0
         _t_reroute = _trend(reroute_count, p_reroute, invert=True)
 
         # Prior courses interrupted
@@ -1341,30 +2283,37 @@ def update_main_data(_n, machines, row_types, gap_threshold, slider_val, date_pr
             "color": CHART_COLORWAY[2],
         }
 
-        # 2. Availability (per period)
-        all_rows = df[df["RowType"].isin(["Gap", "FullDay"])].copy() if not df.empty else pd.DataFrame()
-        if not all_rows.empty:
-            all_rows["_sp"] = _grp_col(all_rows)
-            periods = sorted(all_rows["_sp"].unique())
-            avail_vals = []
-            avail_labels = []
-            for p in periods:
-                p_sub = all_rows[all_rows["_sp"] == p]
-                p_gap = _dedup_events(p_sub[p_sub["RowType"].isin(["Gap", "StartOfDay", "EndOfDay"])])
-                p_fd = p_sub[p_sub["RowType"] == "FullDay"]
-                p_hrs = (p_gap["GapMinutes"].sum() / 60 if not p_gap.empty else 0) + len(p_fd) * 10
-                p_wd = p_sub["DowntimeDate"].dt.normalize().nunique()
-                p_nm = p_sub["Machine"].nunique()
-                p_op = p_wd * 10 * p_nm if p_nm > 0 else 1
-                avail_vals.append(round(max(0, (1 - p_hrs / p_op)) * 100, 1))
-                avail_labels.append(p.isoformat())
-            if len(avail_vals) > 2:
-                sparkline_data["availability"] = {
-                    "labels": avail_labels,
-                    "values": avail_vals,
-                    "color": SEMANTIC_COLORS["success"],
-                    "hover_fmt": "%{x|%b %Y}: %{y:.1f}%<extra></extra>",
-                }
+        # 2. Availability (per period) — use pre-deduped event data
+        if not gap_rows_evt.empty or not fullday_rows.empty:
+            # Combine deduped gap events + fullday rows for availability calc
+            _avail_gap = gap_rows_evt[["DowntimeDate", "GapMinutes", "Machine", "RowType"]].copy() if not gap_rows_evt.empty else pd.DataFrame()
+            _avail_fd = fullday_rows[["DowntimeDate", "Machine", "RowType"]].copy() if not fullday_rows.empty else pd.DataFrame()
+            all_rows = pd.concat([_avail_gap, _avail_fd], ignore_index=True) if not _avail_gap.empty or not _avail_fd.empty else pd.DataFrame()
+            if not all_rows.empty:
+                all_rows["_sp"] = _grp_col(all_rows)
+                # Aggregate gap hours per period (already deduped)
+                gap_part = all_rows[all_rows["RowType"].isin(["Gap", "StartOfDay", "EndOfDay"])]
+                gap_hrs_per_sp = gap_part.groupby("_sp")["GapMinutes"].sum() / 60 if not gap_part.empty else pd.Series(dtype=float)
+                fd_part = all_rows[all_rows["RowType"] == "FullDay"]
+                fd_count_per_sp = fd_part.groupby("_sp").size() if not fd_part.empty else pd.Series(dtype=int)
+                wd_per_sp = all_rows.groupby("_sp")["DowntimeDate"].apply(lambda x: x.dt.normalize().nunique())
+                nm_per_sp = all_rows.groupby("_sp")["Machine"].nunique()
+
+                periods = sorted(all_rows["_sp"].unique())
+                avail_vals = []
+                avail_labels = []
+                for p in periods:
+                    p_hrs = gap_hrs_per_sp.get(p, 0) + fd_count_per_sp.get(p, 0) * 10
+                    p_op = wd_per_sp.get(p, 1) * 10 * nm_per_sp.get(p, 1)
+                    avail_vals.append(round(max(0, (1 - p_hrs / max(p_op, 1))) * 100, 1))
+                    avail_labels.append(p.isoformat())
+                if len(avail_vals) > 2:
+                    sparkline_data["availability"] = {
+                        "labels": avail_labels,
+                        "values": avail_vals,
+                        "color": SEMANTIC_COLORS["success"],
+                        "hover_fmt": "%{x|%b %Y}: %{y:.1f}%<extra></extra>",
+                    }
 
         # 3. Events count
         events_grp = gap_rows_evt.copy()
@@ -1399,7 +2348,7 @@ def update_main_data(_n, machines, row_types, gap_threshold, slider_val, date_pr
         # 5. Cancelled appointments — include both gap and full-day outage cancellations
         _cancel_parts = [gap_rows_evt[["DowntimeDate", "CancelledInGap"]]]
         if not fullday_rows.empty:
-            _cancel_parts.append(_dedup_events(fullday_rows)[["DowntimeDate", "CancelledInGap"]])
+            _cancel_parts.append(fd_rows_evt[["DowntimeDate", "CancelledInGap"]])
         cancel_rows = pd.concat(_cancel_parts)
         cancel_rows = cancel_rows[cancel_rows["CancelledInGap"] > 0].copy()
         if not cancel_rows.empty:
@@ -1413,7 +2362,7 @@ def update_main_data(_n, machines, row_types, gap_threshold, slider_val, date_pr
                 }
 
         # 6. Rerouted patients
-        reroute_rows = gap_rows[gap_rows["RerouteMachine"].notna()].copy()
+        reroute_rows = gap_rows[gap_rows["RerouteMachine"].notna() & (gap_rows["RerouteMachine"] != "")].copy()
         if not reroute_rows.empty:
             reroute_rows["_sp"] = _grp_col(reroute_rows)
             monthly_reroute = reroute_rows.groupby("_sp").size()
@@ -1469,15 +2418,14 @@ def update_main_data(_n, machines, row_types, gap_threshold, slider_val, date_pr
         ), span={"base": 12, "sm": 6, "md": 2}),
     ]
 
-    # --- Pre-aggregated data for drill-down ---
+    # --- Pre-aggregated data for drill-down (yearly only — daily is lazy-loaded) ---
     gaps_agg = {
         "yearly": _build_yearly_summary(df_all_filtered),
-        "daily": _build_daily_summary(df_all_filtered),
     }
 
     trend_data = _build_trend_data(df)
     patient_impact_data = _build_patient_impact_data(df)
-    detail_records = _build_detail_table(df)
+    detail_records = _build_detail_table(df_for_table) if not triggered_by_grid else no_update
 
     # --- Narrative summary ---
     if start is not None and end is not None and not df.empty:
@@ -1503,12 +2451,31 @@ def update_main_data(_n, machines, row_types, gap_threshold, slider_val, date_pr
     else:
         narrative = ""
 
+    detail_col_defs = [
+        {"field": "Date", "headerName": "Date", "maxWidth": 130, "sort": "desc"},
+        {"field": "Patient", "headerName": "Patient", "maxWidth": 160},
+        {"field": "Machine", "headerName": "Machine", "maxWidth": 145},
+        {"field": "Start", "headerName": "Start", "maxWidth": 95},
+        {"field": "End", "headerName": "End", "maxWidth": 95},
+        {"field": "Minutes", "headerName": "Duration", "maxWidth": 120, "type": "numericColumn"},
+        {"field": "Type", "headerName": "Type"},
+        {"field": "Classification", "headerName": "Classification"},
+        {"field": "Cancellations", "headerName": "Cancelled", "maxWidth": 125, "type": "numericColumn"},
+        {"field": "Errors", "headerName": "Errors", "maxWidth": 100},
+        {"field": "Reroute", "headerName": "Reroute", "maxWidth": 110},
+        {"field": "Outcome", "headerName": "Outcome", "maxWidth": 115},
+        {"field": "CourseName", "headerName": "Course"},
+        {"field": "DowntimeNote", "headerName": "Downtime Note"},
+        {"field": "AppointmentNote", "headerName": "Appointment Note", "minWidth": 500},
+    ]
+
     return (
         kpi_children,
         narrative,
         gaps_agg,
         trend_data,
         patient_impact_data,
+        detail_col_defs if not triggered_by_grid else no_update,
         detail_records,
         sparkline_data,
     )
@@ -1666,46 +2633,40 @@ clientside_callback(
 clientside_callback(
     ClientsideFunction("machinesDowntime", "renderMonthHeatmap"),
     Output(f"{PAGE_ID}-month-heatmap-container", "children"),
-    Input(f"{PAGE_ID}-store-gaps-agg", "data"),
+    Input(f"{PAGE_ID}-store-gaps-daily", "data"),
     Input(f"{PAGE_ID}-store-drill", "data"),
 )
 
 
 # ---------------------------------------------------------------------------
-# Filter panel — disable note switch when min cancellations = 0,
-# and update button label with active filter summary
+# Lazy-load daily summary on drill to Level 2
 # ---------------------------------------------------------------------------
 
+# Clear daily store immediately when drill changes (shows skeleton)
 clientside_callback(
-    """function(minCancel) {
-        return minCancel < 1;
+    """function(drill) {
+        if (!drill || drill.level !== 2) return window.dash_clientside.no_update;
+        return null;
     }""",
-    Output(f"{PAGE_ID}-filter-require-note", "disabled"),
-    Input(f"{PAGE_ID}-filter-min-cancellations", "value"),
+    Output(f"{PAGE_ID}-store-gaps-daily", "data"),
+    Input(f"{PAGE_ID}-store-drill", "data"),
+    prevent_initial_call=True,
 )
 
-clientside_callback(
-    """function(rowTypes, gapThreshold, minCancel, reqNote, reqTerm) {
-        var parts = [];
-        // Row types: show only if not all 4 selected
-        if (rowTypes && rowTypes.length < 4) {
-            var labels = {Gap: "Intraday", StartOfDay: "SOD", EndOfDay: "EOD", FullDay: "Full Day"};
-            parts.push(rowTypes.map(function(r) { return labels[r] || r; }).join("+"));
-        }
-        if (gapThreshold && gapThreshold > 0) parts.push("≥" + gapThreshold + "m");
-        if (minCancel && minCancel > 0) parts.push(minCancel + "+ cancels");
-        if (reqNote) parts.push("noted");
-        if (reqTerm) parts.push("terminated");
-        if (parts.length === 0) return "Filters";
-        return "Filters: " + parts.join(" · ");
-    }""",
-    Output(f"{PAGE_ID}-filter-trigger-label", "children"),
-    Input(f"{PAGE_ID}-filter-rowtype", "value"),
-    Input(f"{PAGE_ID}-filter-gap-threshold", "value"),
-    Input(f"{PAGE_ID}-filter-min-cancellations", "value"),
-    Input(f"{PAGE_ID}-filter-require-note", "checked"),
-    Input(f"{PAGE_ID}-filter-require-termination", "checked"),
+
+@callback(
+    Output(f"{PAGE_ID}-store-gaps-daily", "data", allow_duplicate=True),
+    Input(f"{PAGE_ID}-store-drill", "data"),
+    Input(f"{PAGE_ID}-filter-machine", "value"),
+    Input(f"{PAGE_ID}-store-filter-rules", "data"),
+    prevent_initial_call=True,
 )
+def load_daily_on_drill(drill, machines, filter_rules):
+    if not drill or drill.get("level") != 2:
+        return no_update
+    df_all = _get_transformed_gaps()
+    df_filtered = _filter_gaps(df_all, machines, filter_rules, slider_val=None)
+    return _build_daily_summary(df_filtered)
 
 
 # ---------------------------------------------------------------------------
@@ -1716,14 +2677,10 @@ clientside_callback(
     Output(f"{PAGE_ID}-store-timeline", "data"),
     Input(f"{PAGE_ID}-store-drill", "data"),
     Input(f"{PAGE_ID}-filter-machine", "value"),
-    Input(f"{PAGE_ID}-filter-rowtype", "value"),
-    Input(f"{PAGE_ID}-filter-gap-threshold", "value"),
-    Input(f"{PAGE_ID}-filter-min-cancellations", "value"),
-    Input(f"{PAGE_ID}-filter-require-note", "checked"),
-    Input(f"{PAGE_ID}-filter-require-termination", "checked"),
+    Input(f"{PAGE_ID}-store-filter-rules", "data"),
     prevent_initial_call=True,
 )
-def load_timeline_data(drill, machines, row_types, gap_threshold, min_cancel, req_note, req_term):
+def load_timeline_data(drill, machines, filter_rules):
     if not drill or drill.get("level") != 3:
         return no_update
 
@@ -1733,17 +2690,21 @@ def load_timeline_data(drill, machines, row_types, gap_threshold, min_cancel, re
 
     target_date = pd.Timestamp(year, month, day)
 
-    # Load gaps for this day (with lifespan filter to exclude pre-commission FullDay rows)
-    from data.loader import load_downtime_gaps, load_downtime_fields_for_date
-    gaps = _compute_downtime_type(_compute_local_confidence(_propagate_event_note(load_downtime_gaps())))
-    day_gaps = gaps[gaps["DowntimeDate"].dt.normalize() == target_date]
-    day_gaps = _filter_gaps(
-        day_gaps, machines, row_types, gap_threshold or 0,
-        slider_val=None,
-        min_cancellations=min_cancel, require_note=req_note,
-        require_termination=req_term,
-    )
-    gap_rows = day_gaps
+    # Load ALL gaps for this day — we show all gaps in the timeline,
+    # with matched (filtered) gaps in red and unmatched in faded gray.
+    from data.loader import load_downtime_fields_for_date
+    gaps = _apply_lifespan_filter(_get_transformed_gaps().copy())
+    day_gaps_all = gaps[gaps["DowntimeDate"].dt.normalize() == target_date]
+    if machines:
+        day_gaps_all = day_gaps_all[day_gaps_all["Machine"].isin(machines)]
+    # Determine which gaps match the filter rules
+    if filter_rules and filter_rules.get("groups"):
+        filter_mask = _evaluate_filter_rules(day_gaps_all, filter_rules)
+    else:
+        filter_mask = pd.Series(True, index=day_gaps_all.index)
+    day_gaps_all = day_gaps_all.copy()
+    day_gaps_all["_matched"] = filter_mask
+    gap_rows = day_gaps_all
 
     # Load fields for this day
     fields = load_downtime_fields_for_date(target_date)
@@ -1771,6 +2732,8 @@ def load_timeline_data(drill, machines, row_types, gap_threshold, min_cancel, re
             notes = grp["DowntimeNoteMatch"].dropna()
             notes = notes[notes.astype(str).str.strip() != ""]
             note_reasons = sorted(notes.unique().tolist()) if not notes.empty else []
+            # A gap is "matched" if any row in the group matched the filter
+            matched = bool(grp["_matched"].any())
             gap_list.append({
                 "machine": machine,
                 "start": "" if is_fullday else start_s,
@@ -1778,6 +2741,7 @@ def load_timeline_data(drill, machines, row_types, gap_threshold, min_cancel, re
                 "minutes": int(first["GapMinutes"]) if pd.notna(first.get("GapMinutes")) else (600 if is_fullday else 0),
                 "fullDay": is_fullday,
                 "confidence": first.get("LocalConfidence") or first.get("DowntimeConfidence", "Low"),
+                "matched": matched,
                 "cancelled": cancelled,
                 "errors": int(first["MachineErrorsNearGap"]) if pd.notna(first.get("MachineErrorsNearGap")) else 0,
                 "prevPatient": str(first.get("PrevPatientName", "")) if pd.notna(first.get("PrevPatientName")) else "",
@@ -1787,7 +2751,9 @@ def load_timeline_data(drill, machines, row_types, gap_threshold, min_cancel, re
                 "notes": note_reasons,
             })
 
-    # Serialize fields
+    # Serialize fields — skip ImagePI records (duplicates of PortFilm at same time)
+    if not fields.empty and "ImageType" in fields.columns:
+        fields = fields[~(fields["ImageType"].fillna("").eq("ImagePI"))]
     field_list = []
     for _, r in fields.iterrows():
         field_list.append({
@@ -1799,6 +2765,7 @@ def load_timeline_data(drill, machines, row_types, gap_threshold, min_cancel, re
             "patient": str(r.get("PatientName", "")) if pd.notna(r.get("PatientName")) else "",
             "fieldId": str(r.get("FieldId", "")) if pd.notna(r.get("FieldId")) else "",
             "category": r.get("FieldCategory", ""),
+            "imageType": str(r.get("ImageType", "")) if pd.notna(r.get("ImageType")) else "",
         })
 
     active_machines = sorted(set(
@@ -1820,7 +2787,7 @@ clientside_callback(
     Output(f"{PAGE_ID}-timeline-svg-container", "className"),
     Input(f"{PAGE_ID}-store-drill", "data"),
     Input(f"{PAGE_ID}-filter-machine", "value"),
-    Input(f"{PAGE_ID}-filter-gap-threshold", "value"),
+    Input(f"{PAGE_ID}-store-filter-rules", "data"),
     prevent_initial_call=True,
 )
 
@@ -1829,6 +2796,7 @@ clientside_callback(
     ClientsideFunction("machinesDowntime", "renderTimelineStrip"),
     Output(f"{PAGE_ID}-timeline-svg-container", "children"),
     Input(f"{PAGE_ID}-store-timeline", "data"),
+    Input(f"{PAGE_ID}-timeline-show-unmatched", "checked"),
 )
 
 
@@ -1844,6 +2812,8 @@ clientside_callback(
     Input(f"{PAGE_ID}-chart-trend-settings-smooth", "value"),
     Input(f"{PAGE_ID}-chart-trend-settings-type", "value"),
     Input(f"{PAGE_ID}-trend-agg", "value"),
+    Input(f"{PAGE_ID}-chart-trend-settings-stack", "value"),
+    Input(f"{PAGE_ID}-trend-metric", "value"),
     State(f"{PAGE_ID}-chart-trend", "figure"),
 )
 
@@ -1860,7 +2830,19 @@ clientside_callback(
     Input(f"{PAGE_ID}-chart-patient-impact-settings-type", "value"),
     Input(f"{PAGE_ID}-patient-impact-agg", "value"),
     Input(f"{PAGE_ID}-patient-impact-mode", "value"),
+    Input(f"{PAGE_ID}-chart-patient-impact-settings-stack", "value"),
     State(f"{PAGE_ID}-chart-patient-impact", "figure"),
+)
+
+# Hide stacked/grouped toggle when single-series (Course mode)
+clientside_callback(
+    """function(mode, chartType) {
+        if (mode === "course" || chartType === "line") return {"display": "none"};
+        return {"display": ""};
+    }""",
+    Output(f"{PAGE_ID}-chart-patient-impact-settings-stack-wrap", "style"),
+    Input(f"{PAGE_ID}-patient-impact-mode", "value"),
+    Input(f"{PAGE_ID}-chart-patient-impact-settings-type", "value"),
 )
 
 
@@ -1894,40 +2876,55 @@ for _spark_id in _MACHINES_SPARKLINE_IDS:
     Output(f"{PAGE_ID}-store-strip", "data"),
     Input(f"{PAGE_ID}-strip-range", "value"),
     Input(f"{PAGE_ID}-filter-machine", "value"),
-    Input(f"{PAGE_ID}-filter-rowtype", "value"),
-    Input(f"{PAGE_ID}-filter-gap-threshold", "value"),
+    Input(f"{PAGE_ID}-store-filter-rules", "data"),
     Input(f"{PAGE_ID}-interval", "n_intervals"),
-    Input(f"{PAGE_ID}-filter-min-cancellations", "value"),
-    Input(f"{PAGE_ID}-filter-require-note", "checked"),
-    Input(f"{PAGE_ID}-filter-require-termination", "checked"),
+    Input(f"{PAGE_ID}-store-drill", "data"),
 )
-def update_strip_data(strip_range, machines, row_types, gap_threshold, _n, min_cancel, req_note, req_term):
-    from data.loader import load_downtime_gaps, load_treatment_detail
+def update_strip_data(strip_range, machines, filter_rules, _n, drill):
+    from data.loader import load_treatment_detail
 
     td = load_treatment_detail()
     if td.empty:
         return {"machines": [], "colors": {}, "data": {}}
 
     last_date = td["ScheduledDateTime"].dt.normalize().max()
-    range_map = {
-        "3mo": timedelta(days=90),
-        "6mo": timedelta(days=182),
-        "1yr": timedelta(days=365),
-        "3yr": timedelta(days=365 * 3),
-    }
-    start_date = last_date - range_map.get(strip_range, timedelta(days=365 * 25))
-    end_date = last_date
+
+    # When drilled into a year or deeper, override the strip range
+    drill_level = drill.get("level", 1) if drill else 1
+    if drill_level >= 2 and drill and drill.get("year"):
+        year = drill["year"]
+        start_date = pd.Timestamp(year, 1, 1)
+        end_date = pd.Timestamp(year, 12, 31)
+        # Clamp to available data
+        end_date = min(end_date, last_date)
+    else:
+        range_map = {
+            "3mo": timedelta(days=90),
+            "6mo": timedelta(days=182),
+            "1yr": timedelta(days=365),
+            "3yr": timedelta(days=365 * 3),
+        }
+        start_date = last_date - range_map.get(strip_range, timedelta(days=365 * 25))
+        end_date = last_date
 
     # Load and filter gaps for overlay
-    gaps_df = _compute_downtime_type(_compute_local_confidence(_propagate_event_note(load_downtime_gaps())))
+    gaps_df = _get_transformed_gaps()
     if not gaps_df.empty:
-        gaps_df = _filter_gaps(gaps_df, machines, row_types, gap_threshold, slider_val=None,
-                               min_cancellations=min_cancel, require_note=req_note,
-                               require_termination=req_term)
+        gaps_df = _filter_gaps(gaps_df, machines, filter_rules, slider_val=None)
         gaps_df = gaps_df[(gaps_df["DowntimeDate"] >= start_date) & (gaps_df["DowntimeDate"] <= end_date)]
 
     return _build_strip_data(gaps_df, machines, start_date, end_date)
 
+
+# Disable strip range selector when drilled into a year
+clientside_callback(
+    """function(drill) {
+        if (drill && drill.level >= 2) return true;
+        return false;
+    }""",
+    Output(f"{PAGE_ID}-strip-range", "disabled"),
+    Input(f"{PAGE_ID}-store-drill", "data"),
+)
 
 # Continuous Strip — clientside renderer
 clientside_callback(
@@ -1948,3 +2945,71 @@ def handle_strip_click(_n, strip_data):
     # The actual click target detection happens via a JS click handler
     # that stores the clicked date in a data attribute — handled in renderStrip
     return no_update
+
+
+# ---------------------------------------------------------------------------
+# Table column filter → page data feedback
+# ---------------------------------------------------------------------------
+
+# Track which rows are visible after grid column filters
+clientside_callback(
+    """function(virtual, rowData, prev) {
+        var nu = window.dash_clientside.no_update;
+        var hidden = {"position": "absolute", "top": -4, "right": 8, "zIndex": 10, "display": "none", "cursor": "pointer"};
+        var btnHide = {"display": "none"};
+        if (!rowData || !rowData.length || !virtual) {
+            return prev == null ? [nu, nu, nu] : [null, hidden, btnHide];
+        }
+        if (virtual.length >= rowData.length) {
+            return prev == null ? [nu, nu, nu] : [null, hidden, btnHide];
+        }
+        var idxs = [];
+        for (var i = 0; i < virtual.length; i++) {
+            if (virtual[i]._row_idx != null) idxs.push(virtual[i]._row_idx);
+        }
+        idxs.sort(function(a, b) { return a - b; });
+        if (!idxs.length) {
+            return prev == null ? [nu, nu, nu] : [null, hidden, btnHide];
+        }
+        if (prev && prev.length === idxs.length) {
+            var same = true;
+            for (var j = 0; j < idxs.length; j++) {
+                if (prev[j] !== idxs[j]) { same = false; break; }
+            }
+            if (same) return [nu, nu, nu];
+        }
+        var base = {"position": "absolute", "top": -4, "right": 8, "zIndex": 10, "cursor": "pointer"};
+        return [idxs, base, {}];
+    }""",
+    Output(f"{PAGE_ID}-table-filter-rows", "data"),
+    Output(f"{PAGE_ID}-grid-filter-badge", "style"),
+    Output(f"{PAGE_ID}-table-clear-filters", "style"),
+    Input(f"{PAGE_ID}-detail-table", "virtualRowData"),
+    State(f"{PAGE_ID}-detail-table", "rowData"),
+    State(f"{PAGE_ID}-table-filter-rows", "data"),
+    prevent_initial_call=True,
+)
+
+# Clear Filters button → reset grid filterModel
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        return {};
+    }""",
+    Output(f"{PAGE_ID}-detail-table", "filterModel"),
+    Input(f"{PAGE_ID}-table-clear-filters", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+# Badge click → scroll to the detail table
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        var el = document.getElementById('""" + f"{PAGE_ID}-detail-table" + """');
+        if (el) el.scrollIntoView({behavior: 'smooth', block: 'start'});
+        return window.dash_clientside.no_update;
+    }""",
+    Output(f"{PAGE_ID}-grid-filter-badge", "n_clicks"),
+    Input(f"{PAGE_ID}-grid-filter-badge", "n_clicks"),
+    prevent_initial_call=True,
+)

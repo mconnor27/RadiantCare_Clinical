@@ -105,8 +105,8 @@ def _clean_department(df):
 
 # Generic physician names used in ARIA for site-level placeholders
 _GENERIC_PHYSICIAN_MAP = {
-    "Physician, Aberdeen": "Aberdeen MD, ",
-    "Physician, Centralia": "Centralia MD, ",
+    "Physician, Aberdeen": "Aberdeen MD",
+    "Physician, Centralia": "Centralia MD",
 }
 
 
@@ -630,12 +630,22 @@ def load_downtime_gaps():
     GapClassification, DowntimeConfidence, CancelledInGap,
     MachineErrorsNearGap, RerouteMachine, PatientOutcome, etc.
     """
+    _src = sorted((DATA_INCREMENTAL / "MachineDowntimeGaps").glob("*.csv"))
+    cached = _read_parquet_cache("DowntimeGaps", _src)
+    if cached is not None:
+        return cached
     df = _load_incremental(
         DATA_INCREMENTAL / "MachineDowntimeGaps",
         "Machine Downtime - Gaps",
         "RowKey",
     )
     df = _parse_dates(df, ["DowntimeDate"])
+    # Convert mixed-type object columns to strings for parquet compatibility
+    pq_df = df.copy()
+    for col in pq_df.columns:
+        if pq_df[col].dtype == object:
+            pq_df[col] = pq_df[col].astype(str).replace({"None": "", "nan": ""})
+    _write_parquet_cache("DowntimeGaps", pq_df)
     return df
 
 
@@ -643,7 +653,7 @@ _FIELDS_USECOLS = [
     "RecordType", "Site", "Machine", "ActivityDate", "StartTime", "EndTime",
     "DurationSeconds", "PatientId", "PatientName", "CourseId", "FieldId",
     "FractionNumber", "PlannedMU", "DeliveredMU", "FieldStatus",
-    "TerminationStatus", "FieldCategory",
+    "TerminationStatus", "FieldCategory", "ImageType",
 ]
 
 
@@ -687,6 +697,100 @@ def load_downtime_fields_for_date(target_date):
             return matched.copy()
 
     return pd.DataFrame(columns=_FIELDS_USECOLS)
+
+
+_IMAGING_USECOLS = [
+    "RecordType", "Site", "Machine", "ActivityDate", "PatientId",
+    "FieldId", "StartTime",
+]
+
+
+def _dedup_rapid_images(df):
+    """Collapse rapid-fire image records into single acquisitions.
+
+    Some machines (notably the 21EX) logged individual CBCT projections
+    as separate Image rows ~1-2 seconds apart. Normal multi-CBCT gaps
+    are 30+ seconds. This groups image records for the same patient/
+    machine/day and collapses sequences <30s apart into one row.
+    Treatment rows pass through unchanged.
+    """
+    import datetime
+
+    tx = df[df["RecordType"] == "Treatment"]
+    imgs = df[df["RecordType"] != "Treatment"].copy()
+    if imgs.empty:
+        return df
+
+    # Build a seconds-since-midnight column for gap detection
+    def _to_seconds(t):
+        if isinstance(t, datetime.time):
+            return t.hour * 3600 + t.minute * 60 + t.second
+        return 0
+
+    imgs["_secs"] = imgs["StartTime"].apply(_to_seconds)
+    imgs = imgs.sort_values(["ActivityDate", "PatientId", "Machine", "_secs"])
+
+    # Detect group boundaries: new group when patient/machine/day changes
+    # or gap >= 30 seconds
+    diff_pat = imgs["PatientId"] != imgs["PatientId"].shift()
+    diff_machine = imgs["Machine"] != imgs["Machine"].shift()
+    diff_day = imgs["ActivityDate"] != imgs["ActivityDate"].shift()
+    gap = imgs["_secs"].diff().abs() >= 30
+    imgs["_grp"] = (diff_pat | diff_machine | diff_day | gap).cumsum()
+
+    # Keep first row of each group (the acquisition start)
+    deduped = imgs.groupby("_grp").first().reset_index(drop=True)
+    deduped = deduped.drop(columns=["_secs"], errors="ignore")
+
+    return pd.concat([tx, deduped], ignore_index=True)
+
+
+def load_downtime_fields_imaging():
+    """Load imaging and treatment records from Machine Downtime - Fields.
+
+    Returns a DataFrame with columns: RecordType, Site, Machine,
+    ActivityDate, PatientId, FieldId, StartTime.
+    RecordType values: Image (CBCT), PortFilm, Treatment.
+    Deduplicates on (ActivityDate, PatientId, FieldId, StartTime),
+    then collapses rapid-fire image records (<30s apart) into single
+    acquisitions.
+    """
+    folder = DATA_INCREMENTAL / "MachineDowntimeFields"
+    files = sorted(
+        folder.glob("Machine Downtime - Fields_*.csv"),
+        key=lambda f: f.stem.rsplit("_", 1)[-1],
+    )
+    if not files:
+        return pd.DataFrame(columns=_IMAGING_USECOLS)
+
+    dfs = []
+    for fpath in files:
+        try:
+            df = pd.read_csv(
+                fpath, usecols=_IMAGING_USECOLS,
+                encoding="utf-8-sig", engine="pyarrow",
+            )
+        except Exception:
+            df = pd.read_csv(
+                fpath, usecols=_IMAGING_USECOLS,
+                encoding="utf-8-sig", on_bad_lines="skip", low_memory=False,
+            )
+        # Keep only imaging + treatment rows to reduce memory
+        df = df[df["RecordType"].isin(["Image", "PortFilm", "Treatment"])]
+        if not df.empty:
+            dfs.append(df)
+
+    if not dfs:
+        return pd.DataFrame(columns=_IMAGING_USECOLS)
+
+    combined = pd.concat(dfs, ignore_index=True)
+    combined.drop_duplicates(
+        subset=["ActivityDate", "PatientId", "FieldId", "StartTime"],
+        keep="last", inplace=True,
+    )
+    combined = _parse_dates(combined, ["ActivityDate"])
+    combined = _dedup_rapid_images(combined)
+    return combined
 
 
 def load_machine_downtime():
@@ -1260,11 +1364,11 @@ def load_diagnosis():
 
 @lru_cache(maxsize=1)
 def load_rvu_lookup():
-    """Load CMS Physician Fee Schedule RVU lookup (all years 2004-2026).
+    """Load CMS Physician Fee Schedule RVU lookup (all years 2015-2026).
 
-    Returns DataFrame with columns: HCPCS, MOD, wRVU, Fac_PE_RVU,
-    MP_RVU, Fac_Total_RVU, Year.  MOD is '' for Global, 'TC' for
-    Technical, '26' for Professional.
+    Returns DataFrame with columns: HCPCS, MOD, Description, wRVU,
+    NonFac_PE_RVU, Fac_PE_RVU, MP_RVU, NonFac_Total_RVU, Fac_Total_RVU, Year.
+    MOD is '' for Global, 'TC' for Technical, '26' for Professional.
     """
     path = Path(__file__).parent / "rvu_files" / "rvu_lookup.csv"
     df = pd.read_csv(path, low_memory=False)
@@ -1272,10 +1376,58 @@ def load_rvu_lookup():
     df["MOD"] = df["MOD"].fillna("").astype(str).str.strip()
     df["MOD"] = df["MOD"].replace("nan", "")
     df["Year"] = pd.to_numeric(df["Year"], errors="coerce").astype("Int64")
-    for col in ("wRVU", "Fac_PE_RVU", "MP_RVU", "Fac_Total_RVU"):
+    for col in ("wRVU", "NonFac_PE_RVU", "Fac_PE_RVU", "MP_RVU",
+                "NonFac_Total_RVU", "Fac_Total_RVU"):
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
     return df
+
+
+@lru_cache(maxsize=1)
+def load_gpci():
+    """Load GPCI values for Rest of Washington (Locality 99), 2015-2026.
+
+    Returns dict keyed by year: {year: (Work_GPCI, PE_GPCI, MP_GPCI)}.
+    """
+    path = Path(__file__).parent / "rvu_files" / "gpci_rest_of_wa.csv"
+    df = pd.read_csv(path)
+    return {
+        int(r["Year"]): (r["Work_GPCI"], r["PE_GPCI"], r["MP_GPCI"])
+        for _, r in df.iterrows()
+    }
+
+
+@lru_cache(maxsize=1)
+def load_opps_lookup():
+    """Load CMS OPPS Addendum B payment rates (2024-2026).
+
+    Returns DataFrame with columns: HCPCS, Description, StatusIndicator,
+    APC, RelativeWeight, PaymentRate, Year.
+    PaymentRate is the national unadjusted Medicare OPPS payment per unit.
+    """
+    path = Path(__file__).parent / "opps_files" / "opps_lookup.csv"
+    df = pd.read_csv(path, low_memory=False)
+    df["HCPCS"] = df["HCPCS"].astype(str).str.strip()
+    df["Year"] = pd.to_numeric(df["Year"], errors="coerce").astype("Int64")
+    df["PaymentRate"] = pd.to_numeric(df["PaymentRate"], errors="coerce").fillna(0)
+    df["APC"] = pd.to_numeric(df["APC"], errors="coerce")
+    df["RelativeWeight"] = pd.to_numeric(df["RelativeWeight"], errors="coerce").fillna(0)
+    return df
+
+
+@lru_cache(maxsize=1)
+def load_opps_params():
+    """Load OPPS payment parameters for Providence Centralia (CCN 500019).
+
+    Returns dict keyed by year: {year: (OPPS_CF, WageIndex, LaborShare, SCH_Adj)}.
+    Covers 2024-2026.  Both Lacey and Centralia use this parent hospital.
+    """
+    path = Path(__file__).parent / "opps_files" / "opps_params.csv"
+    df = pd.read_csv(path)
+    return {
+        int(r["Year"]): (r["OPPS_CF"], r["WageIndex"], r["LaborShare"], r["SCH_Adj"])
+        for _, r in df.iterrows()
+    }
 
 
 @lru_cache(maxsize=1)

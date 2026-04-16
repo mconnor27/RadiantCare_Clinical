@@ -125,6 +125,25 @@ def _build_filter_bar():
                         value="all",
                         size="xs",
                     ),
+                    # Smoothing slider for KPI sparklines
+                    dmc.Group(
+                        children=[
+                            dmc.Text("Smoothing", size="xs", c="#6B7280", fw=500),
+                            dmc.Slider(
+                                id=f"{PAGE_ID}-smooth-slider",
+                                min=0,
+                                max=1,
+                                step=0.01,
+                                value=0.3,
+                                size="xs",
+                                showLabelOnHover=False,
+                                w=120,
+                                updatemode="drag",
+                            ),
+                        ],
+                        gap=6,
+                        align="center",
+                    ),
                 ],
                 gap="md",
                 wrap="wrap",
@@ -216,7 +235,17 @@ def _tab_panel(cat_key):
             f"{PAGE_ID}-tab-grid-{cat_key}",
             title="Detail Records",
             export_id=f"{PAGE_ID}-tab-export-{cat_key}",
-            height=400,
+            extra_controls=[
+                dmc.Button(
+                    "Clear Filters",
+                    id=f"{PAGE_ID}-table-clear-filters-{cat_key}",
+                    size="compact-xs",
+                    variant="light",
+                    color="red",
+                    leftSection=DashIconify(icon="mdi:filter-remove", width=14),
+                    style={"display": "none"},
+                ),
+            ],
         ),
     ]
 
@@ -254,7 +283,17 @@ def _pluvicto_panel():
             f"{PAGE_ID}-tab-grid-pluvicto",
             title="Detail Records",
             export_id=f"{PAGE_ID}-tab-export-pluvicto",
-            height=400,
+            extra_controls=[
+                dmc.Button(
+                    "Clear Filters",
+                    id=f"{PAGE_ID}-table-clear-filters-pluvicto",
+                    size="compact-xs",
+                    variant="light",
+                    color="red",
+                    leftSection=DashIconify(icon="mdi:filter-remove", width=14),
+                    style={"display": "none"},
+                ),
+            ],
         ),
     ]
 
@@ -277,7 +316,17 @@ def _spacer_panel():
             f"{PAGE_ID}-tab-grid-spacer",
             title="Detail Records",
             export_id=f"{PAGE_ID}-tab-export-spacer",
-            height=400,
+            extra_controls=[
+                dmc.Button(
+                    "Clear Filters",
+                    id=f"{PAGE_ID}-table-clear-filters-spacer",
+                    size="compact-xs",
+                    variant="light",
+                    color="red",
+                    leftSection=DashIconify(icon="mdi:filter-remove", width=14),
+                    style={"display": "none"},
+                ),
+            ],
         ),
     ]
 
@@ -296,7 +345,28 @@ layout = dmc.Stack(
             children=[
                 dmc.Title("Procedures", order=2, className="page-title",
                           style={"margin": 0, "textAlign": "center"}),
-                _build_filter_bar(),
+                html.Div(
+                    style={"position": "relative"},
+                    children=[
+                        _build_filter_bar(),
+                        html.Div(
+                            id=f"{PAGE_ID}-grid-filter-badge",
+                            children=dmc.Tooltip(
+                                label="Table column filters are active — charts reflect the filtered subset",
+                                position="left", withArrow=True, multiline=True, w=220,
+                                children=dmc.Badge(
+                                    "Table Filtered",
+                                    color="red", variant="filled", size="md",
+                                    leftSection=DashIconify(icon="mdi:filter", width=14),
+                                ),
+                            ),
+                            style={
+                                "position": "absolute", "top": -12, "right": 8,
+                                "zIndex": 10, "display": "none", "cursor": "pointer",
+                            },
+                        ),
+                    ],
+                ),
             ],
         ),
 
@@ -335,10 +405,11 @@ layout = dmc.Stack(
                     "Volume Trend",
                     settings_id=f"{PAGE_ID}-trend",
                     chart_types=[
+                        {"value": "bar", "label": "Bar"},
                         {"value": "line", "label": "Line"},
                         {"value": "area", "label": "Area"},
-                        {"value": "bar", "label": "Bar"},
                     ],
+                    chart_type_default="bar",
                     show_smooth=True,
                     smooth_max=12,
                     smooth_default=0,
@@ -363,7 +434,7 @@ layout = dmc.Stack(
                                 {"value": "M", "label": "Monthly"},
                                 {"value": "Y", "label": "Yearly"},
                             ],
-                            value="M",
+                            value="W",
                             size="xs",
                         ),
                     ],
@@ -396,6 +467,15 @@ layout = dmc.Stack(
                                 {"value": "slice", "label": "Slice By"},
                             ],
                             value="prior",
+                            size="xs",
+                        ),
+                        dmc.SegmentedControl(
+                            id=f"{PAGE_ID}-cumul-period-type",
+                            data=[
+                                {"value": "calendar", "label": "Calendar"},
+                                {"value": "rolling", "label": "Rolling"},
+                            ],
+                            value="calendar",
                             size="xs",
                         ),
                         dmc.SegmentedControl(
@@ -438,8 +518,10 @@ layout = dmc.Stack(
         ]),
 
         # Stores for chart data
+        dcc.Store(id=f"{PAGE_ID}-store-kpi-sparklines"),
         dcc.Store(id=f"{PAGE_ID}-store-trend"),
         dcc.Store(id=f"{PAGE_ID}-store-cumul"),
+        dcc.Store(id=f"{PAGE_ID}-table-filter-rows"),  # filtered row indices from grid
 
         # Interval for periodic refresh
         dcc.Interval(id=f"{PAGE_ID}-interval", interval=300_000, n_intervals=0),
@@ -467,11 +549,7 @@ def _register_filter_callbacks():
             return (dash.no_update,) * 3
         sv = preset_to_slider_val(preset, MAX_IDX)
         s = idx_to_date(sv[0]).strftime("%Y-%m-%d")
-        e_ts = idx_to_date(sv[1], end_of_month=True)
-        today = pd.Timestamp.now().normalize()
-        if e_ts > today:
-            e_ts = today
-        e = e_ts.strftime("%Y-%m-%d")
+        e = idx_to_date(sv[1], end_of_month=True).strftime("%Y-%m-%d")
         return sv, s, e
 
     # B) Slider -> DatePicker + Label (clientside)
@@ -566,14 +644,17 @@ clientside_callback(
 
 
 # ---------------------------------------------------------------------------
-# Cumulative mode toggle: show/hide slice selector
+# Cumulative mode toggle: show/hide slice selector + period-type toggle
 # ---------------------------------------------------------------------------
 clientside_callback(
     """function(mode) {
         var isSlice = mode === "slice";
-        return isSlice ? {"display": "inline-flex"} : {"display": "none"};
+        var sliceStyle = isSlice ? {"display": "inline-flex"} : {"display": "none"};
+        var ptStyle = isSlice ? {"display": "none"} : {};
+        return [sliceStyle, ptStyle];
     }""",
     Output(f"{PAGE_ID}-cumul-slice", "style"),
+    Output(f"{PAGE_ID}-cumul-period-type", "style"),
     Input(f"{PAGE_ID}-cumul-mode", "value"),
 )
 
@@ -657,8 +738,9 @@ clientside_callback(
     Input(f"{PAGE_ID}-filter-department", "value"),
     Input(f"{PAGE_ID}-filter-status", "value"),
     Input(f"{PAGE_ID}-date-slider", "value"),
+    Input(f"{PAGE_ID}-tabs", "value"),
 )
-def _populate_physician_chips(_n, range_start, range_end, dept_filter, status_filter, slider_val):
+def _populate_physician_chips(_n, range_start, range_end, dept_filter, status_filter, slider_val, active_tab):
     from data.loader import load_procedures
     try:
         df = load_procedures()
@@ -668,6 +750,11 @@ def _populate_physician_chips(_n, range_start, range_end, dept_filter, status_fi
         return []
     start, end = _get_date_range(slider_val, [range_start, range_end])
     dff = _filter_data(df, start, end, dept_filter, None, status_filter)
+    # Filter to active procedure category tab
+    _key_to_cat = {key: cat for cat, key in _CAT_TAB_PAIRS}
+    active_cat = _key_to_cat.get(active_tab)
+    if active_cat and "ProcedureCategory" in dff.columns:
+        dff = dff[dff["ProcedureCategory"] == active_cat]
     from components.filter_bar import physician_short_name
     mds = sorted(dff["AppointmentPhysician"].dropna().unique())
     return [
@@ -682,14 +769,21 @@ def _populate_physician_chips(_n, range_start, range_end, dept_filter, status_fi
 
 def _get_date_range(slider_val, daterange):
     """Calculate start/end dates from slider or explicit daterange."""
-    today = pd.Timestamp.now().normalize()
     if daterange and len(daterange) == 2 and daterange[0] and daterange[1]:
-        return pd.Timestamp(daterange[0]), min(pd.Timestamp(daterange[1]), today)
+        return pd.Timestamp(daterange[0]), pd.Timestamp(daterange[1])
     if slider_val and len(slider_val) == 2:
         start = idx_to_date(slider_val[0])
-        end = min(idx_to_date(slider_val[1], end_of_month=True), today)
+        end = idx_to_date(slider_val[1], end_of_month=True)
         return start, end
-    return pd.Timestamp("2000-01-01"), today
+    return pd.Timestamp("2000-01-01"), pd.Timestamp("2099-12-31")
+
+
+def _apply_grid_row_filter(dff, grid_rows):
+    """Filter dff to only rows matching the grid's visible row indices."""
+    if grid_rows is None or dff is None or dff.empty:
+        return dff
+    idx_set = set(int(i) for i in grid_rows)
+    return dff.loc[dff.index.isin(idx_set)].reset_index(drop=True)
 
 
 def _filter_data(df, start, end, dept_filter, physician_filter, status_filter):
@@ -765,10 +859,10 @@ def _upcoming_paper(label, value, date_lines, accent_color):
     )
 
 
-def _build_sparkline_kpi(dff, cat_name, accent_color, df_all=None, start=None, end=None):
+def _build_sparkline_kpi(dff, cat_name, accent_color, df_all=None, start=None, end=None, spark_id=None):
     """Build a KPI card with sparkline and trend comparison for a category."""
     if "ProcedureCategory" not in dff.columns:
-        return kpi_card(cat_name, "0", accent_color=accent_color)
+        return kpi_card(cat_name, "0", accent_color=accent_color, sparkline_id=spark_id), None
 
     sub = dff[dff["ProcedureCategory"] == cat_name]
     count = len(sub)
@@ -793,32 +887,34 @@ def _build_sparkline_kpi(dff, cat_name, accent_color, df_all=None, start=None, e
                 trend_text = "New"
                 trend_dir = "up"
 
-    spark_vals, spark_labels = None, None
+    spark_data = None
     if not sub.empty and "ScheduledDateTime" in sub.columns:
         weekly = sub.set_index("ScheduledDateTime").resample("W").size()
         if len(weekly) > 1:
-            spark_vals = weekly.tolist()
-            spark_labels = [pd.Timestamp(d) for d in weekly.index]
+            spark_data = {
+                "values": weekly.tolist(),
+                "labels": [d.isoformat() for d in weekly.index],
+                "color": accent_color,
+            }
 
     return kpi_card(
         cat_name, f"{count:,}",
         trend_text=trend_text,
         trend_direction=trend_dir,
-        sparkline_past=spark_vals,
-        sparkline_past_labels=spark_labels,
+        sparkline_id=spark_id,
         accent_color=accent_color,
-    )
+    ), spark_data
 
 
-def _build_lead_time_kpi(dff, categories, df_all=None, start=None, end=None):
+def _build_lead_time_kpi(dff, categories, df_all=None, start=None, end=None, spark_id=None):
     """Build avg lead time KPI for specific categories with trend comparison."""
     if dff.empty or "ProcedureCategory" not in dff.columns or "DaysFromCreatedToAppt" not in dff.columns:
-        return kpi_card("Avg Lead Time", "N/A", accent_color=PRIMARY)
+        return kpi_card("Avg Lead Time", "N/A", accent_color=PRIMARY, sparkline_id=spark_id), None
 
     sub = dff[dff["ProcedureCategory"].isin(categories)]
     vals = sub["DaysFromCreatedToAppt"].dropna()
     if vals.empty:
-        return kpi_card("Avg Lead Time", "N/A", accent_color=PRIMARY)
+        return kpi_card("Avg Lead Time", "N/A", accent_color=PRIMARY, sparkline_id=spark_id), None
 
     avg = round(vals.mean(), 1)
 
@@ -857,25 +953,35 @@ def _build_lead_time_kpi(dff, categories, df_all=None, start=None, end=None):
             spark_vals = fv
             spark_labels = fl
 
+    spark_data = None
+    if spark_vals and len(spark_vals) > 1:
+        spark_data = {
+            "values": spark_vals,
+            "labels": [d.isoformat() for d in spark_labels],
+            "color": PRIMARY,
+            "hover_fmt": "%{x|%b %d}: %{customdata:.1f} days<extra></extra>",
+        }
+
     return kpi_card(
         "Avg Lead Time", f"{avg} days",
         trend_text=trend_text,
         trend_direction=trend_dir,
-        sparkline_past=spark_vals,
-        sparkline_past_labels=spark_labels,
-        sparkline_hover_fmt="%{x|%b %d}: %{y:.1f} days<extra></extra>",
+        sparkline_id=spark_id,
         accent_color=PRIMARY,
-    )
+    ), spark_data
 
 
 # ---------------------------------------------------------------------------
 # Chart data builders (census format for clientside rendering)
 # ---------------------------------------------------------------------------
 
-_EMPTY_TREND = {
-    "dates": [], "series": [{"name": "", "values": [], "color": "#999"}],
-    "stacked": False, "yTitle": "Count", "height": 380,
-}
+def _empty_trend(cat_name=""):
+    msg = f"No {cat_name} during this period" if cat_name else "No data for this period"
+    return {
+        "dates": [], "series": [],
+        "stacked": False, "yTitle": "Count", "height": 380,
+        "emptyMessage": msg,
+    }
 
 
 def _prepare_trend_data(dff, cat_name, agg="M", slice_by=""):
@@ -884,7 +990,7 @@ def _prepare_trend_data(dff, cat_name, agg="M", slice_by=""):
     Returns dict compatible with census.smoothChartWithType clientside function.
     """
     if dff.empty or "ScheduledDateTime" not in dff.columns:
-        return _EMPTY_TREND
+        return _empty_trend(cat_name)
 
     t = dff.copy()
     period_code = {"W": "W", "Y": "Y"}.get(agg, "M")
@@ -892,11 +998,18 @@ def _prepare_trend_data(dff, cat_name, agg="M", slice_by=""):
     data_periods = sorted(t["period"].unique())
 
     if not data_periods:
-        return _EMPTY_TREND
+        return _empty_trend(cat_name)
 
     # Build full period range (including empty periods) so gaps are visible
     freq_map = {"W": "W-MON", "Y": "YS", "M": "MS"}
-    all_periods = pd.date_range(data_periods[0], data_periods[-1], freq=freq_map.get(agg, "MS"))
+    freq = freq_map.get(agg, "MS")
+    # Pad single-point ranges so the x-axis renders properly
+    rng_start = data_periods[0]
+    rng_end = data_periods[-1]
+    if rng_start == rng_end:
+        rng_start = rng_start - pd.tseries.frequencies.to_offset(freq)
+        rng_end = rng_end + pd.tseries.frequencies.to_offset(freq)
+    all_periods = pd.date_range(rng_start, rng_end, freq=freq)
     all_periods = sorted(set(all_periods) | set(data_periods))
 
     cat_color = _CATEGORY_COLORS.get(cat_name, PRIMARY)
@@ -944,10 +1057,15 @@ def _prepare_trend_data(dff, cat_name, agg="M", slice_by=""):
         }]
         stacked = False
 
+    # If every series is all zeros, show empty message instead of flat line
+    if all(sum(s["values"]) == 0 for s in series):
+        return _empty_trend(cat_name)
+
     return {
         "dates": [d.isoformat() for d in all_periods],
         "series": series,
         "stacked": stacked,
+        "hideLegend": len(series) <= 1,
         "yTitle": "Count",
         "height": 380,
     }
@@ -957,6 +1075,7 @@ def _build_day_index_ticks(start_norm, n_days, max_ticks=12):
     """Build tick positions/labels for a day-index x-axis."""
     candidates = []
 
+    # Daily (only if few enough days)
     if n_days <= max_ticks:
         pos, lbl = [], []
         for i in range(n_days):
@@ -980,6 +1099,24 @@ def _build_day_index_ticks(start_norm, n_days, max_ticks=12):
         if d.day == 1 or i == 0:
             pos.append(i)
             lbl.append(d.strftime("%b '%y") if d.month == 1 or i == 0 else d.strftime("%b"))
+    candidates.append((pos, lbl))
+
+    # Quarterly (Jan, Apr, Jul, Oct)
+    pos, lbl = [], []
+    for i in range(n_days):
+        d = start_norm + pd.Timedelta(days=i)
+        if (d.day == 1 and d.month in (1, 4, 7, 10)) or i == 0:
+            pos.append(i)
+            lbl.append(d.strftime("%b '%y"))
+    candidates.append((pos, lbl))
+
+    # Yearly (Jan 1st)
+    pos, lbl = [], []
+    for i in range(n_days):
+        d = start_norm + pd.Timedelta(days=i)
+        if (d.day == 1 and d.month == 1) or i == 0:
+            pos.append(i)
+            lbl.append(str(d.year))
     candidates.append((pos, lbl))
 
     # Pick the candidate with the most ticks that still fits
@@ -1190,14 +1327,17 @@ def _prepare_cumul_data(dff_all, cat_name, start, end, date_preset="12mo",
 def _build_tab_grid_data(dff):
     """Build AG Grid column defs and row data for a category tab."""
     cols = [
+        {"field": "ScheduledDateTime", "headerName": "Date", "minWidth": 120,
+         "sort": "desc"},
         {"field": "PatientFullName", "headerName": "Patient", "minWidth": 160},
-        {"field": "ScheduledDateTime", "headerName": "Date", "minWidth": 120},
         {"field": "AppointmentPhysician", "headerName": "Physician", "minWidth": 130},
         {"field": "DaysFromCreatedToAppt", "headerName": "Lead (days)", "minWidth": 90},
         {"field": "DurationMinutes", "headerName": "Duration (min)", "minWidth": 100},
         {"field": "ActivityStatus", "headerName": "Status", "minWidth": 110},
         {"field": "Department", "headerName": "Dept", "minWidth": 90},
         {"field": "ReferringPhysician", "headerName": "Referring MD", "minWidth": 130},
+        {"field": "AppointmentNotes", "headerName": "Appt Notes", "minWidth": 200,
+         "wrapText": True, "autoHeight": True},
     ]
     if dff.empty:
         return cols, []
@@ -1497,7 +1637,8 @@ _OUTPUTS = [
     Output(f"{PAGE_ID}-kpi-spacer", "children"),
     Output(f"{PAGE_ID}-kpi-upcoming-spacer", "children"),
     Output(f"{PAGE_ID}-kpi-lead-time", "children"),
-    # Chart stores (for clientside rendering)
+    # Stores (for clientside rendering)
+    Output(f"{PAGE_ID}-store-kpi-sparklines", "data"),
     Output(f"{PAGE_ID}-store-trend", "data"),
     Output(f"{PAGE_ID}-store-cumul", "data"),
 ]
@@ -1524,9 +1665,11 @@ _OUTPUTS.append(Output(f"{PAGE_ID}-spacer-queue", "children"))
     Input(f"{PAGE_ID}-trend-agg", "value"),
     Input(f"{PAGE_ID}-trend-slice", "value"),
     Input(f"{PAGE_ID}-cumul-mode", "value"),
+    Input(f"{PAGE_ID}-cumul-period-type", "value"),
     Input(f"{PAGE_ID}-cumul-slice", "value"),
     Input(f"{PAGE_ID}-cumul-settings-prior-periods", "value"),
     Input(f"{PAGE_ID}-filter-date-preset", "value"),
+    Input(f"{PAGE_ID}-table-filter-rows", "data"),
     running=[
         (Output(f"{PAGE_ID}-chart-trend-loading", "visible"), True, False),
         (Output(f"{PAGE_ID}-chart-cumul-loading", "visible"), True, False),
@@ -1535,7 +1678,8 @@ _OUTPUTS.append(Output(f"{PAGE_ID}-spacer-queue", "children"))
 def _update_procedures(
     _n, range_start, range_end, dept_filter, physician_filter, status_filter, slider_val,
     queue_filter, active_tab, trend_agg, trend_slice,
-    cumul_mode, cumul_slice, cumul_prior_periods, date_preset,
+    cumul_mode, cumul_period_type, cumul_slice, cumul_prior_periods, date_preset,
+    grid_rows,
 ):
     from data.loader import load_procedures
 
@@ -1543,10 +1687,20 @@ def _update_procedures(
         df = load_procedures()
     except Exception:
         n_grids = len(_CAT_TAB_PAIRS) * 2
-        return tuple([None] * 5 + [None, None] + [[], []] * len(_CAT_TAB_PAIRS) + [None, None])
+        return tuple([None] * 5 + [None, None, None] + [[], []] * len(_CAT_TAB_PAIRS) + [None, None])
 
     start, end = _get_date_range(slider_val, [range_start, range_end])
-    dff = _filter_data(df, start, end, dept_filter, physician_filter, status_filter)
+    dff_full = _filter_data(df, start, end, dept_filter, physician_filter, status_filter)
+
+    # Check if triggered by grid filter — skip table rebuild
+    triggered_by_grid = (
+        dash.callback_context.triggered
+        and len(dash.callback_context.triggered) == 1
+        and dash.callback_context.triggered[0]["prop_id"] == f"{PAGE_ID}-table-filter-rows.data"
+    )
+
+    # Apply grid column filter to narrow KPIs/charts to visible rows
+    dff = _apply_grid_row_filter(dff_full, grid_rows) if grid_rows is not None else dff_full
 
     # --- KPIs (with prior-period comparison) ---
     df_base = df[df["ScheduledDateTime"].notna()].copy() if "ScheduledDateTime" in df.columns else df.copy()
@@ -1560,14 +1714,26 @@ def _update_procedures(
         elif status_filter == "completed":
             df_base = df_base[df_base["ActivityStatus"] == "Manually Completed"]
 
-    kpi_pluv = _build_sparkline_kpi(dff, "Pluvicto", _CATEGORY_COLORS["Pluvicto"],
-                                     df_all=df_base, start=start, end=end)
+    kpi_pluv, spark_pluv = _build_sparkline_kpi(
+        dff, "Pluvicto", _CATEGORY_COLORS["Pluvicto"],
+        df_all=df_base, start=start, end=end, spark_id=f"{PAGE_ID}-spark-pluvicto")
     kpi_upcoming_pluv = _build_upcoming_card(df, "Pluvicto", _CATEGORY_COLORS["Pluvicto"])
-    kpi_spacer = _build_sparkline_kpi(dff, "Rectal Spacer", _CATEGORY_COLORS["Rectal Spacer"],
-                                       df_all=df_base, start=start, end=end)
+    kpi_spacer, spark_spacer = _build_sparkline_kpi(
+        dff, "Rectal Spacer", _CATEGORY_COLORS["Rectal Spacer"],
+        df_all=df_base, start=start, end=end, spark_id=f"{PAGE_ID}-spark-spacer")
     kpi_upcoming_spacer = _build_upcoming_card(df, "Rectal Spacer", _CATEGORY_COLORS["Rectal Spacer"])
-    kpi_lead = _build_lead_time_kpi(dff, ["Pluvicto", "Rectal Spacer"],
-                                     df_all=df_base, start=start, end=end)
+    kpi_lead, spark_lead = _build_lead_time_kpi(
+        dff, ["Pluvicto", "Rectal Spacer"],
+        df_all=df_base, start=start, end=end, spark_id=f"{PAGE_ID}-spark-lead")
+
+    # Sparkline store for clientside smoothing
+    sparkline_store = {}
+    if spark_pluv:
+        sparkline_store["pluvicto"] = spark_pluv
+    if spark_spacer:
+        sparkline_store["spacer"] = spark_spacer
+    if spark_lead:
+        sparkline_store["lead"] = spark_lead
 
     # --- Chart stores (for active tab's category) ---
     # Resolve tab key → category name
@@ -1587,15 +1753,21 @@ def _update_procedures(
         slice_by=cumul_slice or "total" if cumul_mode == "slice" else "",
         mode=cumul_mode or "prior",
         max_prior=cumul_prior_periods or 5,
+        period_type=cumul_period_type or "calendar",
     )
 
-    # --- Tab grids ---
+    # --- Tab grids (use dff_full so column filters work on all page-filtered data) ---
     tab_outputs = []
     for cat_name, cat_key in _CAT_TAB_PAIRS:
-        grid_df = dff[dff["ProcedureCategory"] == cat_name] if "ProcedureCategory" in dff.columns else pd.DataFrame()
-        cols, rows = _build_tab_grid_data(grid_df)
-        tab_outputs.append(cols)
-        tab_outputs.append(rows)
+        if triggered_by_grid:
+            # Skip table rebuild when only grid filter changed
+            tab_outputs.append(dash.no_update)
+            tab_outputs.append(dash.no_update)
+        else:
+            grid_df = dff_full[dff_full["ProcedureCategory"] == cat_name] if "ProcedureCategory" in dff_full.columns else pd.DataFrame()
+            cols, rows = _build_tab_grid_data(grid_df)
+            tab_outputs.append(cols)
+            tab_outputs.append(rows)
 
     # --- Pluvicto queue ---
     queue_table = _build_pluvicto_queue(queue_filter or "all")
@@ -1603,6 +1775,7 @@ def _update_procedures(
 
     return (
         kpi_pluv, kpi_upcoming_pluv, kpi_spacer, kpi_upcoming_spacer, kpi_lead,
+        sparkline_store,
         trend_data, cumul_data,
         *tab_outputs,
         queue_table,
@@ -1659,21 +1832,17 @@ clientside_callback(
     State(f"{PAGE_ID}-chart-cumul", "figure"),
 )
 
-# Cap prior-periods slider to available data
+# Disable Calendar when period > 1 year; cap prior-periods slider to available data
 clientside_callback(
-    """function(storeData) {
-        var nu = window.dash_clientside.no_update;
-        if (!storeData) return [nu, nu];
-        var maxAvail = (storeData.maxAvailablePriors != null) ? storeData.maxAvailablePriors : 5;
-        var sliderMax = Math.max(maxAvail, 1);
-        if (sliderMax > 10) sliderMax = 10;
-        var marks = [];
-        for (var i = 1; i <= sliderMax; i++) marks.push({value: i, label: String(i)});
-        return [sliderMax, marks];
+    """function(storeData, currentPtValue) {
+        return window.dash_clientside.cumulative.updatePriorControls(storeData, currentPtValue);
     }""",
+    Output(f"{PAGE_ID}-cumul-period-type", "data"),
+    Output(f"{PAGE_ID}-cumul-period-type", "value", allow_duplicate=True),
     Output(f"{PAGE_ID}-cumul-settings-prior-periods", "max"),
     Output(f"{PAGE_ID}-cumul-settings-prior-periods", "marks"),
     Input(f"{PAGE_ID}-store-cumul", "data"),
+    State(f"{PAGE_ID}-cumul-period-type", "value"),
     prevent_initial_call=True,
 )
 
@@ -1683,4 +1852,111 @@ register_chart_callbacks([
     {"sid": f"{PAGE_ID}-cumul", "gid": f"{PAGE_ID}-chart-cumul", "show_grouping": False},
 ])
 
+# KPI sparkline smoothing (clientside — instant on drag)
+_PROC_SPARKLINE_IDS = [
+    f"{PAGE_ID}-spark-pluvicto",
+    f"{PAGE_ID}-spark-spacer",
+    f"{PAGE_ID}-spark-lead",
+]
 
+for _spark_id in _PROC_SPARKLINE_IDS:
+    clientside_callback(
+        ClientsideFunction(namespace="sparklines", function_name="updateFromStore"),
+        Output(_spark_id, "figure"),
+        Input(f"{PAGE_ID}-store-kpi-sparklines", "data"),
+        Input(_spark_id, "id"),
+        Input(f"{PAGE_ID}-smooth-slider", "value"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Table column-filter detection → badge + clear button + store
+# ---------------------------------------------------------------------------
+# One clientside callback per tab grid: detect if column filters are active,
+# write visible row indices to the shared store, and show/hide badge + clear btn.
+
+for _cat_name, _cat_key in _CAT_TAB_PAIRS:
+    _GRID_FILTER_JS = (
+        """function(vrd, activeTab, allRows, prev) {
+    var nu = window.dash_clientside.no_update;
+    var hidden = {"position": "absolute", "top": -12, "right": 8, "zIndex": 10, "display": "none", "cursor": "pointer"};
+    var base = {"position": "absolute", "top": -12, "right": 8, "zIndex": 10, "display": "block", "cursor": "pointer"};
+    var btnHide = {"display": "none"};
+    if (activeTab !== '"""
+        + _cat_key
+        + """') return [nu, nu, nu];
+    if (!vrd || !allRows) return [nu, nu, nu];
+    if (vrd.length === allRows.length) {
+        if (prev === null) return [nu, nu, nu];
+        return [null, hidden, btnHide];
+    }
+    var idxs = [];
+    for (var i = 0; i < vrd.length; i++) {
+        for (var j = 0; j < allRows.length; j++) {
+            if (JSON.stringify(vrd[i]) === JSON.stringify(allRows[j])) { idxs.push(j); break; }
+        }
+    }
+    idxs.sort(function(a, b) { return a - b; });
+    if (!idxs.length) {
+        return prev == null ? [nu, nu, nu] : [null, hidden, btnHide];
+    }
+    if (prev && prev.length === idxs.length) {
+        var same = true;
+        for (var k = 0; k < idxs.length; k++) {
+            if (prev[k] !== idxs[k]) { same = false; break; }
+        }
+        if (same) return [nu, nu, nu];
+    }
+    return [idxs, base, {}];
+}"""
+    )
+    clientside_callback(
+        _GRID_FILTER_JS,
+        Output(f"{PAGE_ID}-table-filter-rows", "data", allow_duplicate=True),
+        Output(f"{PAGE_ID}-grid-filter-badge", "style", allow_duplicate=True),
+        Output(f"{PAGE_ID}-table-clear-filters-{_cat_key}", "style"),
+        Input(f"{PAGE_ID}-tab-grid-{_cat_key}", "virtualRowData"),
+        Input(f"{PAGE_ID}-tabs", "value"),
+        State(f"{PAGE_ID}-tab-grid-{_cat_key}", "rowData"),
+        State(f"{PAGE_ID}-table-filter-rows", "data"),
+        prevent_initial_call=True,
+    )
+
+
+# Clear Filters button per tab — reset that grid's filterModel
+for _cat_name, _cat_key in _CAT_TAB_PAIRS:
+    clientside_callback(
+        """function(n) {
+            if (!n) return window.dash_clientside.no_update;
+            return {};
+        }""",
+        Output(f"{PAGE_ID}-tab-grid-{_cat_key}", "filterModel"),
+        Input(f"{PAGE_ID}-table-clear-filters-{_cat_key}", "n_clicks"),
+        prevent_initial_call=True,
+    )
+
+
+# Badge click → scroll to the active tab's detail grid
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        var el = document.querySelector('[id^="proc-tab-grid-"]');
+        if (el) el.scrollIntoView({behavior: 'smooth', block: 'start'});
+        return window.dash_clientside.no_update;
+    }""",
+    Output(f"{PAGE_ID}-grid-filter-badge", "n_clicks"),
+    Input(f"{PAGE_ID}-grid-filter-badge", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+# Reset table-filter-rows store + hide badge when tab changes
+clientside_callback(
+    """function(tab) {
+        return [null, {"position": "absolute", "top": -12, "right": 8, "zIndex": 10, "display": "none", "cursor": "pointer"}];
+    }""",
+    Output(f"{PAGE_ID}-table-filter-rows", "data", allow_duplicate=True),
+    Output(f"{PAGE_ID}-grid-filter-badge", "style", allow_duplicate=True),
+    Input(f"{PAGE_ID}-tabs", "value"),
+    prevent_initial_call=True,
+)

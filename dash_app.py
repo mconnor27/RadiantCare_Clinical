@@ -9,6 +9,7 @@ from dash import clientside_callback
 
 from config.settings import DMC_THEME, NEUTRAL, PRIMARY, MAPBOX_TOKEN
 from components.nav import create_sidebar
+from components.help_modal import create_help_modal
 from utils.diagnosis_categories import get_taxonomy
 
 # ---------------------------------------------------------------------------
@@ -100,6 +101,8 @@ app.layout = dmc.MantineProvider(
                 "zIndex": 1000,
             },
         ),
+        # Global help modal
+        create_help_modal(),
         # Hidden div to trigger page reload via clientside callback
         html.Div(id="global-refresh-trigger", style={"display": "none"}),
         # Diagnosis taxonomy store — populates window._diagTaxonomy for JS

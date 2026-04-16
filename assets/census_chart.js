@@ -23,7 +23,7 @@ window.dash_clientside.census = {
      * @returns {Object} Plotly figure
      */
     smoothChartWithType: function(rawData, smoothPct, chartType, currentFig, stackOverride) {
-        if (!rawData || !rawData.series) {
+        if (!rawData || !rawData.series || rawData.series.length === 0) {
             if (rawData && rawData.emptyMessage) {
                 return {
                     data: [],
@@ -335,16 +335,19 @@ window.dash_clientside.census = {
 
         // Detect if values are fractional (e.g. median days, percentages) vs integer counts
         var isPercent = rawData.yTitle && rawData.yTitle.indexOf('%') >= 0;
+        var isDollar = rawData.yTitle && rawData.yTitle.indexOf('$') >= 0;
         var isFractional = isPercent || (rawData.yTitle && (
             rawData.yTitle.toLowerCase().indexOf('median') >= 0 ||
             rawData.yTitle.toLowerCase().indexOf('rate') >= 0 ||
+            rawData.yTitle.toLowerCase().indexOf('per ') >= 0 ||
             rawData.yTitle.toLowerCase().indexOf('days') >= 0
         ));
         var isDays = rawData.yTitle && rawData.yTitle.toLowerCase().indexOf('days') >= 0;
         var valueSuffix = isPercent ? "%" : isDays ? " days" : "";
 
         function formatVal(v) {
-            if (v === null || v === undefined || isNaN(v)) return "0";
+            if (v === null || v === undefined || isNaN(v)) return isDollar ? "$0" : "0";
+            if (isDollar) return "$" + Math.round(v).toLocaleString();
             if (isFractional) return v.toFixed(1) + valueSuffix;
             return Math.round(v) + valueSuffix;
         }
@@ -420,19 +423,33 @@ window.dash_clientside.census = {
             }
         }
 
-        // Invisible summary hover trace — same pattern for all chart types.
-        // Uses hovermode "x" so the tooltip is a clean left-aligned card
-        // with bold date header, matching line/area style.
-        traces.push({
-            x: summaryX,
-            y: summaryY,
-            customdata: summaryHover,
-            name: "",
-            mode: "lines",
-            line: {color: "transparent", width: 0},
-            hovertemplate: "%{customdata}<extra></extra>",
-            showlegend: false
-        });
+        if (chartType === "bar") {
+            // For bar charts, attach summary hover directly to each bar trace
+            // so hovering any bar in a grouped set triggers the tooltip.
+            var pastLen = barData ? barData.labels.length : 0;
+            var pastHover = summaryHover.slice(0, pastLen);
+            var futureHover = summaryHover.slice(pastLen);
+            for (var bt = 0; bt < traces.length; bt++) {
+                if (traces[bt].type === "bar") {
+                    traces[bt].hoverinfo = undefined;
+                    var isFuture = traces[bt].name && traces[bt].name.indexOf("(scheduled)") >= 0;
+                    traces[bt].customdata = isFuture ? futureHover : pastHover;
+                    traces[bt].hovertemplate = "%{customdata}<extra></extra>";
+                }
+            }
+        } else {
+            // Line/area: invisible summary hover trace
+            traces.push({
+                x: summaryX,
+                y: summaryY,
+                customdata: summaryHover,
+                name: "",
+                mode: "lines",
+                line: {color: "transparent", width: 0},
+                hovertemplate: "%{customdata}<extra></extra>",
+                showlegend: false
+            });
+        }
 
         var smoothed = smoothPct > 0;
 
@@ -452,7 +469,7 @@ window.dash_clientside.census = {
             plot_bgcolor: "white",
             paper_bgcolor: "white",
             font: {family: "Inter, system-ui, sans-serif", size: 12, color: "#374151"},
-            hovermode: "x",
+            hovermode: chartType === "bar" ? "closest" : "x",
             hoverlabel: {
                 align: "left",
                 bgcolor: "white",
@@ -461,16 +478,25 @@ window.dash_clientside.census = {
             }
         };
 
-        // Suffix for y-axis on percentage charts or explicit yTickSuffix
+        // Prefix/suffix for y-axis on percentage or dollar charts
         if (rawData.yTickSuffix) {
             layout.yaxis.ticksuffix = rawData.yTickSuffix;
         } else if (!stacked && rawData.yTitle && rawData.yTitle.indexOf('%') >= 0) {
             layout.yaxis.ticksuffix = '%';
         }
+        if (isDollar) {
+            layout.yaxis.tickprefix = '$';
+        }
 
         // Add barmode for bar charts
         if (chartType === "bar") {
-            layout.barmode = stacked ? "stack" : "group";
+            // Use "stack" for single-series to avoid grouped dead space
+            var visibleSeriesCount = renderSeries.filter(function(s) {
+                var hasData = false;
+                for (var vi = 0; vi < s.values.length; vi++) { if (s.values[vi] > 0) { hasData = true; break; } }
+                return hasData;
+            }).length;
+            layout.barmode = stacked ? "stack" : (visibleSeriesCount <= 1 ? "stack" : "group");
             // Scale gaps by bar count, then bump up for coarser aggregation
             var nBars = barData.labels.length + (futureDates ? formatDatesForBars(futureDates).labels.length : 0);
             var baseGap;
@@ -552,7 +578,7 @@ window.dash_clientside.census = {
                 if (t > 0) {
                     barTotalAnnotations.push({
                         x: barXLabels[ai], y: t,
-                        text: "<b>" + Math.round(t).toLocaleString() + "</b>",
+                        text: "<b>" + formatVal(t) + "</b>",
                         showarrow: false, yshift: 8,
                         font: {size: 11, color: "#374151", family: "Inter, system-ui, sans-serif"}
                     });
@@ -1236,6 +1262,11 @@ window.dash_clientside.cumulative = {
 
         var traces = [];
         var yTitle = rawData.yTitle || "Cumulative Visits";
+        var isDollar = yTitle.indexOf('$') >= 0;
+        function fmtVal(v) {
+            if (v === null || v === undefined || isNaN(v)) return isDollar ? "$0" : "0";
+            return isDollar ? "$" + Math.round(v).toLocaleString() : Math.round(v).toLocaleString();
+        }
 
         // LOESS smoothing for cumulative charts: pin endpoints to raw values,
         // ensure no value drops below 0.
@@ -1321,33 +1352,26 @@ window.dash_clientside.cumulative = {
                             var val = slices[sj].values[pi] || 0;
                             if (val > 0) {
                                 parts.push("<span style='color:" + slices[sj].color + "'>\u25A0</span> " +
-                                    slices[sj].name + ": " + val.toLocaleString());
+                                    slices[sj].name + ": " + fmtVal(val));
                                 total += val;
                             }
                         }
                         if (slices.length > 1) {
-                            parts.push("<b>Total: " + total.toLocaleString() + "</b>");
+                            parts.push("<b>Total: " + fmtVal(total) + "</b>");
                         }
                         barTotals.push(parts.join("<br>"));
                         barTotalYs.push(total);
                     }
-                    // Bar traces — use numeric indices, no individual hover
+                    // Put summary hover on every bar so any bar in a group triggers the tooltip
                     for (var si = 0; si < slices.length; si++) {
                         var sl = slices[si];
                         traces.push({
                             x: barIndices, y: sl.values, name: sl.name,
                             type: "bar", marker: {color: sl.color},
-                            hoverinfo: "skip"
+                            customdata: barTotals,
+                            hovertemplate: "%{customdata}<extra></extra>"
                         });
                     }
-                    // Invisible summary hover trace at the top of each stack
-                    traces.push({
-                        x: barIndices, y: barTotalYs, customdata: barTotals,
-                        type: "scatter", mode: "markers",
-                        marker: {size: 0.1, opacity: 0},
-                        hovertemplate: "%{customdata}<extra></extra>",
-                        showlegend: false
-                    });
                 }
 
                 // Dynamic y-range + annotations for totals on top
@@ -1366,7 +1390,7 @@ window.dash_clientside.cumulative = {
                         if (colTotal > yMaxBar) yMaxBar = colTotal;
                         barAnnotations.push({
                             x: pi, y: colTotal,
-                            text: "<b>" + colTotal.toLocaleString() + "</b>",
+                            text: "<b>" + fmtVal(colTotal) + "</b>",
                             showarrow: false, yshift: 8,
                             font: {size: 11, color: "#374151", family: "Inter, system-ui, sans-serif"}
                         });
@@ -1386,6 +1410,7 @@ window.dash_clientside.cumulative = {
                         },
                         yaxis: {
                             gridcolor: "#E5E7EB", title: "",
+                            tickprefix: isDollar ? '$' : '',
                             range: [0, Math.ceil(yMaxBar * 1.13)],
                             autorange: false
                         },
@@ -1395,11 +1420,11 @@ window.dash_clientside.cumulative = {
                             orientation: "h", yanchor: "bottom", y: 1.02,
                             xanchor: "left", x: 0
                         },
-                        margin: {l: 50, r: 16, t: 28, b: 20},
+                        margin: {l: 36, r: 16, t: 28, b: 20},
                         plot_bgcolor: "white",
                         paper_bgcolor: "white",
                         font: {family: "Inter, system-ui, sans-serif", size: 12, color: "#374151"},
-                        hovermode: "x",
+                        hovermode: "closest",
                         hoverlabel: {
                             align: "left", bgcolor: "white", bordercolor: "#E5E7EB",
                             font: {color: "#374151", size: 12, family: "Inter, system-ui, sans-serif"}
@@ -1495,7 +1520,7 @@ window.dash_clientside.cumulative = {
                     var v = di < vals.length ? vals[di] : null;
                     if (v !== null && v !== undefined && isVis) {
                         parts.push("<span style='color:" + entry.color + "'>\u25A0</span> " +
-                            entry.name + ": " + Math.round(v).toLocaleString());
+                            entry.name + ": " + fmtVal(v));
                         if (v > ptMax) ptMax = v;
                     }
                 }
@@ -1528,7 +1553,7 @@ window.dash_clientside.cumulative = {
                 if (pEndVal !== null) {
                     annotations.push({
                         x: pEndX, y: pEndVal,
-                        text: pEndVal.toLocaleString(),
+                        text: fmtVal(pEndVal),
                         showarrow: false,
                         xanchor: "left", yanchor: "middle",
                         xshift: 6,
@@ -1541,11 +1566,11 @@ window.dash_clientside.cumulative = {
                 var endVal = trimmedY[trimmedY.length - 1];
                 var endX = trimmedX[trimmedX.length - 1];
                 if (endVal !== null && endVal !== undefined) {
-                    var fmtVal = endVal.toLocaleString();
+                    var endFmt = fmtVal(endVal);
                     annotations.push({
                         x: endX,
                         y: endVal,
-                        text: "<b>" + fmtVal + "</b>",
+                        text: "<b>" + endFmt + "</b>",
                         showarrow: false,
                         xanchor: "left",
                         yanchor: "bottom",
@@ -1584,6 +1609,7 @@ window.dash_clientside.cumulative = {
                     },
                     yaxis: {
                         gridcolor: "#E5E7EB", title: "",
+                        tickprefix: isDollar ? '$' : '',
                         range: [0, Math.ceil(yMaxLine * 1.1)],
                         autorange: false
                     },
@@ -1595,7 +1621,7 @@ window.dash_clientside.cumulative = {
                         xanchor: "left",
                         x: 0
                     },
-                    margin: {l: 50, r: 16, t: 28, b: 20},
+                    margin: {l: 36, r: 16, t: 28, b: 20},
                     plot_bgcolor: "white",
                     paper_bgcolor: "white",
                     font: {family: "Inter, system-ui, sans-serif", size: 12, color: "#374151"},
@@ -1620,6 +1646,19 @@ window.dash_clientside.cumulative = {
                 var bd = rawData.sliceBreakdown || {};
                 var periods = bd.periods || [];
                 var slices = bd.slices || [];
+                // Trim to maxPrior + 1 (current + N priors), keeping most recent
+                var maxBars2 = (maxPrior && maxPrior > 0) ? maxPrior + 1 : periods.length;
+                if (periods.length > maxBars2) {
+                    var trimStart2 = periods.length - maxBars2;
+                    periods = periods.slice(trimStart2);
+                    slices = slices.map(function(s) {
+                        return Object.assign({}, s, {values: s.values.slice(trimStart2)});
+                    });
+                }
+                // Remove slices with no data in displayed periods
+                slices = slices.filter(function(s) {
+                    return s.values.some(function(v) { return v > 0; });
+                });
                 var barIndices2 = periods.map(function(_, i) { return i; });
 
                 var barTotals2 = [];
@@ -1632,31 +1671,26 @@ window.dash_clientside.cumulative = {
                             var val = slices[sj].values[pi] || 0;
                             if (val > 0) {
                                 parts.push("<span style='color:" + slices[sj].color + "'>\u25A0</span> " +
-                                    slices[sj].name + ": " + val.toLocaleString());
+                                    slices[sj].name + ": " + fmtVal(val));
                                 total += val;
                             }
                         }
                         if (slices.length > 1) {
-                            parts.push("<b>Total: " + total.toLocaleString() + "</b>");
+                            parts.push("<b>Total: " + fmtVal(total) + "</b>");
                         }
                         barTotals2.push(parts.join("<br>"));
                         barTotalYs2.push(total);
                     }
+                    // Put summary hover on every bar so any bar in a group triggers the tooltip
                     for (var si = 0; si < slices.length; si++) {
                         var sl = slices[si];
                         traces.push({
                             x: barIndices2, y: sl.values, name: sl.name,
                             type: "bar", marker: {color: sl.color},
-                            hoverinfo: "skip"
+                            customdata: barTotals2,
+                            hovertemplate: "%{customdata}<extra></extra>"
                         });
                     }
-                    traces.push({
-                        x: barIndices2, y: barTotalYs2, customdata: barTotals2,
-                        type: "scatter", mode: "markers",
-                        marker: {size: 0.1, opacity: 0},
-                        hovertemplate: "%{customdata}<extra></extra>",
-                        showlegend: false
-                    });
                 }
                 var isGrouped2 = stackVal === "grouped";
                 var yMaxBar2 = 0;
@@ -1672,7 +1706,7 @@ window.dash_clientside.cumulative = {
                         if (ct > yMaxBar2) yMaxBar2 = ct;
                         barAnnotations2.push({
                             x: pi2, y: ct,
-                            text: "<b>" + ct.toLocaleString() + "</b>",
+                            text: "<b>" + fmtVal(ct) + "</b>",
                             showarrow: false, yshift: 8,
                             font: {size: 11, color: "#374151", family: "Inter, system-ui, sans-serif"}
                         });
@@ -1692,16 +1726,17 @@ window.dash_clientside.cumulative = {
                         },
                         yaxis: {
                             gridcolor: "#E5E7EB", title: "",
+                            tickprefix: isDollar ? '$' : '',
                             range: [0, Math.ceil(yMaxBar2 * 1.13)],
                             autorange: false
                         },
                         bargap: 0.15,
                         showlegend: slices.length > 1,
                         legend: {orientation: "h", yanchor: "bottom", y: 1.02, xanchor: "left", x: 0},
-                        margin: {l: 50, r: 16, t: 8, b: 20},
+                        margin: {l: 36, r: 16, t: 8, b: 20},
                         plot_bgcolor: "white", paper_bgcolor: "white",
                         font: {family: "Inter, system-ui, sans-serif", size: 12, color: "#374151"},
-                        hovermode: "x",
+                        hovermode: "closest",
                         hoverlabel: {
                             align: "left", bgcolor: "white", bordercolor: "#E5E7EB",
                             font: {color: "#374151", size: 12, family: "Inter, system-ui, sans-serif"}
@@ -1749,12 +1784,12 @@ window.dash_clientside.cumulative = {
                     var val2 = di < sv.length ? sv[di] : null;
                     if (val2 !== null && val2 !== undefined && isV) {
                         pts.push("<span style='color:" + entry2.color + "'>\u25A0</span> " +
-                            entry2.name + ": " + Math.round(val2).toLocaleString());
+                            entry2.name + ": " + fmtVal(val2));
                         total2 += Math.round(val2);
                         if (val2 > ptMax2) ptMax2 = val2;
                     }
                 }
-                if (sliceSeries.length > 1) pts.push("<b>Total: " + total2.toLocaleString() + "</b>");
+                if (sliceSeries.length > 1) pts.push("<b>Total: " + fmtVal(total2) + "</b>");
                 sSummaryX.push(sliceDates[di]);
                 sSummaryY.push(ptMax2);
                 sSummaryH.push(pts.join("<br>"));
@@ -1806,12 +1841,13 @@ window.dash_clientside.cumulative = {
                     xaxis: effXAxis,
                     yaxis: {
                         gridcolor: "#E5E7EB", title: "",
+                        tickprefix: isDollar ? '$' : '',
                         range: [0, Math.ceil(yMaxSlice * 1.1)],
                         autorange: false
                     },
                     showlegend: true,
                     legend: {orientation: "h", yanchor: "bottom", y: 1.02, xanchor: "left", x: 0},
-                    margin: {l: 50, r: 16, t: 28, b: 20},
+                    margin: {l: 36, r: 16, t: 28, b: 20},
                     plot_bgcolor: "white", paper_bgcolor: "white",
                     font: {family: "Inter, system-ui, sans-serif", size: 12, color: "#374151"},
                     hovermode: "x",

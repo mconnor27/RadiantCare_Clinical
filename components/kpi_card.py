@@ -242,7 +242,7 @@ def kpi_card(
     return dmc.Paper(
         children=paper_children,
         pt="sm",
-        px="md",
+        px="sm",
         pb="sm" if not (sparkline_past or sparkline_id) else 4,
         radius="md",
         shadow="xs",

@@ -5,6 +5,31 @@ from dash_iconify import DashIconify
 from dash import html
 
 
+def _add_grouping_toggle(panel_children, chart_id, default="stacked"):
+    """Append a Stacked/Grouped segmented control to panel_children."""
+    panel_children.append(
+        html.Div(
+            id=f"{chart_id}-settings-stack-wrap",
+            children=dmc.Stack(
+                gap=4,
+                children=[
+                    dmc.Text("Grouping", size="xs", fw=500, c="#6B7280"),
+                    dmc.SegmentedControl(
+                        id=f"{chart_id}-settings-stack",
+                        data=[
+                            {"value": "stacked", "label": "Stacked"},
+                            {"value": "grouped", "label": "Grouped"},
+                        ],
+                        value=default,
+                        size="xs",
+                        fullWidth=True,
+                    ),
+                ],
+            ),
+        )
+    )
+
+
 def chart_settings_button(
     chart_id: str,
     chart_types: list[dict] | None = None,
@@ -15,6 +40,7 @@ def chart_settings_button(
     smooth_step: float = 1,
     smooth_default: float = 15,
     show_grouping: bool = True,
+    grouping_default: str = "stacked",
     slider_label: str = "Smoothing",
     show_prior_periods: bool = False,
     prior_periods_default: int = 3,
@@ -55,27 +81,10 @@ def chart_settings_button(
         # Stacked/Grouped toggle — visible only for area and bar chart types
         has_stackable = show_grouping and any(ct["value"] in ("bar", "area") for ct in chart_types)
         if has_stackable:
-            panel_children.append(
-                html.Div(
-                    id=f"{chart_id}-settings-stack-wrap",
-                    children=dmc.Stack(
-                        gap=4,
-                        children=[
-                            dmc.Text("Grouping", size="xs", fw=500, c="#6B7280"),
-                            dmc.SegmentedControl(
-                                id=f"{chart_id}-settings-stack",
-                                data=[
-                                    {"value": "stacked", "label": "Stacked"},
-                                    {"value": "grouped", "label": "Grouped"},
-                                ],
-                                value="stacked",
-                                size="xs",
-                                fullWidth=True,
-                            ),
-                        ],
-                    ),
-                )
-            )
+            _add_grouping_toggle(panel_children, chart_id, grouping_default)
+    elif show_grouping and not chart_types:
+        # Standalone grouping toggle (no chart type selector, always a bar/area chart)
+        _add_grouping_toggle(panel_children, chart_id, grouping_default)
 
     # Smoothing slider
     if show_smooth:

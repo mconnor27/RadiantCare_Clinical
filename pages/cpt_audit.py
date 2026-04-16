@@ -30,6 +30,31 @@ _CPT_MARKS = [
 dash.register_page(__name__, path="/cpt-audit", name="CPT Audit", order=12)
 
 # ---------------------------------------------------------------------------
+# Column definitions (needed by layout)
+# ---------------------------------------------------------------------------
+_COL_DEFS = [
+    {"field": "TreatmentDate", "headerName": "Date", "sort": "desc", "flex": 1.1},
+    {"field": "_patient_display", "headerName": "Patient"},
+    {"field": "PatientMRN", "headerName": "MRN", "flex": 1.2},
+    {"field": "Department", "headerName": "Dept"},
+    {"field": "Machine", "headerName": "Machine", "flex": 1.3},
+    {"field": "CourseName", "headerName": "Course", "flex": 1.2},
+    {"field": "RxTechnique_Day", "headerName": "Tech"},
+    {"field": "UniqueIsocenters", "headerName": "Iso", "flex": 0.6},
+    {"field": "FieldGating", "headerName": "Gate"},
+    {"field": "CPT_Correct", "headerName": "Correct"},
+    {"field": "_billed_display", "headerName": "Billed"},
+    {"field": "AuditResult", "headerName": "Result",
+     "filter": False, "sortable": False,
+     "cellStyle": {"styleConditions": [
+         {"condition": "params.value === 'PASS'", "style": {"color": SEMANTIC_COLORS["success"], "fontWeight": "600"}},
+         {"condition": "params.value === 'FAIL'", "style": {"color": SEMANTIC_COLORS["error"], "fontWeight": "600"}},
+     ]}},
+    {"field": "ReviewStatus", "headerName": "Review", "flex": 2.3, "minWidth": 180,
+     "cellRenderer": "CptReviewButtons", "sortable": False, "filter": False},
+]
+
+# ---------------------------------------------------------------------------
 # Layout
 # ---------------------------------------------------------------------------
 layout = dmc.Stack(
@@ -180,7 +205,18 @@ layout = dmc.Stack(
                                    size="compact-xs", variant="light"),
                     ], gap="sm", align="center"),
                 ], justify="space-between", mb="sm", wrap="wrap"),
-                dmc.Box(id="cpt-table-container"),
+                dmc.Text(id="cpt-table-empty", children="No CPT audit data available",
+                         c=NEUTRAL["text_muted"], ta="center", py="xl"),
+                dag.AgGrid(
+                    id="cpt-detail-grid",
+                    rowData=[],
+                    columnDefs=_COL_DEFS,
+                    defaultColDef={**DEFAULT_COLUMN_DEFS, "flex": 1},
+                    columnSize=None,
+                    dashGridOptions=DEFAULT_GRID_OPTIONS,
+                    className=DEFAULT_GRID_CLASS,
+                    style=DEFAULT_GRID_STYLE,
+                ),
             ],
             p="md", radius="md", shadow="xs", withBorder=True,
         ),
@@ -206,6 +242,7 @@ layout = dmc.Stack(
         dcc.Store(id="cpt-store-course-reviews", data={}),
         dcc.Store(id="cpt-store-filtered-sids", data=[]),
         dcc.Store(id="cpt-store-pending-bulk", data=None),
+        dcc.Store(id="cpt-store-review-action", data=None),
         dcc.Interval(id="cpt-interval", interval=300_000, n_intervals=0),
     ],
 )
@@ -343,18 +380,18 @@ def load_reviews_from_db(_n):
 @callback(
     Output("cpt-store-reviews", "data", allow_duplicate=True),
     Output("cpt-store-course-reviews", "data", allow_duplicate=True),
-    Input("cpt-detail-grid", "cellRendererData"),
+    Input("cpt-store-review-action", "data"),
     State("cpt-store-reviews", "data"),
     State("cpt-store-course-reviews", "data"),
     prevent_initial_call=True,
 )
-def handle_review(renderer_data, reviews, course_reviews):
+def handle_review(action_data, reviews, course_reviews):
     from data.reviews_db import set_review, remove_review, set_course_review, remove_course_review
 
-    if not renderer_data:
+    if not action_data:
         return no_update, no_update
 
-    row = renderer_data
+    row = action_data
     action = row.get("_action", "")
     sid = str(row.get("SessionUniqueID", ""))
     mrn = str(row.get("PatientMRN", ""))
@@ -459,33 +496,11 @@ def execute_bulk(n, pending, filtered_sids, reviews, course_reviews):
 
 
 # ---------------------------------------------------------------------------
-# Table callback — AG Grid with built-in sort, filter, pagination
+# Table callback — updates rowData in-place (grid lives in layout)
 # ---------------------------------------------------------------------------
-_COL_DEFS = [
-    {"field": "TreatmentDate", "headerName": "Date", "sort": "desc"},
-    {"field": "_patient_display", "headerName": "Patient"},
-    {"field": "PatientMRN", "headerName": "MRN"},
-    {"field": "Department", "headerName": "Dept"},
-    {"field": "Machine", "headerName": "Machine"},
-    {"field": "CourseName", "headerName": "Course"},
-    {"field": "RxTechnique_Day", "headerName": "Tech"},
-    {"field": "UniqueIsocenters", "headerName": "Iso"},
-    {"field": "FieldGating", "headerName": "Gate"},
-    {"field": "CPT_Correct", "headerName": "Correct"},
-    {"field": "_billed_display", "headerName": "Billed"},
-    {"field": "AuditResult", "headerName": "Result",
-     "filter": False, "sortable": False,
-     "cellStyle": {"styleConditions": [
-         {"condition": "params.value === 'PASS'", "style": {"color": SEMANTIC_COLORS["success"], "fontWeight": "600"}},
-         {"condition": "params.value === 'FAIL'", "style": {"color": SEMANTIC_COLORS["error"], "fontWeight": "600"}},
-     ]}},
-    {"field": "ReviewStatus", "headerName": "Review", "minWidth": 180,
-     "cellRenderer": "CptReviewButtons", "sortable": False, "filter": False},
-]
-
-
 @callback(
-    Output("cpt-table-container", "children"),
+    Output("cpt-detail-grid", "rowData"),
+    Output("cpt-table-empty", "style"),
     Output("cpt-review-count", "children"),
     Output("cpt-table-page-info", "children"),
     Output("cpt-store-filtered-sids", "data"),
@@ -500,9 +515,8 @@ _COL_DEFS = [
 def update_table(table_records, review_filter, result_filter, table_date, reviews, course_reviews):
     reviews = reviews or {}
     course_reviews = course_reviews or {}
-    empty = dmc.Text("No CPT audit data available", c=NEUTRAL["text_muted"], ta="center", py="xl")
     if not table_records:
-        return empty, "", "", [], "OK All"
+        return [], {"display": "block"}, "", "", [], "OK All"
 
     # Merge review status: session-level first, then course-level fallback
     for row in table_records:
@@ -567,6 +581,11 @@ def update_table(table_records, review_filter, result_filter, table_date, review
             row["_patient_display"] = f"{last}, {first_init}"
         else:
             row["_patient_display"] = raw or "—"
+        gate = row.get("FieldGating", "")
+        if gate in (1, "1", 1.0, True):
+            row["FieldGating"] = "Yes"
+        elif gate in (0, "0", 0.0, False):
+            row["FieldGating"] = "No"
         row["_billed_display"] = _strip_igrt(row.get("CPT_Billed", ""))
 
     # Sort by server key (date desc, stable)
@@ -581,18 +600,9 @@ def update_table(table_records, review_filter, result_filter, table_date, review
     unreviewed_count = len(filtered_sids)
     ok_all_label = f"OK All ({unreviewed_count:,})" if unreviewed_count else "OK All"
 
-    grid = dag.AgGrid(
-        id="cpt-detail-grid",
-        rowData=table_records,
-        columnDefs=_COL_DEFS,
-        defaultColDef=DEFAULT_COLUMN_DEFS,
-        columnSize="autoSize",
-        dashGridOptions={**DEFAULT_GRID_OPTIONS, "skipHeaderOnAutoSize": False},
-        className=DEFAULT_GRID_CLASS,
-        style=DEFAULT_GRID_STYLE,
-    )
+    empty_style = {"display": "none"} if table_records else {"display": "block"}
 
-    return grid, review_text, info_text, filtered_sids, ok_all_label
+    return table_records, empty_style, review_text, info_text, filtered_sids, ok_all_label
 
 
 # ---------------------------------------------------------------------------
@@ -600,37 +610,69 @@ def update_table(table_records, review_filter, result_filter, table_date, review
 # ---------------------------------------------------------------------------
 @callback(
     Output("cpt-chart-trend", "figure"),
-    Input("cpt-store-chart-data", "data"),
+    Input("cpt-store-table-data", "data"),
+    Input("cpt-store-reviews", "data"),
+    Input("cpt-store-course-reviews", "data"),
     Input("cpt-chart-agg", "value"),
     Input("cpt-chart-mode", "value"),
 )
-def build_trend_chart(chart_data, agg, mode):
-    if not chart_data:
+def build_trend_chart(table_data, reviews, course_reviews, agg, mode):
+    if not table_data:
         return empty_figure("No trend data")
 
-    df = pd.DataFrame(chart_data)
-    df["date"] = pd.to_datetime(df["date"])
+    reviews = reviews or {}
+    course_reviews = course_reviews or {}
+
+    # Build per-session frame with reviews factored in
+    df = pd.DataFrame(table_data)
+    if "TreatmentDate" not in df.columns or "AuditResult" not in df.columns:
+        return empty_figure("No trend data")
+
+    df["date"] = pd.to_datetime(df["TreatmentDate"], errors="coerce")
+    df = df.dropna(subset=["date"])
+
+    # A session counts as "passed" if it originally passed, OR has been reviewed OK/Fixed
+    def is_passing(row):
+        if row.get("AuditResult") == "PASS":
+            return True
+        sid = str(row.get("SessionUniqueID", ""))
+        if reviews.get(sid) in ("OK", "Fixed"):
+            return True
+        mrn = str(row.get("PatientMRN", ""))
+        course = str(row.get("CourseName", ""))
+        if course_reviews.get(f"{mrn}|{course}"):
+            return True
+        return False
+
+    df["_passing"] = df.apply(is_passing, axis=1)
 
     # Aggregate
     if agg == "D":
-        grouped = df.set_index("date").sort_index()
+        grouped = df.groupby(df["date"].dt.normalize()).agg(
+            total=("_passing", "count"), passed=("_passing", "sum")
+        )
         grouped["pass_rate"] = grouped["passed"] / grouped["total"] * 100
     else:
         period = "W" if agg == "W" else "M"
         df["period"] = df["date"].dt.to_period(period).dt.start_time
-        grouped = df.groupby("period").agg(total=("total", "sum"), passed=("passed", "sum")).reset_index()
+        grouped = df.groupby("period").agg(total=("_passing", "count"), passed=("_passing", "sum")).reset_index()
         grouped["pass_rate"] = grouped["passed"] / grouped["total"] * 100
         grouped = grouped.rename(columns={"period": "date"}).set_index("date").sort_index()
 
     fig = go.Figure()
 
+    # Drop zero-total rows for bar mode so empty days (weekends) don't show
+    if mode == "bar":
+        grouped = grouped[grouped["total"] > 0]
+
     x = grouped.index
     y = grouped["pass_rate"]
-    hover = "%{x|%b %d, %Y}: %{y:.1f}%<extra></extra>"
+    hover = "%{x}: %{y:.1f}%<extra></extra>"
 
     if mode == "bar":
+        x_labels = x.strftime("%b") if agg == "M" else x.strftime("%b %-d")
         fig.add_trace(go.Bar(
-            x=x, y=y,
+            x=x_labels, y=y,
             marker_color=PRIMARY,
             hovertemplate=hover,
         ))
@@ -653,11 +695,14 @@ def build_trend_chart(chart_data, agg, mode):
         ))
 
     apply_default_layout(fig, height=180)
-    fig.update_layout(
+    layout_kw = dict(
         yaxis_title="Pass Rate %",
-        yaxis_range=[max(0, y.min() - 5) if len(y) else 0, 105],
+        yaxis_range=[max(0, y.min() - 5) if len(y) else 0, 100],
         margin=dict(l=48, r=16, t=12, b=16),
     )
+    if mode == "bar":
+        layout_kw["xaxis_type"] = "category"
+    fig.update_layout(**layout_kw)
     return fig
 
 

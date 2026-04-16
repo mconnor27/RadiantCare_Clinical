@@ -93,6 +93,15 @@ CREATE TABLE IF NOT EXISTS insurance_rate_history (
     updated_at    TEXT NOT NULL,
     UNIQUE(payor, effective_date)
 );
+
+CREATE TABLE IF NOT EXISTS payor_mappings (
+    raw_name            TEXT PRIMARY KEY,
+    standardized_payor  TEXT NOT NULL DEFAULT '',
+    broad_category      TEXT NOT NULL DEFAULT 'Other/Unknown',
+    phdsc_category      TEXT NOT NULL DEFAULT '9',
+    reviewed            INTEGER NOT NULL DEFAULT 0,
+    updated_at          TEXT NOT NULL
+);
 """
 
 
@@ -115,6 +124,10 @@ def _ensure_table():
         for col, default in [("address", ""), ("city", ""), ("state", ""), ("zip_code", ""), ("address_source", "")]:
             if col not in rp_cols:
                 conn.execute(f"ALTER TABLE referring_physicians ADD COLUMN {col} TEXT NOT NULL DEFAULT '{default}'")
+        # Migration: add phdsc_category column to payor_mappings if missing
+        pm_cols = [r[1] for r in conn.execute("PRAGMA table_info(payor_mappings)").fetchall()]
+        if "phdsc_category" not in pm_cols:
+            conn.execute("ALTER TABLE payor_mappings ADD COLUMN phdsc_category TEXT NOT NULL DEFAULT '9'")
 
 
 # Run once on import
@@ -811,3 +824,116 @@ def get_rate_at_date(payor: str, service_date: str) -> dict | None:
             (payor.strip(),),
         ).fetchone()
         return dict(row) if row else None
+
+
+# ---------------------------------------------------------------------------
+# Payor mappings (raw insurance name → standardized payor + broad category)
+# ---------------------------------------------------------------------------
+
+def seed_payor_mappings(rows: list[dict]) -> int:
+    """Bulk INSERT OR IGNORE payor mapping rows.
+
+    Each dict must have keys: raw_name, standardized_payor, broad_category.
+    Existing mappings are never overwritten.
+    """
+    if not rows:
+        return 0
+    now = datetime.now(timezone.utc).isoformat()
+    inserted = 0
+    with _connect() as conn:
+        for r in rows:
+            cur = conn.execute(
+                """INSERT OR IGNORE INTO payor_mappings
+                   (raw_name, standardized_payor, broad_category, reviewed, updated_at)
+                   VALUES (?, ?, ?, 0, ?)""",
+                (r["raw_name"], r.get("standardized_payor", ""),
+                 r.get("broad_category", "Other/Unknown"), now),
+            )
+            inserted += cur.rowcount
+    return inserted
+
+
+def get_all_payor_mappings() -> list[dict]:
+    """Return all payor mappings ordered by raw_name."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT raw_name, standardized_payor, broad_category, phdsc_category, reviewed, updated_at "
+            "FROM payor_mappings ORDER BY raw_name"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def upsert_payor_mapping(
+    raw_name: str,
+    standardized_payor: str = "",
+    broad_category: str = "Other/Unknown",
+    phdsc_category: str = "9",
+    reviewed: int = 0,
+) -> None:
+    """Insert or update a single payor mapping."""
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            """INSERT INTO payor_mappings
+               (raw_name, standardized_payor, broad_category, phdsc_category, reviewed, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(raw_name) DO UPDATE SET
+                   standardized_payor = excluded.standardized_payor,
+                   broad_category     = excluded.broad_category,
+                   phdsc_category     = excluded.phdsc_category,
+                   reviewed           = excluded.reviewed,
+                   updated_at         = excluded.updated_at""",
+            (raw_name.strip(), standardized_payor, broad_category, phdsc_category, reviewed, now),
+        )
+
+
+def get_payor_mapping_dict() -> dict:
+    """Return {raw_name: {"standardized_payor": ..., "broad_category": ..., "phdsc_category": ...}} for fast lookup."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT raw_name, standardized_payor, broad_category, phdsc_category "
+            "FROM payor_mappings"
+        ).fetchall()
+    return {
+        r["raw_name"]: {
+            "standardized_payor": r["standardized_payor"],
+            "broad_category": r["broad_category"],
+            "phdsc_category": r["phdsc_category"],
+        }
+        for r in rows
+    }
+
+
+def rename_standardized_payor(old_name: str, new_name: str) -> int:
+    """Rename a standardized payor across all mapping rows. Returns count updated."""
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE payor_mappings SET standardized_payor = ?, updated_at = ? "
+            "WHERE standardized_payor = ?",
+            (new_name.strip(), now, old_name.strip()),
+        )
+        return cur.rowcount
+
+
+def delete_standardized_payor(name: str) -> int:
+    """Clear a standardized payor from all mapping rows (sets to empty). Returns count updated."""
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE payor_mappings SET standardized_payor = '', updated_at = ? "
+            "WHERE standardized_payor = ?",
+            (now, name.strip()),
+        )
+        return cur.rowcount
+
+
+def get_standardized_payor_counts() -> list[dict]:
+    """Return [{name, mapping_count}] for all distinct standardized payors."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT standardized_payor AS name, COUNT(*) AS mapping_count "
+            "FROM payor_mappings WHERE standardized_payor != '' "
+            "GROUP BY standardized_payor ORDER BY standardized_payor"
+        ).fetchall()
+    return [dict(r) for r in rows]

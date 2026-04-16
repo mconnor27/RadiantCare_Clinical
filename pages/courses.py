@@ -824,14 +824,20 @@ clientside_callback(
 # Auto-sync slider value to [min, max] when not engaged
 # Fires when min/max change (from server) or when engaged flips to false
 clientside_callback(
-    """function(engaged, sliderMin, sliderMax) {
+    """function(engaged, sliderMin, sliderMax, currentVal) {
         if (engaged) return window.dash_clientside.no_update;
-        return [sliderMin, sliderMax];
+        var target = [sliderMin, sliderMax];
+        if (currentVal && currentVal.length === 2
+            && currentVal[0] === target[0] && currentVal[1] === target[1]) {
+            return window.dash_clientside.no_update;
+        }
+        return target;
     }""",
     Output("courses-fraction-slider", "value", allow_duplicate=True),
     Input("courses-fraction-engaged", "data"),
-    Input("courses-fraction-slider", "min"),
-    Input("courses-fraction-slider", "max"),
+    State("courses-fraction-slider", "min"),
+    State("courses-fraction-slider", "max"),
+    State("courses-fraction-slider", "value"),
     prevent_initial_call=True,
 )
 
@@ -904,8 +910,10 @@ def _populate_physician_chips(_n, slider_val, departments, diagnosis_cats,
         )
         for md in mds
     ]
-    # Clear selection when role changes
-    return chips, None
+    # Clear selection only when role toggle is the trigger
+    from dash import ctx
+    clear_val = None if ctx.triggered_id == "courses-physician-role" else dash.no_update
+    return chips, clear_val
 
 
 # ---------------------------------------------------------------------------
@@ -2607,17 +2615,32 @@ _COURSES_FILTER_INPUTS = [
     Input("courses-filter-status", "value"),
     Input("courses-fraction-slider", "value"),
     Input("courses-date-mode", "value"),
-    Input("courses-filter-date-preset", "value"),
     Input("courses-inpatient-switch", "checked"),
     Input("courses-physician-role", "value"),
+]
+
+# States listed separately so they always land at the END of args,
+# regardless of how many extra Inputs a callback appends after
+# *_COURSES_FILTER_INPUTS.  Preset is State (slider is the true
+# trigger; preset cascades through it).
+_COURSES_FILTER_STATES = [
+    State("courses-filter-date-preset", "value"),
     State("courses-fraction-engaged", "data"),
 ]
 
 
-def _unpack_courses_filter_args(args):
-    """Unpack the 14 common filter args (13 Inputs + 1 State) into kwargs for _load_and_filter_courses."""
+def _unpack_courses_filter_args(args, n_extra_inputs=0):
+    """Unpack common filter args into kwargs for _load_and_filter_courses.
+
+    Dash delivers all Inputs first, then all States.  The 12 Inputs from
+    _COURSES_FILTER_INPUTS come first, then any extra per-callback Inputs
+    (n_extra_inputs), then the 2 States from _COURSES_FILTER_STATES.
+    """
+    n_inputs = 12 + n_extra_inputs
     (_n, slider_val, departments, physician, diagnosis_cats, diag_mode, techniques,
-     status, frac_range, date_mode, date_preset, inpatient, physician_role, frac_engaged) = args[:14]
+     status, frac_range, date_mode, inpatient, physician_role) = args[:12]
+    date_preset = args[n_inputs]
+    frac_engaged = args[n_inputs + 1]
     return dict(
         slider_val=slider_val, departments=departments, physician=physician,
         diagnosis_cats=diagnosis_cats, diag_mode=diag_mode, techniques=techniques,
@@ -2653,10 +2676,11 @@ def _unpack_courses_filter_args(args):
     Output("courses-fraction-slider", "max"),
     *_COURSES_FILTER_INPUTS,
     Input("courses-table-filter-rows", "data"),
+    *_COURSES_FILTER_STATES,
 )
 def _update_courses_kpis(*args):
-    ctx = _unpack_courses_filter_args(args)
-    grid_rows = args[len(_COURSES_FILTER_INPUTS)]
+    ctx = _unpack_courses_filter_args(args, n_extra_inputs=1)
+    grid_rows = args[12]  # right after 12 filter Inputs
     data = _load_and_filter_courses(**ctx)
 
     na_kpi = kpi_card("--", "N/A")
@@ -3519,6 +3543,7 @@ def _update_courses_kpis(*args):
             "TreatingPhysician", "ConsultPhysician",
             "TreatmentTechniques",
             "FractionsPrescribed", "FractionsDelivered", "TreatmentDurationDays",
+            "PrescriptionSites",
         ]
         available_cols = [c for c in table_cols if c in table_df.columns]
         table_df = table_df[available_cols]
@@ -3542,6 +3567,7 @@ def _update_courses_kpis(*args):
             {"field": "FractionsPrescribed", "headerName": "Fx Rx", "width": 80, "type": "numericColumn"},
             {"field": "FractionsDelivered", "headerName": "Fx Del", "width": 80, "type": "numericColumn"},
             {"field": "TreatmentDurationDays", "headerName": "Duration (d)", "width": 100, "type": "numericColumn"},
+            {"field": "PrescriptionSites", "headerName": "Rx Sites", "width": 160},
         ]
         column_defs = [cd for cd in column_defs if cd["field"] in available_cols]
         column_defs.append({"field": "_row_idx", "hide": True})
@@ -3565,13 +3591,14 @@ def _update_courses_kpis(*args):
     Input("courses-volume-agg", "value"),
     Input("courses-volume-slice", "value"),
     Input("courses-table-filter-rows", "data"),
+    *_COURSES_FILTER_STATES,
     running=[(Output("courses-chart-volume-loading", "visible"), True, False)],
 )
 def _update_courses_volume(*args):
-    ctx = _unpack_courses_filter_args(args)
-    agg = args[14]
-    volume_slice = args[15]
-    grid_rows = args[16]
+    ctx = _unpack_courses_filter_args(args, n_extra_inputs=3)
+    agg = args[12]
+    volume_slice = args[13]
+    grid_rows = args[14]
     data = _load_and_filter_courses(**ctx)
     if data is None:
         return None
@@ -3596,14 +3623,15 @@ def _update_courses_volume(*args):
     Input("courses-cumulative-period-type", "value"),
     Input("courses-cumulative-slice", "value"),
     Input("courses-table-filter-rows", "data"),
+    *_COURSES_FILTER_STATES,
     running=[(Output("courses-chart-cumulative-loading", "visible"), True, False)],
 )
 def _update_courses_cumulative(*args):
-    ctx = _unpack_courses_filter_args(args)
-    cumul_mode = args[14]
-    cumul_period_type = args[15]
-    cumul_slice = args[16]
-    grid_rows = args[17]
+    ctx = _unpack_courses_filter_args(args, n_extra_inputs=4)
+    cumul_mode = args[12]
+    cumul_period_type = args[13]
+    cumul_slice = args[14]
+    grid_rows = args[15]
     data = _load_and_filter_courses(**ctx)
     if data is None:
         return None
