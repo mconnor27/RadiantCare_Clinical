@@ -23,6 +23,7 @@ from config.settings import PROJECT_ROOT, DEPARTMENTS, DEPARTMENT_COLORS
 logger = logging.getLogger(__name__)
 
 CACHE_PATH = PROJECT_ROOT / "data" / "geocode_cache.csv"
+ADDR_CACHE_PATH = PROJECT_ROOT / "data" / "geocode_addr_cache.csv"
 ZCTA_PATH = PROJECT_ROOT / "data" / "zcta_centroids.csv"
 
 # Bounding box for all US territory incl. Alaska, Hawaii, PR (validates Nominatim)
@@ -256,9 +257,9 @@ def _get_geocoder():
                 )
                 _rate_limiter = RateLimiter(
                     _geocoder.geocode,
-                    min_delay_seconds=1.1,
-                    max_retries=2,
-                    error_wait_seconds=5.0,
+                    min_delay_seconds=1.5,
+                    max_retries=1,
+                    error_wait_seconds=10.0,
                 )
     return _rate_limiter
 
@@ -371,6 +372,145 @@ def geocode_zips(zip_list):
 def load_geocode_cache():
     """Load the geocode cache into memory (lru_cache for session lifetime)."""
     return _load_cache()
+
+
+# ---------------------------------------------------------------------------
+# Address geocoding (for referral provider locations)
+# ---------------------------------------------------------------------------
+
+def _load_addr_cache():
+    """Read address geocode cache if it exists."""
+    if not ADDR_CACHE_PATH.exists():
+        return pd.DataFrame(columns=["addr_key", "lat", "lon", "geocoded_at"])
+    try:
+        df = pd.read_csv(ADDR_CACHE_PATH, dtype={"addr_key": str})
+        df = df.dropna(subset=["lat", "lon"])
+        return df
+    except Exception:
+        return pd.DataFrame(columns=["addr_key", "lat", "lon", "geocoded_at"])
+
+
+def _save_addr_cache(df):
+    """Write address geocode cache to CSV."""
+    df.to_csv(ADDR_CACHE_PATH, index=False)
+    logger.info("Saved address geocode cache: %d entries", len(df))
+
+
+def _addr_geocode_key(address, city, state, zip_code):
+    """Build a normalized cache key from address components."""
+    parts = [
+        (address or "").strip().upper(),
+        (city or "").strip().upper(),
+        (state or "").strip().upper(),
+        (str(zip_code or "").strip()[:5]),
+    ]
+    return "|".join(parts)
+
+
+def geocode_addresses(addr_records, max_nominatim=20):
+    """Geocode a list of address dicts, using cache + Nominatim.
+
+    Each record: {"address", "city", "state", "zip_code"} (all strings).
+    Returns DataFrame with: addr_key, lat, lon.
+
+    Uses a two-tier approach:
+      1. Check persistent address cache
+      2. Nominatim freeform query for uncached addresses (rate-limited)
+    Falls back to ZIP centroid if Nominatim fails.
+
+    Args:
+        max_nominatim: Max Nominatim API calls per invocation to avoid
+            blocking the page. Remaining addresses use ZIP centroid
+            fallback and get precise geocoding on subsequent calls.
+    """
+    if not addr_records:
+        return pd.DataFrame(columns=["addr_key", "lat", "lon"])
+
+    cache = _load_addr_cache()
+    cached_keys = set(cache["addr_key"].values) if not cache.empty else set()
+
+    # Deduplicate by key
+    key_to_record = {}
+    for rec in addr_records:
+        key = _addr_geocode_key(rec["address"], rec["city"], rec["state"], rec["zip_code"])
+        if key not in key_to_record:
+            key_to_record[key] = rec
+
+    needed = {k: v for k, v in key_to_record.items() if k not in cached_keys}
+
+    if not needed:
+        return cache
+
+    # Geocode via Nominatim (city + state + zip — skip street for reliability)
+    geocode = _get_geocoder()
+    new_rows = []
+    zip_cache = geocode_zips([normalize_zip(r["zip_code"]) for r in needed.values()
+                              if normalize_zip(r.get("zip_code"))])
+    zip_lookup = {}
+    if not zip_cache.empty:
+        zip_lookup = dict(zip(zip_cache["zip5"], zip(zip_cache["lat"], zip_cache["lon"])))
+
+    nominatim_calls = 0
+    for key, rec in needed.items():
+        address = (rec.get("address") or "").strip()
+        city = (rec.get("city") or "").strip()
+        state = (rec.get("state") or "").strip()
+        zip5 = normalize_zip(rec.get("zip_code"))
+        lat = lon = None
+
+        # Only hit Nominatim if under the batch limit
+        if nominatim_calls < max_nominatim:
+            # Try full street address first
+            if address and city and state:
+                query = f"{address}, {city}, {state}"
+                if zip5:
+                    query += f" {zip5}"
+                try:
+                    location = geocode(query + ", US")
+                    nominatim_calls += 1
+                    if location and _is_valid_us_coord(location.latitude, location.longitude):
+                        lat, lon = location.latitude, location.longitude
+                except Exception as exc:
+                    logger.debug("Full address geocode failed for %s: %s", key, exc)
+
+            # Fall back to city + state + zip
+            if lat is None and city and state:
+                query = f"{city}, {state}"
+                if zip5:
+                    query += f" {zip5}"
+                try:
+                    location = geocode(query + ", US")
+                    nominatim_calls += 1
+                    if location and _is_valid_us_coord(location.latitude, location.longitude):
+                        lat, lon = location.latitude, location.longitude
+                except Exception as exc:
+                    logger.debug("City geocode failed for %s: %s", key, exc)
+
+        # Fall back to ZIP centroid
+        if lat is None and zip5 and zip5 in zip_lookup:
+            lat, lon = zip_lookup[zip5]
+
+        if lat is not None and lon is not None:
+            new_rows.append({
+                "addr_key": key,
+                "lat": round(lat, 6),
+                "lon": round(lon, 6),
+                "geocoded_at": datetime.now().isoformat(),
+            })
+
+    if nominatim_calls >= max_nominatim and len(needed) > max_nominatim:
+        logger.info(
+            "Address geocoding: capped at %d Nominatim calls (%d remaining will use ZIP fallback this pass)",
+            nominatim_calls, len(needed) - max_nominatim,
+        )
+
+    if new_rows:
+        new_df = pd.DataFrame(new_rows)
+        cache = pd.concat([cache, new_df], ignore_index=True)
+        _save_addr_cache(cache)
+        logger.info("Address geocoding: %d new entries added", len(new_rows))
+
+    return cache
 
 
 # ---------------------------------------------------------------------------
@@ -504,6 +644,8 @@ def get_department_patient_flows(geo_df, min_patients=2):
                 "count": row["patient_count"],
                 "city_label": row.get("primary_city", row["zip5"]),
                 "zip5": row["zip5"],
+                "addr_key": row.get("addr_key", ""),
+                "institution": row.get("institution", ""),
             })
 
     return flows

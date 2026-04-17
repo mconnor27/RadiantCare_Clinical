@@ -1522,12 +1522,12 @@ window.dash_clientside.flowGantt = {
                 {
                     x: 0.5, y: -0.15, xref: "paper", yref: "paper",
                     text: "n=" + tot.n + (tot.nCensored ? " (+" + tot.nCensored + " in progress)" : "") + "  " + tAltLabel + ": " + tAltDisp + tu.suffix + "  (IQR: " + tP25 + "\u2013" + tP75 + tu.suffix + ")",
-                    showarrow: false, font: {size: 11, color: "#4B5563", family: font},
+                    showarrow: false, font: {size: 12, color: "#4B5563", family: font},
                 }
             ];
             var tLay = {
                 font: {family: font, size: 12},
-                margin: {l: 48, r: 16, t: 32, b: 32},
+                margin: {l: 48, r: 16, t: 32, b: 42},
                 plot_bgcolor: "#FFFFFF", paper_bgcolor: "#FFFFFF",
                 xaxis: {showgrid: false, title: tu.axisTitle, autorange: true},
                 yaxis: {gridcolor: "#F0F0F0", gridwidth: 1},
@@ -1604,13 +1604,13 @@ window.dash_clientside.flowGantt = {
             {
                 x: 0.5, y: -0.17, xref: "paper", yref: "paper",
                 text: "n=" + t.n + (t.nCensored ? " (+" + t.nCensored + " in progress)" : "") + "  " + altL + ": " + altDisp + u.suffix + "  (IQR: " + uP25 + "–" + uP75 + u.suffix + ")",
-                showarrow: false, font: {size: 11, color: "#4B5563", family: font},
+                showarrow: false, font: {size: 12, color: "#4B5563", family: font},
             }
         ];
 
         var baseLay = {
             font: {family: font, size: 12},
-            margin: {l: 48, r: 16, t: 32, b: 32},
+            margin: {l: 48, r: 16, t: 32, b: 42},
             plot_bgcolor: "#FFFFFF", paper_bgcolor: "#FFFFFF",
             xaxis: {showgrid: false, title: u.axisTitle, autorange: true},
             yaxis: {gridcolor: "#F0F0F0", gridwidth: 1},
@@ -1664,7 +1664,7 @@ window.dash_clientside.flowGantt = {
     renderFlowTrend: function(flowDetails, selectedFlow, trendData, smooth, chartType, agg, useKM, flowDetailsB, trendDataB, compareMode, aggToggleA, aggToggleB) {
         var font = "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
         agg = agg || "M";
-        var aggLabels = {D: "daily", W: "weekly", M: "monthly"};
+        var aggLabels = {D: "daily", W: "weekly", M: "monthly", Y: "yearly"};
         var aggLabel = aggLabels[agg] || "monthly";
 
         function movingAvg(vals, win) {
@@ -1829,7 +1829,7 @@ window.dash_clientside.flowGantt = {
 
         var baseLay = {
             font: {family: font, size: 12},
-            margin: {l: 48, r: 16, t: 32, b: 32},
+            margin: {l: 48, r: 16, t: 32, b: 42},
             plot_bgcolor: "#FFFFFF", paper_bgcolor: "#FFFFFF",
             xaxis: {showgrid: false},
             yaxis: {gridcolor: "#F0F0F0", gridwidth: 1, title: statLabel + " Days"},
@@ -1925,15 +1925,16 @@ window.dash_clientside.flowGantt = {
         // No selection → show total pipeline trend (Exam → Treatment)
         if (selectedFlow === null || selectedFlow === undefined || selectedFlow < 0) {
             var tot = flowDetails && flowDetails.total;
-            if (!tot) return [emptyFig("No total pipeline data"), "Total Pipeline Trend (" + aggLabel + " " + statLabel.toLowerCase() + ")", legendHidden];
+            if (!tot) return [emptyFig("No total pipeline data"), "Duration Trend", legendHidden];
             var tTrend = getTrend(tot);
             if (!tTrend || !tTrend.dates || tTrend.dates.length === 0) {
-                return [emptyFig("No total pipeline data"), "Total Pipeline Trend (" + aggLabel + " " + statLabel.toLowerCase() + ")", legendHidden];
+                return [emptyFig("No total pipeline data"), "Duration Trend", legendHidden];
             }
-            var kmSuffix = useKM ? ", KM adjusted" : "";
+            var kmSuffix = useKM ? " (KM)" : "";
+            baseLay.yaxis.title = aggLabel + " " + statLabel.toLowerCase() + kmSuffix + " (days)";
             var tTraces = buildTraces(tTrend, "Total Pipeline", tot.color);
             var hasImm = !useKM && (tTrend.completionRates || []).some(function(r) { return r < 0.5; });
-            return addBTrend([{data: tTraces, layout: baseLay}, "Total Pipeline Trend (" + aggLabel + " " + statLabel.toLowerCase() + kmSuffix + ")", legendStyle(hasImm, tot.color)], flowDetailsB, trendDataB);
+            return addBTrend([{data: tTraces, layout: baseLay}, "Duration Trend", legendStyle(hasImm, tot.color)], flowDetailsB, trendDataB);
         }
 
         // Selected flow → single-transition trend
@@ -1944,14 +1945,146 @@ window.dash_clientside.flowGantt = {
         if (!t) return [emptyFig("No trend data"), "", legendHidden];
         var selTrend = getTrend(t);
         if (!selTrend || !selTrend.dates || selTrend.dates.length === 0) {
-            return [emptyFig("No trend data"), t.label + " Trend", legendHidden];
+            return [emptyFig("No trend data"), "Duration Trend", legendHidden];
         }
 
-        var kmSuffix2 = useKM ? ", KM adjusted" : "";
-        var title = t.label + " Trend (" + aggLabel + " " + statLabel.toLowerCase() + kmSuffix2 + ")";
+        var kmSuffix2 = useKM ? " (KM)" : "";
+        baseLay.yaxis.title = aggLabel + " " + statLabel.toLowerCase() + kmSuffix2 + " (days)";
+        var title = "Duration Trend";
         var traces = buildTraces(selTrend, t.label, t.color);
         var hasImm2 = !useKM && (selTrend.completionRates || []).some(function(r) { return r < 0.5; });
         return addBTrend([{data: traces, layout: baseLay}, title, legendStyle(hasImm2, t.color)], flowDetailsB, trendDataB);
+    },
+
+    renderConversionTrend: function(flowDetails, selectedFlow, agg, chartType, smooth) {
+        var font = "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
+        agg = agg || "M";
+        chartType = chartType || "line";
+        smooth = smooth || 0;
+        var aggLabels = {D: "daily", W: "weekly", M: "monthly", Y: "yearly"};
+        var aggLabel = aggLabels[agg] || "monthly";
+
+        function emptyFig(msg) {
+            return {
+                data: [],
+                layout: {
+                    font: {family: font, size: 12},
+                    margin: {l: 48, r: 16, t: 16, b: 42},
+                    plot_bgcolor: "#FFFFFF", paper_bgcolor: "#FFFFFF",
+                    xaxis: {visible: false}, yaxis: {visible: false},
+                    autosize: true,
+                    annotations: [{
+                        text: msg || "No data", showarrow: false,
+                        xref: "paper", yref: "paper", x: 0.5, y: 0.5,
+                        font: {size: 14, color: "#9CA3AF"}
+                    }]
+                }
+            };
+        }
+
+        function movingAvg(vals, win) {
+            if (!win || win <= 1) return vals;
+            var out = [];
+            for (var i = 0; i < vals.length; i++) {
+                var s = Math.max(0, i - Math.floor(win / 2));
+                var e = Math.min(vals.length, i + Math.ceil(win / 2));
+                var sum = 0, cnt = 0;
+                for (var j = s; j < e; j++) {
+                    if (vals[j] != null) { sum += vals[j]; cnt++; }
+                }
+                out.push(cnt > 0 ? sum / cnt : null);
+            }
+            return out;
+        }
+
+        if (!flowDetails || !flowDetails.convByAgg) {
+            return [emptyFig("No conversion data"), "Conversion Rate Trend"];
+        }
+
+        var conv = flowDetails.convByAgg[agg];
+        if (!conv || !conv.dates || conv.dates.length === 0) {
+            return [emptyFig("No conversion data"), "Conversion Rate Trend"];
+        }
+
+        var colors = flowDetails.colors || ["#7C2A83", "#2196F3", "#4CAF50"];
+
+        // Determine which series to show based on selectedFlow
+        var series = [];
+        if (selectedFlow === null || selectedFlow === undefined || selectedFlow < 0) {
+            // No selection → overall Created → Completed rate
+            series.push({
+                name: "Created → Completed",
+                values: conv.completePct,
+                color: "#7C2A83",
+            });
+        } else if (selectedFlow === 0) {
+            // Created → Scheduled
+            series.push({
+                name: "Created → Scheduled",
+                values: conv.schedPct,
+                color: colors[0] || "#7C2A83",
+            });
+        } else if (selectedFlow === 1) {
+            // Scheduled → Completed (% of created that completed)
+            series.push({
+                name: "Scheduled → Completed",
+                values: conv.completePct,
+                color: colors[1] || "#2196F3",
+            });
+        }
+
+        var traces = [];
+        for (var si = 0; si < series.length; si++) {
+            var sr = series[si];
+            var vals = (smooth > 1 && chartType !== "bar") ? movingAvg(sr.values, smooth) : sr.values;
+            var customdata = [];
+            for (var i = 0; i < vals.length; i++) {
+                customdata.push([sr.values[i], conv.created[i]]);
+            }
+            var hoverTpl = "%{y:.1f}%  · n=%{customdata[1]}<extra>" + sr.name + "</extra>";
+
+            if (chartType === "bar") {
+                traces.push({
+                    x: conv.dates, y: vals, name: sr.name, type: "bar",
+                    marker: {color: (typeof hexToRgba === "function") ? hexToRgba(sr.color, 0.7) : sr.color,
+                             line: {color: sr.color, width: 1}},
+                    customdata: customdata, hovertemplate: hoverTpl,
+                });
+            } else {
+                var fillMode = chartType === "area" ? "tozeroy" : "none";
+                var fillColor = chartType === "area" && (typeof hexToRgba === "function")
+                    ? hexToRgba(sr.color, 0.15) : undefined;
+                traces.push({
+                    x: conv.dates, y: vals, name: sr.name,
+                    type: "scatter", mode: "lines+markers",
+                    line: {color: sr.color, width: 2},
+                    marker: {color: sr.color, size: 4},
+                    fill: fillMode, fillcolor: fillColor,
+                    customdata: customdata, hovertemplate: hoverTpl,
+                });
+            }
+        }
+
+        var title = "Conversion Rate Trend (" + aggLabel + ")";
+        if (selectedFlow === 0) title = "Created → Scheduled Rate (" + aggLabel + ")";
+        else if (selectedFlow === 1) title = "Scheduled → Completed Rate (" + aggLabel + ")";
+
+        var layout = {
+            font: {family: font, size: 12},
+            margin: {l: 48, r: 16, t: 32, b: 42},
+            plot_bgcolor: "#FFFFFF", paper_bgcolor: "#FFFFFF",
+            xaxis: {showgrid: false},
+            yaxis: {gridcolor: "#F0F0F0", gridwidth: 1, title: "%",
+                    rangemode: "tozero"},
+            autosize: true,
+            showlegend: series.length > 1,
+            legend: {orientation: "h", y: 1.02, x: 0, xanchor: "left", yanchor: "bottom",
+                     font: {size: 11}},
+            hovermode: "x unified",
+            barmode: "group",
+        };
+
+        return [{data: traces, layout: layout}, title];
     }
 };
 

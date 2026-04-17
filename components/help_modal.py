@@ -53,7 +53,7 @@ _BILLING_HELP = dmc.Stack(
                         ]),
                         dmc.ListItem([
                             dmc.Text("Aberdeen (POS 11)", fw=600, span=True, size="xs"),
-                            " — Non-Facility PE RVU (higher, covers equipment/overhead). HPSA bonus ×1.10.",
+                            " — Non-Facility PE RVU. HPSA bonus ×1.10.",
                         ]),
                     ],
                 ),
@@ -232,6 +232,84 @@ _BILLING_HELP = dmc.Stack(
                     ),
                 ],
             ),
+        ),
+
+        # --- Revenue Adjustments ---
+        dmc.Paper(
+            p="md", radius="md", withBorder=True,
+            children=[
+                dmc.Group(
+                    children=[
+                        DashIconify(icon="tabler:adjustments-dollar", width=20, color=PRIMARY),
+                        dmc.Text("Revenue Adjustments", fw=600, size="sm"),
+                    ],
+                    gap="xs", mb="xs",
+                ),
+                dmc.Text(
+                    "Found in the Payor Manager modal under the Revenue Adjustments tab. "
+                    "These controls refine monetary estimates beyond raw Medicare allowed amounts.",
+                    size="xs", c="dimmed", mb="xs",
+                ),
+
+                dmc.Text("Realization Factor", fw=500, size="xs", c=PRIMARY, mb=4),
+                dmc.Text(
+                    "A percentage (0\u2013100%, default 90%) applied to all revenue estimates to "
+                    "account for denials, contractual adjustments, underpayments, and write-offs. "
+                    "This is always active regardless of the payer-mix toggle. A value of 90% means "
+                    "the dashboard assumes 10% of billed revenue is lost to these factors.",
+                    size="xs", mb="xs",
+                ),
+
+                dmc.Divider(my="xs"),
+
+                dmc.Text("Payer-Mix Multipliers", fw=500, size="xs", c=PRIMARY, mb=4),
+                dmc.Text(
+                    "When the toggle is enabled, each billing row's revenue is scaled by a "
+                    "multiplier based on the patient's broad payer category. This models how "
+                    "different payer types reimburse relative to Medicare. The final per-row "
+                    "calculation is:",
+                    size="xs", mb="xs",
+                ),
+                dmc.Code(
+                    "Adjusted Revenue = Medicare Allowed Amount \u00d7 Category Multiplier \u00d7 Realization Factor",
+                    block=True,
+                ),
+                dmc.Text(
+                    "When the toggle is off, the category multiplier is 1.0 (i.e., pure Medicare "
+                    "rates), and only the realization factor is applied.",
+                    size="xs", mt="xs", mb="xs",
+                ),
+
+                dmc.Divider(my="xs"),
+
+                dmc.Text("Default Multipliers", fw=500, size="xs", c=PRIMARY, mb=4),
+                dmc.Table(
+                    data={
+                        "head": ["Category", "Default", "Basis"],
+                        "body": [
+                            ["Medicare", "100%", "CMS fee schedule (by definition)"],
+                            ["Medicaid", "90%", "WA Medicaid ~80%; managed care plans ~100%"],
+                            ["Private", "130%", "Volume-weighted avg of Regence 147%, Premera 141%, Kaiser ~120%, Aetna 133%"],
+                            ["Military/VA", "100%", "TRICARE/VA generally follows Medicare rates"],
+                            ["Workers Comp", "125%", "WA L&I fee schedule"],
+                            ["Tribal/IHS", "100%", "Assumed at Medicare rates"],
+                            ["Self Pay", "50%", "High write-off rate; no contract"],
+                            ["Other/Unknown", "100%", "Catch-all; assumed at Medicare"],
+                        ],
+                    },
+                    striped=True,
+                    highlightOnHover=True,
+                    withTableBorder=True,
+                    withColumnBorders=True,
+                    fz="xs",
+                ),
+                dmc.Text(
+                    "These defaults are estimates derived from available contract data. "
+                    "Adjust sliders to match your actual payer mix experience. "
+                    "Settings persist across sessions.",
+                    size="xs", c="dimmed", mt=4,
+                ),
+            ],
         ),
     ],
 )

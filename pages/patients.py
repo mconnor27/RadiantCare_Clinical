@@ -883,14 +883,39 @@ def _build_patient_map(
                 showlegend=False,
             ))
 
+    # Auto-fit: compute center and zoom from trace coordinates
+    import math
+    all_lat, all_lon = [], []
+    for trace in fig.data:
+        lats = trace.lat if hasattr(trace, "lat") else []
+        lons = trace.lon if hasattr(trace, "lon") else []
+        if lats is not None:
+            all_lat.extend(v for v in lats if v is not None)
+        if lons is not None:
+            all_lon.extend(v for v in lons if v is not None)
+
+    if all_lat and all_lon:
+        center = dict(
+            lat=(min(all_lat) + max(all_lat)) / 2,
+            lon=(min(all_lon) + max(all_lon)) / 2,
+        )
+        lat_span = max(max(all_lat) - min(all_lat), 0.1) * 1.2
+        lon_span = max(max(all_lon) - min(all_lon), 0.1) * 1.2
+        z_lat = 8.4 - math.log2(lat_span)
+        z_lon = 9.4 - math.log2(lon_span)
+        zoom = max(2.0, min(12.0, min(z_lat, z_lon)))
+    else:
+        center = MAPBOX_CENTER
+        zoom = MAPBOX_ZOOM
+
     fig.update_layout(
         mapbox=dict(
             accesstoken=MAPBOX_TOKEN,
             style=MAPBOX_STYLE,
-            center=MAPBOX_CENTER,
-            zoom=MAPBOX_ZOOM,
+            center=center,
+            zoom=zoom,
         ),
-        height=500,
+        height=700,
         margin=dict(l=0, r=0, t=0, b=0),
         font=dict(family=FONT_FAMILY, size=13),
         paper_bgcolor="#FFFFFF",
@@ -1152,8 +1177,13 @@ def _update_age_dist(data, mode, group, bandwidth_pct):
 )
 def update_map(geo_data, selected_dept, departments, show_flows, region, min_patients, _reset):
     """Build the Mapbox map from geocoded data in the store."""
-    # When reset is clicked, force uirevision change to reset pan/zoom
-    reset_rev = f"reset-{_reset}" if ctx.triggered_id == "patients-map-reset" else "patients-map"
+    # Re-fit when view controls change; preserve zoom on data refresh / flow toggle
+    _preserve = {"patients-store-geo", "patients-flow-toggle"}
+    triggered = ctx.triggered_id
+    if triggered and triggered not in _preserve:
+        reset_rev = f"{region}-{selected_dept}-{departments}-{min_patients}-{_reset}"
+    else:
+        reset_rev = "patients-map"
 
     if not geo_data:
         fig = go.Figure()
@@ -1162,7 +1192,7 @@ def update_map(geo_data, selected_dept, departments, show_flows, region, min_pat
                 accesstoken=MAPBOX_TOKEN, style=MAPBOX_STYLE,
                 center=MAPBOX_CENTER, zoom=MAPBOX_ZOOM,
             ),
-            height=500,
+            height=700,
             margin=dict(l=0, r=0, t=0, b=0),
             paper_bgcolor="#FFFFFF",
             showlegend=False,

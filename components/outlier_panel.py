@@ -25,13 +25,14 @@ from dash_iconify import DashIconify
 OUTLIER_SLIDER_MAX = 120
 
 
-def outlier_panel(page_id, transitions, slider_max=OUTLIER_SLIDER_MAX):
+def outlier_panel(page_id, transitions, slider_max=OUTLIER_SLIDER_MAX, extra_children=None):
     """Build the outlier cap dropdown panel.
 
     Args:
         page_id: page prefix for IDs (e.g., "referrals", "cv")
         transitions: list of (label, default_days) tuples
         slider_max: maximum slider value
+        extra_children: optional list of additional components to append inside the panel
     """
     sliders = []
     for i, (label, default) in enumerate(transitions):
@@ -87,7 +88,7 @@ def outlier_panel(page_id, transitions, slider_max=OUTLIER_SLIDER_MAX):
                         className="wf-outlier-sliders",
                         children=sliders,
                     ),
-                ],
+                ] + (extra_children or []),
                 id=f"{page_id}-outlier-panel",
                 p="sm", shadow="md", withBorder=True, radius="md",
                 className="wf-chip-dropdown",

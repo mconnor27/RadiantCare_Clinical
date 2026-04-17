@@ -72,9 +72,12 @@ layout = dmc.Stack(
                         dmc.Select(
                             id="cpt-filter-date-preset",
                             data=[
-                                {"value": "ytd", "label": "Year to Date"},
+                                {"value": "12mo", "label": "Prior 12 mo"},
+                                {"value": "6mo", "label": "Prior 6 mo"},
                                 {"value": "3mo", "label": "Prior 3 mo"},
                                 {"value": "30d", "label": "Prior 30 days"},
+                                {"value": "ytd", "label": "Year to Date"},
+                                {"value": "last_year", "label": "Last Year"},
                                 {"value": "this_month", "label": "This Month"},
                                 {"value": "last_month", "label": "Last Month"},
                                 {"value": "all", "label": "All Time"},
@@ -278,6 +281,22 @@ def sync_slider_to_daterange(slider_val):
     s = idx_to_date(slider_val[0])
     e = idx_to_date(slider_val[1], end_of_month=True)
     return s.strftime("%Y-%m-%d"), e.strftime("%Y-%m-%d")
+
+
+# D) Slider → auto-set preset to "Custom" when it doesn't match
+@callback(
+    Output("cpt-filter-date-preset", "value", allow_duplicate=True),
+    Input("cpt-date-slider", "value"),
+    State("cpt-filter-date-preset", "value"),
+    prevent_initial_call=True,
+)
+def _maybe_clear_preset(slider_val, current_preset):
+    if not current_preset or current_preset == "custom":
+        return no_update
+    expected = preset_to_slider_val(current_preset, MAX_IDX)
+    if slider_val == expected:
+        return no_update
+    return "custom"
 
 
 # ---------------------------------------------------------------------------

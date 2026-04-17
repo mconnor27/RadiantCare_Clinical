@@ -16,10 +16,19 @@ from config.settings import (
     DEPARTMENTS, DEPARTMENT_COLORS, CHART_COLORWAY, PRIMARY,
     DEFAULT_LAYOUT, FONT_FAMILY, SEMANTIC_COLORS, NEUTRAL, CHART_PAPER_HEIGHT,
     DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, DEFAULT_GRID_STYLE, DEFAULT_GRID_CLASS, ABMS_SPECIALTIES,
+    PRIOR_PERIOD_COLORS,
+    MAPBOX_TOKEN, MAPBOX_CENTER, MAPBOX_ZOOM, MAPBOX_STYLE,
 )
+from utils.geocoding import (
+    normalize_zip, geocode_addresses, _addr_geocode_key,
+    get_department_patient_flows, bezier_arc, DEPT_COORDS,
+)
+from components.diagnosis_filter import diagnosis_accordion, register_diagnosis_callbacks
 from components.filter_bar import department_chips
 from components.kpi_card import kpi_card, kpi_placeholder, create_sparkline
 from components.chart_card import chart_card, register_chart_callbacks
+from components.chart_settings import chart_settings_popover
+from components.detail_table import detail_table
 from components.outlier_panel import outlier_panel, register_outlier_callbacks
 from utils.charts import apply_default_layout, empty_figure, dept_color, color_for_index
 from utils.tables import sanitize_for_grid
@@ -274,20 +283,44 @@ def _build_filter_bar():
                         maxDropdownHeight=800,
                         comboboxProps={"zIndex": 500},
                     ),
-                    dmc.Select(
-                        id=f"{PAGE_ID}-filter-diagnosis",
-                        data=[{"value": bs, "label": bs} for bs in BODY_SYSTEMS],
-                        placeholder="All Diagnoses",
-                        clearable=True,
-                        size="sm",
-                        w=220,
-                        maxDropdownHeight=800,
-                        comboboxProps={"zIndex": 500},
-                    ),
+                    diagnosis_accordion(PAGE_ID),
                     outlier_panel(PAGE_ID, transitions=[
                         ("Created \u2192 Scheduled", _CAP_CREATED_TO_SCHEDULED),
                         ("Scheduled \u2192 Visit", _CAP_SCHEDULED_TO_VISIT),
+                    ], extra_children=[
+                        dmc.Divider(my="xs"),
+                        dmc.Box(children=[
+                            dmc.Group(
+                                justify="space-between",
+                                children=[
+                                    dmc.Text("Pipeline Window", size="xs", c="#6B7280"),
+                                    dmc.Text(
+                                        "90d",
+                                        id=f"{PAGE_ID}-pipeline-window-val",
+                                        size="xs", fw=600, c="#7C2A83",
+                                    ),
+                                ],
+                            ),
+                            dmc.Slider(
+                                id=f"{PAGE_ID}-pipeline-window",
+                                min=30, max=180, step=5,
+                                value=90, size="xs", color="violet",
+                                showLabelOnHover=True,
+                            ),
+                        ], mb="xs"),
                     ]),
+                    dmc.Group(
+                        children=[
+                            dmc.Text("Smoothing", size="xs", c="#6B7280", fw=500),
+                            dmc.Slider(
+                                id=f"{PAGE_ID}-smooth-slider",
+                                min=0, max=1, step=0.01, value=0.3,
+                                size="xs", showLabelOnHover=False,
+                                w=120, updatemode="drag",
+                            ),
+                        ],
+                        gap=6, align="center",
+                    ),
                 ],
                 gap="md", wrap="wrap", align="center",
             ),
@@ -300,8 +333,11 @@ def _build_filter_bar():
                             {"value": "12mo", "label": "Prior 12 mo"},
                             {"value": "6mo", "label": "Prior 6 mo"},
                             {"value": "3mo", "label": "Prior 3 mo"},
+                            {"value": "30d", "label": "Prior 30 days"},
                             {"value": "ytd", "label": "Year to Date"},
                             {"value": "last_year", "label": "Last Year"},
+                            {"value": "this_month", "label": "This Month"},
+                            {"value": "last_month", "label": "Last Month"},
                             {"value": "all", "label": "All Time"},
                             {"value": "custom", "label": "Custom Range"},
                         ],
@@ -376,7 +412,28 @@ layout = dmc.Stack(
                         ),
                     ],
                 ),
-                _build_filter_bar(),
+                html.Div(
+                    style={"position": "relative"},
+                    children=[
+                        _build_filter_bar(),
+                        html.Div(
+                            id=f"{PAGE_ID}-grid-filter-badge",
+                            children=dmc.Tooltip(
+                                label="Table column filters are active — charts reflect the filtered subset",
+                                position="left", withArrow=True, multiline=True, w=220,
+                                children=dmc.Badge(
+                                    "Table Filtered",
+                                    color="red", variant="filled", size="md",
+                                    leftSection=DashIconify(icon="mdi:filter", width=14),
+                                ),
+                            ),
+                            style={
+                                "position": "absolute", "top": -12, "right": 8,
+                                "zIndex": 10, "display": "none", "cursor": "pointer",
+                            },
+                        ),
+                    ],
+                ),
             ],
         ),
 
@@ -407,12 +464,12 @@ layout = dmc.Stack(
             p="md", radius="md", shadow="xs", withBorder=True,
         ),
 
-        # Flow distribution + trend (driven by Gantt band selection)
+        # Flow distribution + trend + conversion (driven by Gantt band selection)
         dmc.Grid(
             gutter="md",
             children=[
                 dmc.GridCol(
-                    span={"base": 12, "md": 6},
+                    span={"base": 12, "md": 4},
                     children=dmc.Paper(
                         children=[
                             dmc.Group(
@@ -423,13 +480,29 @@ layout = dmc.Stack(
                                         children="Duration Distribution",
                                         size="sm", fw=500, c=NEUTRAL["text_secondary"],
                                     ),
-                                    dmc.SegmentedControl(
-                                        id=f"{PAGE_ID}-dist-type",
-                                        data=[
-                                            {"value": "density", "label": "Density"},
-                                            {"value": "histogram", "label": "Histogram"},
+                                    dmc.Group(
+                                        gap="xs", align="center", wrap="nowrap",
+                                        children=[
+                                            dmc.SegmentedControl(
+                                                id=f"{PAGE_ID}-dist-type",
+                                                data=[
+                                                    {"value": "density", "label": "Density"},
+                                                    {"value": "histogram", "label": "Histogram"},
+                                                ],
+                                                value="density", size="xs",
+                                            ),
+                                            chart_settings_popover(
+                                                f"{PAGE_ID}-dist",
+                                                chart_types=None,
+                                                show_smooth=True,
+                                                smooth_min=0,
+                                                smooth_max=10,
+                                                smooth_step=0.5,
+                                                smooth_default=1.5,
+                                                slider_label="Bandwidth",
+                                                show_grouping=False,
+                                            ),
                                         ],
-                                        value="density", size="xs",
                                     ),
                                 ],
                             ),
@@ -443,7 +516,7 @@ layout = dmc.Stack(
                     ),
                 ),
                 dmc.GridCol(
-                    span={"base": 12, "md": 6},
+                    span={"base": 12, "md": 4},
                     children=dmc.Paper(
                         children=[
                             dmc.Group(
@@ -454,18 +527,89 @@ layout = dmc.Stack(
                                         children="Duration Trend",
                                         size="sm", fw=500, c=NEUTRAL["text_secondary"],
                                     ),
-                                    dmc.SegmentedControl(
-                                        id=f"{PAGE_ID}-trend-agg",
-                                        data=[
-                                            {"value": "W", "label": "Weekly"},
-                                            {"value": "M", "label": "Monthly"},
+                                    dmc.Group(
+                                        gap="xs", align="center", wrap="nowrap",
+                                        children=[
+                                            dmc.SegmentedControl(
+                                                id=f"{PAGE_ID}-trend-agg",
+                                                data=[
+                                                    {"value": "W", "label": "Weekly"},
+                                                    {"value": "M", "label": "Monthly"},
+                                                    {"value": "Y", "label": "Yearly"},
+                                                ],
+                                                value="M", size="xs",
+                                            ),
+                                            chart_settings_popover(
+                                                f"{PAGE_ID}-trend",
+                                                chart_types=[
+                                                    {"value": "line", "label": "Line"},
+                                                    {"value": "area", "label": "Area"},
+                                                    {"value": "bar", "label": "Bar"},
+                                                ],
+                                                chart_type_default="bar",
+                                                show_smooth=True,
+                                                smooth_max=12,
+                                                smooth_default=2,
+                                                slider_label="Smoothing",
+                                                show_grouping=False,
+                                            ),
                                         ],
-                                        value="M", size="xs",
                                     ),
                                 ],
                             ),
                             dcc.Graph(
                                 id=f"{PAGE_ID}-flow-trend",
+                                config={"displayModeBar": False, "responsive": True},
+                                style={"height": "340px"},
+                            ),
+                        ],
+                        p="sm", radius="md", shadow="xs", withBorder=True,
+                    ),
+                ),
+                dmc.GridCol(
+                    span={"base": 12, "md": 4},
+                    children=dmc.Paper(
+                        children=[
+                            dmc.Group(
+                                justify="space-between", mb=8,
+                                children=[
+                                    dmc.Text(
+                                        id=f"{PAGE_ID}-conv-title",
+                                        children="Conversion Rate Trend",
+                                        size="sm", fw=500, c=NEUTRAL["text_secondary"],
+                                    ),
+                                    dmc.Group(
+                                        gap="xs", align="center", wrap="nowrap",
+                                        children=[
+                                            dmc.SegmentedControl(
+                                                id=f"{PAGE_ID}-conv-agg",
+                                                data=[
+                                                    {"value": "W", "label": "Weekly"},
+                                                    {"value": "M", "label": "Monthly"},
+                                                    {"value": "Y", "label": "Yearly"},
+                                                ],
+                                                value="M", size="xs",
+                                            ),
+                                            chart_settings_popover(
+                                                f"{PAGE_ID}-conv",
+                                                chart_types=[
+                                                    {"value": "line", "label": "Line"},
+                                                    {"value": "area", "label": "Area"},
+                                                    {"value": "bar", "label": "Bar"},
+                                                ],
+                                                chart_type_default="line",
+                                                show_smooth=True,
+                                                smooth_max=12,
+                                                smooth_default=0,
+                                                slider_label="Smoothing",
+                                                show_grouping=False,
+                                            ),
+                                        ],
+                                    ),
+                                ],
+                            ),
+                            dcc.Graph(
+                                id=f"{PAGE_ID}-flow-conv",
                                 config={"displayModeBar": False, "responsive": True},
                                 style={"height": "340px"},
                             ),
@@ -489,6 +633,7 @@ layout = dmc.Stack(
                             {"value": "line", "label": "Line"},
                             {"value": "bar", "label": "Bar"},
                         ],
+                        show_grouping=False,
                         show_smooth=True,
                         smooth_max=30,
                         smooth_default=0,
@@ -513,6 +658,7 @@ layout = dmc.Stack(
                                 data=[
                                     {"value": "provider", "label": "Referring MD"},
                                     {"value": "department", "label": "Referring Dept"},
+                                    {"value": "institution", "label": "Institution"},
                                     {"value": "specialty", "label": "Specialty"},
                                     {"value": "diagnosis", "label": "Diagnosis"},
                                 ],
@@ -532,15 +678,29 @@ layout = dmc.Stack(
                                 mb=8,
                                 children=[
                                     dmc.Text("Current vs Prior Period", size="sm", fw=500,
-                                             c=NEUTRAL["text_secondary"]),
-                                    dmc.SegmentedControl(
-                                        id=f"{PAGE_ID}-dim-compare-period",
-                                        data=[
-                                            {"value": "calendar", "label": "Calendar"},
-                                            {"value": "rolling", "label": "Rolling"},
+                                             c=NEUTRAL["text_secondary"],
+                                             id=f"{PAGE_ID}-compare-title"),
+                                    dmc.Group(
+                                        gap="xs",
+                                        children=[
+                                            dmc.SegmentedControl(
+                                                id=f"{PAGE_ID}-dim-compare-period",
+                                                data=[
+                                                    {"value": "calendar", "label": "Calendar"},
+                                                    {"value": "rolling", "label": "Rolling"},
+                                                ],
+                                                value="calendar",
+                                                size="xs",
+                                            ),
+                                            chart_settings_popover(
+                                                f"{PAGE_ID}-dim-compare",
+                                                chart_types=None,
+                                                show_smooth=False,
+                                                show_grouping=False,
+                                                show_prior_periods=True,
+                                                prior_periods_default=1,
+                                            ),
                                         ],
-                                        value="calendar",
-                                        size="xs",
                                     ),
                                 ],
                             ),
@@ -572,71 +732,196 @@ layout = dmc.Stack(
             ],
         ),
 
-        # Row: Top Referring Providers + Top Referring Departments
-        dmc.Grid(
-            gutter="md",
-            children=[
-                dmc.GridCol(
-                    span={"base": 12, "md": 6},
-                    children=chart_card(
-                        f"{PAGE_ID}-chart-providers", "Top Referring Providers",
-                        show_settings=False, show_smooth=False,
-                    ),
+        # Row: Referral Volume Trend + Cumulative Referral Volume
+        dmc.Grid(gutter="md", children=[
+            dmc.GridCol(
+                chart_card(
+                    f"{PAGE_ID}-chart-vol",
+                    "Referral Volume",
+                    settings_id=f"{PAGE_ID}-vol",
+                    chart_types=[
+                        {"value": "bar", "label": "Bar"},
+                        {"value": "line", "label": "Line"},
+                        {"value": "area", "label": "Area"},
+                    ],
+                    show_smooth=True,
+                    smooth_max=12,
+                    smooth_default=0,
+                    paper_padding="md",
+                    extra_controls_left=[
+                        dmc.SegmentedControl(
+                            id=f"{PAGE_ID}-vol-slice",
+                            data=[
+                                {"value": "", "label": "Total"},
+                                {"value": "department", "label": "Ref Dept"},
+                                {"value": "institution", "label": "Institution"},
+                                {"value": "specialty", "label": "Specialty"},
+                                {"value": "diagnosis", "label": "Dx"},
+                                {"value": "site", "label": "Site"},
+                            ],
+                            value="",
+                            size="xs",
+                            color="violet",
+                        ),
+                    ],
+                    extra_controls=[
+                        dmc.SegmentedControl(
+                            id=f"{PAGE_ID}-vol-agg",
+                            data=[
+                                {"value": "W", "label": "Weekly"},
+                                {"value": "M", "label": "Monthly"},
+                                {"value": "Y", "label": "Yearly"},
+                            ],
+                            value="M",
+                            size="xs",
+                        ),
+                    ],
                 ),
-                dmc.GridCol(
-                    span={"base": 12, "md": 6},
-                    children=chart_card(
-                        f"{PAGE_ID}-chart-departments", "Top Referring Departments",
-                        show_settings=False, show_smooth=False,
-                    ),
+                span={"base": 12, "md": 6},
+            ),
+            dmc.GridCol(
+                chart_card(
+                    f"{PAGE_ID}-chart-cumulative",
+                    "Cumulative Referral Volume",
+                    settings_id=f"{PAGE_ID}-cumulative",
+                    chart_types=[
+                        {"value": "line", "label": "Line"},
+                        {"value": "area", "label": "Area"},
+                        {"value": "bar", "label": "Bar"},
+                    ],
+                    show_smooth=True,
+                    show_prior_periods=True,
+                    smooth_min=0,
+                    smooth_max=1,
+                    smooth_step=0.05,
+                    smooth_default=0.1,
+                    prior_periods_default=3,
+                    slider_label="Smoothing",
+                    paper_padding="md",
+                    extra_controls=[
+                        dmc.SegmentedControl(
+                            id=f"{PAGE_ID}-cumulative-mode",
+                            data=[
+                                {"value": "prior", "label": "Prior Periods"},
+                                {"value": "slice", "label": "Slice By"},
+                            ],
+                            value="prior",
+                            size="xs",
+                        ),
+                        dmc.SegmentedControl(
+                            id=f"{PAGE_ID}-cumulative-period-type",
+                            data=[
+                                {"value": "calendar", "label": "Calendar"},
+                                {"value": "rolling", "label": "Rolling"},
+                            ],
+                            value="calendar",
+                            size="xs",
+                        ),
+                        dmc.SegmentedControl(
+                            id=f"{PAGE_ID}-cumulative-slice",
+                            data=[
+                                {"value": "department", "label": "Ref Dept"},
+                                {"value": "institution", "label": "Institution"},
+                                {"value": "specialty", "label": "Specialty"},
+                                {"value": "diagnosis", "label": "Dx"},
+                                {"value": "site", "label": "Site"},
+                            ],
+                            value="department",
+                            size="xs",
+                            style={"display": "none"},
+                        ),
+                    ],
+                ),
+                span={"base": 12, "md": 6},
+            ),
+        ]),
+
+        # Referring Provider Map
+        dmc.Paper(
+            children=[
+                dmc.Group(
+                    justify="space-between", mb="xs",
+                    children=[
+                        dmc.Text("Referring Provider Origins", size="sm", fw=500, c=NEUTRAL["text_secondary"]),
+                        dmc.Group(
+                            gap="md", align="center",
+                            children=[
+                                dmc.Switch(
+                                    id=f"{PAGE_ID}-map-flow-toggle",
+                                    label="Flow lines",
+                                    size="xs",
+                                    checked=True,
+                                ),
+                                dmc.Group(
+                                    gap="xs", align="center",
+                                    children=[
+                                        dmc.Text("Min:", size="xs", c="#9CA3AF"),
+                                        dmc.Slider(
+                                            id=f"{PAGE_ID}-map-min-slider",
+                                            min=1, max=20, value=3, step=1,
+                                            marks=[
+                                                {"value": 1, "label": "1"},
+                                                {"value": 5, "label": "5"},
+                                                {"value": 10, "label": "10"},
+                                                {"value": 20, "label": "20"},
+                                            ],
+                                            size="xs", w=140,
+                                            styles={"markLabel": {"fontSize": "9px", "marginTop": "-2px"}},
+                                        ),
+                                    ],
+                                ),
+                                dmc.SegmentedControl(
+                                    id=f"{PAGE_ID}-map-region",
+                                    data=[
+                                        {"label": "PNW", "value": "pnw"},
+                                        {"label": "All US", "value": "all"},
+                                    ],
+                                    value="pnw", size="xs",
+                                ),
+                                dmc.SegmentedControl(
+                                    id=f"{PAGE_ID}-map-dept",
+                                    data=["All"] + list(DEPARTMENTS),
+                                    value="All", size="xs",
+                                ),
+                                dmc.Tooltip(
+                                    label="Reset map view", position="bottom",
+                                    children=dmc.ActionIcon(
+                                        DashIconify(icon="mdi:fit-to-screen-outline", width=16),
+                                        id=f"{PAGE_ID}-map-reset",
+                                        variant="subtle", color="gray", size="sm",
+                                    ),
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+                dcc.Graph(
+                    id=f"{PAGE_ID}-map",
+                    config={"displayModeBar": False, "scrollZoom": True},
+                    style={"height": "700px"},
+                ),
+            ],
+            p="sm", radius="md", shadow="xs", withBorder=True,
+        ),
+
+        # Detail table (accordion)
+        detail_table(
+            f"{PAGE_ID}-detail-grid",
+            title="Referral Detail",
+            export_id=f"{PAGE_ID}-table-export",
+            column_size="autoSize",
+            extra_controls=[
+                dmc.Button(
+                    "Clear Filters",
+                    id=f"{PAGE_ID}-table-clear-filters",
+                    size="compact-xs",
+                    variant="light",
+                    color="red",
+                    leftSection=DashIconify(icon="mdi:filter-remove", width=14),
+                    style={"display": "none"},
                 ),
             ],
         ),
-
-        # Row: Monthly Volume Trend + Conversion by Dept
-        dmc.Grid(
-            gutter="md",
-            children=[
-                dmc.GridCol(
-                    span={"base": 12, "md": 6},
-                    children=chart_card(
-                        f"{PAGE_ID}-chart-trend", "Monthly Referral Volume & Conversion",
-                        show_settings=False, show_smooth=False,
-                    ),
-                ),
-                dmc.GridCol(
-                    span={"base": 12, "md": 6},
-                    children=chart_card(
-                        f"{PAGE_ID}-chart-conv-dept", "Conversion Rate by Referring Dept",
-                        show_settings=False, show_smooth=False,
-                    ),
-                ),
-            ],
-        ),
-
-        # Row: New Referrer Trend + Diagnosis Ridge Plot
-        dmc.Grid(
-            gutter="md",
-            children=[
-                dmc.GridCol(
-                    span={"base": 12, "md": 6},
-                    children=chart_card(
-                        f"{PAGE_ID}-chart-new-referrers", "New Referrer Trend",
-                        show_settings=False, show_smooth=False,
-                    ),
-                ),
-                dmc.GridCol(
-                    span={"base": 12, "md": 6},
-                    children=chart_card(
-                        f"{PAGE_ID}-chart-ridge", "Referral Volume by Diagnosis (Ridge)",
-                        show_settings=False, show_smooth=False,
-                    ),
-                ),
-            ],
-        ),
-
-        # Detail table
-        dmc.Box(id=f"{PAGE_ID}-table-container"),
 
         # ---------------------------------------------------------------
         # Referring Physician Manager Modal
@@ -1312,8 +1597,6 @@ layout = dmc.Stack(
         dcc.Store(id=f"{PAGE_ID}-dist-km-switch", data=False),
         dcc.Store(id=f"{PAGE_ID}-store-trend-legacy"),
         dcc.Store(id=f"{PAGE_ID}-store-trend-legacy-b"),
-        dcc.Store(id=f"{PAGE_ID}-trend-smooth", data=0),
-        dcc.Store(id=f"{PAGE_ID}-trend-settings-type", data="line"),
         dcc.Store(id=f"{PAGE_ID}-trend-km-switch", data=False),
         html.Div(id=f"{PAGE_ID}-trend-maturity", style={"display": "none"}),
         dcc.Store(id=f"{PAGE_ID}-store-funnel"),
@@ -1324,7 +1607,13 @@ layout = dmc.Stack(
         dcc.Store(id=f"{PAGE_ID}-store-ridge"),
         dcc.Store(id=f"{PAGE_ID}-store-conv-dept"),
         dcc.Store(id=f"{PAGE_ID}-store-new-referrers"),
+        dcc.Store(id=f"{PAGE_ID}-store-vol"),
+        dcc.Store(id=f"{PAGE_ID}-store-cumulative"),
+        dcc.Store(id=f"{PAGE_ID}-store-kpi-sparklines"),
+        dcc.Store(id=f"{PAGE_ID}-store-map-geo"),
+        dcc.Store(id=f"{PAGE_ID}-store-dim-compare-figs"),
 
+        dcc.Store(id=f"{PAGE_ID}-table-filter-rows"),
         dcc.Interval(id=f"{PAGE_ID}-interval", interval=300_000, n_intervals=0),
     ],
 )
@@ -1355,6 +1644,102 @@ clientside_callback(
     State(f"{PAGE_ID}-filter-daterange", "end_date"),
 )
 
+
+# D) Slider → auto-set preset to "Custom" when it doesn't match
+@callback(
+    Output(f"{PAGE_ID}-filter-date-preset", "value", allow_duplicate=True),
+    Input(f"{PAGE_ID}-date-slider", "value"),
+    State(f"{PAGE_ID}-filter-date-preset", "value"),
+    prevent_initial_call=True,
+)
+def _maybe_clear_preset(slider_val, current_preset):
+    if not current_preset or current_preset == "custom":
+        return dash.no_update
+    expected = preset_to_slider_val(current_preset, MAX_IDX)
+    if slider_val == expected:
+        return dash.no_update
+    return "custom"
+
+
+# ---------------------------------------------------------------------------
+# Grid filter → table-filter-rows store, badge, clear-filters button
+# ---------------------------------------------------------------------------
+
+clientside_callback(
+    """function(virtual, rowData, prev) {
+        var nu = window.dash_clientside.no_update;
+        var base = {"position": "absolute", "top": -12, "right": 8, "zIndex": 10, "cursor": "pointer"};
+        var hidden = Object.assign({}, base, {"display": "none"});
+        var btnHide = {"display": "none"};
+        if (!rowData || !rowData.length || !virtual) {
+            return prev == null ? [nu, nu, nu] : [null, hidden, btnHide];
+        }
+        if (virtual.length >= rowData.length) {
+            return prev == null ? [nu, nu, nu] : [null, hidden, btnHide];
+        }
+        var idxs = [];
+        for (var i = 0; i < virtual.length; i++) {
+            if (virtual[i]._row_idx != null) idxs.push(virtual[i]._row_idx);
+        }
+        idxs.sort(function(a, b) { return a - b; });
+        if (!idxs.length) {
+            return prev == null ? [nu, nu, nu] : [null, hidden, btnHide];
+        }
+        if (prev && prev.length === idxs.length) {
+            var same = true;
+            for (var j = 0; j < idxs.length; j++) {
+                if (prev[j] !== idxs[j]) { same = false; break; }
+            }
+            if (same) return [nu, nu, nu];
+        }
+        return [idxs, base, {}];
+    }""",
+    Output(f"{PAGE_ID}-table-filter-rows", "data"),
+    Output(f"{PAGE_ID}-grid-filter-badge", "style"),
+    Output(f"{PAGE_ID}-table-clear-filters", "style"),
+    Input(f"{PAGE_ID}-detail-grid", "virtualRowData"),
+    State(f"{PAGE_ID}-detail-grid", "rowData"),
+    State(f"{PAGE_ID}-table-filter-rows", "data"),
+    prevent_initial_call=True,
+)
+
+# Clear filters → reset AG Grid filterModel
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        return {};
+    }""",
+    Output(f"{PAGE_ID}-detail-grid", "filterModel"),
+    Input(f"{PAGE_ID}-table-clear-filters", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+# Badge click → scroll to the detail grid
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        var el = document.getElementById('""" + f"{PAGE_ID}-detail-grid" + """');
+        if (el) el.scrollIntoView({behavior: 'smooth', block: 'start'});
+        return window.dash_clientside.no_update;
+    }""",
+    Output(f"{PAGE_ID}-grid-filter-badge", "n_clicks"),
+    Input(f"{PAGE_ID}-grid-filter-badge", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+# Export CSV
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        gridExportCsv('""" + f"{PAGE_ID}-detail-grid" + """', 'referrals_detail.csv');
+        return window.dash_clientside.no_update;
+    }""",
+    Output(f"{PAGE_ID}-table-export", "n_clicks"),
+    Input(f"{PAGE_ID}-table-export", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
 # Flow Gantt renderer — reuses flow_gantt.js via referralFlowGantt wrapper
 clientside_callback(
     ClientsideFunction(namespace="referralFlowGantt", function_name="render"),
@@ -1375,6 +1760,7 @@ clientside_callback(
     Input(f"{PAGE_ID}-compare-mode", "data"),
     Input(f"{PAGE_ID}-agg-toggle", "data"),
     Input(f"{PAGE_ID}-agg-toggle-b", "data"),
+    Input(f"{PAGE_ID}-dist-settings-smooth", "value"),
 )
 
 # Trend chart — reuses flowGantt.renderFlowTrend
@@ -1386,8 +1772,8 @@ clientside_callback(
     Input(f"{PAGE_ID}-store-flow-details", "data"),
     Input(f"{PAGE_ID}-store-selected-flow", "data"),
     Input(f"{PAGE_ID}-store-trend-legacy", "data"),
-    Input(f"{PAGE_ID}-trend-smooth", "data"),
-    Input(f"{PAGE_ID}-trend-settings-type", "data"),
+    Input(f"{PAGE_ID}-trend-settings-smooth", "value"),
+    Input(f"{PAGE_ID}-trend-settings-type", "value"),
     Input(f"{PAGE_ID}-trend-agg", "value"),
     Input(f"{PAGE_ID}-trend-km-switch", "data"),
     Input(f"{PAGE_ID}-store-flow-details-b", "data"),
@@ -1397,6 +1783,18 @@ clientside_callback(
     Input(f"{PAGE_ID}-agg-toggle-b", "data"),
 )
 
+# Conversion rate trend — clientside from flow details store
+clientside_callback(
+    ClientsideFunction(namespace="flowGantt", function_name="renderConversionTrend"),
+    Output(f"{PAGE_ID}-flow-conv", "figure"),
+    Output(f"{PAGE_ID}-conv-title", "children"),
+    Input(f"{PAGE_ID}-store-flow-details", "data"),
+    Input(f"{PAGE_ID}-store-selected-flow", "data"),
+    Input(f"{PAGE_ID}-conv-agg", "value"),
+    Input(f"{PAGE_ID}-conv-settings-type", "value"),
+    Input(f"{PAGE_ID}-conv-settings-smooth", "value"),
+)
+
 
 # Register outlier panel callbacks
 register_outlier_callbacks(
@@ -1404,8 +1802,44 @@ register_outlier_callbacks(
     defaults=[_CAP_CREATED_TO_SCHEDULED, _CAP_SCHEDULED_TO_VISIT],
 )
 
+# Pipeline window slider value label
+clientside_callback(
+    """function(v) { return v + "d"; }""",
+    Output(f"{PAGE_ID}-pipeline-window-val", "children"),
+    Input(f"{PAGE_ID}-pipeline-window", "value"),
+)
+
 # Register gear-icon toggle + export callbacks for dimension trend chart
-register_chart_callbacks([f"{PAGE_ID}-chart-dim-trend"])
+register_chart_callbacks([
+    f"{PAGE_ID}-chart-dim-trend",
+    f"{PAGE_ID}-dim-compare",
+    (f"{PAGE_ID}-dist", f"{PAGE_ID}-flow-dist"),
+    {"sid": f"{PAGE_ID}-trend", "gid": f"{PAGE_ID}-flow-trend",
+     "store_id": True, "show_grouping": False},
+    {"sid": f"{PAGE_ID}-conv", "gid": f"{PAGE_ID}-flow-conv",
+     "store_id": True, "show_grouping": False},
+    (f"{PAGE_ID}-vol", f"{PAGE_ID}-chart-vol", f"{PAGE_ID}-store-vol"),
+    {"sid": f"{PAGE_ID}-cumulative", "gid": f"{PAGE_ID}-chart-cumulative",
+     "store_id": f"{PAGE_ID}-store-cumulative", "show_grouping": False},
+])
+register_diagnosis_callbacks(PAGE_ID)
+
+# Clientside callbacks — KPI sparklines via store + smooth slider
+_KPI_SPARK_IDS = [
+    f"{PAGE_ID}-spark-total",
+    f"{PAGE_ID}-spark-conv",
+    f"{PAGE_ID}-spark-lead",
+    f"{PAGE_ID}-spark-mds",
+]
+
+for _spark_id in _KPI_SPARK_IDS:
+    clientside_callback(
+        ClientsideFunction(namespace="sparklines", function_name="updateFromStore"),
+        Output(_spark_id, "figure"),
+        Input(f"{PAGE_ID}-store-kpi-sparklines", "data"),
+        Input(_spark_id, "id"),
+        Input(f"{PAGE_ID}-smooth-slider", "value"),
+    )
 
 # Clientside callback — renders dimension trend ridgeline from store + settings
 clientside_callback(
@@ -1415,6 +1849,21 @@ clientside_callback(
     Input(f"{PAGE_ID}-chart-dim-trend-settings-smooth", "value"),
     Input(f"{PAGE_ID}-chart-dim-trend-settings-type", "value"),
     Input(f"{PAGE_ID}-dim-trend-agg", "value"),
+)
+
+# Clientside callback — pick comparison figure by prior periods slider (no server trip)
+clientside_callback(
+    """function(figs, nPrior) {
+        if (!figs) return [window.dash_clientside.no_update, window.dash_clientside.no_update];
+        var key = String(nPrior != null ? nPrior : 1);
+        var fig = figs[key] || window.dash_clientside.no_update;
+        var title = nPrior === 0 ? "Current Period" : "Current vs Prior Period";
+        return [fig, title];
+    }""",
+    Output(f"{PAGE_ID}-chart-dim-comparison", "figure"),
+    Output(f"{PAGE_ID}-compare-title", "children"),
+    Input(f"{PAGE_ID}-store-dim-compare-figs", "data"),
+    Input(f"{PAGE_ID}-dim-compare-settings-prior-periods", "value"),
 )
 
 
@@ -1502,292 +1951,639 @@ def _build_leadtime(df):
     return fig
 
 
-def _build_top_providers(df, n=20):
-    """Horizontal bar chart of top N referring providers."""
-    if df.empty or "Referred by Provider" not in df.columns:
-        return empty_figure("No referral data")
 
-    counts = df["Referred by Provider"].dropna().value_counts().head(n)
-    counts = counts.sort_values(ascending=True)
+def _prepare_referral_geo_data(df):
+    """Aggregate referral provider locations by address + our department for map.
 
+    Uses city/state/zip geocoding (more precise than ZIP centroids) with
+    persistent caching. Falls back to ZIP centroid if address geocoding fails.
+
+    Returns a DataFrame with: addr_key, lat, lon, referral_count, primary_city,
+    zip5, Department.
+    """
+    required = ["Referring Provider City", "Referring Provider State",
+                 "Referring Provider Zip Code"]
+    if df.empty or not all(c in df.columns for c in required):
+        return pd.DataFrame()
+
+    work = df.copy()
+    # Use "Referred to Department" (always our 3 depts) for coloring
+    if "Referred to Department" in work.columns:
+        work["_our_dept"] = work["Referred to Department"].apply(_map_to_our_dept).fillna("Unknown")
+    else:
+        work["_our_dept"] = work["Referred by Department"].apply(_map_to_our_dept).fillna("Unknown")
+
+    # Build address key for each row
+    work["_addr_key"] = work.apply(
+        lambda r: _addr_geocode_key(
+            r.get("Referring Provider Address", ""),
+            r.get("Referring Provider City", ""),
+            r.get("Referring Provider State", ""),
+            r.get("Referring Provider Zip Code", ""),
+        ), axis=1,
+    )
+    work = work[work["_addr_key"].str.strip("|") != "|||"]
+
+    if work.empty:
+        return pd.DataFrame()
+
+    # Build unique address records for geocoding
+    unique_keys = work["_addr_key"].unique()
+    addr_records = []
+    for key in unique_keys:
+        row = work[work["_addr_key"] == key].iloc[0]
+        addr_records.append({
+            "address": row.get("Referring Provider Address", ""),
+            "city": row.get("Referring Provider City", ""),
+            "state": row.get("Referring Provider State", ""),
+            "zip_code": row.get("Referring Provider Zip Code", ""),
+        })
+
+    # Geocode
+    geo = geocode_addresses(addr_records)
+    if geo.empty:
+        return pd.DataFrame()
+
+    # Aggregate: count referrals per address + our department
+    _inst_col = "DoctorInstitution" if "DoctorInstitution" in work.columns else None
+    _inst_agg = {"institution": (_inst_col, lambda s: s.mode().iloc[0] if not s.mode().empty else "")} if _inst_col else {}
+    has_dept = work["_our_dept"].notna().any()
+    if has_dept:
+        grp = work.groupby(["_addr_key", "_our_dept"]).agg(
+            referral_count=("_addr_key", "size"),
+            primary_city=("Referring Provider City",
+                          lambda s: s.mode().iloc[0] if not s.mode().empty else ""),
+            zip5=("Referring Provider Zip Code",
+                  lambda s: normalize_zip(s.mode().iloc[0]) if not s.mode().empty else ""),
+            **_inst_agg,
+        ).reset_index().rename(columns={"_addr_key": "addr_key", "_our_dept": "Department"})
+    else:
+        grp = work.groupby("_addr_key").agg(
+            referral_count=("_addr_key", "size"),
+            primary_city=("Referring Provider City",
+                          lambda s: s.mode().iloc[0] if not s.mode().empty else ""),
+            zip5=("Referring Provider Zip Code",
+                  lambda s: normalize_zip(s.mode().iloc[0]) if not s.mode().empty else ""),
+            **_inst_agg,
+        ).reset_index().rename(columns={"_addr_key": "addr_key"})
+        grp["Department"] = "Unknown"
+
+    # Merge coordinates
+    result = grp.merge(geo[["addr_key", "lat", "lon"]], on="addr_key", how="inner")
+    result = result[result["referral_count"] > 0]
+
+    return result
+
+
+def _format_addr_hover(addr_key, dept, count, arrow_to=None, institution=None):
+    """Format addr_key (ADDRESS|CITY|STATE|ZIP) into readable hover text."""
+    parts = addr_key.split("|") if addr_key else []
+    address = parts[0].title() if len(parts) > 0 and parts[0] else ""
+    city = parts[1].title() if len(parts) > 1 and parts[1] else ""
+    state = parts[2].upper() if len(parts) > 2 and parts[2] else ""
+    zipcode = parts[3] if len(parts) > 3 and parts[3] else ""
+    lines = []
+    if institution and str(institution) not in ("", "nan"):
+        lines.append(f"<b>{institution}</b>")
+    if address:
+        lines.append(address)
+    loc = ", ".join(filter(None, [city, state, zipcode]))
+    if loc:
+        lines.append(loc)
+    suffix = "referral" if count == 1 else "referrals"
+    if arrow_to:
+        lines.append(f"\u2192 {arrow_to}: {count:,} {suffix}")
+    else:
+        lines.append(f"{dept}: {count:,} {suffix}")
+    return "<br>".join(lines)
+
+
+def _build_referral_map(geo_df, departments_filter, selected_dept="All",
+                        show_flows=True, region="pnw", min_referrals=3,
+                        uirevision="referrals-map"):
+    """Build Scattermapbox for referring provider origins."""
     fig = go.Figure()
-    fig.add_trace(go.Bar(
-        y=counts.index,
-        x=counts.values,
-        orientation="h",
-        marker_color=CHART_COLORWAY[0],
-        hovertemplate="%{y}<br>%{x:,} referrals<extra></extra>",
-        showlegend=False,
-    ))
 
-    fig = apply_default_layout(fig,
-        height=380,
-        margin=dict(l=200, r=16, t=8, b=32),
-        yaxis=dict(showgrid=False, tickfont=dict(size=10)),
-        xaxis=dict(showgrid=True, gridcolor="#F0F0F0", title="Referrals"),
+    _PNW_LAT, _PNW_LON = (42.0, 50.0), (-126.0, -116.0)
+    _US_LAT, _US_LON = (24.0, 50.0), (-126.0, -66.0)
+    lat_bounds = _PNW_LAT if region == "pnw" else _US_LAT
+    lon_bounds = _PNW_LON if region == "pnw" else _US_LON
+
+    active_depts = departments_filter if departments_filter else list(DEPARTMENTS)
+    if selected_dept == "All":
+        render_depts = list(active_depts)
+    elif selected_dept in active_depts:
+        render_depts = [selected_dept]
+    else:
+        render_depts = []
+
+    # Flow lines (rendered first = bottom layer)
+    if show_flows and render_depts and not geo_df.empty and "Department" in geo_df.columns:
+        # Adapt geo_df to the format get_department_patient_flows expects
+        flow_df = geo_df.rename(columns={"referral_count": "patient_count"})
+        if "zip5" not in flow_df.columns:
+            flow_df["zip5"] = flow_df.get("addr_key", "")
+        all_flows = get_department_patient_flows(flow_df, min_patients=min_referrals)
+
+        for dept in render_depts:
+            dept_flows = [
+                f for f in all_flows
+                if f["dept"] == dept
+                and lat_bounds[0] <= f["from_lat"] <= lat_bounds[1]
+                and lon_bounds[0] <= f["from_lon"] <= lon_bounds[1]
+            ]
+            if not dept_flows:
+                continue
+
+            max_flow = max(f["count"] for f in dept_flows)
+            all_lats, all_lons, all_text, all_cd = [], [], [], []
+            for flow in dept_flows:
+                ratio = flow["count"] / max(max_flow, 1)
+                n_arcs = max(1, min(6, 1 + int(ratio * 5)))
+                curvatures = [0.25] if n_arcs == 1 else np.linspace(0.15, 0.35, n_arcs).tolist()
+                hover = _format_addr_hover(
+                    flow.get("addr_key", ""), dept, flow["count"],
+                    arrow_to=dept, institution=flow.get("institution"),
+                )
+                cd = [flow["zip5"], flow["city_label"]]
+                for curv in curvatures:
+                    arc_lats, arc_lons = bezier_arc(
+                        flow["from_lat"], flow["from_lon"],
+                        flow["to_lat"], flow["to_lon"],
+                        num_points=20, curvature=curv,
+                    )
+                    all_lats.extend(arc_lats + [None])
+                    all_lons.extend(arc_lons + [None])
+                    all_text.extend([hover] * len(arc_lats) + [None])
+                    all_cd.extend([cd] * len(arc_lats) + [None])
+
+            color = DEPARTMENT_COLORS.get(dept, CHART_COLORWAY[0])
+            fig.add_trace(go.Scattermapbox(
+                lat=all_lats, lon=all_lons,
+                mode="lines", line=dict(width=2.5, color=color),
+                opacity=0.4, customdata=all_cd,
+                text=all_text, hoverinfo="text", showlegend=False,
+            ))
+
+    # Department location markers (middle layer)
+    for dept in render_depts:
+        coords = DEPT_COORDS.get(dept)
+        if coords:
+            color = DEPARTMENT_COLORS.get(dept, PRIMARY)
+            fig.add_trace(go.Scattermapbox(
+                lat=[coords[0]], lon=[coords[1]],
+                mode="markers+text",
+                marker=dict(size=16, color=color, symbol="hospital"),
+                text=[dept], textposition="top center",
+                textfont=dict(size=12, color=color),
+                hovertext=f"{dept} Department", hoverinfo="text",
+                showlegend=False,
+            ))
+
+    # Scatter markers (top layer — captures hover over flow lines)
+    if render_depts and not geo_df.empty and "lat" in geo_df.columns:
+        if "Department" in geo_df.columns:
+            plot_df = geo_df[geo_df["Department"].isin(render_depts)]
+        else:
+            plot_df = geo_df
+        plot_df = plot_df[
+            plot_df["lat"].between(*lat_bounds) & plot_df["lon"].between(*lon_bounds)
+        ]
+        if "referral_count" in plot_df.columns:
+            plot_df = plot_df[plot_df["referral_count"] >= min_referrals]
+
+        for dept in render_depts:
+            dept_data = plot_df[plot_df["Department"] == dept] if "Department" in plot_df.columns else plot_df
+            if dept_data.empty:
+                continue
+
+            color = DEPARTMENT_COLORS.get(dept, "#9E9E9E")
+            fig.add_trace(go.Scattermapbox(
+                lat=dept_data["lat"], lon=dept_data["lon"],
+                mode="markers",
+                marker=dict(size=8, color=color, opacity=0.7),
+                text=dept_data.apply(
+                    lambda r, d=dept: (
+                        _format_addr_hover(r.get("addr_key", ""), d, r["referral_count"],
+                                          institution=r.get("institution"))
+                    ), axis=1,
+                ),
+                hoverinfo="text", showlegend=False,
+            ))
+
+    # Auto-fit: compute center and zoom from trace coordinates
+    import math
+    all_lat, all_lon = [], []
+    for trace in fig.data:
+        lats = trace.lat if hasattr(trace, "lat") else []
+        lons = trace.lon if hasattr(trace, "lon") else []
+        if lats is not None:
+            all_lat.extend(v for v in lats if v is not None)
+        if lons is not None:
+            all_lon.extend(v for v in lons if v is not None)
+
+    if all_lat and all_lon:
+        center = dict(
+            lat=(min(all_lat) + max(all_lat)) / 2,
+            lon=(min(all_lon) + max(all_lon)) / 2,
+        )
+        # Zoom separately for lat (700px tall) and lon (~1100px wide),
+        # take the more constrained axis. 20% padding on each.
+        lat_span = max(max(all_lat) - min(all_lat), 0.1) * 1.2
+        lon_span = max(max(all_lon) - min(all_lon), 0.1) * 1.2
+        z_lat = 8.4 - math.log2(lat_span)   # calibrated for ~700px height
+        z_lon = 9.4 - math.log2(lon_span)   # calibrated for ~1100px width
+        zoom = max(2.0, min(12.0, min(z_lat, z_lon)))
+    else:
+        center = MAPBOX_CENTER
+        zoom = MAPBOX_ZOOM
+
+    fig.update_layout(
+        mapbox=dict(
+            accesstoken=MAPBOX_TOKEN, style=MAPBOX_STYLE,
+            center=center, zoom=zoom,
+        ),
+        height=700, margin=dict(l=0, r=0, t=0, b=0),
+        font=dict(family=FONT_FAMILY, size=13),
+        paper_bgcolor="#FFFFFF", showlegend=False,
+        uirevision=uirevision,
     )
     return fig
 
 
-def _build_top_departments(df, n=15):
-    """Horizontal bar chart of top N referring departments."""
-    if df.empty or "Referred by Department" not in df.columns:
-        return empty_figure("No department data")
-
-    counts = df["Referred by Department"].dropna().value_counts().head(n)
-    counts = counts.sort_values(ascending=True)
-
-    # Truncate long names
-    labels = [n if len(n) <= 40 else n[:37] + "..." for n in counts.index]
-
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
-        y=labels,
-        x=counts.values,
-        orientation="h",
-        marker_color=CHART_COLORWAY[1],
-        hovertemplate="%{y}<br>%{x:,} referrals<extra></extra>",
-        showlegend=False,
-        customdata=counts.index.tolist(),
-    ))
-
-    fig = apply_default_layout(fig,
-        height=380,
-        margin=dict(l=260, r=16, t=8, b=32),
-        yaxis=dict(showgrid=False, tickfont=dict(size=10)),
-        xaxis=dict(showgrid=True, gridcolor="#F0F0F0", title="Referrals"),
-    )
-    return fig
-
-
-def _build_volume_trend(df):
-    """Monthly referral volume with conversion rate on secondary axis."""
+def _prepare_ref_volume_data(df, agg, slice_by=""):
+    """Census-format store data for referral volume trend."""
     if df.empty or "Created" not in df.columns:
-        return empty_figure("No referral data")
+        return None
 
     df = df.copy()
-    df["_month"] = df["Created"].dt.to_period("M").dt.to_timestamp()
+    period_code = "Y" if agg == "Y" else agg
+    df["period"] = df["Created"].dt.to_period(period_code).dt.to_timestamp()
+    all_periods = sorted(df["period"].unique())
+    dates = [d.isoformat() for d in all_periods]
 
-    monthly = df.groupby("_month").agg(
-        total=("Referral ID", "count"),
-        converted=("Appt Attached", lambda x: (x == "Yes").sum()),
-    ).reset_index().sort_values("_month")
+    series = []
 
-    monthly["conv_rate"] = (monthly["converted"] / monthly["total"] * 100).round(1)
+    if not slice_by:
+        counts = df.groupby("period").size().reindex(all_periods, fill_value=0)
+        series.append({"name": "Total", "values": counts.tolist(), "color": PRIMARY})
 
-    # Drop the last month if it's partial (< 15 days of data)
-    if len(monthly) > 1:
-        last_month_data = df[df["_month"] == monthly["_month"].iloc[-1]]
-        if len(last_month_data) < 15:
-            monthly = monthly.iloc[:-1]
+    elif slice_by == "department":
+        top = df["Referred by Department"].value_counts().head(10).index.tolist()
+        for i, dept in enumerate(top):
+            sub = df[df["Referred by Department"] == dept]
+            counts = sub.groupby("period").size().reindex(all_periods, fill_value=0)
+            series.append({"name": dept[:30], "values": counts.tolist(),
+                           "color": CHART_COLORWAY[i % len(CHART_COLORWAY)]})
 
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
-        x=monthly["_month"], y=monthly["total"],
-        name="Total Referrals",
-        marker_color=CHART_COLORWAY[0],
-        opacity=0.6,
-        hovertemplate="%{x|%b %Y}: %{y:,} referrals<extra></extra>",
-        yaxis="y",
-    ))
-    fig.add_trace(go.Scatter(
-        x=monthly["_month"], y=monthly["conv_rate"],
-        name="Conversion %",
-        mode="lines+markers",
-        line=dict(color=SEMANTIC_COLORS["success"], width=2),
-        marker=dict(size=4),
-        hovertemplate="%{x|%b %Y}: %{y:.1f}%<extra></extra>",
-        yaxis="y2",
-    ))
+    elif slice_by == "institution":
+        col = "DoctorInstitution"
+        if col in df.columns:
+            top = df[col].dropna().value_counts().head(10).index.tolist()
+            for i, inst in enumerate(top):
+                sub = df[df[col] == inst]
+                counts = sub.groupby("period").size().reindex(all_periods, fill_value=0)
+                series.append({"name": inst[:30], "values": counts.tolist(),
+                               "color": CHART_COLORWAY[i % len(CHART_COLORWAY)]})
 
-    fig = apply_default_layout(fig,
-        height=380,
-        margin=dict(l=48, r=48, t=8, b=48),
-        xaxis=dict(showgrid=False, dtick="M3", tickformat="%b '%y"),
-        yaxis=dict(showgrid=True, gridcolor="#F0F0F0", title="Referrals"),
-        yaxis2=dict(
-            title="Conversion %", overlaying="y", side="right",
-            showgrid=False, range=[0, 105],
-            ticksuffix="%",
-        ),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        barmode="overlay",
-    )
-    return fig
+    elif slice_by == "specialty":
+        col = "DeptSpecialty"
+        if col in df.columns:
+            top = df[col].dropna().value_counts().head(10).index.tolist()
+            for i, spec in enumerate(top):
+                sub = df[df[col] == spec]
+                counts = sub.groupby("period").size().reindex(all_periods, fill_value=0)
+                series.append({"name": spec[:30], "values": counts.tolist(),
+                               "color": CHART_COLORWAY[i % len(CHART_COLORWAY)]})
 
+    elif slice_by == "diagnosis":
+        df["_dx"] = df.apply(
+            lambda r: _categorise_diagnosis(
+                r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("MRN")
+            ), axis=1,
+        )
+        df_dx = df[~df["_dx"].isin(["Other", "Unknown"])]
+        top = df_dx["_dx"].value_counts().head(10).index.tolist()
+        for i, dx in enumerate(top):
+            sub = df_dx[df_dx["_dx"] == dx]
+            counts = sub.groupby("period").size().reindex(all_periods, fill_value=0)
+            series.append({"name": dx, "values": counts.tolist(),
+                           "color": CHART_COLORWAY[i % len(CHART_COLORWAY)]})
 
-def _build_ridge_plot(df):
-    """Ridge-line plot of monthly referral volume by diagnosis category."""
-    if df.empty or "Created" not in df.columns:
-        return empty_figure("No referral data")
+    elif slice_by == "site":
+        # Our department (mapped from referring dept)
+        df["_our_dept"] = df["Referred by Department"].apply(_map_to_our_dept)
+        for dept in DEPARTMENTS:
+            sub = df[df["_our_dept"] == dept]
+            if sub.empty:
+                continue
+            counts = sub.groupby("period").size().reindex(all_periods, fill_value=0)
+            series.append({"name": dept, "values": counts.tolist(),
+                           "color": DEPARTMENT_COLORS.get(dept, CHART_COLORWAY[0])})
 
-    df = df.copy()
-    df["_diag_cat"] = df.apply(
-        lambda r: _categorise_diagnosis(
-            r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("MRN")
-        ),
-        axis=1,
-    )
-    df["_month"] = df["Created"].dt.to_period("M").dt.to_timestamp()
+    if not series:
+        return None
 
-    # Get top categories by volume (exclude Other)
-    cat_counts = df["_diag_cat"].value_counts()
-    categories = [c for c in cat_counts.index if c != "Other"][:8]
-    categories = list(reversed(categories))  # Bottom to top
-
-    if not categories:
-        return empty_figure("No diagnosis data")
-
-    # Monthly counts per category
-    pivot = (
-        df[df["_diag_cat"].isin(categories)]
-        .groupby(["_month", "_diag_cat"]).size()
-        .unstack(fill_value=0)
-    )
-
-    fig = go.Figure()
-    spacing = 1.0  # vertical spacing between ridges
-
-    for i, cat in enumerate(categories):
-        if cat not in pivot.columns:
-            continue
-        y_vals = pivot[cat].values.astype(float)
-        x_vals = pivot.index
-
-        # Normalise to [0, spacing*0.8] for visual consistency
-        y_max = y_vals.max() if y_vals.max() > 0 else 1
-        y_norm = y_vals / y_max * spacing * 0.7
-        y_offset = i * spacing
-
-        color = color_for_index(i)
-
-        # Convert hex to rgba for fill
-        def _hex_to_rgba(hex_c, alpha=0.3):
-            r = int(hex_c[1:3], 16)
-            g = int(hex_c[3:5], 16)
-            b = int(hex_c[5:7], 16)
-            return f"rgba({r},{g},{b},{alpha})"
-
-        fill_color = _hex_to_rgba(color, 0.3) if color.startswith("#") else color
-
-        # Fill area
-        fig.add_trace(go.Scatter(
-            x=x_vals, y=y_norm + y_offset,
-            mode="lines",
-            line=dict(color=color, width=1.5),
-            fill="toself",
-            fillcolor=fill_color,
-            hovertemplate=f"{cat}<br>%{{x|%b %Y}}: %{{customdata:,}}<extra></extra>",
-            customdata=y_vals.astype(int),
-            showlegend=False,
-        ))
-        # Baseline
-        fig.add_trace(go.Scatter(
-            x=x_vals, y=[y_offset] * len(x_vals),
-            mode="lines",
-            line=dict(color=color, width=0.5),
-            hoverinfo="skip",
-            showlegend=False,
-        ))
-
-    # Y-axis labels for categories
-    tickvals = [i * spacing for i in range(len(categories))]
-    ticktext = categories
-
-    fig = apply_default_layout(fig,
-        height=380,
-        margin=dict(l=90, r=16, t=8, b=48),
-        xaxis=dict(showgrid=False, dtick="M6", tickformat="%b '%y"),
-        yaxis=dict(
-            showgrid=False, zeroline=False,
-            tickmode="array", tickvals=tickvals, ticktext=ticktext,
-            tickfont=dict(size=10),
-        ),
-    )
-    return fig
+    return {
+        "dates": dates,
+        "series": series,
+        "height": 380,
+        "yTitle": "Referrals",
+        "hideLegend": len(series) == 1,
+    }
 
 
-def _build_conv_by_dept(df, n=15):
-    """Horizontal bar chart of conversion rate by referring department."""
-    if df.empty or "Referred by Department" not in df.columns:
-        return empty_figure("No department data")
-
-    grp = df.groupby("Referred by Department").agg(
-        total=("Referral ID", "count"),
-        converted=("Appt Attached", lambda x: (x == "Yes").sum()),
-    ).reset_index()
-
-    # Only departments with meaningful volume
-    grp = grp[grp["total"] >= 10].copy()
-    grp["conv_rate"] = (grp["converted"] / grp["total"] * 100).round(1)
-    grp = grp.sort_values("conv_rate", ascending=True).tail(n)
-
-    labels = [n if len(n) <= 40 else n[:37] + "..." for n in grp["Referred by Department"]]
-
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
-        y=labels,
-        x=grp["conv_rate"].values,
-        orientation="h",
-        marker_color=[
-            SEMANTIC_COLORS["success"] if v >= 85
-            else SEMANTIC_COLORS["warning"] if v >= 70
-            else SEMANTIC_COLORS["error"]
-            for v in grp["conv_rate"]
-        ],
-        text=[f"{v:.0f}%" for v in grp["conv_rate"]],
-        textposition="auto",
-        textfont=dict(size=11),
-        hovertemplate="%{y}<br>%{x:.1f}% (%{customdata:,} total)<extra></extra>",
-        customdata=grp["total"].values,
-        showlegend=False,
-    ))
-
-    fig = apply_default_layout(fig,
-        height=380,
-        margin=dict(l=260, r=16, t=8, b=32),
-        yaxis=dict(showgrid=False, tickfont=dict(size=10)),
-        xaxis=dict(showgrid=True, gridcolor="#F0F0F0", title="Conversion %",
-                   range=[0, 105], ticksuffix="%"),
-    )
-    return fig
+def _build_day_index_ticks_ref(start_norm, n_days, max_ticks=12):
+    """Build tick positions and labels for day-indexed x-axis."""
+    if n_days <= max_ticks:
+        positions = list(range(n_days))
+        labels = [(start_norm + pd.Timedelta(days=i)).strftime("%b %d") for i in positions]
+        return positions, labels
+    step = max(1, n_days // max_ticks)
+    positions = list(range(0, n_days, step))
+    labels = [(start_norm + pd.Timedelta(days=i)).strftime("%b %d") for i in positions]
+    return positions, labels
 
 
-def _build_new_referrer_trend(df):
-    """Bar chart of new referring providers by month."""
-    if df.empty or "Created" not in df.columns or "Referred by Provider" not in df.columns:
-        return empty_figure("No referral data")
+def _prepare_ref_cumulative_data(df_all, start, end, mode="prior",
+                                  period_type="calendar", slice_by="department"):
+    """Prepare cumulative referral volume data for overlay chart.
 
-    df = df.copy()
-    df_with = df[df["Referred by Provider"].notna()]
-    if df_with.empty:
-        return empty_figure("No provider data")
+    mode="prior": Current period cumulative + prior equivalent periods.
+    mode="slice": Current period only, split by dimension.
 
-    first_ref = df_with.groupby("Referred by Provider")["Created"].min().reset_index()
-    first_ref.columns = ["Provider", "FirstDate"]
-    first_ref["_month"] = first_ref["FirstDate"].dt.to_period("M").dt.to_timestamp()
+    Returns (store_data, max_slider, marks).
+    """
+    _default_marks = [{"value": i, "label": str(i)} for i in range(0, 6)]
 
-    monthly = first_ref.groupby("_month").size().reset_index(name="count").sort_values("_month")
+    if df_all.empty or "Created" not in df_all.columns:
+        return None, 5, _default_marks
 
-    # Drop partial last month
-    if len(monthly) > 1 and monthly["count"].iloc[-1] < 3:
-        monthly = monthly.iloc[:-1]
+    last_data = df_all["Created"].dt.normalize().max()
+    if end.normalize() > last_data:
+        end = last_data
 
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
-        x=monthly["_month"], y=monthly["count"],
-        marker_color=CHART_COLORWAY[4],
-        hovertemplate="%{x|%b %Y}: %{y} new referrers<extra></extra>",
-        showlegend=False,
-    ))
+    period_days = (end - start).days + 1
+    if period_days < 2:
+        return None, 5, _default_marks
 
-    fig = apply_default_layout(fig,
-        height=380,
-        margin=dict(l=48, r=16, t=8, b=48),
-        xaxis=dict(showgrid=False, dtick="M3", tickformat="%b '%y"),
-        yaxis=dict(showgrid=True, gridcolor="#F0F0F0", title="New Referring MDs"),
-    )
-    return fig
+    if period_days > 365 and period_type == "calendar":
+        period_type = "rolling"
+
+    def _cumulative_for_window(df, w_start, w_end):
+        mask = (df["Created"] >= w_start) & (df["Created"] <= w_end)
+        sub = df.loc[mask]
+        if sub.empty:
+            return []
+        daily = sub.groupby(sub["Created"].dt.normalize()).size()
+        idx = pd.date_range(w_start.normalize(), w_end.normalize(), freq="D")
+        daily = daily.reindex(idx, fill_value=0)
+        return daily.cumsum().tolist()
+
+    n_days = period_days
+    start_norm = start.normalize()
+    day_indices = list(range(n_days))
+    tick_positions, tick_labels = _build_day_index_ticks_ref(start_norm, n_days)
+
+    current_vals = _cumulative_for_window(df_all, start, end) if not df_all.empty else [0] * n_days
+
+    if df_all.empty:
+        data_min = start
+    else:
+        data_min = df_all["Created"].min()
+
+    def _period_label(p_start, p_end):
+        same_year = p_start.year == p_end.year
+        same_month = same_year and p_start.month == p_end.month
+        if same_month:
+            return p_start.strftime("%b %Y")
+        if same_year:
+            if p_start.month == 1 and p_end.month == 12:
+                return str(p_start.year)
+            return f"{p_start.strftime('%b')} – {p_end.strftime('%b %Y')}"
+        fmt = "%b '%y"
+        return f"{p_start.strftime(fmt)} – {p_end.strftime(fmt)}"
+
+    _MAX_PRIOR = 10
+    windows = []
+    for i in range(1, _MAX_PRIOR + 1):
+        if period_type == "calendar":
+            try:
+                p_start = start - pd.DateOffset(years=i)
+                p_end = end - pd.DateOffset(years=i)
+            except Exception:
+                continue
+        else:
+            shift = pd.Timedelta(days=period_days * i)
+            p_start = start - shift
+            p_end = end - shift
+        if p_end < data_min:
+            break
+        windows.append((_period_label(p_start, p_end), p_start, p_end))
+
+    prior = []
+    for pi, (label, p_start, p_end) in enumerate(windows):
+        vals = _cumulative_for_window(df_all, p_start, p_end)
+        if vals and any(v > 0 for v in vals):
+            if len(vals) < n_days:
+                vals = vals + [vals[-1] if vals else 0] * (n_days - len(vals))
+            elif len(vals) > n_days:
+                vals = vals[:n_days]
+            prior.append({"label": label, "values": vals,
+                          "color": PRIOR_PERIOD_COLORS[min(pi, len(PRIOR_PERIOD_COLORS) - 1)]})
+
+    has_partial = False
+    if prior and windows:
+        last_prior_start = windows[len(prior) - 1][1]
+        has_partial = last_prior_start.normalize() < data_min.normalize()
+
+    _prior_meta = {
+        "periodDays": period_days,
+        "maxAvailablePriors": len(prior),
+        "hasPartialPrior": has_partial,
+    }
+
+    current_label = _period_label(start, end)
+    if len(current_vals) < n_days:
+        current_vals = current_vals + [None] * (n_days - len(current_vals))
+
+    # Per-slice-per-period breakdown for bar mode
+    def _slice_totals_for_window(df, w_start, w_end, sb):
+        mask = (df["Created"] >= w_start) & (df["Created"] <= w_end)
+        sub = df.loc[mask]
+        if sub.empty:
+            return {}
+        if sb == "department" and "Referred by Department" in sub.columns:
+            return sub.groupby("Referred by Department").size().to_dict()
+        elif sb == "institution" and "DoctorInstitution" in sub.columns:
+            return sub.groupby("DoctorInstitution").size().to_dict()
+        elif sb == "specialty" and "DeptSpecialty" in sub.columns:
+            return sub.groupby("DeptSpecialty").size().to_dict()
+        elif sb == "diagnosis":
+            sub = sub.copy()
+            sub["_dx"] = sub.apply(
+                lambda r: _categorise_diagnosis(
+                    r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("MRN")
+                ), axis=1,
+            )
+            sub = sub[~sub["_dx"].isin(["Other", "Unknown"])]
+            return sub.groupby("_dx").size().to_dict()
+        elif sb == "status" and "Status" in sub.columns:
+            return sub.groupby("Status").size().to_dict()
+        return {}
+
+    all_windows_list = [(current_label, start, end)]
+    for label, p_start, p_end in windows:
+        all_windows_list.append((label, p_start, p_end))
+
+    all_slice_totals = []
+    all_slice_keys = set()
+    for wlabel, ws, we in all_windows_list:
+        totals = _slice_totals_for_window(df_all, ws, we, slice_by)
+        all_slice_totals.append((wlabel, totals))
+        all_slice_keys.update(totals.keys())
+
+    slice_keys_sorted = sorted(all_slice_keys)
+    slice_colors = {k: CHART_COLORWAY[i % len(CHART_COLORWAY)]
+                   for i, k in enumerate(slice_keys_sorted)}
+
+    breakdown_periods = [t[0] for t in reversed(all_slice_totals)]
+    breakdown_slices = []
+    for sk in slice_keys_sorted:
+        vals = [t[1].get(sk, 0) for t in reversed(all_slice_totals)]
+        breakdown_slices.append({"name": sk, "values": vals, "color": slice_colors[sk]})
+
+    slice_breakdown = {"periods": breakdown_periods, "slices": breakdown_slices}
+
+    avail_priors = max(len(prior), 1)
+    slider_max = avail_priors
+    slider_marks = [{"value": i, "label": str(i)} for i in range(0, slider_max + 1)]
+
+    if mode == "prior":
+        store_data = {
+            "mode": "prior",
+            "startDate": start_norm.isoformat(),
+            "dayIndices": day_indices,
+            "tickPositions": tick_positions,
+            "tickLabels": tick_labels,
+            "current": {
+                "label": current_label,
+                "values": current_vals,
+                "color": PRIMARY,
+                "endpoint": current_vals[-1] if current_vals and current_vals[-1] is not None else (
+                    next((v for v in reversed(current_vals) if v is not None), 0)
+                ),
+            },
+            "prior": prior,
+            "sliceBreakdown": slice_breakdown,
+            "height": 350,
+            "yTitle": "Cumulative Referrals",
+            **_prior_meta,
+        }
+        return store_data, slider_max, slider_marks
+
+    else:  # mode == "slice"
+        mask = (df_all["Created"] >= start) & (df_all["Created"] <= end)
+        dff_period = df_all.loc[mask]
+
+        dates_range = pd.date_range(start.normalize(), end.normalize(), freq="D")
+        dates_iso = [d.isoformat() for d in dates_range]
+
+        def _trimmed_cumsum(daily_counts):
+            cumvals = daily_counts.cumsum().tolist()
+            raw = daily_counts.tolist()
+            first_idx = next((i for i, v in enumerate(raw) if v > 0), None)
+            if first_idx is None:
+                return [None] * len(cumvals)
+            for i in range(first_idx):
+                cumvals[i] = None
+            last_idx = next((i for i in range(len(raw) - 1, -1, -1) if raw[i] > 0), first_idx)
+            for i in range(last_idx + 1, len(cumvals)):
+                cumvals[i] = cumvals[last_idx]
+            return cumvals
+
+        series = []
+
+        if slice_by == "department" and "Referred by Department" in dff_period.columns:
+            top = dff_period["Referred by Department"].dropna().value_counts().head(10).index.tolist()
+            for i, dept in enumerate(top):
+                sub = dff_period[dff_period["Referred by Department"] == dept]
+                daily = sub.groupby(sub["Created"].dt.normalize()).size()
+                daily = daily.reindex(dates_range, fill_value=0)
+                series.append({
+                    "name": dept[:30],
+                    "values": _trimmed_cumsum(daily),
+                    "color": CHART_COLORWAY[i % len(CHART_COLORWAY)],
+                })
+
+        elif slice_by == "institution" and "DoctorInstitution" in dff_period.columns:
+            top = dff_period["DoctorInstitution"].dropna().value_counts().head(10).index.tolist()
+            for i, inst in enumerate(top):
+                sub = dff_period[dff_period["DoctorInstitution"] == inst]
+                daily = sub.groupby(sub["Created"].dt.normalize()).size()
+                daily = daily.reindex(dates_range, fill_value=0)
+                series.append({
+                    "name": inst[:30],
+                    "values": _trimmed_cumsum(daily),
+                    "color": CHART_COLORWAY[i % len(CHART_COLORWAY)],
+                })
+
+        elif slice_by == "specialty" and "DeptSpecialty" in dff_period.columns:
+            top = dff_period["DeptSpecialty"].dropna().value_counts().head(10).index.tolist()
+            for i, spec in enumerate(top):
+                sub = dff_period[dff_period["DeptSpecialty"] == spec]
+                daily = sub.groupby(sub["Created"].dt.normalize()).size()
+                daily = daily.reindex(dates_range, fill_value=0)
+                series.append({
+                    "name": spec[:30],
+                    "values": _trimmed_cumsum(daily),
+                    "color": CHART_COLORWAY[i % len(CHART_COLORWAY)],
+                })
+
+        elif slice_by == "diagnosis":
+            dff_p = dff_period.copy()
+            dff_p["_dx"] = dff_p.apply(
+                lambda r: _categorise_diagnosis(
+                    r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("MRN")
+                ), axis=1,
+            )
+            dff_dx = dff_p[~dff_p["_dx"].isin(["Other", "Unknown"])]
+            top = dff_dx["_dx"].value_counts().head(8).index.tolist()
+            for i, dx in enumerate(top):
+                sub = dff_dx[dff_dx["_dx"] == dx]
+                daily = sub.groupby(sub["Created"].dt.normalize()).size()
+                daily = daily.reindex(dates_range, fill_value=0)
+                series.append({
+                    "name": dx,
+                    "values": _trimmed_cumsum(daily),
+                    "color": CHART_COLORWAY[i % len(CHART_COLORWAY)],
+                })
+
+        elif slice_by == "site":
+            dff_period = dff_period.copy()
+            dff_period["_our_dept"] = dff_period["Referred by Department"].apply(_map_to_our_dept)
+            for dept in DEPARTMENTS:
+                sub = dff_period[dff_period["_our_dept"] == dept]
+                if sub.empty:
+                    continue
+                daily = sub.groupby(sub["Created"].dt.normalize()).size()
+                daily = daily.reindex(dates_range, fill_value=0)
+                series.append({
+                    "name": dept,
+                    "values": _trimmed_cumsum(daily),
+                    "color": DEPARTMENT_COLORS.get(dept, CHART_COLORWAY[0]),
+                })
+
+        store_data = {
+            "mode": "slice",
+            "dates": dates_iso,
+            "series": series,
+            "sliceBreakdown": slice_breakdown,
+            "height": 350,
+            "yTitle": "Cumulative Referrals",
+            **_prior_meta,
+        }
+        return store_data, slider_max, slider_marks
 
 
 # ---------------------------------------------------------------------------
@@ -1807,7 +2603,7 @@ _DIM_COLORS = [
 def _assign_dimension_group(df, dimension):
     """Add _dim_group column based on the chosen dimension.
 
-    dimension: "provider" | "department" | "specialty" | "diagnosis"
+    dimension: "provider" | "department" | "institution" | "specialty" | "diagnosis"
     Returns df with _dim_group column (rows with None/_dim_group==None dropped).
     """
     df = df.copy()
@@ -1819,6 +2615,15 @@ def _assign_dimension_group(df, dimension):
             df["_dim_group"] = df[col]
     elif dimension == "department":
         col = "Referred by Department"
+        if col not in df.columns:
+            df["_dim_group"] = None
+        else:
+            df["_dim_group"] = df[col].apply(
+                lambda v: v if len(str(v)) <= 40 else str(v)[:37] + "..."
+                if pd.notna(v) else None
+            )
+    elif dimension == "institution":
+        col = "DoctorInstitution"
         if col not in df.columns:
             df["_dim_group"] = None
         else:
@@ -1912,10 +2717,13 @@ def _period_label(start, end):
     return f"{start.strftime('%b %y')} – {end.strftime('%b %y')}"
 
 
-def _build_ref_comparison_bars(dff_curr, dff_prior, start, end, prior_start, prior_end):
-    """Horizontal grouped bar chart: current vs prior period per dimension group.
+def _build_ref_comparison_bars(dff_curr, prior_windows, start, end):
+    """Horizontal grouped bar chart: current vs N prior periods per dimension group.
 
-    Same layout as the Diagnosis page comparison chart.
+    Args:
+        dff_curr: Current period dataframe (with _dim_group column)
+        prior_windows: list of (dff_prior, prior_start, prior_end) tuples
+        start, end: Current period boundaries
     """
     if dff_curr.empty or "_dim_group" not in dff_curr.columns:
         fig = empty_figure("No data for selected filters")
@@ -1923,46 +2731,67 @@ def _build_ref_comparison_bars(dff_curr, dff_prior, start, end, prior_start, pri
         return fig
 
     curr_label = _period_label(start, end)
-    prior_label = _period_label(prior_start, prior_end)
-
     curr_counts = dff_curr["_dim_group"].value_counts()
-    prior_counts = (
-        dff_prior["_dim_group"].value_counts()
-        if dff_prior is not None and not dff_prior.empty and "_dim_group" in dff_prior.columns
-        else pd.Series(dtype=int)
-    )
 
-    all_groups = sorted(set(curr_counts.index) | set(prior_counts.index))
-    # Sort by absolute change (biggest movers first), then keep top N
-    # This highlights what shifted between periods, not just what's largest
-    all_groups = sorted(
-        all_groups,
-        key=lambda g: abs(curr_counts.get(g, 0) - prior_counts.get(g, 0)),
-        reverse=True,
-    )
+    # Build prior count series + labels
+    prior_data = []  # list of (label, counts_series)
+    for dff_p, ps, pe in prior_windows:
+        label = _period_label(ps, pe)
+        counts = (
+            dff_p["_dim_group"].value_counts()
+            if dff_p is not None and not dff_p.empty and "_dim_group" in dff_p.columns
+            else pd.Series(dtype=int)
+        )
+        prior_data.append((label, counts))
+
+    # Collect all groups across current + all priors
+    all_group_set = set(curr_counts.index)
+    for _, pc in prior_data:
+        all_group_set.update(pc.index)
+
+    # Sort by absolute change vs most recent prior (biggest movers first),
+    # or by current count if no prior periods
+    first_prior = prior_data[0][1] if prior_data else pd.Series(dtype=int)
+    if prior_data:
+        all_groups = sorted(
+            all_group_set,
+            key=lambda g: abs(curr_counts.get(g, 0) - first_prior.get(g, 0)),
+            reverse=True,
+        )
+    else:
+        all_groups = sorted(all_group_set, key=lambda g: curr_counts.get(g, 0), reverse=True)
     all_groups = all_groups[:_DIM_TOP_N]
     # Re-sort ascending by current count for horizontal bar display (largest at top)
     all_groups = sorted(all_groups, key=lambda g: curr_counts.get(g, 0))
 
     cmap = _dim_color_map(all_groups)
     curr_vals = [int(curr_counts.get(g, 0)) for g in all_groups]
-    prior_vals = [int(prior_counts.get(g, 0)) for g in all_groups]
+    n_periods = 1 + len(prior_data)
+    outside = n_periods >= 3
 
     fig = go.Figure()
 
-    # Prior bars (behind, muted)
-    fig.add_trace(go.Bar(
-        x=prior_vals, y=all_groups, orientation="h",
-        marker_color="rgba(156, 163, 175, 0.45)",
-        name=prior_label,
-        text=[f"{v:,}" for v in prior_vals],
-        textposition="inside", insidetextanchor="end", textangle=0,
-        textfont=dict(size=12, color="#6B7280"),
-        hovertemplate=[
-            f"<b>{g}</b><br>{prior_label}: {v:,}<extra></extra>"
-            for g, v in zip(all_groups, prior_vals)
-        ],
-    ))
+    # Prior bars (furthest back first, progressively lighter)
+    gray_alphas = [0.45, 0.30, 0.18]
+    for idx in range(len(prior_data) - 1, -1, -1):
+        plabel, pcounts = prior_data[idx]
+        pvals = [int(pcounts.get(g, 0)) for g in all_groups]
+        alpha = gray_alphas[idx] if idx < len(gray_alphas) else 0.15
+        fig.add_trace(go.Bar(
+            x=pvals, y=all_groups, orientation="h",
+            marker_color=f"rgba(156, 163, 175, {alpha})",
+            name=plabel,
+            text=[f"{v:,}" for v in pvals],
+            textposition="outside" if outside else "inside",
+            insidetextanchor="end" if not outside else None,
+            textangle=0,
+            textfont=dict(size=11 if outside else 12,
+                          color="#374151" if outside else "#6B7280"),
+            hovertemplate=[
+                f"<b>{g}</b><br>{plabel}: {v:,}<extra></extra>"
+                for g, v in zip(all_groups, pvals)
+            ],
+        ))
 
     # Current bars (front, colored per group)
     bar_colors = [cmap.get(g, CHART_COLORWAY[0]) for g in all_groups]
@@ -1971,38 +2800,49 @@ def _build_ref_comparison_bars(dff_curr, dff_prior, start, end, prior_start, pri
         marker_color=bar_colors,
         name=curr_label,
         text=[f"{v:,}" for v in curr_vals],
-        textposition="inside", insidetextanchor="end", textangle=0,
-        textfont=dict(size=12, color="white"),
+        textposition="outside" if outside else "inside",
+        insidetextanchor="end" if not outside else None,
+        textangle=0,
+        textfont=dict(size=11 if outside else 12,
+                      color="#374151" if outside else "white"),
         hovertemplate=[
             f"<b>{g}</b><br>{curr_label}: {v:,}<extra></extra>"
             for g, v in zip(all_groups, curr_vals)
         ],
     ))
 
-    # Delta annotations
-    max_val = max(max(curr_vals, default=0), max(prior_vals, default=0))
-    annot_x = max_val * 1.05 if max_val > 0 else 1
-
+    # Delta annotations: compare current vs most recent prior (skip if no priors)
     annotations = []
-    for i, g in enumerate(all_groups):
-        c, p = curr_vals[i], prior_vals[i]
-        if p > 0:
-            pct = (c - p) / p * 100
-            if pct > 0:
-                txt, color = f"▲ {pct:.0f}%", "#10B981"
-            elif pct < 0:
-                txt, color = f"▼ {abs(pct):.0f}%", "#EF4444"
+    if prior_data:
+        first_prior_vals = [int(first_prior.get(g, 0)) for g in all_groups]
+        all_vals = curr_vals + first_prior_vals
+        for _, pc in prior_data:
+            all_vals += [int(pc.get(g, 0)) for g in all_groups]
+        max_val = max(all_vals) if all_vals else 0
+        annot_x = max_val * 1.05 if max_val > 0 else 1
+
+        for i, g in enumerate(all_groups):
+            c, p = curr_vals[i], first_prior_vals[i]
+            if p > 0:
+                pct = (c - p) / p * 100
+                if pct > 0:
+                    txt, color = f"▲ {pct:.0f}%", "#10B981"
+                elif pct < 0:
+                    txt, color = f"▼ {abs(pct):.0f}%", "#EF4444"
+                else:
+                    txt, color = "—", "#9CA3AF"
+            elif c > 0:
+                txt, color = "● new", "#3B82F6"
             else:
-                txt, color = "—", "#9CA3AF"
-        elif c > 0:
-            txt, color = "● new", "#3B82F6"
-        else:
-            continue
-        annotations.append(dict(
-            x=annot_x, y=g, text=txt, showarrow=False,
-            font=dict(size=12, color=color, family=FONT_FAMILY),
-            xanchor="left", yanchor="middle",
-        ))
+                continue
+            annotations.append(dict(
+                x=annot_x, y=g, text=txt, showarrow=False,
+                font=dict(size=12, color=color, family=FONT_FAMILY),
+                xanchor="left", yanchor="middle",
+            ))
+    else:
+        max_val = max(curr_vals) if curr_vals else 0
+        annot_x = max_val * 1.05 if max_val > 0 else 1
 
     apply_default_layout(fig, barmode="group")
     fig.update_layout(
@@ -2027,73 +2867,115 @@ def _build_ref_comparison_bars(dff_curr, dff_prior, start, end, prior_start, pri
 
 
 def _build_detail_table(df):
-    """AG Grid detail table."""
+    """Return (rowData, columnDefs) for the accordion AG Grid detail table."""
     if df.empty:
-        return dmc.Text("No referral data to display.", c="#9CA3AF", ta="center", py="xl")
+        return [], []
 
     df = df.copy()
 
-    # Format dates
-    for col in ["Created", "First Appt"]:
-        if col in df.columns:
-            df[col] = df[col].dt.strftime("%m/%d/%Y")
+    # Mapped diagnosis category
+    df["Dx Category"] = df.apply(
+        lambda r: _categorise_diagnosis(
+            r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("MRN")
+        ),
+        axis=1,
+    )
 
-    # Select display columns
+    # Full address: "Street, City, ST Zip"
+    addr_parts = ["Referring Provider Address", "Referring Provider City",
+                   "Referring Provider State", "Referring Provider Zip Code"]
+    if any(c in df.columns for c in addr_parts):
+        street = df.get("Referring Provider Address", pd.Series("", index=df.index)).fillna("")
+        city = df.get("Referring Provider City", pd.Series("", index=df.index)).fillna("")
+        state = df.get("Referring Provider State", pd.Series("", index=df.index)).fillna("")
+        zipcode = df.get("Referring Provider Zip Code", pd.Series("", index=df.index)).fillna("").astype(str)
+        city_st_zip = (city.str.strip() + ", " + state.str.strip() + " " + zipcode.str.strip()).str.strip(", ")
+        df["Address"] = (street.str.strip() + ", " + city_st_zip).str.strip(", ")
+        df.loc[df["Address"].str.strip() == "", "Address"] = pd.NA
+
+    # Simplify "Referred to Department" → Lacey / Centralia / Aberdeen
+    if "Referred to Department" in df.columns:
+        df["Referred to Department"] = df["Referred to Department"].apply(_map_to_our_dept)
+
+    # Date columns → ISO (YYYY-MM-DD) for proper sorting; valueFormatter handles display
+    date_cols = ["Created", "First Appt", "Authorized On", "CVBookedDate"]
+    for col in date_cols:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], errors="coerce").dt.strftime("%Y-%m-%d")
+
+    # Column mapping: source → display name (order = display order)
     display_cols = {
         "Created": "Created",
         "Patient Name": "Patient",
-        "Status": "Status",
+        "MRN": "MRN",
+        "Payer": "Payor",
         "Referred by Provider": "Referring Provider",
+        "DoctorInstitution": "Institution",
         "Referred by Department": "Referring Dept",
-        "Diagnoses": "Diagnosis",
+        "Address": "Address",
+        "Referred to Department": "Referred to Site",
+        "Dx Category": "Dx Category",
+        "Diagnoses": "Raw Diagnosis",
+        "Rfl Prim Dx": "Primary Dx",
+        "Authorized On": "Authorized",
+        "CVBookedDate": "Scheduled",
         "First Appt": "First Appt",
+        "Days to Assign": "Days to Assign",
+        "Days to Auth": "Days to Auth",
+        "Auth to Appt": "Auth to Appt",
         "Days to First Appt": "Days to Appt",
-        "Appt Attached": "Appt?",
+        "CVDaysBookedToAppt": "Booked to Appt",
         "CVMatch": "Visit Status",
     }
     available = {k: v for k, v in display_cols.items() if k in df.columns}
     table_df = df[list(available.keys())].rename(columns=available)
+    table_df["_row_idx"] = table_df.index  # preserve original index for grid filter
     table_df = table_df.sort_values("Created", ascending=False, na_position="last")
     table_df = sanitize_for_grid(table_df)
 
-    column_defs = []
-    widths = {
-        "Created": 110, "Patient": 180, "Status": 120,
-        "Referring Provider": 200, "Referring Dept": 220,
-        "Diagnosis": 250, "First Appt": 110,
-        "Days to Appt": 100, "Appt?": 70, "Visit Status": 110,
+    # Column definitions with explicit widths
+    col_widths = {
+        "Created": 120,
+        "Patient": 160,
+        "MRN": 90,
+        "Payor": 140,
+        "Referring Provider": 200,
+        "Institution": 180,
+        "Referring Dept": 180,
+        "Address": 250,
+        "Referred to Site": 130,
+        "Dx Category": 130,
+        "Raw Diagnosis": 200,
+        "Primary Dx": 160,
+        "Authorized": 120,
+        "Scheduled": 120,
+        "First Appt": 120,
+        "Days to Assign": 120,
+        "Days to Auth": 120,
+        "Auth to Appt": 120,
+        "Days to Appt": 120,
+        "Booked to Appt": 125,
+        "Visit Status": 120,
     }
+    date_display_cols = {"Created", "First Appt", "Authorized", "Scheduled"}
+    date_formatter = {
+        "function": "params.value ? new Date(params.value + 'T00:00:00').toLocaleDateString('en-US', {month: '2-digit', day: '2-digit', year: 'numeric'}) : '\u2013'"
+    }
+
+    column_defs = []
     for col in table_df.columns:
+        if col == "_row_idx":
+            continue
         col_def = {"field": col, "headerName": col, **DEFAULT_COLUMN_DEFS}
-        if col in widths:
-            col_def["width"] = widths[col]
-        if col == "Diagnosis":
-            col_def["flex"] = 1
-            col_def["minWidth"] = 200
+        if col in col_widths:
+            col_def["width"] = col_widths[col]
+        if col in date_display_cols:
+            col_def["valueFormatter"] = date_formatter
+        if col == "Created":
+            col_def["sort"] = "desc"
         column_defs.append(col_def)
 
-    return dmc.Paper(
-        children=[
-            dmc.Group(
-                justify="space-between", mb="sm",
-                children=[
-                    dmc.Text("Referral Detail", size="sm", fw=500, c="#6B7280"),
-                    dmc.Text(f"{len(table_df):,} records", size="xs", c="#9CA3AF"),
-                ],
-            ),
-            dag.AgGrid(
-                id=f"{PAGE_ID}-detail-grid",
-                rowData=table_df.to_dict("records"),
-                columnDefs=column_defs,
-                defaultColDef=DEFAULT_COLUMN_DEFS,
-                columnSize="autoSize",
-                dashGridOptions={**DEFAULT_GRID_OPTIONS, "paginationPageSize": 25},
-                style=DEFAULT_GRID_STYLE,
-                className=DEFAULT_GRID_CLASS,
-            ),
-        ],
-        p="sm", radius="md", shadow="xs", withBorder=True,
-    )
+    return table_df.to_dict("records"), column_defs
 
 
 # ---------------------------------------------------------------------------
@@ -2276,7 +3158,7 @@ def _compute_referral_flow_details(df, cap_0=_CAP_CREATED_TO_SCHEDULED, cap_1=_C
         temp = pd.DataFrame({"_days": days_series, "_ref": ref_dates}).dropna()
         temp = temp[(temp["_days"] >= 0) & (temp["_days"] <= cap)]
         trend_by_agg = {}
-        for agg_key in ("W", "M"):
+        for agg_key in ("W", "M", "Y"):
             temp["_period"] = temp["_ref"].dt.to_period(agg_key).dt.to_timestamp()
             gmed = temp.groupby("_period")["_days"].median()
             gmean = temp.groupby("_period")["_days"].mean()
@@ -2336,10 +3218,44 @@ def _compute_referral_flow_details(df, cap_0=_CAP_CREATED_TO_SCHEDULED, cap_1=_C
         cap=cap_total,
     )
 
+    # --- Conversion rate trend data ---
+    # For each period: % of referrals created that reached each stage
+    conv_by_agg = {}
+    for agg_key in ("W", "M", "Y"):
+        created_periods = df["Created"].dt.to_period(agg_key).dt.to_timestamp()
+        grp = df.groupby(created_periods)
+        period_created = grp.size()
+        period_scheduled = grp.apply(
+            lambda g: ((g["Appt Attached"] == "Yes") if "Appt Attached" in g.columns
+                       else pd.Series(False, index=g.index)).sum(),
+            include_groups=False,
+        )
+        period_completed = grp.apply(
+            lambda g: (g["CVMatch"].isin(["Confirmed", "Rescheduled"]) if "CVMatch" in g.columns
+                       else pd.Series(False, index=g.index)).sum(),
+            include_groups=False,
+        )
+        all_periods = sorted(period_created.index)
+        conv_by_agg[agg_key] = {
+            "dates": [d.isoformat() for d in all_periods],
+            "created": period_created.reindex(all_periods, fill_value=0).tolist(),
+            "scheduled": period_scheduled.reindex(all_periods, fill_value=0).tolist(),
+            "completed": period_completed.reindex(all_periods, fill_value=0).tolist(),
+            "schedPct": [
+                round(period_scheduled.get(d, 0) / period_created.get(d, 1) * 100, 1)
+                for d in all_periods
+            ],
+            "completePct": [
+                round(period_completed.get(d, 0) / period_created.get(d, 1) * 100, 1)
+                for d in all_periods
+            ],
+        }
+
     return {
         "transitions": transitions,
         "total": total,
         "aggFunc": "median",
+        "convByAgg": conv_by_agg,
     }
 
 
@@ -2486,6 +3402,14 @@ def _cross_validate_with_cv(df):
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _apply_grid_row_filter(dff, grid_rows):
+    """Filter dff to only rows matching the grid's visible row indices."""
+    if grid_rows is None or dff is None or dff.empty:
+        return dff
+    idx_set = set(int(i) for i in grid_rows)
+    return dff.loc[dff.index.isin(idx_set)].reset_index(drop=True)
+
+
 def _trend(curr, prior, invert=False):
     """Return (pct_text, direction, prior_value) for trend display."""
     if prior is None or prior == 0:
@@ -2509,41 +3433,40 @@ def _prior_range(start, end):
     Output(f"{PAGE_ID}-kpi-row", "children"),
     Output(f"{PAGE_ID}-store-flow-gantt", "data"),
     Output(f"{PAGE_ID}-store-flow-details", "data"),
-    Output(f"{PAGE_ID}-chart-providers", "figure"),
-    Output(f"{PAGE_ID}-chart-departments", "figure"),
-    Output(f"{PAGE_ID}-chart-trend", "figure"),
-    Output(f"{PAGE_ID}-chart-ridge", "figure"),
-    Output(f"{PAGE_ID}-chart-conv-dept", "figure"),
-    Output(f"{PAGE_ID}-chart-new-referrers", "figure"),
-    Output(f"{PAGE_ID}-table-container", "children"),
+    Output(f"{PAGE_ID}-detail-grid", "rowData"),
+    Output(f"{PAGE_ID}-detail-grid", "columnDefs"),
     Output(f"{PAGE_ID}-chart-dim-trend-store", "data"),
-    Output(f"{PAGE_ID}-chart-dim-comparison", "figure"),
+    Output(f"{PAGE_ID}-store-dim-compare-figs", "data"),
     Output(f"{PAGE_ID}-filter-specialty", "data"),
+    Output(f"{PAGE_ID}-dim-compare-period", "data"),
+    Output(f"{PAGE_ID}-dim-compare-period", "value"),
+    Output(f"{PAGE_ID}-dim-compare-settings-prior-periods", "max"),
+    Output(f"{PAGE_ID}-dim-compare-settings-prior-periods", "marks"),
+    Output(f"{PAGE_ID}-store-kpi-sparklines", "data"),
+    Output(f"{PAGE_ID}-store-map-geo", "data"),
     # Inputs
     Input(f"{PAGE_ID}-interval", "n_intervals"),
     Input(f"{PAGE_ID}-filter-daterange", "start_date"),
     Input(f"{PAGE_ID}-filter-daterange", "end_date"),
     Input(f"{PAGE_ID}-filter-department", "value"),
     Input(f"{PAGE_ID}-filter-specialty", "value"),
-    Input(f"{PAGE_ID}-filter-diagnosis", "value"),
+    Input(f"{PAGE_ID}-diag-store", "data"),
+    Input(f"{PAGE_ID}-diag-mode", "data"),
+    Input(f"{PAGE_ID}-diag-subcategory", "value"),
     Input(f"{PAGE_ID}-outlier-enabled", "data"),
     Input(f"{PAGE_ID}-outlier-cap-0", "value"),
     Input(f"{PAGE_ID}-outlier-cap-1", "value"),
+    Input(f"{PAGE_ID}-pipeline-window", "value"),
     Input(f"{PAGE_ID}-dim-toggle", "value"),
     Input(f"{PAGE_ID}-dim-compare-period", "value"),
+    Input(f"{PAGE_ID}-table-filter-rows", "data"),
     running=[
         (Output(f"{PAGE_ID}-chart-dim-trend-loading", "visible"), True, False),
-        (Output(f"{PAGE_ID}-chart-providers-loading", "visible"), True, False),
-        (Output(f"{PAGE_ID}-chart-departments-loading", "visible"), True, False),
-        (Output(f"{PAGE_ID}-chart-trend-loading", "visible"), True, False),
-        (Output(f"{PAGE_ID}-chart-ridge-loading", "visible"), True, False),
-        (Output(f"{PAGE_ID}-chart-conv-dept-loading", "visible"), True, False),
-        (Output(f"{PAGE_ID}-chart-new-referrers-loading", "visible"), True, False),
     ],
 )
 def update_referrals(_n, start_date, end_date, departments, specialty_filter,
-                     diagnosis_filter, outlier_enabled, cap_0, cap_1,
-                     dim_toggle, dim_compare_period):
+                     diag_cats, diag_mode, diag_subs, outlier_enabled, cap_0, cap_1,
+                     pipeline_window, dim_toggle, dim_compare_period, grid_rows):
     """Master callback: KPIs + all charts."""
     from data.loader import load_referrals, load_referring
 
@@ -2560,8 +3483,9 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
     empty_dim = empty_figure("No data for selected filters")
     empty_dim.update_layout(height=_DIM_RIDGE_HEIGHT)
     no_spec = []
-    empty_out = (empty_kpis, None, None, empty, empty, empty, empty, empty, empty,
-                 dmc.Text("No data", c="#9CA3AF"), None, empty_dim, no_spec)
+    no_ctrl = (dash.no_update, dash.no_update, dash.no_update, dash.no_update)
+    empty_out = (empty_kpis, None, None,
+                 [], [], None, {}, no_spec) + no_ctrl + ({}, None)
 
     try:
         df = load_referrals()
@@ -2596,22 +3520,25 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
     if specialty_filter and "DeptSpecialty" in df.columns:
         df = df[df["DeptSpecialty"] == specialty_filter]
 
-    # --- Diagnosis filter ---
-    if diagnosis_filter:
+    # --- Diagnosis filter (accordion: categories + optional subcategories) ---
+    if diag_cats:
         df["_diag_filt"] = df.apply(
             lambda r: _categorise_diagnosis(
                 r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("MRN")
             ),
             axis=1,
         )
-        df = df[df["_diag_filt"] == diagnosis_filter]
+        cat_set = set(diag_cats)
+        if diag_subs:
+            cat_set.update(diag_subs)
+        df = df[df["_diag_filt"].isin(cat_set)]
         df = df.drop(columns=["_diag_filt"])
 
     if df.empty:
         return empty_out
 
     # Keep the full filtered set for charts that need all data
-    all_data = df.copy()
+    all_data = df.reset_index(drop=True)
 
     # --- KPI Calculations ---
     total = len(df)
@@ -2626,18 +3553,23 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
         median_days = _total_days.median()
     else:
         median_days = df["Days to First Appt"].median()
-    # True pending = same logic as Gantt flow: not yet completed, waiting
+    # True pending = not yet completed, waiting — capped to pipeline window
+    # to exclude stale referrals that were never closed/denied but are
+    # effectively abandoned.
+    _pw = pipeline_window or 90
     _today = pd.Timestamp.now().normalize()
+    _pending_cutoff = _today - pd.Timedelta(days=_pw)
+    _recent = df["Created"] >= _pending_cutoff
     _cv_matched = df["CVMatch"].isin(["Confirmed", "Rescheduled", "Canceled", "No Show"]) if "CVMatch" in df.columns else pd.Series(False, index=df.index)
     _has_future = (df["First Appt"].notna() & (df["First Appt"] >= _today)) if "First Appt" in df.columns else pd.Series(False, index=df.index)
     _appt_att = (df["Appt Attached"] == "Yes") if "Appt Attached" in df.columns else pd.Series(False, index=df.index)
     _scheduled = _cv_matched | _has_future | _appt_att
     _completed = df["CVMatch"].isin(["Confirmed", "Rescheduled"]) if "CVMatch" in df.columns else pd.Series(False, index=df.index)
     _is_terminal = df["Status"].isin(["Closed", "Denied", "Canceled"])
-    # Pending off Created (not scheduled, not terminal)
-    _p0 = (~_scheduled & ~_is_terminal).sum()
-    # Pending off Scheduled (scheduled but not completed, future appt or appt without CV)
-    _p1 = (_scheduled & ~_completed & (_has_future | (_appt_att & ~_cv_matched))).sum()
+    # Pending off Created (not scheduled, not terminal, within pipeline window)
+    _p0 = (_recent & ~_scheduled & ~_is_terminal).sum()
+    # Pending off Scheduled (has a future appointment but not yet completed)
+    _p1 = (_has_future & ~_completed).sum()
     pending = int(_p0 + _p1)
     unique_mds = df["Referred by Provider"].dropna().nunique()
     denied_canceled = len(df[df["Status"].isin(["Denied", "Canceled"])])
@@ -2683,7 +3615,15 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
         if len(sp) > 1 and sp.index[-1].month == pd.Timestamp.now().month:
             sp.drop(sp.index[-1], inplace=True, errors="ignore")
 
-    sp_labels = list(sp_total.index)
+    sp_labels = [d.strftime("%Y-%m-%d") for d in sp_total.index]
+
+    # Build sparkline store data for clientside smoothing
+    sparkline_store = {
+        "total": {"labels": sp_labels, "values": sp_total.tolist(), "color": PRIMARY},
+        "conv": {"labels": sp_labels, "values": sp_conv.tolist(), "color": SEMANTIC_COLORS["success"]},
+        "lead": {"labels": sp_labels, "values": [v if pd.notna(v) else 0 for v in sp_lead.tolist()], "color": CHART_COLORWAY[1]},
+        "mds": {"labels": sp_labels, "values": sp_mds.tolist(), "color": CHART_COLORWAY[5]},
+    }
 
     # Build KPIs
     t1, d1, p1 = _trend(total, prior_total)
@@ -2691,8 +3631,7 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
         "Total Referrals", f"{total:,}",
         trend_text=f"{t1} vs prior ({p1:,.0f})" if t1 else None,
         trend_direction=d1, accent_color=PRIMARY,
-        sparkline_past=sp_total.tolist(),
-        sparkline_past_labels=sp_labels,
+        sparkline_id=f"{PAGE_ID}-spark-total",
     )
 
     t2, d2, p2 = _trend(conv_rate, prior_conv)
@@ -2700,8 +3639,7 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
         "Conversion Rate", f"{conv_rate:.1f}%",
         trend_text=f"{t2} vs prior ({p2:.1f}%)" if t2 else None,
         trend_direction=d2, accent_color=SEMANTIC_COLORS["success"],
-        sparkline_past=sp_conv.tolist(),
-        sparkline_past_labels=sp_labels,
+        sparkline_id=f"{PAGE_ID}-spark-conv",
     )
 
     t3, d3, p3 = _trend(median_days, prior_median, invert=True)
@@ -2709,12 +3647,11 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
         "Median Days to Appt", f"{median_days:.0f}" if pd.notna(median_days) else "N/A",
         trend_text=f"{t3} vs prior ({p3:.0f}d)" if t3 else None,
         trend_direction=d3, accent_color=CHART_COLORWAY[1],
-        sparkline_past=sp_lead.tolist(),
-        sparkline_past_labels=sp_labels,
+        sparkline_id=f"{PAGE_ID}-spark-lead",
     )
 
     kpi_pending = kpi_card(
-        "Pending Pipeline", f"{pending:,}",
+        f"Pending Pipeline ({_pw}d)", f"{pending:,}",
         trend_text=f"{pending / total * 100:.0f}% of total" if total else None,
         accent_color=SEMANTIC_COLORS["warning"],
         sparkline_id=" ",
@@ -2725,24 +3662,36 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
         "Unique Referring MDs", f"{unique_mds:,}",
         trend_text=f"{t5} vs prior ({p5:,.0f})" if t5 else None,
         trend_direction=d5, accent_color=CHART_COLORWAY[5],
-        sparkline_past=sp_mds.tolist(),
-        sparkline_past_labels=sp_labels,
+        sparkline_id=f"{PAGE_ID}-spark-mds",
     )
 
     kpis = [kpi_total, kpi_conv, kpi_lead, kpi_pending, kpi_mds]
+
+    # --- Table (built from all_data before grid row filter) ---
+    triggered_by_grid = (
+        dash.callback_context.triggered
+        and len(dash.callback_context.triggered) == 1
+        and dash.callback_context.triggered[0]["prop_id"] == f"{PAGE_ID}-table-filter-rows.data"
+    )
+    if triggered_by_grid:
+        table_rows = dash.no_update
+        table_cols = dash.no_update
+    else:
+        table_rows, table_cols = _build_detail_table(all_data)
+
+    # Apply grid row filter — KPIs, sparklines, and charts use the subset
+    all_data = _apply_grid_row_filter(all_data, grid_rows)
 
     # --- Flow Gantt ---
     flow_data = _compute_referral_flow_data(all_data, cap_0=cap_0, cap_1=cap_1)
     flow_details = _compute_referral_flow_details(all_data, cap_0=cap_0, cap_1=cap_1)
 
-    # --- Charts ---
-    fig_providers = _build_top_providers(all_data)
-    fig_departments = _build_top_departments(all_data)
-    fig_trend = _build_volume_trend(all_data)
-    fig_ridge = _build_ridge_plot(all_data)
-    fig_conv_dept = _build_conv_by_dept(all_data)
-    fig_new = _build_new_referrer_trend(all_data)
-    table = _build_detail_table(all_data)
+    # --- Map geo data (may block on geocoding — don't let it break the page) ---
+    try:
+        geo_df = _prepare_referral_geo_data(all_data)
+        geo_store = geo_df.to_dict("records") if not geo_df.empty else None
+    except Exception:
+        geo_store = None
 
     # --- Dimension trend + comparison ---
     dimension = dim_toggle or "diagnosis"
@@ -2750,62 +3699,321 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
 
     dim_trend_store = _prepare_ref_trend_store(dim_df, dimension) if not dim_df.empty else None
 
-    # Comparison: current vs prior period
+    # Comparison: current vs N prior periods
     compare_type = dim_compare_period or "calendar"
     if start_date and end_date:
         dim_start = pd.Timestamp(start_date)
         dim_end = pd.Timestamp(end_date)
-        if compare_type == "calendar":
-            try:
-                dim_prior_start = dim_start - pd.DateOffset(years=1)
-                dim_prior_end = dim_end - pd.DateOffset(years=1)
-            except Exception:
-                span = dim_end - dim_start
-                dim_prior_end = dim_start - pd.Timedelta(days=1)
-                dim_prior_start = dim_prior_end - span
-        else:
-            span = dim_end - dim_start
-            dim_prior_end = dim_start - pd.Timedelta(days=1)
-            dim_prior_start = dim_prior_end - span
     else:
         dim_start = all_data["Created"].min()
         dim_end = all_data["Created"].max()
-        span = dim_end - dim_start
-        dim_prior_end = dim_start - pd.Timedelta(days=1)
-        dim_prior_start = dim_prior_end - span
 
-    # Build prior-period dimension-grouped data from unfiltered referrals
+    period_days = (dim_end - dim_start).days
+    cal_disabled = period_days > 365
+    if cal_disabled and compare_type == "calendar":
+        compare_type = "rolling"
+
+    # Probe up to 3 prior periods to discover availability
+    _MAX_PROBE = 3
+    all_prior_windows = []
     try:
-        prior_raw = load_referrals()
-        prior_raw = prior_raw[
-            (prior_raw["Created"] >= dim_prior_start) &
-            (prior_raw["Created"] <= dim_prior_end)
-        ]
-        if departments and "Referred by Department" in prior_raw.columns:
-            p_dept = prior_raw["Referred by Department"].apply(_map_to_our_dept)
-            prior_raw = prior_raw[p_dept.isin(departments) | p_dept.isna()]
-        if specialty_filter and "DeptSpecialty" in prior_raw.columns:
-            prior_raw = prior_raw[prior_raw["DeptSpecialty"] == specialty_filter]
-        if diagnosis_filter:
-            prior_raw["_diag_filt"] = prior_raw.apply(
+        prior_all = load_referrals()
+        data_min = prior_all["Created"].min() if not prior_all.empty else dim_start
+        # Apply same filters as current data
+        if departments and "Referred by Department" in prior_all.columns:
+            p_dept = prior_all["Referred by Department"].apply(_map_to_our_dept)
+            prior_all = prior_all[p_dept.isin(departments) | p_dept.isna()]
+        if specialty_filter and "DeptSpecialty" in prior_all.columns:
+            prior_all = prior_all[prior_all["DeptSpecialty"] == specialty_filter]
+        if diag_cats:
+            prior_all["_diag_filt"] = prior_all.apply(
                 lambda r: _categorise_diagnosis(
                     r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("MRN")
                 ),
                 axis=1,
             )
-            prior_raw = prior_raw[prior_raw["_diag_filt"] == diagnosis_filter]
-            prior_raw = prior_raw.drop(columns=["_diag_filt"])
-        dim_prior_df = _assign_dimension_group(prior_raw, dimension)
+            _cat_set = set(diag_cats)
+            if diag_subs:
+                _cat_set.update(diag_subs)
+            prior_all = prior_all[prior_all["_diag_filt"].isin(_cat_set)]
+            prior_all = prior_all.drop(columns=["_diag_filt"])
+
+        for i in range(1, _MAX_PROBE + 1):
+            if compare_type == "calendar":
+                try:
+                    ps = dim_start - pd.DateOffset(years=i)
+                    pe = dim_end - pd.DateOffset(years=i)
+                except Exception:
+                    break
+            else:
+                shift = pd.Timedelta(days=period_days * i)
+                ps = dim_start - shift
+                pe = dim_end - shift
+            if pe < data_min:
+                break
+            pw = prior_all[
+                (prior_all["Created"] >= ps) & (prior_all["Created"] <= pe)
+            ]
+            pw = _assign_dimension_group(pw, dimension)
+            all_prior_windows.append((pw, ps, pe))
     except Exception:
-        dim_prior_df = pd.DataFrame()
+        pass
 
-    fig_dim_comparison = _build_ref_comparison_bars(
-        dim_df, dim_prior_df, dim_start, dim_end, dim_prior_start, dim_prior_end,
+    avail_priors = max(len(all_prior_windows), 1)
+
+    # Control outputs: calendar disable + slider cap
+    pt_data = [
+        {"value": "calendar", "label": "Calendar", "disabled": cal_disabled},
+        {"value": "rolling", "label": "Rolling"},
+    ]
+    pt_value = "rolling" if cal_disabled and compare_type == "calendar" else dash.no_update
+    slider_max = avail_priors
+    slider_marks = [{"value": i, "label": str(i)} for i in range(0, slider_max + 1)]
+
+    # Pre-build comparison figures for each prior period count (clientside picks)
+    compare_figs = {}
+    # 0 = current only, no comparison
+    compare_figs["0"] = _build_ref_comparison_bars(
+        dim_df, [], dim_start, dim_end,
     ) if not dim_df.empty else empty_dim
+    for n_prior in range(1, avail_priors + 1):
+        pw = all_prior_windows[:n_prior]
+        fig_c = _build_ref_comparison_bars(
+            dim_df, pw, dim_start, dim_end,
+        ) if not dim_df.empty else empty_dim
+        compare_figs[str(n_prior)] = fig_c
 
-    return (kpis, flow_data, flow_details, fig_providers,
-            fig_departments, fig_trend, fig_ridge, fig_conv_dept, fig_new, table,
-            dim_trend_store, fig_dim_comparison, spec_options)
+    return (kpis, flow_data, flow_details, table_rows, table_cols,
+            dim_trend_store, compare_figs, spec_options,
+            pt_data, pt_value, slider_max, slider_marks, sparkline_store, geo_store)
+
+
+# ---------------------------------------------------------------------------
+# Referral Volume Store Callback
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output(f"{PAGE_ID}-store-vol", "data"),
+    Input(f"{PAGE_ID}-interval", "n_intervals"),
+    Input(f"{PAGE_ID}-filter-daterange", "start_date"),
+    Input(f"{PAGE_ID}-filter-daterange", "end_date"),
+    Input(f"{PAGE_ID}-filter-department", "value"),
+    Input(f"{PAGE_ID}-filter-specialty", "value"),
+    Input(f"{PAGE_ID}-diag-store", "data"),
+    Input(f"{PAGE_ID}-diag-mode", "data"),
+    Input(f"{PAGE_ID}-diag-subcategory", "value"),
+    Input(f"{PAGE_ID}-vol-slice", "value"),
+    Input(f"{PAGE_ID}-vol-agg", "value"),
+    running=[(Output(f"{PAGE_ID}-chart-vol-loading", "visible"), True, False)],
+)
+def _update_ref_volume(_n, start_date, end_date, departments, specialty_filter,
+                       diag_cats, diag_mode, diag_subs, vol_slice, vol_agg):
+    """Build census-format store data for referral volume trend."""
+    from data.loader import load_referrals
+    try:
+        df = load_referrals()
+        df = _cross_validate_with_cv(df)
+    except Exception:
+        return None
+    if df.empty:
+        return None
+
+    # Apply filters
+    if start_date and end_date:
+        s = pd.Timestamp(start_date)
+        e = pd.Timestamp(end_date) + timedelta(days=1)
+        df = df[(df["Created"] >= s) & (df["Created"] < e)]
+    if departments and "Referred by Department" in df.columns:
+        our_dept = df["Referred by Department"].apply(_map_to_our_dept)
+        df = df[our_dept.isin(departments) | our_dept.isna()]
+    if specialty_filter and "DeptSpecialty" in df.columns:
+        df = df[df["DeptSpecialty"] == specialty_filter]
+    if diag_cats:
+        df["_diag_filt"] = df.apply(
+            lambda r: _categorise_diagnosis(
+                r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("MRN")
+            ), axis=1,
+        )
+        cat_set = set(diag_cats)
+        if diag_subs:
+            cat_set.update(diag_subs)
+        df = df[df["_diag_filt"].isin(cat_set)]
+
+    if df.empty:
+        return None
+
+    return _prepare_ref_volume_data(df, vol_agg, vol_slice or "")
+
+
+# ---------------------------------------------------------------------------
+# Cumulative Referral Volume Store Callback
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output(f"{PAGE_ID}-store-cumulative", "data"),
+    Output(f"{PAGE_ID}-cumulative-settings-prior-periods", "max"),
+    Output(f"{PAGE_ID}-cumulative-settings-prior-periods", "marks"),
+    Input(f"{PAGE_ID}-interval", "n_intervals"),
+    Input(f"{PAGE_ID}-filter-daterange", "start_date"),
+    Input(f"{PAGE_ID}-filter-daterange", "end_date"),
+    Input(f"{PAGE_ID}-filter-department", "value"),
+    Input(f"{PAGE_ID}-filter-specialty", "value"),
+    Input(f"{PAGE_ID}-diag-store", "data"),
+    Input(f"{PAGE_ID}-diag-mode", "data"),
+    Input(f"{PAGE_ID}-diag-subcategory", "value"),
+    Input(f"{PAGE_ID}-cumulative-mode", "value"),
+    Input(f"{PAGE_ID}-cumulative-period-type", "value"),
+    Input(f"{PAGE_ID}-cumulative-slice", "value"),
+    running=[(Output(f"{PAGE_ID}-chart-cumulative-loading", "visible"), True, False)],
+)
+def _update_ref_cumulative(_n, start_date, end_date, departments, specialty_filter,
+                           diag_cats, diag_mode, diag_subs,
+                           cum_mode, period_type, slice_by):
+    """Build cumulative referral volume store data."""
+    from data.loader import load_referrals
+
+    _default_marks = [{"value": i, "label": str(i)} for i in range(0, 6)]
+
+    try:
+        df_all = load_referrals()
+        df_all = _cross_validate_with_cv(df_all)
+    except Exception:
+        return None, 5, _default_marks
+    if df_all.empty or "Created" not in df_all.columns:
+        return None, 5, _default_marks
+
+    # Apply non-date filters to full dataset (for prior periods)
+    if departments and "Referred by Department" in df_all.columns:
+        our_dept = df_all["Referred by Department"].apply(_map_to_our_dept)
+        df_all = df_all[our_dept.isin(departments) | our_dept.isna()]
+    if specialty_filter and "DeptSpecialty" in df_all.columns:
+        df_all = df_all[df_all["DeptSpecialty"] == specialty_filter]
+    if diag_cats:
+        df_all["_diag_filt"] = df_all.apply(
+            lambda r: _categorise_diagnosis(
+                r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("MRN")
+            ), axis=1,
+        )
+        cat_set = set(diag_cats)
+        if diag_subs:
+            cat_set.update(diag_subs)
+        df_all = df_all[df_all["_diag_filt"].isin(cat_set)]
+
+    if df_all.empty:
+        return None, 5, _default_marks
+
+    # Date range
+    if start_date and end_date:
+        start = pd.Timestamp(start_date)
+        end = pd.Timestamp(end_date)
+    else:
+        start = df_all["Created"].min()
+        end = df_all["Created"].max()
+
+    # Use the standard _prepare_ref_cumulative_data pattern
+    return _prepare_ref_cumulative_data(
+        df_all, start, end, cum_mode or "prior",
+        period_type or "calendar", slice_by or "department",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Clientside callbacks for new census charts
+# ---------------------------------------------------------------------------
+
+_CENSUS_WITH_STACK = """function(rawData, smoothPct, chartType, stackVal, currentFig) {
+    return window.dash_clientside.census.smoothChartWithType(rawData, smoothPct, chartType, currentFig, stackVal);
+}"""
+_CUMULATIVE_WITH_STACK = """function(rawData, smoothPct, chartType, stackVal, maxPrior, currentFig) {
+    return window.dash_clientside.cumulative.renderCumulative(rawData, smoothPct, chartType, currentFig, stackVal, maxPrior);
+}"""
+
+clientside_callback(
+    _CENSUS_WITH_STACK,
+    Output(f"{PAGE_ID}-chart-vol", "figure"),
+    Input(f"{PAGE_ID}-store-vol", "data"),
+    Input(f"{PAGE_ID}-vol-settings-smooth", "value"),
+    Input(f"{PAGE_ID}-vol-settings-type", "value"),
+    Input(f"{PAGE_ID}-vol-settings-stack", "value"),
+    State(f"{PAGE_ID}-chart-vol", "figure"),
+)
+
+clientside_callback(
+    _CUMULATIVE_WITH_STACK,
+    Output(f"{PAGE_ID}-chart-cumulative", "figure"),
+    Input(f"{PAGE_ID}-store-cumulative", "data"),
+    Input(f"{PAGE_ID}-cumulative-settings-smooth", "value"),
+    Input(f"{PAGE_ID}-cumulative-settings-type", "value"),
+    Input(f"{PAGE_ID}-cumulative-settings-stack", "value"),
+    Input(f"{PAGE_ID}-cumulative-settings-prior-periods", "value"),
+    State(f"{PAGE_ID}-chart-cumulative", "figure"),
+)
+
+# Toggle cumulative slice selector and stack visibility based on mode
+clientside_callback(
+    """function(mode, sliceVal, chartType) {
+        var showSlice = mode === "slice" ? {} : {"display": "none"};
+        var showStack = (mode === "slice" && chartType !== "line") || (mode === "prior" && chartType === "bar")
+            ? {} : {"display": "none"};
+        var newSlice = window.dash_clientside.no_update;
+        return [showSlice, showStack, newSlice];
+    }""",
+    Output(f"{PAGE_ID}-cumulative-slice", "style"),
+    Output(f"{PAGE_ID}-cumulative-settings-stack-wrap", "style"),
+    Output(f"{PAGE_ID}-cumulative-slice", "value"),
+    Input(f"{PAGE_ID}-cumulative-mode", "value"),
+    Input(f"{PAGE_ID}-cumulative-slice", "value"),
+    Input(f"{PAGE_ID}-cumulative-settings-type", "value"),
+)
+
+
+# ---------------------------------------------------------------------------
+# Referral Map callback (reads from store + inline controls)
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output(f"{PAGE_ID}-map", "figure"),
+    Input(f"{PAGE_ID}-store-map-geo", "data"),
+    Input(f"{PAGE_ID}-map-dept", "value"),
+    Input(f"{PAGE_ID}-filter-department", "value"),
+    Input(f"{PAGE_ID}-map-flow-toggle", "checked"),
+    Input(f"{PAGE_ID}-map-region", "value"),
+    Input(f"{PAGE_ID}-map-min-slider", "value"),
+    Input(f"{PAGE_ID}-map-reset", "n_clicks"),
+)
+def _update_referral_map(geo_data, selected_dept, departments, show_flows,
+                         region, min_referrals, _reset):
+    # Re-fit map when any view control changes; preserve zoom only on
+    # data refresh (interval) and flow line toggle (same bounds).
+    _preserve = {f"{PAGE_ID}-store-map-geo", f"{PAGE_ID}-map-flow-toggle"}
+    triggered = dash.callback_context.triggered_id
+    if triggered and triggered not in _preserve:
+        ui_rev = f"{region}-{selected_dept}-{departments}-{min_referrals}-{_reset}"
+    else:
+        ui_rev = "referrals-map"
+
+    if not geo_data:
+        fig = go.Figure()
+        fig.update_layout(
+            mapbox=dict(
+                accesstoken=MAPBOX_TOKEN, style=MAPBOX_STYLE,
+                center=MAPBOX_CENTER, zoom=MAPBOX_ZOOM,
+            ),
+            height=700, margin=dict(l=0, r=0, t=0, b=0),
+            paper_bgcolor="#FFFFFF", showlegend=False,
+            uirevision=ui_rev,
+        )
+        return fig
+
+    geo_df = pd.DataFrame(geo_data)
+    return _build_referral_map(
+        geo_df, departments,
+        selected_dept=selected_dept,
+        show_flows=show_flows,
+        region=region,
+        min_referrals=min_referrals or 3,
+        uirevision=ui_rev,
+    )
 
 
 # ==========================================================================

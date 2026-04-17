@@ -387,7 +387,8 @@ def _build_comparison_bars(dff_curr, prior_windows, start, end, sort_order="volu
 
     # Sort for horizontal bar (Plotly renders last item at top)
     first_prior = prior_data[0][1] if prior_data else pd.Series(dtype=int)
-    all_groups = _sort_groups(list(all_group_set), sort_order, curr_counts, first_prior)
+    effective_sort = sort_order if prior_data else "volume"
+    all_groups = _sort_groups(list(all_group_set), effective_sort, curr_counts, first_prior)
 
     # Dynamic color map
     cmap = {}
@@ -450,46 +451,50 @@ def _build_comparison_bars(dff_curr, prior_windows, start, end, sort_order="volu
         ],
     ))
 
-    # Delta annotations: compare current vs most recent prior
-    first_prior_counts = prior_data[0][1] if prior_data else pd.Series(dtype=int)
-    first_prior_vals = [int(first_prior_counts.get(g, 0)) for g in all_groups]
-    all_vals = curr_vals + first_prior_vals
-    for _, pc in prior_data:
-        all_vals += [int(pc.get(g, 0)) for g in all_groups]
-    max_val = max(all_vals) if all_vals else 0
-    annot_x = max_val * 1.05 if max_val > 0 else 1
-
+    # Delta annotations: compare current vs most recent prior (skip if no priors)
     annotations = []
-    for i, g in enumerate(all_groups):
-        c, p = curr_vals[i], first_prior_vals[i]
-        if p > 0:
-            pct = (c - p) / p * 100
-            if pct > 0:
-                txt = f"▲ {pct:.0f}%"
-                color = "#10B981"
-            elif pct < 0:
-                txt = f"▼ {abs(pct):.0f}%"
-                color = "#EF4444"
-            else:
-                txt = "—"
-                color = "#9CA3AF"
-        elif c > 0:
-            txt = "● new"
-            color = "#3B82F6"
-        else:
-            txt = ""
-            color = "#9CA3AF"
+    if prior_data:
+        first_prior_counts = prior_data[0][1] if prior_data else pd.Series(dtype=int)
+        first_prior_vals = [int(first_prior_counts.get(g, 0)) for g in all_groups]
+        all_vals = curr_vals + first_prior_vals
+        for _, pc in prior_data:
+            all_vals += [int(pc.get(g, 0)) for g in all_groups]
+        max_val = max(all_vals) if all_vals else 0
+        annot_x = max_val * 1.05 if max_val > 0 else 1
 
-        if txt:
-            annotations.append(dict(
-                x=annot_x,
-                y=g,
-                text=txt,
-                showarrow=False,
-                font=dict(size=13, color=color, family=FONT_FAMILY),
-                xanchor="left",
-                yanchor="middle",
-            ))
+        for i, g in enumerate(all_groups):
+            c, p = curr_vals[i], first_prior_vals[i]
+            if p > 0:
+                pct = (c - p) / p * 100
+                if pct > 0:
+                    txt = f"▲ {pct:.0f}%"
+                    color = "#10B981"
+                elif pct < 0:
+                    txt = f"▼ {abs(pct):.0f}%"
+                    color = "#EF4444"
+                else:
+                    txt = "—"
+                    color = "#9CA3AF"
+            elif c > 0:
+                txt = "● new"
+                color = "#3B82F6"
+            else:
+                txt = ""
+                color = "#9CA3AF"
+
+            if txt:
+                annotations.append(dict(
+                    x=annot_x,
+                    y=g,
+                    text=txt,
+                    showarrow=False,
+                    font=dict(size=13, color=color, family=FONT_FAMILY),
+                    xanchor="left",
+                    yanchor="middle",
+                ))
+    else:
+        max_val = max(curr_vals) if curr_vals else 0
+        annot_x = max_val * 1.05 if max_val > 0 else 1
 
     apply_default_layout(fig, barmode="group")
     fig.update_layout(
@@ -831,7 +836,8 @@ layout = dmc.Stack(
                                         gap="xs",
                                         children=[
                                             dmc.Text("Current vs Prior Period", size="sm", fw=500,
-                                                     c=NEUTRAL["text_secondary"]),
+                                                     c=NEUTRAL["text_secondary"],
+                                                     id="diag-compare-title"),
                                             dmc.Group(
                                                 gap=4, align="center",
                                                 children=[
@@ -1367,6 +1373,7 @@ def _populate_physician_chips(_n, slider_val, departments, diag_filter,
     Output("diag-compare-period-type", "value", allow_duplicate=True),
     Output("diag-compare-settings-prior-periods", "max"),
     Output("diag-compare-settings-prior-periods", "marks"),
+    Output("diag-compare-title", "children"),
     Input("diag-interval", "n_intervals"),
     Input("diag-date-slider", "value"),
     Input("diag-filter-department", "value"),
@@ -1387,11 +1394,11 @@ def update_diagnosis(_n, slider_val, departments, physicians, diag_filter,
                      diag_mode, mode, period_type, max_prior, sort_order):
     from data.loader import load_diagnosis
 
-    max_prior = max_prior or 1
+    max_prior = max_prior if max_prior is not None else 1
     empty_bar = empty_figure("No data for selected filters")
     empty_bar.update_layout(height=_RIDGE_HEIGHT)
     # Default control outputs (no change)
-    no_ctrl = (dash.no_update,) * 4
+    no_ctrl = (dash.no_update,) * 5
 
     try:
         diag_df = load_diagnosis()
@@ -1493,7 +1500,7 @@ def update_diagnosis(_n, slider_val, departments, physicians, diag_filter,
     ]
     pt_value = "rolling" if cal_disabled and period_type == "calendar" else dash.no_update
     slider_max = avail_priors
-    slider_marks = [{"value": i, "label": str(i)} for i in range(1, slider_max + 1)]
+    slider_marks = [{"value": i, "label": str(i)} for i in range(0, slider_max + 1)]
 
     # Build outputs
     sort_order = sort_order or "volume"
@@ -1503,7 +1510,8 @@ def update_diagnosis(_n, slider_val, departments, physicians, diag_filter,
                                       sort_order=sort_order)
     dist_store = _prepare_diag_dist_data(dff, date_col)
 
-    return (trend_store, fig_bars, dist_store, pt_data, pt_value, slider_max, slider_marks)
+    compare_title = "Current Period" if max_prior == 0 else "Current vs Prior Period"
+    return (trend_store, fig_bars, dist_store, pt_data, pt_value, slider_max, slider_marks, compare_title)
 
 
 # --- Unreviewed-only toggle for Diagnosis manager grid ---

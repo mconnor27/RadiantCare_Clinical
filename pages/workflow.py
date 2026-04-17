@@ -763,7 +763,7 @@ layout = dmc.Stack(
                         dmc.Group(
                             justify="space-between", mb="sm",
                             children=[
-                                dmc.Text("Pipeline Trend (monthly median)", id="wf-trend-title", size="sm", fw=500, c="#6B7280"),
+                                dmc.Text("Duration Trend", id="wf-trend-title", size="sm", fw=500, c="#6B7280"),
                                 dmc.Group(gap="sm", children=[
                                     dmc.Tooltip(
                                         dmc.Switch(

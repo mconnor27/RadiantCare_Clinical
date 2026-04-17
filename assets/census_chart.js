@@ -806,7 +806,7 @@ window.dash_clientside.census = {
                 if (fig && fig !== window.dash_clientside.no_update) {
                     var el = document.getElementById(chartElId);
                     var plotEl = el && el.querySelector('.js-plotly-plot');
-                    if (plotEl) Plotly.react(plotEl, fig.data, fig.layout);
+                    if (plotEl) Plotly.react(plotEl, fig.data, fig.layout, {displayModeBar: false});
                 }
             }, 0); });
         }, 150);
@@ -1143,7 +1143,7 @@ window.dash_clientside.efficiency = {
                 if (fig && fig !== window.dash_clientside.no_update) {
                     var el = document.getElementById(chartElId);
                     var plotEl = el && el.querySelector('.js-plotly-plot');
-                    if (plotEl) Plotly.react(plotEl, fig.data, fig.layout);
+                    if (plotEl) Plotly.react(plotEl, fig.data, fig.layout, {displayModeBar: false});
                 }
             }, 0); });
         }, 150);

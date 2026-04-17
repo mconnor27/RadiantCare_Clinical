@@ -102,6 +102,11 @@ CREATE TABLE IF NOT EXISTS payor_mappings (
     reviewed            INTEGER NOT NULL DEFAULT 0,
     updated_at          TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS revenue_adj_settings (
+    key   TEXT PRIMARY KEY,
+    value REAL NOT NULL
+);
 """
 
 
@@ -937,3 +942,42 @@ def get_standardized_payor_counts() -> list[dict]:
             "GROUP BY standardized_payor ORDER BY standardized_payor"
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Revenue adjustment settings (category multipliers + realization factor)
+# ---------------------------------------------------------------------------
+
+_REVENUE_ADJ_DEFAULTS = {
+    "enabled": 0,
+    "realization": 90,
+    "mult_Medicare": 100,
+    "mult_Medicaid": 90,
+    "mult_Private": 130,
+    "mult_Military/VA": 100,
+    "mult_Workers Comp": 125,
+    "mult_Tribal/IHS": 100,
+    "mult_Self Pay": 50,
+    "mult_Other/Unknown": 100,
+}
+
+
+def get_revenue_adj_settings() -> dict[str, float]:
+    """Return all revenue adjustment settings, filling in defaults."""
+    result = dict(_REVENUE_ADJ_DEFAULTS)
+    with _connect() as conn:
+        rows = conn.execute("SELECT key, value FROM revenue_adj_settings").fetchall()
+    for r in rows:
+        result[r["key"]] = r["value"]
+    return result
+
+
+def save_revenue_adj_settings(settings: dict[str, float]) -> None:
+    """Upsert revenue adjustment settings."""
+    with _connect() as conn:
+        for k, v in settings.items():
+            conn.execute(
+                "INSERT INTO revenue_adj_settings (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (k, float(v)),
+            )
