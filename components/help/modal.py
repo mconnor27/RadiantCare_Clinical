@@ -69,6 +69,12 @@ def _render_page_content(path: str):
 
     mod = _load_content(entry["ui_module"])
 
+    # Dynamic tabs builder (used by Data Sources) — re-runs per render so
+    # filesystem state is live. Takes precedence over static TABS / UI_CONTENT.
+    build_tabs_fn = getattr(mod, "build_tabs", None)
+    if callable(build_tabs_fn):
+        return _render_custom_tabs(build_tabs_fn())
+
     # Custom tabs (used by Overview) take precedence over the standard layout.
     custom_tabs = getattr(mod, "TABS", None)
     if custom_tabs:
@@ -181,7 +187,7 @@ def create_help_modal():
                     # --- Sidebar -----------------------------------------
                     html.Div(
                         style={
-                            "width": "190px",
+                            "width": "230px",
                             "flexShrink": 0,
                             "borderRight": f"1px solid {NEUTRAL['border']}",
                             "backgroundColor": "#FAFAFB",
@@ -203,7 +209,13 @@ def create_help_modal():
                             "overflowY": "auto",
                             "padding": "16px 20px",
                         },
-                        children=html.Div(id="help-modal-content"),
+                        children=dcc.Loading(
+                            id="help-modal-loading",
+                            type="circle",
+                            color=PRIMARY,
+                            delay_show=150,
+                            children=html.Div(id="help-modal-content"),
+                        ),
                     ),
                 ],
             ),

@@ -124,26 +124,26 @@ def sql_tab(script_keys: list[str], intro: str | None = None) -> dmc.Stack:
 # ---------------------------------------------------------------------------
 
 def help_tabs(sql_content, ui_content) -> dmc.Tabs:
-    """Standard two-tab layout: SQL Data Source | UI & Data Processing."""
+    """Standard two-tab layout: UI & Data Processing (default) | SQL Data Source."""
     return dmc.Tabs(
-        value="sql",
+        value="ui",
         children=[
             dmc.TabsList(
                 children=[
-                    dmc.TabsTab(
-                        "SQL Data Source",
-                        value="sql",
-                        leftSection=DashIconify(icon="tabler:database", width=16),
-                    ),
                     dmc.TabsTab(
                         "UI & Data Processing",
                         value="ui",
                         leftSection=DashIconify(icon="tabler:layout-dashboard", width=16),
                     ),
+                    dmc.TabsTab(
+                        "SQL Data Source",
+                        value="sql",
+                        leftSection=DashIconify(icon="tabler:database", width=16),
+                    ),
                 ],
             ),
-            dmc.TabsPanel(value="sql", pt="md", children=sql_content),
             dmc.TabsPanel(value="ui", pt="md", children=ui_content),
+            dmc.TabsPanel(value="sql", pt="md", children=sql_content),
         ],
     )
 

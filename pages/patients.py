@@ -299,7 +299,7 @@ layout = dmc.Stack(
                 dcc.Graph(
                     id="patients-map",
                     config={"displayModeBar": False, "scrollZoom": True},
-                    style={"height": "500px"},
+                    style={"height": "700px"},
                 ),
             ],
             p="sm", radius="md", shadow="xs", withBorder=True,
@@ -897,8 +897,8 @@ def _build_patient_map(
         )
         lat_span = max(max(all_lat) - min(all_lat), 0.1) * 1.2
         lon_span = max(max(all_lon) - min(all_lon), 0.1) * 1.2
-        z_lat = 8.4 - math.log2(lat_span)
-        z_lon = 9.4 - math.log2(lon_span)
+        z_lat = 8.4 - math.log2(lat_span)   # calibrated for ~700px height
+        z_lon = 10.0 - math.log2(lon_span)  # calibrated for full-width card (~2000px+)
         zoom = max(2.0, min(12.0, min(z_lat, z_lon)))
     else:
         center = MAPBOX_CENTER

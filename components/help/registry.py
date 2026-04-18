@@ -19,6 +19,17 @@ from __future__ import annotations
 HELP_PAGES = [
     # OVERVIEW ---------------------------------------------------------------
     {
+        # Synthetic path — not a real Dash route. Data Sources renders a
+        # live filesystem scan of every CSV / XLSX feeding the dashboard
+        # (see data.py build_tabs).
+        "path": "/_data",
+        "label": "Data Sources",
+        "icon": "tabler:database-search",
+        "section": "OVERVIEW",
+        "sql": list(),            # unused — data.py defines build_tabs()
+        "ui_module": "data",
+    },
+    {
         # Synthetic path — not a real Dash route. The Overview entry documents
         # the project as a whole and uses its own Back-End / Front-End tabs
         # (see overview.py TABS).
@@ -78,7 +89,7 @@ HELP_PAGES = [
         "icon": "tabler:stethoscope",
         "section": "CLINICAL",
         "sql": ["Clinic_Visits"],
-        "ui_module": "placeholder",
+        "ui_module": "clinic_visits",
     },
     {
         "path": "/simulations",
@@ -86,7 +97,7 @@ HELP_PAGES = [
         "icon": "tabler:scan",
         "section": "CLINICAL",
         "sql": ["Simulations"],
-        "ui_module": "placeholder",
+        "ui_module": "simulations",
     },
     {
         "path": "/tasks",
@@ -94,7 +105,7 @@ HELP_PAGES = [
         "icon": "tabler:checklist",
         "section": "CLINICAL",
         "sql": ["Tasks"],
-        "ui_module": "placeholder",
+        "ui_module": "tasks",
     },
     {
         "path": "/otvs",
@@ -102,7 +113,7 @@ HELP_PAGES = [
         "icon": "tabler:clipboard-check",
         "section": "CLINICAL",
         "sql": ["Weekly_Visits"],
-        "ui_module": "placeholder",
+        "ui_module": "otvs",
     },
     {
         "path": "/diagnosis",
@@ -116,7 +127,7 @@ HELP_PAGES = [
             "and courses/plans (treatment-time). Each stream applies its own "
             "diagnosis-resolution cascade — see the scripts below for details."
         ),
-        "ui_module": "placeholder",
+        "ui_module": "diagnosis",
     },
 
     # TREATMENT --------------------------------------------------------------
@@ -131,7 +142,7 @@ HELP_PAGES = [
             "volume charts and Treatment_Detail for drill-through tables and "
             "per-patient / per-physician breakdowns."
         ),
-        "ui_module": "placeholder",
+        "ui_module": "treatment",
     },
     {
         "path": "/courses",
@@ -139,7 +150,7 @@ HELP_PAGES = [
         "icon": "tabler:package",
         "section": "TREATMENT",
         "sql": ["Courses"],
-        "ui_module": "placeholder",
+        "ui_module": "courses",
     },
     {
         "path": "/plans",
@@ -147,7 +158,7 @@ HELP_PAGES = [
         "icon": "tabler:ruler-measure",
         "section": "TREATMENT",
         "sql": ["Plans"],
-        "ui_module": "placeholder",
+        "ui_module": "plans",
     },
     {
         "path": "/procedures",
@@ -160,7 +171,7 @@ HELP_PAGES = [
             "appointment detail, with Workflow_Events supplying the consult→procedure "
             "timeline context where available."
         ),
-        "ui_module": "placeholder",
+        "ui_module": "procedures",
     },
 
     # RESOURCES --------------------------------------------------------------
@@ -176,7 +187,7 @@ HELP_PAGES = [
             "(discrete MACHINE-termination events), and Downtime_FieldTicks (the "
             "per-beam / per-image tick data that backs the drill-down Gantt)."
         ),
-        "ui_module": "placeholder",
+        "ui_module": "machines",
     },
     {
         "path": "/machine-statistics",
@@ -184,7 +195,7 @@ HELP_PAGES = [
         "icon": "tabler:chart-dots-3",
         "section": "RESOURCES",
         "sql": ["Machine_Statistics"],
-        "ui_module": "placeholder",
+        "ui_module": "machine_statistics",
     },
     {
         "path": "/physicians",
@@ -197,7 +208,7 @@ HELP_PAGES = [
             "data derived from multiple activity reports rather than a dedicated "
             "SQL script."
         ),
-        "ui_module": "placeholder",
+        "ui_module": "physicians",
     },
 
     # FINANCIAL --------------------------------------------------------------
@@ -220,7 +231,7 @@ HELP_PAGES = [
             "the difference is purely front-end — CPT Audit pivots on code to "
             "surface coding-completeness and mismatch issues."
         ),
-        "ui_module": "placeholder",
+        "ui_module": "cpt_audit",
     },
     {
         "path": "/otv-audit",
@@ -233,7 +244,7 @@ HELP_PAGES = [
             "management visits) and the pre-computed OTV Audit file from "
             "Complete/ that tags each course as OK / Too Few / Extra Visit(s)."
         ),
-        "ui_module": "placeholder",
+        "ui_module": "otv_audit",
     },
 
     # POPULATION -------------------------------------------------------------
@@ -248,7 +259,7 @@ HELP_PAGES = [
             "Treatment_Detail and joins to the Referrals extract for address and "
             "zip-code-level mapping."
         ),
-        "ui_module": "placeholder",
+        "ui_module": "patients",
     },
     {
         "path": "/referrals",
@@ -263,7 +274,7 @@ HELP_PAGES = [
             "dedicated SQL script — the referring-physician cascade is handled "
             "in the loader."
         ),
-        "ui_module": "placeholder",
+        "ui_module": "referrals",
     },
 ]
 

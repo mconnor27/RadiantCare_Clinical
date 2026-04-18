@@ -26,6 +26,33 @@ from ..sql_summaries import (
 from ..renderers import body, bullets, section, subheading
 
 
+def _screenshot(src: str, caption: str | None = None,
+                max_width: str | int = "100%") -> dmc.Paper:
+    """Inline screenshot used in the Overview's common-UI-components section."""
+    children: list = [
+        dmc.Image(
+            src=src,
+            fit="contain",
+            radius="sm",
+            style={
+                "width": "100%",
+                "maxWidth": max_width,
+                "display": "block",
+                "margin": "0 auto",
+            },
+        ),
+    ]
+    if caption:
+        children.append(
+            dmc.Text(caption, size="xs", c="dimmed", ta="center", mt=4)
+        )
+    return dmc.Paper(
+        p="xs", radius="md", withBorder=True, mt="xs", mb="sm",
+        style={"backgroundColor": "#FAFAFB"},
+        children=children,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Front-end stats (updated when significant refactors land)
 # ---------------------------------------------------------------------------
@@ -118,23 +145,37 @@ BACKEND_SQL_CONTENT = dmc.Stack(
                 striped=True, highlightOnHover=True,
                 withTableBorder=True, withColumnBorders=True,
                 fz="xs", mt="xs",
-                data={
-                    "head": ["Script", "Total", "SQL", "Comments / Blank"],
-                    "body": [
-                        [f"{key}.sql", f"{s['total']:,}", f"{s['sql']:,}",
-                         f"{s['total'] - s['sql']:,}"]
-                        for key, s in sorted(
-                            SQL_SCRIPTS.items(),
-                            key=lambda kv: kv[1]["total"],
-                            reverse=True,
-                        )
-                    ] + [[
-                        dmc.Text("Total", fw=700, size="xs"),
-                        dmc.Text(f"{TOTAL_FILE_LINES:,}", fw=700, size="xs"),
-                        dmc.Text(f"{TOTAL_SQL_LINES:,}", fw=700, size="xs"),
-                        dmc.Text(f"{TOTAL_COMMENT_LINES:,}", fw=700, size="xs"),
-                    ]],
-                },
+                children=[
+                    dmc.TableThead(
+                        dmc.TableTr([
+                            dmc.TableTh("Script"),
+                            dmc.TableTh("Total"),
+                            dmc.TableTh("SQL"),
+                            dmc.TableTh("Comments / Blank"),
+                        ]),
+                    ),
+                    dmc.TableTbody([
+                        *[
+                            dmc.TableTr([
+                                dmc.TableTd(f"{key}.sql"),
+                                dmc.TableTd(f"{s['total']:,}"),
+                                dmc.TableTd(f"{s['sql']:,}"),
+                                dmc.TableTd(f"{s['total'] - s['sql']:,}"),
+                            ])
+                            for key, s in sorted(
+                                SQL_SCRIPTS.items(),
+                                key=lambda kv: kv[1]["total"],
+                                reverse=True,
+                            )
+                        ],
+                        dmc.TableTr([
+                            dmc.TableTd(dmc.Text("Total", fw=700, size="xs")),
+                            dmc.TableTd(dmc.Text(f"{TOTAL_FILE_LINES:,}", fw=700, size="xs")),
+                            dmc.TableTd(dmc.Text(f"{TOTAL_SQL_LINES:,}", fw=700, size="xs")),
+                            dmc.TableTd(dmc.Text(f"{TOTAL_COMMENT_LINES:,}", fw=700, size="xs")),
+                        ]),
+                    ]),
+                ],
             ),
 
             subheading("Cross-cutting design patterns refined across scripts"),
@@ -451,6 +492,13 @@ FRONTEND_CONTENT = dmc.Stack(
                 "custom children to replace or augment the defaults. Appears "
                 "on 17 of the 20 pages.",
             ),
+            _screenshot(
+                "/assets/topbar.png",
+                "Example — Workflow page filter bar with department chips, "
+                "physician and diagnosis selects, category / type pickers, "
+                "inpatient and weekend switches, outlier caps, smoothing "
+                "slider, and the custom date-range preset + slider.",
+            ),
 
             subheading("Census trend plot"),
             body(
@@ -471,6 +519,14 @@ FRONTEND_CONTENT = dmc.Stack(
                 "Appears on Home (as a metric card), Operations, Clinic "
                 "Visits, Treatment, Courses, Billing, Diagnosis, and "
                 "Machine Statistics.",
+            ),
+            _screenshot(
+                "/assets/trend.png",
+                "Example — Clinic Visits weekly trend, stacked by category "
+                "(Consult / Follow-Up / Re-eval / Virtual). Segmented "
+                "controls switch series grouping (Total / Category / Type / "
+                "MD / Site / Dx) and aggregation (Weekly / Monthly / Yearly).",
+                max_width="620px",
             ),
 
             subheading("Census cumulative plot"),
@@ -494,6 +550,14 @@ FRONTEND_CONTENT = dmc.Stack(
                 "Appears on Home metric cards (Consultations, Bookings, "
                 "Simulations, Treatment Starts) when the \"current year\" "
                 "preset is active.",
+            ),
+            _screenshot(
+                "/assets/cumulative.png",
+                "Example — Cumulative Visit Volume with the current year "
+                "(2026) in brand purple overlaid on three prior years in a "
+                "fading gray spectrum. Prior Periods / Slice By and Calendar "
+                "/ Rolling toggles switch the comparison basis.",
+                max_width="620px",
             ),
 
             subheading("Flow-Gantt (pipeline visualization)"),
@@ -522,6 +586,14 @@ FRONTEND_CONTENT = dmc.Stack(
             body(
                 "Appears on the Workflow page. The same component is planned "
                 "for other pipeline-style views (Tasks, Procedures).",
+            ),
+            _screenshot(
+                "/assets/flowgantt.png",
+                "Example — Workflow Flow-Gantt. Band widths between nodes "
+                "are proportional to the median inter-stage days; per-stage "
+                "counts and % of chains that reached the stage are shown "
+                "inside each node. Pending and Cancelled tails on the right "
+                "carry the chains that haven't completed (or never will).",
             ),
         ),
 
@@ -570,15 +642,15 @@ FRONTEND_CONTENT = dmc.Stack(
 
 TABS = [
     {
-        "value": "backend",
-        "label": "Back-End SQL",
-        "icon": "tabler:database",
-        "content": BACKEND_SQL_CONTENT,
-    },
-    {
         "value": "frontend",
         "label": "Front-End App",
         "icon": "tabler:device-desktop",
         "content": FRONTEND_CONTENT,
+    },
+    {
+        "value": "backend",
+        "label": "Back-End SQL",
+        "icon": "tabler:database",
+        "content": BACKEND_SQL_CONTENT,
     },
 ]

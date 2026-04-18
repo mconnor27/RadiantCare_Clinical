@@ -915,7 +915,4 @@ div:has(> .wf-filter-clear-btn[style*="inline-flex"]) > .mantine-Button-root .ma
 #patients-kpi-row .mantine-Paper-root .mantine-Stack-root {
     gap: 0;
 }
-#patients-kpi-row .mantine-Paper-root .mantine-Stack-root > :last-child {
-    display: none;  /* hide empty trend line */
-}
 

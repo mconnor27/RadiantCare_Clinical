@@ -1,6 +1,6 @@
 dash~=3.4.0
 plotly~=6.5
-dash-mantine-components~=0.15
+dash-mantine-components~=2.6
 dash-iconify~=0.1
 dash-ag-grid~=33.3
 pandas~=2.2

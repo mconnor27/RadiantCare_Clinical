@@ -1,7 +1,8 @@
 /**
  * Shared date-slider helpers for filter bars.
- * Each page registers with its own BASE year so slider indices
- * map to the correct calendar dates.
+ * A single MutationObserver rewrites slider thumb labels from raw
+ * month-index integers to "Mon YYYY" strings, for all registered
+ * date-slider IDs.
  *
  * Usage (Python):
  *   ClientsideFunction(namespace="cvDateSlider", function_name="syncSlider")
@@ -15,35 +16,76 @@
     var MO = ["Jan","Feb","Mar","Apr","May","Jun",
               "Jul","Aug","Sep","Oct","Nov","Dec"];
 
-    /**
-     * Build a {syncSlider} namespace for the given base year and
-     * attach a MutationObserver to rewrite slider thumb labels.
-     */
-    function registerSlider(namespaceName, baseYear, sliderIds) {
+    // Registry: sliderId -> formatter fn(n) -> string
+    var formatters = {};
 
-        function fmtIdx(idx) {
+    function makeIdxFormatter(baseYear) {
+        return function(idx) {
             return MO[idx % 12] + " " + (baseYear + Math.floor(idx / 12));
+        };
+    }
+
+    // Use a WeakMap to remember which slider each label belongs to
+    // so we don't re-walk the DOM on every tick.
+    var labelToFmt = new WeakMap();
+
+    function findFormatterForLabel(lbl) {
+        // Walk up ancestors looking for an element whose id is registered.
+        var node = lbl.parentElement;
+        while (node && node !== document.body) {
+            if (node.id && formatters[node.id]) return formatters[node.id];
+            node = node.parentElement;
         }
+        return null;
+    }
 
-        // Rewrite slider thumb labels from raw index → "Mon YYYY"
-        var observer = new MutationObserver(function() {
-            sliderIds.forEach(function(sid) {
-                var el = document.getElementById(sid);
-                if (!el) return;
-                el.querySelectorAll(".mantine-Slider-label").forEach(function(lbl) {
-                    var n = parseInt(lbl.textContent, 10);
-                    if (!isNaN(n) && n >= 0 && lbl.textContent === String(n)) {
-                        lbl.textContent = fmtIdx(n);
-                    }
-                });
-            });
-        });
-        document.addEventListener("DOMContentLoaded", function() {
-            observer.observe(document.body,
-                {childList: true, subtree: true, characterData: true});
-        });
+    // Rewrite any slider label whose parent slider id is registered.
+    // Matches .mantine-Slider-label (stable Mantine class) AND falls back
+    // to any [class*="Slider-label"] for class-name drift across versions.
+    function rewriteLabels() {
+        var labels = document.querySelectorAll(
+            '.mantine-Slider-label, [class*="Slider-label"]'
+        );
+        for (var i = 0; i < labels.length; i++) {
+            var lbl = labels[i];
+            var raw = lbl.textContent;
+            var n = parseInt(raw, 10);
+            // Only rewrite if textContent is purely an integer (otherwise
+            // it's already been rewritten, or it's a non-numeric label).
+            if (isNaN(n) || String(n) !== raw.trim()) continue;
 
-        // Register clientside callback namespace
+            var fmt = labelToFmt.get(lbl);
+            if (!fmt) {
+                fmt = findFormatterForLabel(lbl);
+                if (!fmt) continue;
+                labelToFmt.set(lbl, fmt);
+            }
+            var next = fmt(n);
+            if (next !== raw) lbl.textContent = next;
+        }
+    }
+
+    // Poll + observer combo: the observer catches most changes instantly;
+    // the 200ms poll is a safety net for missed mutations or timing races
+    // when assets load after DOMContentLoaded.
+    var observer = new MutationObserver(rewriteLabels);
+
+    function startObserver() {
+        observer.observe(document.body,
+            {childList: true, subtree: true, characterData: true});
+        rewriteLabels();
+    }
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", startObserver);
+    } else {
+        startObserver();
+    }
+    setInterval(rewriteLabels, 200);
+
+    function registerSlider(namespaceName, baseYear, sliderIds) {
+        var fmtIdx = makeIdxFormatter(baseYear);
+        sliderIds.forEach(function(sid) { formatters[sid] = fmtIdx; });
+
         window.dash_clientside = window.dash_clientside || {};
         window.dash_clientside[namespaceName] = {
             syncSlider: function(sliderVal, curStart, curEnd) {
@@ -63,7 +105,6 @@
                 var endDate = eYear + "-" + String(eMonth).padStart(2, "0") + "-"
                             + String(lastDay).padStart(2, "0");
 
-                // Cap end date at today
                 var today = new Date();
                 var todayStr = today.getFullYear() + "-"
                     + String(today.getMonth() + 1).padStart(2, "0") + "-"
@@ -87,44 +128,32 @@
     }
 
     // ── Page registrations ───────────────────────────────────────────────
-    // Clinic Visits: data goes back to 2004
-    registerSlider("cvDateSlider", 2004, ["cv-date-slider"]);
-
-    // Simulations: same BASE_YEAR as Python utils/date_slider.py
-    registerSlider("simDateSlider", 2004, ["sim-date-slider"]);
-
-    // Tasks: same BASE_YEAR as Python utils/date_slider.py
-    registerSlider("tasksDateSlider", 2004, ["tasks-date-slider"]);
-
-    // OTVs: same BASE_YEAR as Python utils/date_slider.py
-    registerSlider("otvsDateSlider", 2004, ["otvs-date-slider"]);
-
-    // Courses: same BASE_YEAR as Python utils/date_slider.py
-    registerSlider("coursesDateSlider", 2004, ["courses-date-slider"]);
-
-    // Plans: same BASE_YEAR as Python utils/date_slider.py
-    registerSlider("plansDateSlider", 2004, ["plans-date-slider"]);
-
-    // Machine Downtime: same BASE_YEAR as Python utils/date_slider.py
-    registerSlider("machinesDateSlider", 2004, ["machines-date-slider"]);
-
-    // Procedures: same BASE_YEAR as Python utils/date_slider.py
+    registerSlider("cvDateSlider",        2004, ["cv-date-slider"]);
+    registerSlider("simDateSlider",       2004, ["sim-date-slider"]);
+    registerSlider("tasksDateSlider",     2004, ["tasks-date-slider"]);
+    registerSlider("otvsDateSlider",      2004, ["otvs-date-slider"]);
+    registerSlider("coursesDateSlider",   2004, ["courses-date-slider"]);
+    registerSlider("plansDateSlider",     2004, ["plans-date-slider"]);
+    registerSlider("machinesDateSlider",  2004, ["machines-date-slider"]);
     registerSlider("proceduresDateSlider", 2004, ["proc-date-slider"]);
-
-    // Physicians: same BASE_YEAR as Python utils/date_slider.py
-    registerSlider("physDateSlider", 2004, ["phys-date-slider"]);
-    registerSlider("billingDateSlider", 2004, ["billing-date-slider"]);
-    registerSlider("cptDateSlider", 2004, ["cpt-date-slider"]);
-    registerSlider("patientsDateSlider", 2004, ["patients-date-slider"]);
-    registerSlider("diagDateSlider", 2004, ["diag-date-slider"]);
+    registerSlider("physDateSlider",      2004, ["phys-date-slider"]);
+    registerSlider("billingDateSlider",   2004, ["billing-date-slider"]);
+    registerSlider("cptDateSlider",       2004, ["cpt-date-slider"]);
+    registerSlider("patientsDateSlider",  2004, ["patients-date-slider"]);
+    registerSlider("diagDateSlider",      2004, ["diag-date-slider"]);
     registerSlider("referralsDateSlider", 2004, ["referrals-date-slider"]);
-    registerSlider("txDateSlider", 2004, ["tx-date-slider"]);
+    registerSlider("txDateSlider",        2004, ["tx-date-slider"]);
+
+    // Also rewrite workflow sliders (no clientside callback registration needed)
+    // — labels alone are handled via the shared registry.
+    ["wf-date-slider", "wf-b-date-slider"].forEach(function(sid) {
+        formatters[sid] = makeIdxFormatter(2004);
+    });
 
     // Expose factory for future pages
     window._registerDateSlider = registerSlider;
 
-    // ── Physicians after-hours slider: rewrite thumb labels ───────────
-    // Slider uses 0-48 scale (each tick = 30 min, 0 = midnight)
+    // ── Physicians after-hours slider: 0-48 scale (half-hour ticks) ───
     function fmtHalfHour(tick) {
         var totalMin = tick * 30;
         var h = Math.floor(totalMin / 60);
@@ -133,19 +162,6 @@
         var h12 = h % 12 || 12;
         return h12 + ":" + String(m).padStart(2, "0") + " " + suffix;
     }
-    var ahObserver = new MutationObserver(function() {
-        var el = document.getElementById("phys-ah-hours");
-        if (!el) return;
-        el.querySelectorAll(".mantine-Slider-label").forEach(function(lbl) {
-            var n = parseInt(lbl.textContent, 10);
-            if (!isNaN(n) && lbl.textContent === String(n)) {
-                lbl.textContent = fmtHalfHour(n);
-            }
-        });
-    });
-    document.addEventListener("DOMContentLoaded", function() {
-        ahObserver.observe(document.body,
-            {childList: true, subtree: true, characterData: true});
-    });
+    formatters["phys-ah-hours"] = fmtHalfHour;
 
 })();
