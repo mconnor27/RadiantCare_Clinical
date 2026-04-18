@@ -1843,8 +1843,7 @@ window.dash_clientside.cumulative = {
                         legend: {
                             orientation: "h", yanchor: "bottom", y: 1.02,
                             xanchor: "left", x: 0,
-                            entrywidth: 45,
-                            entrywidthmode: "pixels", tracegroupgap: 0
+                            tracegroupgap: 0
                         },
                         margin: {l: 36, r: 16, t: 28, b: 20},
                         plot_bgcolor: "white",
@@ -2069,16 +2068,11 @@ window.dash_clientside.cumulative = {
                     },
                     showlegend: true,
                     legend: {
-                        // Keep legend entries on a single horizontal row even when
-                        // the chart is narrow: smaller font + tight fixed-width
-                        // entries prevent Plotly's auto-wrap into a stacked list.
                         orientation: "h",
                         yanchor: "bottom",
                         y: 1.02,
                         xanchor: "left",
                         x: 0,
-                        entrywidth: 45,
-                        entrywidthmode: "pixels",
                         tracegroupgap: 0
                     },
                     margin: {l: 36, r: 16, t: 28, b: 20},
@@ -2193,8 +2187,7 @@ window.dash_clientside.cumulative = {
                         bargap: 0.15,
                         showlegend: slices.length > 1,
                         legend: {orientation: "h", yanchor: "bottom", y: 1.02, xanchor: "left", x: 0,
-                                 entrywidth: 45,
-                                 entrywidthmode: "pixels", tracegroupgap: 0},
+                                 tracegroupgap: 0},
                         margin: {l: 36, r: 16, t: 8, b: 20},
                         plot_bgcolor: "white", paper_bgcolor: "white",
                         font: {family: "Inter, system-ui, sans-serif", size: 12, color: "#374151"},
@@ -2309,8 +2302,7 @@ window.dash_clientside.cumulative = {
                     },
                     showlegend: true,
                     legend: {orientation: "h", yanchor: "bottom", y: 1.02, xanchor: "left", x: 0,
-                             entrywidth: 45,
-                             entrywidthmode: "pixels", tracegroupgap: 0},
+                             tracegroupgap: 0},
                     margin: {l: 36, r: 16, t: 28, b: 20},
                     plot_bgcolor: "white", paper_bgcolor: "white",
                     font: {family: "Inter, system-ui, sans-serif", size: 12, color: "#374151"},
