@@ -351,7 +351,7 @@ layout = dmc.Stack(
                             children=dmc.SegmentedControl(
                                 id="tx-vol-pct",
                                 data=[
-                                    {"value": "count", "label": "#"},
+                                    {"value": "count", "label": "Count"},
                                     {"value": "pct", "label": "%"},
                                 ],
                                 value="count", size="xs",
@@ -450,7 +450,7 @@ layout = dmc.Stack(
                         dmc.SegmentedControl(
                             id="tx-tech-pct",
                             data=[
-                                {"value": "count", "label": "#"},
+                                {"value": "count", "label": "Count"},
                                 {"value": "pct", "label": "%"},
                             ],
                             value="count", size="xs",
@@ -490,7 +490,7 @@ layout = dmc.Stack(
                         dmc.SegmentedControl(
                             id="tx-fieldtype-pct",
                             data=[
-                                {"value": "count", "label": "#"},
+                                {"value": "count", "label": "Count"},
                                 {"value": "pct", "label": "%"},
                             ],
                             value="count", size="xs",
@@ -583,7 +583,7 @@ layout = dmc.Stack(
                         dmc.SegmentedControl(
                             id="tx-igrt-pct",
                             data=[
-                                {"value": "count", "label": "#"},
+                                {"value": "count", "label": "Count"},
                                 {"value": "per_session", "label": "/ Ses"},
                                 {"value": "pct_sessions", "label": "% Ses"},
                             ],
@@ -694,7 +694,7 @@ layout = dmc.Stack(
                             children=dmc.SegmentedControl(
                                 id="tx-gating-pct",
                                 data=[
-                                    {"value": "count", "label": "#"},
+                                    {"value": "count", "label": "Count"},
                                     {"value": "pct", "label": "%"},
                                 ],
                                 value="count", size="xs",

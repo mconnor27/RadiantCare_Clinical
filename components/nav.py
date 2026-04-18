@@ -10,14 +10,12 @@ from config.settings import NAV_SECTIONS, NEUTRAL
 def _create_nav_link(page, active_path):
     """Create a single nav link."""
     is_active = page["path"] == active_path
-    text_color = "#1A1A2E" if is_active else "white"
-    icon_color = "#1A1A2E" if is_active else "white"
     return dmc.NavLink(
         label=page["label"],
         href=page["path"],
-        leftSection=DashIconify(icon=page["icon"], width=18, color=icon_color),
+        leftSection=DashIconify(icon=page["icon"], width=18, color="white"),
         active=is_active,
-        variant="filled" if is_active else "subtle",
+        variant="subtle",
         color="white",
         className="nav-link-item nav-link-active" if is_active else "nav-link-item",
         styles={
@@ -26,10 +24,9 @@ def _create_nav_link(page, active_path):
                 "marginBottom": "2px",
                 "padding": "6px 8px 6px 12px",
                 "minHeight": "unset",
-                "color": text_color,
-                "backgroundColor": "rgba(255,255,255,0.35)" if is_active else "transparent",
+                "color": "white",
             },
-            "label": {"color": text_color, "fontWeight": "600" if is_active else "400", "fontSize": "13px"},
+            "label": {"color": "white", "fontWeight": "700" if is_active else "400", "fontSize": "13px"},
         },
     )
 
