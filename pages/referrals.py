@@ -4016,17 +4016,14 @@ def _update_referral_map(geo_data, selected_dept, departments, show_flows,
         ui_rev = "referrals-map"
 
     if not geo_data:
-        fig = go.Figure()
-        fig.update_layout(
-            mapbox=dict(
-                accesstoken=MAPBOX_TOKEN, style=MAPBOX_STYLE,
-                center=MAPBOX_CENTER, zoom=MAPBOX_ZOOM,
-            ),
-            height=700, margin=dict(l=0, r=0, t=0, b=0),
-            paper_bgcolor="#FFFFFF", showlegend=False,
+        return _build_referral_map(
+            pd.DataFrame(), departments,
+            selected_dept=selected_dept,
+            show_flows=show_flows,
+            region=region,
+            min_referrals=min_referrals or 3,
             uirevision=ui_rev,
         )
-        return fig
 
     geo_df = pd.DataFrame(geo_data)
     return _build_referral_map(
