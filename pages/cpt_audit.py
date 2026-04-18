@@ -15,7 +15,7 @@ from config.settings import (
 )
 from components.filter_bar import department_chips
 from utils.charts import apply_default_layout, empty_figure
-from utils.date_slider import month_idx, idx_to_date, MAX_IDX, preset_to_slider_val
+from utils.date_slider import month_idx, idx_to_date, MAX_IDX, preset_to_slider_val, preset_to_exact_dates
 
 _DEFAULT_DATE_PRESET = "ytd"
 
@@ -77,6 +77,7 @@ layout = dmc.Stack(
                                 {"value": "3mo", "label": "Prior 3 mo"},
                                 {"value": "30d", "label": "Prior 30 days"},
                                 {"value": "ytd", "label": "Year to Date"},
+                            {"value": "current_year", "label": "Current Year"},
                                 {"value": "last_year", "label": "Last Year"},
                                 {"value": "this_month", "label": "This Month"},
                                 {"value": "last_month", "label": "Last Month"},
@@ -257,16 +258,19 @@ layout = dmc.Stack(
 # ---------------------------------------------------------------------------
 @callback(
     Output("cpt-date-slider", "value"),
+    Output("cpt-filter-daterange", "start_date", allow_duplicate=True),
+    Output("cpt-filter-daterange", "end_date", allow_duplicate=True),
     Input("cpt-filter-date-preset", "value"),
     prevent_initial_call=True,
 )
 def sync_preset_to_slider(preset):
     if not preset or preset == "custom":
-        return no_update
+        return (no_update,) * 3
     val = preset_to_slider_val(preset, MAX_IDX)
     # Clamp to CPT data range
     val[0] = max(val[0], _CPT_MIN_IDX)
-    return val
+    s, e = preset_to_exact_dates(preset)
+    return val, s, e
 
 
 @callback(

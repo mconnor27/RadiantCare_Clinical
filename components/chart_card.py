@@ -36,6 +36,8 @@ def chart_card(
     show_grouping=True,
     show_prior_periods=False,
     prior_periods_default=3,
+    show_project_toggle=False,
+    project_toggle_default=True,
     extra_settings=None,
 ):
     """Build a chart card with standardized Paper, Graph, LoadingOverlay, and settings.
@@ -88,6 +90,8 @@ def chart_card(
                 slider_label=slider_label,
                 show_prior_periods=show_prior_periods,
                 prior_periods_default=prior_periods_default,
+                show_project_toggle=show_project_toggle,
+                project_toggle_default=project_toggle_default,
                 extra_settings=extra_settings,
             )
         )

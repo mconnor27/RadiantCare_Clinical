@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 
 from config.settings import (
     DEPARTMENTS, DEPARTMENT_COLORS, CHART_COLORWAY, PRIMARY,
-    DEFAULT_LAYOUT, FONT_FAMILY, SEMANTIC_COLORS,
+    DEFAULT_LAYOUT, FONT_FAMILY, SEMANTIC_COLORS, PRIOR_PERIOD_COLORS,
 )
 from components.filter_bar import department_chips
 from components.outlier_panel import outlier_panel, register_outlier_callbacks
@@ -44,67 +44,151 @@ def _clean_spark(series, biz_days_only=True, frac=0.2):
     return _apply_loess(series, frac)
 
 
-import re
-
-# Regex patterns for consult classification (compiled once at module level)
-_FOLLOWUP_PATTERNS = re.compile(
-    r"follow[\s-]?up|re[\s-]?eval|followup|reeval|\bphone\b|\btelephone\b|f/u|review|discuss|go\s+over",
-    re.IGNORECASE
-)
-_NEWPATIENT_PATTERNS = re.compile(r"working\s+chart|bookmarked", re.IGNORECASE)
-_EXPLICIT_CONSULT_NAMES = {"consult", "consult - special request", "consult- add on"}
+_ATTENDED_EXCLUDE_STATUSES = frozenset({"Cancelled", "Cancelled - Patient No-Show", "Deleted"})
 
 
-def _is_consult(row):
-    """Classify a clinic visit row as consult (True) or follow-up (False).
+def _classify_consults(cv):
+    """Filter a clinic-visit dataframe to rows where VisitType == "Consult".
 
-    Priority-based decision tree from legacy logic:
-    1. Duration > 60 minutes → Consult
-    2. ActivityName is explicit consult type → Consult (unless note matches follow-up pattern)
-    3. Virtual Consult/Follow Up with duration < 60 → check notes, default Follow-Up
-    4. Virtual Consult/Follow Up with duration = 60 → check notes, default Consult
-    5. Any other activity type → Consult (fallback)
+    Uses the exact classifier from the clinic-visits page so both pages count
+    consults identically. Lazy import avoids circular-import issues at module
+    load; the function is cheap once imported.
     """
-    activity = str(row.get("ActivityName", "")).strip().lower()
-    duration = row.get("DurationMinutes", 0) or 0
-    notes = str(row.get("AppointmentNotes", "") or "")
+    if cv.empty or "ActivityName" not in cv.columns:
+        return cv.iloc[0:0]
+    from pages.clinic_visits import _classify_visit_type
+    return cv[cv.apply(_classify_visit_type, axis=1) == "Consult"]
 
-    # Rule 1: Long appointments are consults
-    if duration > 60:
-        return True
 
-    # Rule 2: Explicit consult activity names
-    if activity in _EXPLICIT_CONSULT_NAMES:
-        # Unless notes indicate follow-up
-        if _FOLLOWUP_PATTERNS.search(notes):
-            return False
-        return True
+def _apply_attended_filter(df):
+    """Mirror clinic_visits.py default Status="Attended" rule: drop cancelled /
+    no-show / deleted, plus any Open rows dated on/after the latest data export
+    (future-scheduled — hasn't happened yet). Keeps past-dated Opens, which are
+    consults that happened but never got their status flipped to Completed.
+    """
+    if df.empty or "Status" not in df.columns:
+        return df
+    from pages.clinic_visits import _get_cv_export_date
+    out = df[~df["Status"].isin(_ATTENDED_EXCLUDE_STATUSES)]
+    export_date = _get_cv_export_date()
+    if export_date is not None and "ScheduledDateTime" in out.columns:
+        future_open = (out["Status"] == "Open") & (out["ScheduledDateTime"].dt.normalize() >= export_date)
+        out = out[~future_open]
+    return out
 
-    # Rule 3 & 4: Virtual Consult/Follow Up — ambiguous, check duration + notes
-    if "virtual" in activity and "consult" in activity:
-        if duration < 60:
-            # Default to follow-up unless new patient indicators present
-            if _NEWPATIENT_PATTERNS.search(notes):
-                return True
-            return False
-        elif duration == 60:
-            # Default to consult unless follow-up indicators present
-            if _FOLLOWUP_PATTERNS.search(notes):
-                return False
-            return True
-        else:
-            # duration > 60 already handled above
-            return True
 
-    # Rule 5: Fallback — if "consult" in name but not matched above, treat as consult
-    if "consult" in activity:
-        return True
+# Simulation scope — match simulations.py "Initial Simulations" / "Total Simulations" KPIs.
+# "initial" = Initial + Stereotactic (aligns with sim page's Initial KPI).
+# "all"     = every sim activity except HOLD/MD-needed placeholders (aligns with
+#             sim page's Total KPI and its _SIM_TYPE_EXCLUDE set).
+_SIM_SCOPE_EXCLUDE = frozenset({"HOLD SIM TIME", "MD Needed in Sim"})
 
-    # Not a consult activity
-    return False
+
+def _filter_sims_scope(sims, scope):
+    """Apply sim-scope filter to an ActivityName column. Returns filtered df."""
+    if sims.empty or "ActivityName" not in sims.columns:
+        return sims
+    if scope == "initial":
+        return sims[
+            sims["ActivityName"].str.contains("Initial", case=False, na=False) |
+            sims["ActivityName"].str.contains("Stereotactic Simulation", case=False, na=False)
+        ]
+    # "all": blacklist placeholder activities, keep everything else.
+    return sims[~sims["ActivityName"].isin(_SIM_SCOPE_EXCLUDE)]
 
 
 dash.register_page(__name__, path="/", name="Home", order=0)
+
+
+# ---------------------------------------------------------------------------
+# Home metric charts — 4 metrics × 2 rows (trend + cumulative)
+# ---------------------------------------------------------------------------
+
+_DIM_DEPT_MD = [
+    {"value": "total", "label": "Total"},
+    {"value": "department", "label": "Dept"},
+    {"value": "physician", "label": "MD"},
+]
+_DIM_DEPT_DX = [
+    {"value": "total", "label": "Total"},
+    {"value": "department", "label": "Dept"},
+    {"value": "diagnosis", "label": "Dx"},
+]
+
+_HOME_METRICS = [
+    # (metric_id, title_base, dim_options, trend_defaults)
+    # trend_defaults: dim / agg / chart_type / stack applied to the trend card
+    # (cum card uses the same dim/agg but its own chart_type=line default).
+    ("tx",       "Treatments",   _DIM_DEPT_MD, {"dim": "department", "agg": "W", "chart_type": "area", "stack": "stacked"}),
+    ("consults", "New Consults", _DIM_DEPT_MD, {"dim": "physician",  "agg": "M", "chart_type": "bar",  "stack": "stacked"}),
+    ("sims",     "Simulations",  _DIM_DEPT_MD, {"dim": "total",      "agg": "W", "chart_type": "area", "stack": "stacked"}),
+    ("refs",     "Referrals",    _DIM_DEPT_DX, {"dim": "department", "agg": "M", "chart_type": "bar",  "stack": "stacked"}),
+]
+
+_AGG_DATA = [
+    {"value": "D", "label": "D"},
+    {"value": "W", "label": "W"},
+    {"value": "M", "label": "M"},
+]
+
+
+def _metric_card_col(metric_id, title, dim_options, is_cumulative, defaults=None):
+    """Build one chart-card GridCol for the home metric grid."""
+    defaults = defaults or {}
+    row = "cum" if is_cumulative else "trend"
+    cid = f"home-chart-{metric_id}-{row}"
+    sid = f"home-{metric_id}-{row}"
+    label = ("Cumulative " if is_cumulative else "") + title
+    chart_types = [
+        {"value": "area", "label": "Area"},
+        {"value": "line", "label": "Line"},
+        {"value": "bar",  "label": "Bar"},
+    ]
+    # Shared trend/cum: same dim + agg defaults per column. Chart type/smoothing
+    # differ — cum defaults to a LOESS-smoothed line, trend uses the per-metric
+    # trend_default chart type.
+    dim_default = defaults.get("dim") or next(
+        (o["value"] for o in dim_options if o["value"] == "department"),
+        dim_options[0]["value"],
+    )
+    agg_default = defaults.get("agg", "W")
+    if is_cumulative:
+        smooth_kwargs = dict(smooth_min=0, smooth_max=1, smooth_step=0.05, smooth_default=0.1)
+        chart_type_default = "line"
+    else:
+        smooth_kwargs = dict(smooth_min=0, smooth_max=50, smooth_step=1, smooth_default=5)
+        chart_type_default = defaults.get("chart_type", "area")
+    return dmc.GridCol(
+        span={"base": 12, "sm": 6, "md": 3},
+        children=chart_card(
+            cid, label,
+            settings_id=sid,
+            chart_types=chart_types,
+            chart_type_default=chart_type_default,
+            show_smooth=True,
+            # Cum cards are unidimensional (single "Total" slice per year) —
+            # Stacked/Grouped has nothing to group. The dispatcher forces
+            # stacked internally so per-bar total annotations still render.
+            show_grouping=not is_cumulative,
+            show_prior_periods=is_cumulative,
+            prior_periods_default=3,
+            show_project_toggle=is_cumulative,
+            project_toggle_default=True,
+            paper_height="400px",
+            extra_controls_left=[
+                dmc.SegmentedControl(
+                    id=f"{sid}-dim", data=dim_options,
+                    value=dim_default, size="xs",
+                ),
+            ],
+            extra_controls=[
+                dmc.SegmentedControl(
+                    id=f"{sid}-agg", data=_AGG_DATA, value=agg_default, size="xs",
+                ),
+            ],
+            **smooth_kwargs,
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -662,15 +746,18 @@ layout = dmc.Stack(
                                 dmc.SegmentedControl(
                                     id="home-filter-date-preset",
                                     data=[
-                                        {"value": "today", "label": "Today"},
-                                        {"value": "week", "label": "7 Days"},
-                                        {"value": "month", "label": "30 Days"},
-                                        {"value": "quarter", "label": "3 Mo"},
-                                        {"value": "12mo", "label": "12 Mo"},
-                                        {"value": "lastyear", "label": "Last Year"},
-                                        {"value": "ytd", "label": "YTD"},
+                                        {"value": "30d",          "label": "30 d"},
+                                        {"value": "3mo",          "label": "3 mo"},
+                                        {"value": "6mo",          "label": "6 mo"},
+                                        {"value": "12mo",         "label": "12 mo"},
+                                        {"value": "last_year",    "label": "Last Year"},
+                                        {"value": "ytd",          "label": "YTD"},
+                                        {"value": "current_year", "label": "Current Year"},
+                                        {"value": "this_month",   "label": "This Month"},
+                                        {"value": "last_month",   "label": "Last Month"},
+                                        {"value": "all",          "label": "All"},
                                     ],
-                                    value="ytd", size="sm",
+                                    value="current_year", size="sm",
                                 ),
                                 department_chips("home"),
                                 outlier_panel(PAGE_ID, transitions=[
@@ -709,86 +796,15 @@ layout = dmc.Stack(
             ],
         ),
 
-        # Census charts — side by side
-        dmc.Grid(
-            gutter=16,
-            children=[
-                dmc.GridCol(
-                    span={"base": 12, "md": 6},
-                    children=chart_card(
-                        "home-chart-physician",
-                        "Active Patients by Physician",
-                        settings_id="home-md",
-                        chart_types=[
-                            {"value": "area", "label": "Area"},
-                            {"value": "line", "label": "Line"},
-                            {"value": "bar", "label": "Bar"},
-                        ],
-                        smooth_max=50, smooth_default=15,
-                        extra_controls=[
-                            dmc.SegmentedControl(
-                                id="home-md-agg",
-                                data=[
-                                    {"value": "D", "label": "Daily"},
-                                    {"value": "W", "label": "Weekly"},
-                                    {"value": "M", "label": "Monthly"},
-                                ],
-                                value="D", size="xs",
-                            ),
-                            dmc.SegmentedControl(
-                                id="home-md-range",
-                                data=[
-                                    {"value": "30", "label": "30d"},
-                                    {"value": "60", "label": "60d"},
-                                    {"value": "90", "label": "90d"},
-                                    {"value": "180", "label": "6mo"},
-                                    {"value": "365", "label": "1y"},
-                                    {"value": "0", "label": "All"},
-                                ],
-                                value="90", size="xs",
-                            ),
-                        ],
-                    ),
-                ),
-                dmc.GridCol(
-                    span={"base": 12, "md": 6},
-                    children=chart_card(
-                        "home-chart-site",
-                        "Treatments by Site",
-                        settings_id="home-site",
-                        chart_types=[
-                            {"value": "area", "label": "Area"},
-                            {"value": "line", "label": "Line"},
-                            {"value": "bar", "label": "Bar"},
-                        ],
-                        smooth_max=50, smooth_default=15,
-                        extra_controls=[
-                            dmc.SegmentedControl(
-                                id="home-site-agg",
-                                data=[
-                                    {"value": "D", "label": "Daily"},
-                                    {"value": "W", "label": "Weekly"},
-                                    {"value": "M", "label": "Monthly"},
-                                ],
-                                value="D", size="xs",
-                            ),
-                            dmc.SegmentedControl(
-                                id="home-site-range",
-                                data=[
-                                    {"value": "30", "label": "30d"},
-                                    {"value": "60", "label": "60d"},
-                                    {"value": "90", "label": "90d"},
-                                    {"value": "180", "label": "6mo"},
-                                    {"value": "365", "label": "1y"},
-                                    {"value": "0", "label": "All"},
-                                ],
-                                value="90", size="xs",
-                            ),
-                        ],
-                    ),
-                ),
-            ],
-        ),
+        # Metric charts — trend row + cumulative row
+        dmc.Grid(gutter=16, children=[
+            _metric_card_col(m, title, dims, is_cumulative=False, defaults=defaults)
+            for m, title, dims, defaults in _HOME_METRICS
+        ]),
+        dmc.Grid(gutter=16, children=[
+            _metric_card_col(m, title, dims, is_cumulative=True, defaults=defaults)
+            for m, title, dims, defaults in _HOME_METRICS
+        ]),
 
         # Operating hours + Availability row
         dmc.Grid(
@@ -827,9 +843,12 @@ layout = dmc.Stack(
         # Interval for periodic refresh
         dcc.Interval(id="home-interval", interval=300_000, n_intervals=0),
 
-        # Stores for raw census data (clientside smoothing)
-        dcc.Store(id="home-store-md-census"),
-        dcc.Store(id="home-store-site-census"),
+        # Stores for raw metric data (one per card: 4 trend + 4 cumulative)
+        *[dcc.Store(id=f"home-{m}-{row}-store")
+          for m, _, _, _ in _HOME_METRICS for row in ("trend", "cum")],
+        # Shared "Prior Periods" value — any cum card's slider writes here and
+        # every cum card's render + slider reads from it, keeping the whole row in sync.
+        dcc.Store(id="home-cum-prior-store", data=3),
 
         # Store for KPI sparkline data (clientside smoothing)
         dcc.Store(id="home-store-kpi-sparklines"),
@@ -895,15 +914,17 @@ def update_kpis(_n, date_preset, departments, sims_scope,
         cap_sim = cap_sim or _CAP_SIM_LEAD
 
     PERIOD_LABELS = {
-        "today": "Today", "week": "7 Days",
-        "month": "30 Days", "quarter": "3 Mo",
-        "12mo": "12 Mo", "lastyear": "Last Year", "ytd": "YTD",
+        "12mo": "12 mo", "6mo": "6 mo", "3mo": "3 mo", "30d": "30 days",
+        "ytd": "YTD", "current_year": "Current Yr", "last_year": "Last Year",
+        "this_month": "This Month", "last_month": "Last Month",
+        "all": "All Time",
     }
     TREND_LABELS = {
-        "today": "vs yesterday", "week": "vs prior 7d",
-        "month": "vs prior 30d", "quarter": "vs prior 3 mo",
-        "12mo": "vs prior 12 mo", "lastyear": "vs prior year",
-        "ytd": "vs prior year",
+        "12mo": "vs prior 12 mo", "6mo": "vs prior 6 mo", "3mo": "vs prior 3 mo",
+        "30d": "vs prior 30 days", "ytd": "vs prior year",
+        "current_year": "vs prior year", "last_year": "vs 2 yrs ago",
+        "this_month": "vs last month", "last_month": "vs 2 months ago",
+        "all": "",
     }
     period_label = PERIOD_LABELS.get(date_preset, "YTD")
     trend_label = TREND_LABELS.get(date_preset, "vs prior")
@@ -911,60 +932,43 @@ def update_kpis(_n, date_preset, departments, sims_scope,
     # Store raw sparkline data for clientside smoothing
     sparkline_data = {}
 
-    def _spark_start(last_date, preset):
-        """Compute sparkline start date (different from KPI range start)."""
-        if preset == "ytd":
-            return pd.Timestamp(last_date.year, 1, 1)
-        if preset == "lastyear":
-            return pd.Timestamp(last_date.year - 1, 1, 1)
-        lookbacks = {"today": 14, "week": 28, "month": 60, "quarter": 120, "12mo": 365}
-        return last_date - timedelta(days=lookbacks.get(preset, 365))
-
     def _preset_start(last_date, preset):
-        if preset == "today":
-            return last_date
-        elif preset == "week":
-            return last_date - timedelta(days=6)  # Rolling 7 days
-        elif preset == "month":
-            return last_date - timedelta(days=29)  # Rolling 30 days
-        elif preset == "quarter":
-            return last_date - timedelta(days=89)  # Rolling 90 days (~3 months)
-        elif preset == "12mo":
-            return last_date - timedelta(days=365)
-        elif preset == "lastyear":
-            return pd.Timestamp(last_date.year - 1, 1, 1)
-        else:  # ytd
-            return pd.Timestamp(last_date.year, 1, 1)
+        return _home_preset_range(last_date, preset)[0]
 
     def _preset_end(last_date, preset):
-        """End date for the current period (only differs for lastyear)."""
-        if preset == "lastyear":
-            return pd.Timestamp(last_date.year - 1, 12, 31)
-        return last_date
+        return _home_preset_range(last_date, preset)[1]
+
+    def _spark_start(last_date, preset):
+        """Sparkline window: matches the KPI window but caps 'all' at 3 years
+        so the sparkline stays legible."""
+        if preset == "all":
+            return pd.Timestamp(last_date.year - 3, 1, 1)
+        return _preset_start(last_date, preset)
 
     def _prior_range(last_date, preset):
-        if preset == "today":
-            d = last_date - timedelta(days=1)
-            return d, d
-        elif preset == "week":
-            # Rolling: prior 7 days before the current 7-day window
-            return last_date - timedelta(days=13), last_date - timedelta(days=7)
-        elif preset == "month":
-            # Rolling: prior 30 days before the current 30-day window
-            return last_date - timedelta(days=59), last_date - timedelta(days=30)
-        elif preset == "quarter":
-            # Rolling: prior 90 days before the current 90-day window
-            return last_date - timedelta(days=179), last_date - timedelta(days=90)
-        elif preset == "12mo":
-            return last_date - timedelta(days=730), last_date - timedelta(days=366)
-        elif preset == "lastyear":
-            return pd.Timestamp(last_date.year - 2, 1, 1), pd.Timestamp(last_date.year - 2, 12, 31)
-        else:  # ytd
+        """Prior-period comparison window. 'all' has no prior — return a window
+        that matches zero rows so _trend() emits no trend badge."""
+        if preset == "all":
+            return pd.Timestamp.min, pd.Timestamp.min
+        if preset in ("ytd", "current_year"):
             try:
                 pe = pd.Timestamp(last_date.year - 1, last_date.month, last_date.day)
             except ValueError:
                 pe = pd.Timestamp(last_date.year - 1, last_date.month, 28)
-            return pd.Timestamp(last_date.year - 1, 1, 1), pe
+            return pd.Timestamp(last_date.year - 1, 1, 1), _eod(pe)
+        if preset == "last_year":
+            return pd.Timestamp(last_date.year - 2, 1, 1), _eod(pd.Timestamp(last_date.year - 2, 12, 31))
+        if preset == "this_month":
+            lm_end = pd.Timestamp(last_date.year, last_date.month, 1) - pd.Timedelta(days=1)
+            return pd.Timestamp(lm_end.year, lm_end.month, 1), _eod(lm_end)
+        if preset == "last_month":
+            lm_end = pd.Timestamp(last_date.year, last_date.month, 1) - pd.Timedelta(days=1)
+            prev_end = pd.Timestamp(lm_end.year, lm_end.month, 1) - pd.Timedelta(days=1)
+            return pd.Timestamp(prev_end.year, prev_end.month, 1), _eod(prev_end)
+        # Rolling windows — shift back by the window length
+        window_days = {"12mo": 365, "6mo": 183, "3mo": 91, "30d": 30}.get(preset, 365)
+        cur_start, _ = _home_preset_range(last_date, preset)
+        return cur_start - pd.Timedelta(days=window_days), _eod(cur_start - pd.Timedelta(days=1))
 
     def _trend(curr, prior, invert=False):
         """Return (pct_text, direction, prior_value) for trend display."""
@@ -1013,22 +1017,8 @@ def update_kpis(_n, date_preset, departments, sims_scope,
     try:
         sims = load_simulations()
         if departments and "Department" in sims.columns:
-            # Include NaN departments (new patients without treatment history yet)
             sims = sims[sims["Department"].isin(departments) | sims["Department"].isna()]
-        # Filter to countable simulation activities only
-        if not sims.empty and "ActivityName" in sims.columns:
-            if sims_scope == "initial":
-                sims = sims[
-                    sims["ActivityName"].str.contains("Initial", case=False, na=False) |
-                    sims["ActivityName"].str.contains("Stereotactic Simulation", case=False, na=False)
-                ]
-            else:  # "all"
-                sims = sims[
-                    sims["ActivityName"].str.contains("Initial", case=False, na=False) |
-                    sims["ActivityName"].str.contains("Stereotactic Simulation", case=False, na=False) |
-                    sims["ActivityName"].str.contains("Re-Simulation", case=False, na=False) |
-                    sims["ActivityName"].str.contains("Decub", case=False, na=False)
-                ]
+        sims = _filter_sims_scope(sims, sims_scope)
         # Filter to completed or billed simulations only
         if not sims.empty:
             completed = sims["Status"].str.contains("Completed", case=False, na=False) if "Status" in sims.columns else pd.Series(False, index=sims.index)
@@ -1039,18 +1029,8 @@ def update_kpis(_n, date_preset, departments, sims_scope,
     try:
         cv = load_clinic_visits()
         if departments and "Department" in cv.columns:
-            # Include NaN departments (new patients without treatment history yet)
             cv = cv[cv["Department"].isin(departments) | cv["Department"].isna()]
-        # Apply consult classification logic (duration + activity name + notes)
-        if "ActivityName" in cv.columns:
-            consults = cv[cv.apply(_is_consult, axis=1)]
-        else:
-            consults = pd.DataFrame()
-        # Filter to completed or billed consults
-        if not consults.empty:
-            completed = consults["Status"].str.contains("Completed", case=False, na=False) if "Status" in consults.columns else pd.Series(False, index=consults.index)
-            billed = consults["ProcedureCodes"].notna() & (consults["ProcedureCodes"].astype(str).str.strip() != "") if "ProcedureCodes" in consults.columns else pd.Series(False, index=consults.index)
-            consults = consults[completed | billed]
+        consults = _apply_attended_filter(_classify_consults(cv))
     except Exception:
         consults = pd.DataFrame()
 
@@ -1251,370 +1231,523 @@ clientside_callback(
 
 
 # ---------------------------------------------------------------------------
-# Physician Census Callback — outputs raw data to store
+# Home metric callbacks (4 metrics × 2 rows = 8 cards)
 # ---------------------------------------------------------------------------
 
-@callback(
-    Output("home-store-md-census", "data"),
-    Input("home-interval", "n_intervals"),
-    Input("home-filter-department", "value"),
-    Input("home-md-agg", "value"),
-    running=[(Output("home-chart-physician-loading", "visible"), True, False)],
-)
-def update_physician_data(_n, departments, agg):
+def _metric_df_tx(departments):
+    """Treatment-session per-row dataframe, department-filtered."""
     from data.loader import load_treatment_detail
-
-    try:
-        td = load_treatment_detail()
-        if departments and "Department" in td.columns:
-            td = td[td["Department"].isin(departments)]
-        if td.empty or "ScheduledDateTime" not in td.columns:
-            return None
-
-        # Get physicians dynamically from data
-        if "TreatingPhysician" in td.columns:
-            from components.filter_bar import physician_options
-            opts = physician_options(td["TreatingPhysician"])
-            physicians = [o["value"] for o in opts]
-            render_physicians = list(physicians)
-            colors = list(CHART_COLORWAY) * ((len(physicians) // len(CHART_COLORWAY)) + 1)
-        else:
-            physicians = []
-            render_physicians = []
-            colors = CHART_COLORWAY
-
-        return _build_census_data(
-            td,
-            "TreatingPhysician",
-            physicians,
-            colors,
-            render_groups=render_physicians,
-            agg=agg or "D",
-            dynamic_colors=True,
-        )
-    except Exception:
-        return None
+    td = load_treatment_detail()
+    if departments and "Department" in td.columns:
+        td = td[td["Department"].isin(departments)]
+    return td
 
 
-# Clientside callback for physician chart smoothing with chart type and range
-clientside_callback(
-    ClientsideFunction(namespace="census", function_name="smoothChartWithTypeAndRange"),
-    Output("home-chart-physician", "figure"),
-    Input("home-store-md-census", "data"),
-    Input("home-md-settings-smooth", "value"),
-    Input("home-md-settings-type", "value"),
-    Input("home-md-range", "value"),
-    Input("home-md-settings-stack", "value"),
-    State("home-chart-physician", "figure"),
-)
-
-# Dynamic y-axis rescaling on pan for physician chart
-clientside_callback(
-    ClientsideFunction(namespace="censusYAxis", function_name="updateOnPan"),
-    Output("home-chart-physician", "figure", allow_duplicate=True),
-    Input("home-chart-physician", "relayoutData"),
-    State("home-chart-physician", "figure"),
-    State("home-store-md-census", "data"),
-    State("home-md-settings-type", "value"),
-    State("home-md-settings-stack", "value"),
-    prevent_initial_call=True,
-)
+def _metric_df_consults(departments):
+    """Consult rows (Attended status) from clinic visits — matches CV page KPI."""
+    from data.loader import load_clinic_visits
+    cv = load_clinic_visits()
+    if departments and "Department" in cv.columns:
+        cv = cv[cv["Department"].isin(departments) | cv["Department"].isna()]
+    return _apply_attended_filter(_classify_consults(cv))
 
 
-# Disable Daily aggregation for bar charts with long ranges (physician)
-clientside_callback(
-    ClientsideFunction(namespace="barAggGuard", function_name="update"),
-    Output("home-md-agg", "data"),
-    Output("home-md-agg", "value"),
-    Input("home-md-settings-type", "value"),
-    Input("home-md-range", "value"),
-    State("home-md-agg", "value"),
-    prevent_initial_call=True,
-)
+def _metric_df_sims(departments):
+    """Simulation rows (completed or billed, sim-like activities), patient-day deduped.
 
-
-@callback(
-    Output("home-md-settings-smooth", "max"),
-    Output("home-md-settings-smooth", "value"),
-    Input("home-md-range", "value"),
-    State("home-md-settings-smooth", "value"),
-)
-def update_md_smooth_slider(range_days, current_value):
-    """Adjust physician chart smoothing slider for the selected range."""
-    return smooth_limits(range_days, current_value)
-
-
-# ---------------------------------------------------------------------------
-# Site Census Callback — outputs raw data to store (treatments with future)
-# ---------------------------------------------------------------------------
-
-@callback(
-    Output("home-store-site-census", "data"),
-    Input("home-interval", "n_intervals"),
-    Input("home-filter-department", "value"),
-    Input("home-site-agg", "value"),
-    running=[(Output("home-chart-site-loading", "visible"), True, False)],
-)
-def update_site_data(_n, departments, agg):
-    from data.loader import load_daily_volume, load_daily_volume_future
-
-    try:
-        # Load past and future daily volume data
-        dv_past = load_daily_volume()
-        dv_future = load_daily_volume_future()
-
-        # Filter to departments only (not machines)
-        sites = departments if departments else DEPARTMENTS
-        dv_past = dv_past[dv_past["Department"].isin(sites)]
-        dv_future = dv_future[dv_future["Department"].isin(sites)]
-
-        if dv_past.empty or "ScheduledDate" not in dv_past.columns:
-            return None
-
-        colors = [DEPARTMENT_COLORS.get(d, "#999") for d in sites]
-        return _build_treatment_census_data(dv_past, dv_future, sites, colors, agg=agg or "D")
-    except Exception:
-        return None
-
-
-# Clientside callback for site chart smoothing with chart type and range
-clientside_callback(
-    ClientsideFunction(namespace="census", function_name="smoothChartWithTypeAndRange"),
-    Output("home-chart-site", "figure"),
-    Input("home-store-site-census", "data"),
-    Input("home-site-settings-smooth", "value"),
-    Input("home-site-settings-type", "value"),
-    Input("home-site-range", "value"),
-    Input("home-site-settings-stack", "value"),
-    State("home-chart-site", "figure"),
-)
-
-# Dynamic y-axis rescaling on pan for site chart
-clientside_callback(
-    ClientsideFunction(namespace="censusYAxis", function_name="updateOnPan"),
-    Output("home-chart-site", "figure", allow_duplicate=True),
-    Input("home-chart-site", "relayoutData"),
-    State("home-chart-site", "figure"),
-    State("home-store-site-census", "data"),
-    State("home-site-settings-type", "value"),
-    State("home-site-settings-stack", "value"),
-    prevent_initial_call=True,
-)
-
-
-# Disable Daily aggregation for bar charts with long ranges (site)
-clientside_callback(
-    ClientsideFunction(namespace="barAggGuard", function_name="update"),
-    Output("home-site-agg", "data"),
-    Output("home-site-agg", "value"),
-    Input("home-site-settings-type", "value"),
-    Input("home-site-range", "value"),
-    State("home-site-agg", "value"),
-    prevent_initial_call=True,
-)
-
-
-@callback(
-    Output("home-site-settings-smooth", "max"),
-    Output("home-site-settings-smooth", "value"),
-    Input("home-site-range", "value"),
-    State("home-site-settings-smooth", "value"),
-)
-def update_site_smooth_slider(range_days, current_value):
-    """Adjust site chart smoothing slider for the selected range."""
-    return smooth_limits(range_days, current_value)
-
-
-# ---------------------------------------------------------------------------
-# Census data builder (for clientside smoothing)
-# ---------------------------------------------------------------------------
-
-def _build_census_data(df, group_col, groups, colors, height=380, render_groups=None, agg="D", dynamic_colors=False):
-    """Build raw census data dict for clientside smoothing.
-
-    Returns dict with dates, series (name, values, color), optional renderOrder,
-    height, yTitle.
-
-    Args:
-        agg: aggregation period — "D" (daily), "W" (weekly), "M" (monthly).
+    Uses the "all" scope (blacklist of placeholder activities) so the trend/cum
+    chart totals match the simulations page's "Total Simulations" KPI.
     """
-    df = df.copy()
-    df["Date"] = df["ScheduledDateTime"].dt.normalize()
+    from data.loader import load_simulations
+    sims = load_simulations()
+    if departments and "Department" in sims.columns:
+        sims = sims[sims["Department"].isin(departments) | sims["Department"].isna()]
+    sims = _filter_sims_scope(sims, "all")
+    if not sims.empty:
+        completed = sims["Status"].str.contains("Completed", case=False, na=False) if "Status" in sims.columns else pd.Series(False, index=sims.index)
+        billed = sims["ProcedureCodes"].notna() & (sims["ProcedureCodes"].astype(str).str.strip() != "") if "ProcedureCodes" in sims.columns else pd.Series(False, index=sims.index)
+        sims = sims[completed | billed]
+    if not sims.empty and "PatientId" in sims.columns and "ScheduledDateTime" in sims.columns:
+        sims = sims.copy()
+        sims["_SimDate"] = sims["ScheduledDateTime"].dt.normalize()
+        sims = sims.drop_duplicates(subset=["PatientId", "_SimDate"], keep="first")
+    return sims
 
-    if group_col not in df.columns:
-        return None
 
-    patient_col = next((c for c in ["PatientId", "PatientMRN"] if c in df.columns), None)
-    if patient_col is None:
-        return None
-
-    if agg in ("W", "M"):
-        # Aggregate to period — count unique patients per period per group
-        df["period"] = df["Date"].dt.to_period(agg).dt.to_timestamp()
-        daily = df.groupby(["period", group_col])[patient_col].nunique().reset_index(name="count")
-        date_range = sorted(daily["period"].unique())
+def _metric_df_refs(departments):
+    """Referrals with derived _OurDept (our dept mapping) and _DxCat (diagnosis) columns."""
+    from data.loader import load_referrals
+    from pages.referrals import _categorise_diagnosis as _ref_dx, _map_to_our_dept as _ref_dept
+    refs = load_referrals()
+    if refs.empty or "Created" not in refs.columns:
+        return refs.iloc[0:0] if not refs.empty else refs
+    refs = refs.copy()
+    # "Referred to Department" records our site (Lacey/Centralia/Aberdeen);
+    # "Referred by Department" is the external referring office and is wrong here.
+    if "Referred to Department" in refs.columns:
+        refs["_OurDept"] = refs["Referred to Department"].apply(_ref_dept)
     else:
-        # Daily: business days only, excluding days with zero total patients
-        date_range = pd.bdate_range(df["Date"].min(), df["Date"].max())
-        total_per_day = df.groupby("Date")[patient_col].nunique()
-        active_days = total_per_day[total_per_day > 0].index
-        date_range = date_range[date_range.isin(active_days)]
-        daily = df.groupby(["Date", group_col])[patient_col].nunique().reset_index(name="count")
+        refs["_OurDept"] = None
+    if departments:
+        refs = refs[refs["_OurDept"].isin(departments)]
+    if refs.empty:
+        return refs
+    refs["_DxCat"] = refs.apply(
+        lambda r: _ref_dx(r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("MRN")),
+        axis=1,
+    )
+    return refs
 
-    date_col = "period" if agg in ("W", "M") else "Date"
 
-    # First pass: identify groups that have actual data so empty groups
-    # don't consume color indices or create phantom stacked-area traces.
-    group_data = {}
-    for grp in groups:
-        grp_raw = daily[daily[group_col] == grp].set_index(date_col)["count"]
-        if grp_raw.empty or (grp_raw <= 0).all():
-            continue  # skip groups with no positive values anywhere
-        group_data[grp] = grp_raw
+# (date_col, unique_id_col-or-None, dim→groupcol map, dataframe loader)
+# "total" dim is synthesized — builder injects a single-valued column.
+# Physician columns chosen to match the dedicated pages + minimise nulls:
+#   consults → AppointmentPhysician (CV page uses this; 0 nulls vs 3 for Attending)
+#   sims     → ConsultPhysician     (sim page default; 6 nulls vs 25 for Attending)
+#   tx       → TreatingPhysician    (0 nulls)
+_METRIC_SPECS = {
+    "tx":       ("ScheduledDateTime", None,        {"total": "_Total", "department": "Department", "physician": "TreatingPhysician"},   _metric_df_tx),
+    "consults": ("ScheduledDateTime", "PatientId", {"total": "_Total", "department": "Department", "physician": "AppointmentPhysician"}, _metric_df_consults),
+    "sims":     ("ScheduledDateTime", None,        {"total": "_Total", "department": "Department", "physician": "ConsultPhysician"},    _metric_df_sims),
+    "refs":     ("Created",           None,        {"total": "_Total", "department": "_OurDept",   "diagnosis": "_DxCat"},               _metric_df_refs),
+}
 
-    # Second pass: build series with sequential color assignment (no gaps).
+_METRIC_YTITLE = {
+    "tx": "Treatments", "consults": "Consults", "sims": "Simulations", "refs": "Referrals",
+}
+
+
+def _build_metric_census_store(metric_id, departments, dim, agg, date_preset):
+    """Build a census-style {dates, series, height, yTitle} dict for a home metric card."""
+    spec = _METRIC_SPECS.get(metric_id)
+    if spec is None:
+        return None
+    date_col, unique_col, dim_map, frame_fn = spec
+
+    dim = dim or "department"
+    group_col = dim_map.get(dim)
+    if group_col is None:
+        return None
+
+    try:
+        df = frame_fn(departments)
+    except Exception:
+        return None
+    if df is None or df.empty or date_col not in df.columns:
+        return None
+
+    df = df[df[date_col].notna()].copy()
+    if df.empty:
+        return None
+
+    # Filter to the home date-preset range (data-relative)
+    last_date = df[date_col].dt.normalize().max()
+    start, end = _home_preset_range(last_date, date_preset)
+    df = df[(df[date_col] >= start) & (df[date_col] <= end + pd.Timedelta(days=1))]
+    if df.empty:
+        return None
+
+    # Synthesize the "total" group column
+    if dim == "total":
+        df["_Total"] = "Total"
+    elif group_col not in df.columns:
+        return None
+
+    df = df[df[group_col].notna()]
+    df["_Date"] = df[date_col].dt.normalize()
+    df = df[df[group_col].astype(str).str.strip() != ""]
+    if df.empty:
+        return None
+
+    agg = agg or "D"
+    if agg in ("W", "M"):
+        df["_period"] = df["_Date"].dt.to_period(agg).dt.to_timestamp()
+        dkey = "_period"
+        if unique_col and unique_col in df.columns:
+            daily = df.groupby([dkey, group_col])[unique_col].nunique().reset_index(name="count")
+        else:
+            daily = df.groupby([dkey, group_col]).size().reset_index(name="count")
+        date_range = sorted(daily[dkey].unique())
+    else:
+        dkey = "_Date"
+        if unique_col and unique_col in df.columns:
+            daily = df.groupby([dkey, group_col])[unique_col].nunique().reset_index(name="count")
+        else:
+            daily = df.groupby([dkey, group_col]).size().reset_index(name="count")
+        if daily.empty:
+            return None
+        date_range = pd.bdate_range(df["_Date"].min(), df["_Date"].max())
+        totals = daily.groupby(dkey)["count"].sum()
+        active = totals[totals > 0].index
+        date_range = date_range[date_range.isin(active)]
+
+    if len(date_range) == 0:
+        return None
+
+    # Order groups by total desc (dominant series first → better stacking)
+    totals = daily.groupby(group_col)["count"].sum().sort_values(ascending=False)
+    groups = totals.index.tolist()
+
+    is_dept = (dim == "department")
+    is_total = (dim == "total")
     series = []
     color_idx = 0
-    active_groups = []
     for grp in groups:
-        if grp not in group_data:
+        grp_raw = daily[daily[group_col] == grp].set_index(dkey)["count"]
+        if grp_raw.empty or (grp_raw <= 0).all():
             continue
-        grp_raw = group_data[grp]
-        display_name = grp.split(",")[0] if "," in grp else grp
-        c = colors[color_idx % len(colors)]
-        color_idx += 1
-
-        # None outside active range so traces don't extend before/after data exists
+        grp_full = grp_raw.reindex(date_range)
         positive = grp_raw[grp_raw > 0]
         first_active = positive.index.min() if not positive.empty else grp_raw.index.min()
         last_active = positive.index.max() if not positive.empty else grp_raw.index.max()
-        grp_full = grp_raw.reindex(date_range)
         values = [
             None if (p < first_active or p > last_active)
             else (int(v) if pd.notna(v) else 0)
             for p, v in zip(date_range, grp_full)
         ]
+        name = str(grp)
+        display_name = name.split(",")[0] if "," in name else name
+        if is_total:
+            c = PRIMARY
+        elif is_dept:
+            c = DEPARTMENT_COLORS.get(name, CHART_COLORWAY[color_idx % len(CHART_COLORWAY)])
+        else:
+            c = CHART_COLORWAY[color_idx % len(CHART_COLORWAY)]
+        color_idx += 1
+        series.append({"name": display_name, "values": values, "color": c})
 
-        series.append({
-            "name": display_name,
-            "values": values,
-            "color": c,
-        })
-        active_groups.append(grp)
+    if not series:
+        return None
 
     result = {
-        "dates": [d.isoformat() for d in date_range],
+        "dates": [pd.Timestamp(d).isoformat() for d in date_range],
         "series": series,
-        "renderOrder": [
-            grp.split(",")[0] if "," in grp else grp
-            for grp in active_groups
-        ],
-        "height": height,
-        "yTitle": "Unique Patients",
+        "height": 280,
+        "yTitle": _METRIC_YTITLE.get(metric_id, "Count"),
     }
-    if dynamic_colors:
+    if len(series) <= 1:
+        result["hideLegend"] = True
+    if not is_dept and not is_total:
         result["dynamicColors"] = True
     return result
 
 
-def _build_treatment_census_data(df_past, df_future, groups, colors, height=380, agg="D"):
-    """Build treatment census data with future projections.
+def _build_current_year_yoy_cumulative(metric_id, departments, n_prior=4):
+    """Build a YoY cumulative store in the "prior" mode schema expected by
+    window.dash_clientside.cumulative.renderCumulative (matches treatment.py
+    and other pages' cumulative charts).
 
-    Uses Daily Volume data (AppointmentCount) instead of unique patients.
-    Returns dict with dates, futureDates, series (with values and futureValues).
-
-    Args:
-        agg: aggregation period — "D" (daily), "W" (weekly), "M" (monthly).
+    Current (partial) year + up to N prior full years, all aligned to the
+    display year's calendar so prior-year dates map to the same day-of-year.
     """
-    df_past = df_past.copy()
-    df_future = df_future.copy()
+    spec = _METRIC_SPECS.get(metric_id)
+    if spec is None:
+        return None
+    date_col, unique_col, _dim_map, frame_fn = spec
 
-    # Aggregate by date and department
-    past_daily = df_past.groupby(["ScheduledDate", "Department"])["AppointmentCount"].sum().reset_index()
-    future_daily = df_future.groupby(["ScheduledDate", "Department"])["AppointmentCount"].sum().reset_index()
-
-    # Date ranges
-    if past_daily.empty:
+    try:
+        df = frame_fn(departments)
+    except Exception:
+        return None
+    if df is None or df.empty or date_col not in df.columns:
         return None
 
-    if agg in ("W", "M"):
-        # Aggregate to period
-        past_daily["period"] = past_daily["ScheduledDate"].dt.to_period(agg).dt.to_timestamp()
-        past_daily = past_daily.groupby(["period", "Department"])["AppointmentCount"].sum().reset_index()
-        past_dates = sorted(past_daily["period"].unique())
+    df = df[df[date_col].notna()].copy()
+    if df.empty:
+        return None
 
-        if not future_daily.empty:
-            future_daily["period"] = future_daily["ScheduledDate"].dt.to_period(agg).dt.to_timestamp()
-            future_daily = future_daily.groupby(["period", "Department"])["AppointmentCount"].sum().reset_index()
-            # Exclude periods already in past
-            past_period_set = set(past_dates)
-            future_daily = future_daily[~future_daily["period"].isin(past_period_set)]
-            future_dates = sorted(future_daily["period"].unique())
+    last_date = df[date_col].dt.normalize().max()
+    display_year = last_date.year
+    year_start = pd.Timestamp(display_year, 1, 1)
+    year_end = pd.Timestamp(display_year, 12, 31)
+    year_cal = pd.date_range(year_start, year_end, freq="D")
+    n_days = len(year_cal)
+    day_indices = list(range(n_days))
+
+    # Month-center tick labels (Jan, Feb, …) so each label sits between the
+    # month's first and last day rather than left-anchored at day 1.
+    tick_positions, tick_labels = [], []
+    for month in range(1, 13):
+        m_start = pd.Timestamp(display_year, month, 1)
+        m_end = m_start + pd.offsets.MonthEnd(0)
+        mid = ((m_start - year_start).days + (m_end - year_start).days) / 2
+        tick_positions.append(mid)
+        tick_labels.append(m_start.strftime("%b"))
+
+    def _shift_to_display(d):
+        try:
+            return pd.Timestamp(display_year, d.month, d.day)
+        except ValueError:
+            return None  # Feb 29 in non-leap display year
+
+    def _year_series(year):
+        ys = pd.Timestamp(year, 1, 1)
+        ye = pd.Timestamp(year, 12, 31)
+        year_df = df[(df[date_col] >= ys) & (df[date_col] <= ye)]
+        if year_df.empty:
+            return None, 0.0
+        year_df = year_df.copy()
+        year_df["_Date"] = year_df[date_col].dt.normalize()
+        if unique_col and unique_col in year_df.columns:
+            daily = year_df.groupby("_Date")[unique_col].nunique()
         else:
-            future_dates = []
+            daily = year_df.groupby("_Date").size()
+        cal = pd.date_range(ys, ye, freq="D")
+        daily = daily.reindex(cal, fill_value=0)
+        cum = daily.cumsum().astype(float)
+        if year == display_year:
+            cum = cum.where(cum.index <= last_date)
+        shifted = {}
+        for d, v in cum.items():
+            sd = _shift_to_display(d)
+            if sd is not None:
+                shifted[sd] = v
+        aligned = pd.Series(shifted).reindex(year_cal)
+        vals = [None if pd.isna(v) else float(v) for v in aligned]
+        total = float(next((v for v in reversed(vals) if v is not None), 0.0))
+        return vals, total
 
-        date_col = "period"
-    else:
-        past_dates = pd.bdate_range(past_daily["ScheduledDate"].min(), past_daily["ScheduledDate"].max())
-        # Filter to days with activity
-        total_per_day = past_daily.groupby("ScheduledDate")["AppointmentCount"].sum()
-        active_days = total_per_day[total_per_day > 0].index
-        past_dates = past_dates[past_dates.isin(active_days)]
+    current_vals, current_total = _year_series(display_year)
+    if current_vals is None:
+        return None
 
-        # Future dates (next 2 weeks / ~10 business days)
-        if not future_daily.empty:
-            last_past = past_daily["ScheduledDate"].max()
-            future_start = last_past + timedelta(days=1)
-            future_end = future_daily["ScheduledDate"].max()
-            future_dates = pd.bdate_range(future_start, min(future_end, last_past + timedelta(days=14)))
-            # Filter to days with scheduled appointments
-            future_totals = future_daily.groupby("ScheduledDate")["AppointmentCount"].sum()
-            future_active = future_totals[future_totals > 0].index
-            future_dates = future_dates[future_dates.isin(future_active)]
-        else:
-            future_dates = pd.DatetimeIndex([])
-
-        date_col = "ScheduledDate"
-
-    series = []
-    for i, grp in enumerate(groups):
-        # Past values — None outside active range so traces don't extend before/after data
-        grp_past_raw = past_daily[past_daily["Department"] == grp].set_index(date_col)["AppointmentCount"]
-        if not grp_past_raw.empty:
-            positive = grp_past_raw[grp_past_raw > 0]
-            first_active = positive.index.min() if not positive.empty else grp_past_raw.index.min()
-            last_active = positive.index.max() if not positive.empty else grp_past_raw.index.max()
-            grp_past_full = grp_past_raw.reindex(past_dates)
-            past_values = [
-                None if (p < first_active or p > last_active)
-                else (int(v) if pd.notna(v) else 0)
-                for p, v in zip(past_dates, grp_past_full)
-            ]
-        else:
-            past_values = [None] * len(past_dates)
-
-        # Future values
-        if len(future_dates) > 0:
-            grp_future = future_daily[future_daily["Department"] == grp].set_index(date_col)["AppointmentCount"]
-            grp_future = grp_future.reindex(future_dates, fill_value=0)
-        else:
-            grp_future = pd.Series([], dtype=float)
-
-        c = colors[i % len(colors)]
-        series.append({
-            "name": grp,
-            "values": past_values,
-            "futureValues": grp_future.tolist(),
-            "color": c,
+    prior = []
+    year_totals = {str(display_year): current_total}
+    for offset in range(1, n_prior + 1):
+        vals, total = _year_series(display_year - offset)
+        if vals is None:
+            break
+        prior.append({
+            "label": str(display_year - offset),
+            "values": vals,
+            "color": PRIOR_PERIOD_COLORS[min(offset - 1, len(PRIOR_PERIOD_COLORS) - 1)],
         })
+        year_totals[str(display_year - offset)] = total
+
+    # Year-end projection: linear extrapolation of YTD pace through Dec 31.
+    last_idx = (last_date - year_start).days
+    days_elapsed = last_idx + 1
+    rate = current_total / days_elapsed if days_elapsed > 0 else 0.0
+    projected_end = current_total + rate * (n_days - days_elapsed)
+    projected_remainder = max(0.0, projected_end - current_total)
+    projection_current = {
+        "startIdx": last_idx,
+        "startVal": current_total,
+        "endIdx": n_days - 1,
+        "endVal": projected_end,
+    }
+
+    # Bar-mode breakdown: one slice ("Total") across year-periods oldest → newest
+    periods_asc = sorted(year_totals.keys())
+    y_title = _METRIC_YTITLE.get(metric_id, "Total")
+    slice_breakdown = {
+        "periods": periods_asc,
+        "slices": [{
+            "name": y_title,
+            "values": [year_totals[p] for p in periods_asc],
+            "color": PRIMARY,
+        }],
+    }
 
     return {
-        "dates": [d.isoformat() for d in past_dates],
-        "futureDates": [d.isoformat() for d in future_dates],
-        "series": series,
-        "height": height,
-        "yTitle": "Treatments",
+        "mode": "prior",
+        "startDate": year_start.isoformat(),
+        "dayIndices": day_indices,
+        "tickPositions": tick_positions,
+        "tickLabels": tick_labels,
+        "current": {
+            "label": str(display_year),
+            "values": current_vals,
+            "color": PRIMARY,
+            "endpoint": current_total,
+            "projection": projection_current,
+        },
+        "prior": prior,
+        "sliceBreakdown": slice_breakdown,
+        "projectionTotal": {
+            "periodIdx": periods_asc.index(str(display_year)),
+            "remainder": float(projected_remainder),
+            "endVal": float(projected_end),
+        },
+        "periodDays": n_days,
+        "maxAvailablePriors": len(prior),
+        "hasPartialPrior": False,
+        "height": 300,
+        "yTitle": y_title,
+        "hidePriorEndpointLabels": True,
     }
+
+
+def _register_metric_callbacks(metric_id, row, is_cumulative):
+    """Wire one card's data callback + render + axis callbacks."""
+    sid = f"home-{metric_id}-{row}"
+    cid = f"home-chart-{metric_id}-{row}"
+    store_id = f"home-{metric_id}-{row}-store"
+
+    @callback(
+        Output(store_id, "data"),
+        Input("home-interval", "n_intervals"),
+        Input("home-filter-date-preset", "value"),
+        Input("home-filter-department", "value"),
+        Input(f"{sid}-dim", "value"),
+        Input(f"{sid}-agg", "value"),
+        running=[(Output(f"{cid}-loading", "visible"), True, False)],
+    )
+    def _update_store(_n, date_preset, departments, dim, agg):
+        if is_cumulative and date_preset == "current_year":
+            return _build_current_year_yoy_cumulative(metric_id, departments)
+        return _build_metric_census_store(metric_id, departments, dim, agg, date_preset)
+
+    _update_store.__name__ = f"update_{metric_id}_{row}_store"
+
+    if is_cumulative:
+        clientside_callback(
+            ClientsideFunction(namespace="census", function_name="homeCumulative"),
+            Output(cid, "figure"),
+            Input(store_id, "data"),
+            Input(f"{sid}-settings-smooth", "value"),
+            Input(f"{sid}-settings-type", "value"),
+            Input("home-cum-prior-store", "data"),
+            Input(f"{sid}-project", "checked"),
+            State(cid, "figure"),
+        )
+        # Projection toggle is only relevant in current_year preset.
+        clientside_callback(
+            """function(preset) {
+                return preset === "current_year" ? {} : {"display": "none"};
+            }""",
+            Output(f"{sid}-project-wrap", "style"),
+            Input("home-filter-date-preset", "value"),
+        )
+        # Each card's slider publishes to the shared store so any card drives
+        # the whole cumulative row.
+        clientside_callback(
+            "function(v) { return v; }",
+            Output("home-cum-prior-store", "data", allow_duplicate=True),
+            Input(f"{sid}-settings-prior-periods", "value"),
+            prevent_initial_call=True,
+        )
+        # Store writes back to keep other cards' sliders visually in sync.
+        clientside_callback(
+            "function(v) { return v; }",
+            Output(f"{sid}-settings-prior-periods", "value", allow_duplicate=True),
+            Input("home-cum-prior-store", "data"),
+            prevent_initial_call=True,
+        )
+    else:
+        clientside_callback(
+            ClientsideFunction(namespace="census", function_name="homeTrend"),
+            Output(cid, "figure"),
+            Input(store_id, "data"),
+            Input(f"{sid}-settings-smooth", "value"),
+            Input(f"{sid}-settings-type", "value"),
+            Input(f"{sid}-settings-stack", "value"),
+            State(cid, "figure"),
+        )
+        clientside_callback(
+            ClientsideFunction(namespace="censusYAxis", function_name="updateOnPan"),
+            Output(cid, "figure", allow_duplicate=True),
+            Input(cid, "relayoutData"),
+            State(cid, "figure"),
+            State(store_id, "data"),
+            State(f"{sid}-settings-type", "value"),
+            State(f"{sid}-settings-stack", "value"),
+            prevent_initial_call=True,
+        )
+
+
+_SLICE_CLASS_JS = """function(val) {
+    return (val && val !== "total") ? "slice-group-active" : "slice-total-active";
+}"""
+_HIDE_STACK_JS = """function(sliceVal, chartType) {
+    var single = !sliceVal || sliceVal === "total";
+    return (single || chartType === "line") ? {"display": "none"} : {};
+}"""
+
+for _m, _t, _d, _defaults in _HOME_METRICS:
+    _register_metric_callbacks(_m, "trend", is_cumulative=False)
+    _register_metric_callbacks(_m, "cum",   is_cumulative=True)
+
+    for _row in ("trend", "cum"):
+        _sid = f"home-{_m}-{_row}"
+        # Dim visual: slice-total-active / slice-group-active className
+        clientside_callback(
+            _SLICE_CLASS_JS,
+            Output(f"{_sid}-dim", "className"),
+            Input(f"{_sid}-dim", "value"),
+        )
+
+    # Trend cards only: hide Stacked/Grouped when Total dim or Line chart
+    _trend_sid = f"home-{_m}-trend"
+    clientside_callback(
+        _HIDE_STACK_JS,
+        Output(f"{_trend_sid}-settings-stack-wrap", "style", allow_duplicate=True),
+        Input(f"{_trend_sid}-dim", "value"),
+        Input(f"{_trend_sid}-settings-type", "value"),
+        prevent_initial_call="initial_duplicate",
+    )
+
+    # Cum cards: when Current Year preset is active, dim/agg toggles are
+    # overridden by the YoY overlay so hide them to avoid confusion.
+    _cum_sid = f"home-{_m}-cum"
+    clientside_callback(
+        """function(preset) {
+            return preset === "current_year" ? {"display": "none"} : {};
+        }""",
+        Output(f"{_cum_sid}-dim", "style"),
+        Input("home-filter-date-preset", "value"),
+    )
+    clientside_callback(
+        """function(preset) {
+            return preset === "current_year" ? {"display": "none"} : {};
+        }""",
+        Output(f"{_cum_sid}-agg", "style"),
+        Input("home-filter-date-preset", "value"),
+    )
+
+
+def _eod(ts):
+    """End-of-day for `ts` so `<= end` covers the entire calendar date.
+
+    `last_date` here comes from `ScheduledDateTime.dt.normalize().max()` — midnight
+    of the last day with activity. A naive `<= last_date` check would drop every
+    appointment scheduled after midnight on that day.
+    """
+    if ts is None or ts is pd.Timestamp.min:
+        return ts
+    return ts.normalize() + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
+
+
+def _home_preset_range(last_date, preset):
+    """Return (start_ts, end_ts) for the home date-preset, data-relative.
+
+    End timestamp is end-of-day so same-day rows after midnight are included.
+
+    Home shares the 9 standard presets used by filter-bar pages:
+    12mo / 6mo / 3mo / 30d / ytd / last_year / this_month / last_month / all.
+    """
+    preset = preset or "ytd"
+    if preset == "all":
+        return pd.Timestamp.min, _eod(last_date)
+    if preset in ("ytd", "current_year"):
+        # Data filter is identical — the full-year x-axis framing for
+        # current_year lives in the cumulative renderer, not here.
+        return pd.Timestamp(last_date.year, 1, 1), _eod(last_date)
+    if preset == "last_year":
+        return pd.Timestamp(last_date.year - 1, 1, 1), _eod(pd.Timestamp(last_date.year - 1, 12, 31))
+    if preset == "this_month":
+        return pd.Timestamp(last_date.year, last_date.month, 1), _eod(last_date)
+    if preset == "last_month":
+        lm_end = pd.Timestamp(last_date.year, last_date.month, 1) - pd.Timedelta(days=1)
+        return pd.Timestamp(lm_end.year, lm_end.month, 1), _eod(lm_end)
+    if preset == "6mo":
+        return last_date - pd.DateOffset(months=6), _eod(last_date)
+    if preset == "3mo":
+        return last_date - pd.DateOffset(months=3), _eod(last_date)
+    if preset == "30d":
+        return last_date - pd.Timedelta(days=30), _eod(last_date)
+    # 12mo (default)
+    return last_date - pd.DateOffset(months=12), _eod(last_date)
 
 
 # ---------------------------------------------------------------------------
@@ -1672,8 +1805,9 @@ clientside_callback(
 # ---------------------------------------------------------------------------
 # Settings toggle + PNG export (clientside via shared helpers)
 # ---------------------------------------------------------------------------
-register_chart_callbacks([
-    ("home-md", "home-chart-physician", "home-store-md-census"),
-    ("home-site", "home-chart-site", "home-store-site-census"),
-    ("home-avail", "home-chart-availability"),
-])
+_home_chart_registry = []
+for _m, _t, _d, _defaults in _HOME_METRICS:
+    _home_chart_registry.append((f"home-{_m}-trend", f"home-chart-{_m}-trend", f"home-{_m}-trend-store"))
+    _home_chart_registry.append((f"home-{_m}-cum",   f"home-chart-{_m}-cum",   f"home-{_m}-cum-store"))
+_home_chart_registry.append(("home-avail", "home-chart-availability"))
+register_chart_callbacks(_home_chart_registry)

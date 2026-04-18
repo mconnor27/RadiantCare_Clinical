@@ -25,7 +25,7 @@ from utils.charts import apply_default_layout, empty_figure, dept_color
 from utils.tables import sanitize_for_grid
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, DEFAULT_SLIDER, SLIDER_MARKS,
-    preset_to_slider_val,
+    preset_to_slider_val, preset_to_exact_dates,
 )
 
 dash.register_page(__name__, path="/clinic-visits", name="Clinic Visits", order=3)
@@ -380,6 +380,7 @@ def _build_cv_filter_bar():
                             {"value": "3mo", "label": "Prior 3 mo"},
                             {"value": "30d", "label": "Prior 30 days"},
                             {"value": "ytd", "label": "Year to Date"},
+                            {"value": "current_year", "label": "Current Year"},
                             {"value": "last_year", "label": "Last Year"},
                             {"value": "this_month", "label": "This Month"},
                             {"value": "last_month", "label": "Last Month"},
@@ -552,6 +553,7 @@ layout = dmc.Stack(
                     ],
                     show_smooth=True,
                     show_prior_periods=True,
+                    show_project_toggle=True,
                     smooth_min=0,
                     smooth_max=1,
                     smooth_step=0.05,
@@ -1126,12 +1128,7 @@ def _register_cv_filter_callbacks():
         if not preset or preset == "custom":
             return (dash.no_update,) * 3
         sv = preset_to_slider_val(preset, MAX_IDX)
-        s = idx_to_date(sv[0]).strftime("%Y-%m-%d")
-        e_ts = idx_to_date(sv[1], end_of_month=True)
-        today = pd.Timestamp.now().normalize()
-        if e_ts > today:
-            e_ts = today
-        e = e_ts.strftime("%Y-%m-%d")
+        s, e = preset_to_exact_dates(preset)
         return sv, s, e
 
     # B) Slider → DatePicker + Label (clientside for speed)
@@ -1239,7 +1236,7 @@ _CV_PHYS_COL = {
     Input("cv-diag-mode", "data"),
     Input("cv-filter-visit-type", "value"),
     Input("cv-filter-classified-type", "value"),
-    Input("cv-filter-status", "value"),
+    Input("cv-filter-status", "data"),
     Input("cv-inpatient-switch", "checked"),
     Input("cv-physician-role", "data"),
 )
@@ -1457,7 +1454,7 @@ _CV_FILTER_INPUTS = [
     Input("cv-diag-mode", "data"),
     Input("cv-filter-visit-type", "value"),
     Input("cv-filter-classified-type", "value"),
-    Input("cv-filter-status", "value"),
+    Input("cv-filter-status", "data"),
     Input("cv-inpatient-switch", "checked"),
     Input("cv-weekend-switch", "checked"),
     Input("cv-filter-date-preset", "value"),
@@ -2099,13 +2096,14 @@ clientside_callback(
 )
 
 clientside_callback(
-    _CUMULATIVE_WITH_STACK,
+    ClientsideFunction(namespace="cumulative", function_name="renderWithProjectToggle"),
     Output("cv-chart-cumulative", "figure"),
     Input("cv-store-cumulative", "data"),
     Input("cv-cumulative-settings-smooth", "value"),
     Input("cv-cumulative-settings-type", "value"),
     Input("cv-cumulative-settings-stack", "value"),
     Input("cv-cumulative-settings-prior-periods", "value"),
+    Input("cv-cumulative-project", "checked"),
     State("cv-chart-cumulative", "figure"),
 )
 
@@ -2723,8 +2721,12 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             df_all = df_all[~future_open]
     if df_all.empty:
         return None
+    from utils.cumulative_current_year import setup_current_year_range, apply_current_year_projection
     last_data = df_all["ScheduledDateTime"].dt.normalize().max()
-    if end.normalize() > last_data:
+    start, end, _cy_last_actual = setup_current_year_range(date_preset, mode, start, end)
+    if _cy_last_actual is not None:
+        _cy_last_actual = min(_cy_last_actual, last_data)
+    elif end.normalize() > last_data:
         end = last_data
 
     period_days = (end - start).days + 1
@@ -2896,7 +2898,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
     slice_breakdown = {"periods": breakdown_periods, "slices": breakdown_slices}
 
     if mode == "prior":
-        return {
+        _result = {
             "mode": "prior",
             "startDate": start_norm.isoformat(),
             "dayIndices": day_indices,
@@ -2916,6 +2918,9 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             "yTitle": "Cumulative Visits",
             **_prior_meta,
         }
+        if _cy_last_actual is not None:
+            apply_current_year_projection(_result, _cy_last_actual, start)
+        return _result
 
     else:  # mode == "slice"
         # Within current period, group by slice dimension
@@ -3575,3 +3580,14 @@ clientside_callback(
     Input("cv-grid-filter-badge", "n_clicks"),
     prevent_initial_call=True,
 )
+
+
+# Project-to-year-end toggle visibility (shown only for current_year preset)
+clientside_callback(
+    """function(preset) {
+        return preset === "current_year" ? {} : {"display": "none"};
+    }""",
+    Output("cv-cumulative" + "-project-wrap", "style"),
+    Input("cv-filter-date-preset", "value"),
+)
+

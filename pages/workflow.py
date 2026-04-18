@@ -61,6 +61,7 @@ from utils.date_slider import (
     DEFAULT_SLIDER as _DEFAULT_SLIDER,
     SLIDER_MARKS as _SLIDER_MARKS,
     preset_to_slider_val as _preset_to_slider_val,
+    preset_to_exact_dates as _preset_to_exact_dates,
 )
 
 _DEFAULT_DATE_PRESET = "ytd" if pd.Timestamp.now().month > 1 else "3mo"
@@ -549,6 +550,7 @@ def _build_filter_bar(prefix, label=None):
                             {"value": "3mo", "label": "Prior 3 mo"},
                             {"value": "30d", "label": "Prior 30 days"},
                             {"value": "ytd", "label": "Year to Date"},
+                            {"value": "current_year", "label": "Current Year"},
                             {"value": "last_year", "label": "Last Year"},
                             {"value": "this_month", "label": "This Month"},
                             {"value": "last_month", "label": "Last Month"},
@@ -1391,8 +1393,7 @@ def _register_filter_callbacks(prefix):
         if not preset or preset == "custom":
             return (dash.no_update,) * 3
         sv = _preset_to_slider_val(preset, _MAX_IDX)
-        s = _idx_to_date(sv[0]).strftime("%Y-%m-%d")
-        e = _idx_to_date(sv[1], end_of_month=True).strftime("%Y-%m-%d")
+        s, e = _preset_to_exact_dates(preset)
         return sv, s, e
 
     # B) Slider → DatePicker + Label (clientside for speed)

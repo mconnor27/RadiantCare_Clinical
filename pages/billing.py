@@ -24,7 +24,7 @@ from components.chart_settings import chart_settings_popover
 from utils.charts import apply_default_layout, empty_figure, dept_color, color_for_index
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, DEFAULT_SLIDER, SLIDER_MARKS,
-    preset_to_slider_val,
+    preset_to_slider_val, preset_to_exact_dates,
 )
 from data.reviews_db import (
     get_all_insurance_rates, upsert_insurance_rate, delete_insurance_rate,
@@ -484,8 +484,10 @@ def _build_cumulative(df, date_col, start, end, date_preset,
     if df.empty or date_col not in df.columns:
         return None
 
+    from utils.cumulative_current_year import setup_current_year_range, apply_current_year_projection
     today = pd.Timestamp.now().normalize()
-    end_norm = min(end.normalize(), today)
+    start, end, _cy_last_actual = setup_current_year_range(date_preset, mode, start, end)
+    end_norm = end.normalize() if _cy_last_actual is not None else min(end.normalize(), today)
     start_norm = start.normalize()
     period_days = (end_norm - start_norm).days + 1
     if period_days < 2:
@@ -649,7 +651,7 @@ def _build_cumulative(df, date_col, start, end, date_preset,
                 "color": colors.get(sk, "#9CA3AF"),
             })
 
-    return {
+    _result = {
         "mode": mode,
         "startDate": start_norm.isoformat(),
         "dayIndices": day_indices,
@@ -669,6 +671,9 @@ def _build_cumulative(df, date_col, start, end, date_preset,
         "height": 350,
         "yTitle": y_title,
     }
+    if _cy_last_actual is not None:
+        apply_current_year_projection(_result, _cy_last_actual, start)
+    return _result
 
 
 _BROAD_CATEGORIES = [
@@ -1622,6 +1627,7 @@ def _build_filter_bar():
                             {"value": "3mo", "label": "Prior 3 mo"},
                             {"value": "30d", "label": "Prior 30 days"},
                             {"value": "ytd", "label": "Year to Date"},
+                            {"value": "current_year", "label": "Current Year"},
                             {"value": "last_year", "label": "Last Year"},
                             {"value": "this_month", "label": "This Month"},
                             {"value": "last_month", "label": "Last Month"},
@@ -1816,6 +1822,7 @@ layout = dmc.Stack(
                         smooth_min=0, smooth_max=1,
                         smooth_step=0.05, smooth_default=0.1,
                         show_prior_periods=True,
+                        show_project_toggle=True,
                         prior_periods_default=3,
                         paper_padding="md",
                         extra_controls=[
@@ -1882,6 +1889,7 @@ layout = dmc.Stack(
                         smooth_min=0, smooth_max=1,
                         smooth_step=0.05, smooth_default=0.1,
                         show_prior_periods=True,
+                        show_project_toggle=True,
                         prior_periods_default=3,
                         paper_padding="md",
                         extra_controls=[
@@ -1947,6 +1955,7 @@ layout = dmc.Stack(
                         smooth_min=0, smooth_max=1,
                         smooth_step=0.05, smooth_default=0.1,
                         show_prior_periods=True,
+                        show_project_toggle=True,
                         prior_periods_default=3,
                         paper_padding="md",
                         extra_controls=[
@@ -2815,13 +2824,17 @@ layout = dmc.Stack(
 # Preset → slider
 @callback(
     Output(f"{PAGE_ID}-date-slider", "value"),
+    Output(f"{PAGE_ID}-filter-daterange", "start_date", allow_duplicate=True),
+    Output(f"{PAGE_ID}-filter-daterange", "end_date", allow_duplicate=True),
     Input(f"{PAGE_ID}-filter-date-preset", "value"),
     prevent_initial_call=True,
 )
 def _preset_to_slider(preset):
     if preset == "custom":
-        return dash.no_update
-    return preset_to_slider_val(preset, MAX_IDX)
+        return (dash.no_update,) * 3
+    sv = preset_to_slider_val(preset, MAX_IDX)
+    s, e = preset_to_exact_dates(preset)
+    return sv, s, e
 
 
 # Slider → datepicker + label (clientside)
@@ -3707,9 +3720,9 @@ function(storeData, sliceMode, agg, smoothPct, chartType, stackVal) {{
 
 def _cum_js(chart_id):
     return f"""
-function(rawData, smoothPct, chartType, stackVal, maxPrior) {{
+function(rawData, smoothPct, chartType, stackVal, maxPrior, projectOn) {{
     return window.dash_clientside.billingDeferred.renderCum(
-        '{chart_id}', rawData, smoothPct, chartType, stackVal, maxPrior
+        '{chart_id}', rawData, smoothPct, chartType, stackVal, maxPrior, projectOn
     );
 }}
 """
@@ -3747,6 +3760,7 @@ clientside_callback(
     Input(f"{PAGE_ID}-volcum-settings-type", "value"),
     Input(f"{PAGE_ID}-volcum-settings-stack", "value"),
     Input(f"{PAGE_ID}-volcum-settings-prior-periods", "value"),
+    Input(f"{PAGE_ID}-volcum-project", "checked"),
 )
 
 # RVU cumulative
@@ -3758,6 +3772,7 @@ clientside_callback(
     Input(f"{PAGE_ID}-rvucum-settings-type", "value"),
     Input(f"{PAGE_ID}-rvucum-settings-stack", "value"),
     Input(f"{PAGE_ID}-rvucum-settings-prior-periods", "value"),
+    Input(f"{PAGE_ID}-rvucum-project", "checked"),
 )
 
 # Dollar trend
@@ -3781,6 +3796,7 @@ clientside_callback(
     Input(f"{PAGE_ID}-dollarcum-settings-type", "value"),
     Input(f"{PAGE_ID}-dollarcum-settings-stack", "value"),
     Input(f"{PAGE_ID}-dollarcum-settings-prior-periods", "value"),
+    Input(f"{PAGE_ID}-dollarcum-project", "checked"),
 )
 
 # Payor trend ridgeline (reuse diagRidge JS renderer)
@@ -4879,3 +4895,30 @@ clientside_callback(
     Output(f"{PAGE_ID}-rev-adj-realization-val", "children"),
     Input(f"{PAGE_ID}-rev-adj-realization", "value"),
 )
+
+
+# Project-to-year-end toggle visibility (shown only for current_year preset)
+clientside_callback(
+    """function(preset) {
+        return preset === "current_year" ? {} : {"display": "none"};
+    }""",
+    Output(f"{PAGE_ID}-volcum" + "-project-wrap", "style"),
+    Input(f"{PAGE_ID}-filter-date-preset", "value"),
+)
+
+clientside_callback(
+    """function(preset) {
+        return preset === "current_year" ? {} : {"display": "none"};
+    }""",
+    Output(f"{PAGE_ID}-rvucum" + "-project-wrap", "style"),
+    Input(f"{PAGE_ID}-filter-date-preset", "value"),
+)
+
+clientside_callback(
+    """function(preset) {
+        return preset === "current_year" ? {} : {"display": "none"};
+    }""",
+    Output(f"{PAGE_ID}-dollarcum" + "-project-wrap", "style"),
+    Input(f"{PAGE_ID}-filter-date-preset", "value"),
+)
+

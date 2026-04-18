@@ -157,9 +157,14 @@
         },
 
         renderCum: function (chartId, rawData, smoothPct, chartType,
-                             stackVal, maxPrior) {
+                             stackVal, maxPrior, projectOn) {
             if (!rawData) return NO;
 
+            if (projectOn === false) {
+                rawData = JSON.parse(JSON.stringify(rawData));
+                if (rawData.current) delete rawData.current.projection;
+                delete rawData.projectionTotal;
+            }
             var fig = window.dash_clientside.cumulative.renderCumulative(
                 rawData, smoothPct, chartType, null, stackVal, maxPrior
             );

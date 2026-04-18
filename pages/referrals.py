@@ -39,7 +39,7 @@ from utils.diagnosis_categories import (
 )
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, DEFAULT_SLIDER, SLIDER_MARKS,
-    preset_to_slider_val,
+    preset_to_slider_val, preset_to_exact_dates,
 )
 
 dash.register_page(__name__, path="/referrals", name="Referrals", order=12)
@@ -224,7 +224,14 @@ _DEPT_MAP_PATTERNS = [
 
 
 def _map_to_our_dept(ref_dept):
-    """Map 'Referred by Department' to our three departments (or None)."""
+    """Map a department string (typically 'Referred to Department') to our
+    three sites — Lacey / Centralia / Aberdeen — or None if no match.
+
+    Always map from 'Referred to Department' for site attribution: that column
+    records WHICH RadiantCare site will see the patient (~100% mapping rate).
+    'Referred by Department' is the EXTERNAL referring office and only
+    coincidentally contains our site names (~30% mapping rate).
+    """
     if pd.isna(ref_dept):
         return None
     s = str(ref_dept)
@@ -335,6 +342,7 @@ def _build_filter_bar():
                             {"value": "3mo", "label": "Prior 3 mo"},
                             {"value": "30d", "label": "Prior 30 days"},
                             {"value": "ytd", "label": "Year to Date"},
+                            {"value": "current_year", "label": "Current Year"},
                             {"value": "last_year", "label": "Last Year"},
                             {"value": "this_month", "label": "This Month"},
                             {"value": "last_month", "label": "Last Month"},
@@ -791,6 +799,7 @@ layout = dmc.Stack(
                     ],
                     show_smooth=True,
                     show_prior_periods=True,
+                    show_project_toggle=True,
                     smooth_min=0,
                     smooth_max=1,
                     smooth_step=0.05,
@@ -1625,13 +1634,17 @@ layout = dmc.Stack(
 
 @callback(
     Output(f"{PAGE_ID}-date-slider", "value"),
+    Output(f"{PAGE_ID}-filter-daterange", "start_date", allow_duplicate=True),
+    Output(f"{PAGE_ID}-filter-daterange", "end_date", allow_duplicate=True),
     Input(f"{PAGE_ID}-filter-date-preset", "value"),
     prevent_initial_call=True,
 )
 def _preset_to_slider(preset):
     if preset == "custom":
-        return dash.no_update
-    return preset_to_slider_val(preset, MAX_IDX)
+        return (dash.no_update,) * 3
+    slider_val = preset_to_slider_val(preset, MAX_IDX)
+    s, e = preset_to_exact_dates(preset)
+    return slider_val, s, e
 
 
 clientside_callback(
@@ -2271,8 +2284,8 @@ def _prepare_ref_volume_data(df, agg, slice_by=""):
                            "color": CHART_COLORWAY[i % len(CHART_COLORWAY)]})
 
     elif slice_by == "site":
-        # Our department (mapped from referring dept)
-        df["_our_dept"] = df["Referred by Department"].apply(_map_to_our_dept)
+        # Our site (mapped from "Referred to Department" — where we see the patient)
+        df["_our_dept"] = df["Referred to Department"].apply(_map_to_our_dept)
         for dept in DEPARTMENTS:
             sub = df[df["_our_dept"] == dept]
             if sub.empty:
@@ -2306,7 +2319,8 @@ def _build_day_index_ticks_ref(start_norm, n_days, max_ticks=12):
 
 
 def _prepare_ref_cumulative_data(df_all, start, end, mode="prior",
-                                  period_type="calendar", slice_by="department"):
+                                  period_type="calendar", slice_by="department",
+                                  date_preset=None):
     """Prepare cumulative referral volume data for overlay chart.
 
     mode="prior": Current period cumulative + prior equivalent periods.
@@ -2319,8 +2333,12 @@ def _prepare_ref_cumulative_data(df_all, start, end, mode="prior",
     if df_all.empty or "Created" not in df_all.columns:
         return None, 5, _default_marks
 
+    from utils.cumulative_current_year import setup_current_year_range, apply_current_year_projection
     last_data = df_all["Created"].dt.normalize().max()
-    if end.normalize() > last_data:
+    start, end, _cy_last_actual = setup_current_year_range(date_preset, mode, start, end)
+    if _cy_last_actual is not None:
+        _cy_last_actual = min(_cy_last_actual, last_data)
+    elif end.normalize() > last_data:
         end = last_data
 
     period_days = (end - start).days + 1
@@ -2480,6 +2498,8 @@ def _prepare_ref_cumulative_data(df_all, start, end, mode="prior",
             "yTitle": "Cumulative Referrals",
             **_prior_meta,
         }
+        if _cy_last_actual is not None:
+            apply_current_year_projection(store_data, _cy_last_actual, start)
         return store_data, slider_max, slider_marks
 
     else:  # mode == "slice"
@@ -2561,7 +2581,7 @@ def _prepare_ref_cumulative_data(df_all, start, end, mode="prior",
 
         elif slice_by == "site":
             dff_period = dff_period.copy()
-            dff_period["_our_dept"] = dff_period["Referred by Department"].apply(_map_to_our_dept)
+            dff_period["_our_dept"] = dff_period["Referred to Department"].apply(_map_to_our_dept)
             for dept in DEPARTMENTS:
                 sub = dff_period[dff_period["_our_dept"] == dept]
                 if sub.empty:
@@ -3506,10 +3526,10 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
         return empty_out
 
     # --- Department filter ---
-    # Map "Referred by Department" to our departments, filter
-    if departments and "Referred by Department" in df.columns:
-        our_dept = df["Referred by Department"].apply(_map_to_our_dept)
-        df = df[our_dept.isin(departments) | our_dept.isna()]
+    # Map "Referred to Department" (our site) to Lacey/Centralia/Aberdeen
+    if departments and "Referred to Department" in df.columns:
+        our_dept = df["Referred to Department"].apply(_map_to_our_dept)
+        df = df[our_dept.isin(departments)]
 
     # --- Build specialty options (after dept filter, before specialty filter) ---
     spec_options = []
@@ -3580,9 +3600,9 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
         ps, pe = _prior_range(pd.Timestamp(start_date), pd.Timestamp(end_date))
         prior_df = load_referrals()
         prior_df = prior_df[(prior_df["Created"] >= ps) & (prior_df["Created"] < pe + timedelta(days=1))]
-        if departments and "Referred by Department" in prior_df.columns:
-            p_dept = prior_df["Referred by Department"].apply(_map_to_our_dept)
-            prior_df = prior_df[p_dept.isin(departments) | p_dept.isna()]
+        if departments and "Referred to Department" in prior_df.columns:
+            p_dept = prior_df["Referred to Department"].apply(_map_to_our_dept)
+            prior_df = prior_df[p_dept.isin(departments)]
         prior_total = len(prior_df) if not prior_df.empty else None
         prior_conv = ((prior_df["Appt Attached"] == "Yes").sum() / prior_total * 100
                       if prior_total else None)
@@ -3720,9 +3740,9 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
         prior_all = load_referrals()
         data_min = prior_all["Created"].min() if not prior_all.empty else dim_start
         # Apply same filters as current data
-        if departments and "Referred by Department" in prior_all.columns:
-            p_dept = prior_all["Referred by Department"].apply(_map_to_our_dept)
-            prior_all = prior_all[p_dept.isin(departments) | p_dept.isna()]
+        if departments and "Referred to Department" in prior_all.columns:
+            p_dept = prior_all["Referred to Department"].apply(_map_to_our_dept)
+            prior_all = prior_all[p_dept.isin(departments)]
         if specialty_filter and "DeptSpecialty" in prior_all.columns:
             prior_all = prior_all[prior_all["DeptSpecialty"] == specialty_filter]
         if diag_cats:
@@ -3823,9 +3843,9 @@ def _update_ref_volume(_n, start_date, end_date, departments, specialty_filter,
         s = pd.Timestamp(start_date)
         e = pd.Timestamp(end_date) + timedelta(days=1)
         df = df[(df["Created"] >= s) & (df["Created"] < e)]
-    if departments and "Referred by Department" in df.columns:
-        our_dept = df["Referred by Department"].apply(_map_to_our_dept)
-        df = df[our_dept.isin(departments) | our_dept.isna()]
+    if departments and "Referred to Department" in df.columns:
+        our_dept = df["Referred to Department"].apply(_map_to_our_dept)
+        df = df[our_dept.isin(departments)]
     if specialty_filter and "DeptSpecialty" in df.columns:
         df = df[df["DeptSpecialty"] == specialty_filter]
     if diag_cats:
@@ -3864,11 +3884,12 @@ def _update_ref_volume(_n, start_date, end_date, departments, specialty_filter,
     Input(f"{PAGE_ID}-cumulative-mode", "value"),
     Input(f"{PAGE_ID}-cumulative-period-type", "value"),
     Input(f"{PAGE_ID}-cumulative-slice", "value"),
+    Input(f"{PAGE_ID}-filter-date-preset", "value"),
     running=[(Output(f"{PAGE_ID}-chart-cumulative-loading", "visible"), True, False)],
 )
 def _update_ref_cumulative(_n, start_date, end_date, departments, specialty_filter,
                            diag_cats, diag_mode, diag_subs,
-                           cum_mode, period_type, slice_by):
+                           cum_mode, period_type, slice_by, date_preset):
     """Build cumulative referral volume store data."""
     from data.loader import load_referrals
 
@@ -3883,9 +3904,9 @@ def _update_ref_cumulative(_n, start_date, end_date, departments, specialty_filt
         return None, 5, _default_marks
 
     # Apply non-date filters to full dataset (for prior periods)
-    if departments and "Referred by Department" in df_all.columns:
-        our_dept = df_all["Referred by Department"].apply(_map_to_our_dept)
-        df_all = df_all[our_dept.isin(departments) | our_dept.isna()]
+    if departments and "Referred to Department" in df_all.columns:
+        our_dept = df_all["Referred to Department"].apply(_map_to_our_dept)
+        df_all = df_all[our_dept.isin(departments)]
     if specialty_filter and "DeptSpecialty" in df_all.columns:
         df_all = df_all[df_all["DeptSpecialty"] == specialty_filter]
     if diag_cats:
@@ -3914,6 +3935,7 @@ def _update_ref_cumulative(_n, start_date, end_date, departments, specialty_filt
     return _prepare_ref_cumulative_data(
         df_all, start, end, cum_mode or "prior",
         period_type or "calendar", slice_by or "department",
+        date_preset=date_preset,
     )
 
 
@@ -3939,13 +3961,14 @@ clientside_callback(
 )
 
 clientside_callback(
-    _CUMULATIVE_WITH_STACK,
+    ClientsideFunction(namespace="cumulative", function_name="renderWithProjectToggle"),
     Output(f"{PAGE_ID}-chart-cumulative", "figure"),
     Input(f"{PAGE_ID}-store-cumulative", "data"),
     Input(f"{PAGE_ID}-cumulative-settings-smooth", "value"),
     Input(f"{PAGE_ID}-cumulative-settings-type", "value"),
     Input(f"{PAGE_ID}-cumulative-settings-stack", "value"),
     Input(f"{PAGE_ID}-cumulative-settings-prior-periods", "value"),
+    Input(f"{PAGE_ID}-cumulative-project", "checked"),
     State(f"{PAGE_ID}-chart-cumulative", "figure"),
 )
 
@@ -6002,3 +6025,14 @@ def _rpm_diag_ai_apply(n, review_data, full_data, unreviewed_only):
     visible = [r for r in full_data if not r.get("reviewed")] if unreviewed_only else full_data
     msg = f"Applied {len(accepted)} AI classifications."
     return visible, full_data, stats, False, msg
+
+
+# Project-to-year-end toggle visibility (shown only for current_year preset)
+clientside_callback(
+    """function(preset) {
+        return preset === "current_year" ? {} : {"display": "none"};
+    }""",
+    Output(f"{PAGE_ID}-cumulative" + "-project-wrap", "style"),
+    Input(f"{PAGE_ID}-filter-date-preset", "value"),
+)
+

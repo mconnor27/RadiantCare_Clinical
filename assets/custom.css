@@ -58,6 +58,22 @@ body {
     margin-top: -6px;
 }
 
+/* Home-only: pull each legend label closer to its color-chip marker.
+   Plotly reserves ~30px per entry's swatch slot (itemwidth floor), leaving
+   a wide gap between the 11px square proxy chip and the text. Shifting
+   the <text> element left visually closes that gap without touching layout
+   for other pages. */
+#home-chart-tx-trend .legendtext,
+#home-chart-tx-cum .legendtext,
+#home-chart-consults-trend .legendtext,
+#home-chart-consults-cum .legendtext,
+#home-chart-sims-trend .legendtext,
+#home-chart-sims-cum .legendtext,
+#home-chart-refs-trend .legendtext,
+#home-chart-refs-cum .legendtext {
+    transform: translateX(-8px);
+}
+
 /* Allow Plotly annotations to render outside the plot area without clipping */
 .js-plotly-plot .plot-container,
 .js-plotly-plot .svg-container {

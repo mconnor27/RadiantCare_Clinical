@@ -44,6 +44,8 @@ def chart_settings_button(
     slider_label: str = "Smoothing",
     show_prior_periods: bool = False,
     prior_periods_default: int = 3,
+    show_project_toggle: bool = False,
+    project_toggle_default: bool = True,
     extra_settings: list | None = None,
 ):
     """Create a settings gear icon with small dropdown panel.
@@ -130,6 +132,28 @@ def chart_settings_button(
                             updatemode="drag",
                             marks=[{"value": i, "label": str(i)} for i in range(0, 6)],
                             mb=16,
+                        ),
+                    ],
+                ),
+            )
+        )
+
+    # "Project to year end" toggle — hidden by default via inline style, shown
+    # by a page-level callback only when the filter preset is "current_year".
+    if show_project_toggle:
+        panel_children.append(
+            html.Div(
+                id=f"{chart_id}-project-wrap",
+                style={"display": "none"},
+                children=dmc.Stack(
+                    gap=4,
+                    children=[
+                        dmc.Text("Projection", size="xs", fw=500, c="#6B7280"),
+                        dmc.Switch(
+                            id=f"{chart_id}-project",
+                            label="Project to year end",
+                            size="sm",
+                            checked=project_toggle_default,
                         ),
                     ],
                 ),

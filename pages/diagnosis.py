@@ -20,7 +20,7 @@ from utils.diagnosis_categories import SUBCATEGORIES as DIAG_SUBCATEGORIES
 from utils.charts import apply_default_layout, empty_figure
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, DEFAULT_SLIDER, SLIDER_MARKS,
-    preset_to_slider_val,
+    preset_to_slider_val, preset_to_exact_dates,
 )
 from utils.diagnosis_categories import (
     CATEGORIES as BODY_SYSTEMS,
@@ -672,6 +672,7 @@ def _build_filter_bar():
                             {"value": "3mo", "label": "Prior 3 mo"},
                             {"value": "30d", "label": "Prior 30 days"},
                             {"value": "ytd", "label": "Year to Date"},
+                            {"value": "current_year", "label": "Current Year"},
                             {"value": "last_year", "label": "Last Year"},
                             {"value": "this_month", "label": "This Month"},
                             {"value": "last_month", "label": "Last Month"},
@@ -1253,12 +1254,7 @@ def _sync_preset(preset, slider_min):
     slider_min = slider_min or 0
     sv = preset_to_slider_val(preset, MAX_IDX)
     sv = [max(sv[0], slider_min), max(sv[1], slider_min)]
-    s = idx_to_date(sv[0]).strftime("%Y-%m-%d")
-    e_ts = idx_to_date(sv[1], end_of_month=True)
-    today = pd.Timestamp.now().normalize()
-    if e_ts > today:
-        e_ts = today
-    e = e_ts.strftime("%Y-%m-%d")
+    s, e = preset_to_exact_dates(preset)
     return sv, s, e
 
 # B) Slider → DatePicker + Label (clientside for speed)

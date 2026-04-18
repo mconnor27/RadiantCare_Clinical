@@ -58,6 +58,11 @@ window.dash_clientside.census = {
         } else {
             stacked = rawData.stacked !== false;  // default true
         }
+        // Single-series (e.g. "Total" dim) has nothing to stack against — render
+        // as overlay so the fill uses the lighter 0.15 alpha instead of 0.5.
+        if (stacked && rawData.series && rawData.series.length <= 1) {
+            stacked = false;
+        }
 
         // TEMPORARILY DISABLED: Downsampling was causing last data points to be dropped
         // TODO: Fix downsampling to ensure dates and values arrays have matching lengths
@@ -618,6 +623,7 @@ window.dash_clientside.census = {
 
         var days = parseInt(rangeDays) || 0;
         var stacked = stackOverride === "grouped" ? false : stackOverride === "stacked" ? true : rawData.stacked !== false;
+        if (stacked && rawData.series && rawData.series.length <= 1) stacked = false;
         var hasFuture = (rawData.futureDates || []).length > 0;
 
         // Determine the visible x-range
@@ -818,6 +824,363 @@ window.dash_clientside.census = {
             return window.dash_clientside.census._buildWithRange(rawData, smoothPct, chartType, rangeDays, currentFig, stackOverride);
         }
         return window.dash_clientside.no_update;
+    },
+
+    /**
+     * Render variant without a per-card range picker — the server has already
+     * filtered the store to the desired date window, so we show everything in it.
+     */
+    smoothChartNoRange: function(rawData, smoothPct, chartType, stackOverride, currentFig) {
+        return window.dash_clientside.census.smoothChartWithTypeAndRange(
+            rawData, smoothPct, chartType, "0", stackOverride, currentFig
+        );
+    },
+
+    smoothCumulativeNoRange: function(rawData, smoothPct, currentFig) {
+        return window.dash_clientside.census.smoothCumulativeWithRange(
+            rawData, smoothPct, "0", currentFig
+        );
+    },
+
+    /**
+     * Tighten a figure's horizontal legend so it packs more entries per row.
+     * The home page's 4-card grid makes each chart narrow; the default legend
+     * spacing wraps at 4-5 entries. Only used by home — other pages keep the
+     * standard entry width.
+     */
+    _homeCompactLegend: function(fig) {
+        if (!fig || fig === window.dash_clientside.no_update) return fig;
+        if (!fig.layout) fig.layout = {};
+
+        // Left margin is pinned to a constant so Total/Dept/MD slices all
+        // align. The shared `_buildWithRange` uses `l: stacked ? 28 : 40`,
+        // which makes Total mode (single series, unstacked) wider than
+        // Dept/MD (stacked) — a visible hop when toggling.
+        var legendShown = fig.layout.showlegend !== false;
+        if (!legendShown) {
+            // No legend → reclaim the top space. Plotly.react deep-merges
+            // layout.legend across renders, so an `Object.assign({}, lg, {yref:
+            // "container", y: 0.99, …})` from a prior sliced render sticks
+            // around even when we later pass `legend: {}`. Explicitly write
+            // back the Plotly defaults for every key the sliced branch mutates
+            // so the merged config matches a fresh render.
+            fig.layout.showlegend = false;
+            fig.layout.legend = {
+                orientation: "v",
+                xref: "paper", xanchor: "auto", x: 1.02,
+                yref: "paper", yanchor: "auto", y: 1,
+                entrywidth: null,
+                entrywidthmode: "pixels",
+                tracegroupgap: 10,
+                itemsizing: "trace",
+                indentation: 0,
+                itemwidth: 30
+            };
+            var m = fig.layout.margin || {};
+            fig.layout.margin = {
+                l: 36,
+                r: (m.r != null) ? m.r : 8,
+                t: 10,
+                b: (m.b != null) ? m.b : 20,
+                // Disable Plotly's autoexpand, which otherwise leaves the prior
+                // render's expanded top margin in place when we shrink t.
+                autoexpand: false
+            };
+            // Unique uirevision per branch so Plotly discards preserved layout
+            // state from the other branch on toggle.
+            fig.layout.uirevision = "home-nolegend";
+            fig.layout.autosize = true;
+            return fig;
+        }
+
+        var lg = fig.layout.legend || {};
+        fig.layout.legend = Object.assign({}, lg, {
+            orientation: "h",
+            // Anchor the legend to the container (fixed CSS height) rather
+            // than the plot area. This avoids the "legend jumps after first
+            // interaction" bug — plot-area coords depend on Plotly measuring
+            // the plot, which isn't finalized on the first render.
+            xanchor: "left", x: 0,
+            yref: "container", yanchor: "top", y: 0.99,
+            entrywidth: 0,
+            entrywidthmode: "pixels",
+            tracegroupgap: 0,
+            itemsizing: "constant",
+            indentation: 0,
+            itemwidth: 15
+        });
+        // Top margin holds the legend comfortably. 46px fits either a single
+        // row (18px) with breathing room or a wrapped 2-row legend (~36px
+        // tall) without clipping row 2 into the plot area.
+        fig.layout.margin = Object.assign({}, fig.layout.margin || {}, {t: 46, l: 36});
+        // Pair with the no-legend uirevision so Plotly re-lays out the plot
+        // area when the user toggles between Total and sliced modes.
+        fig.layout.uirevision = "home-legend";
+
+        // Home-only: replace the line-segment legend swatch with a small square
+        // color chip. Plotly's built-in `itemwidth` is clamped to ~30px so the
+        // line swatch can't be shortened natively; instead, we hide each line
+        // trace from the legend and add a marker-only proxy trace (symbol:
+        // "square") that shows up as a compact colored square. The proxy shares
+        // `legendgroup` with the real trace so legend clicks still toggle
+        // visibility on the actual line. Bar traces already render a square
+        // swatch natively, so we skip them.
+        if (fig.data && fig.data.length) {
+            var proxies = [];
+            for (var i = 0; i < fig.data.length; i++) {
+                var t = fig.data[i];
+                if (!t || !t.name) continue;
+                if (t.showlegend === false) continue;
+                if (t.type === "bar") continue;
+                var color = (t.line && t.line.color) ||
+                            (t.marker && t.marker.color);
+                if (typeof color !== "string") continue;  // skip per-point arrays
+                var group = t.legendgroup || t.name;
+                t.showlegend = false;
+                t.legendgroup = group;
+                // Shorten 4-digit year labels to 2-digit with apostrophe
+                // ("2026" → "'26") so more fit on one row. Leave non-year
+                // names (MD surnames, department names) unchanged.
+                var displayName = t.name;
+                var yrMatch = String(displayName).match(/^(\d{4})$/);
+                if (yrMatch) displayName = "'" + yrMatch[1].slice(-2);
+                proxies.push({
+                    type: "scatter",
+                    mode: "markers",
+                    x: [null], y: [null],
+                    name: displayName,
+                    marker: {symbol: "square", size: 11, color: color,
+                             line: {width: 0}},
+                    showlegend: true,
+                    legendgroup: group,
+                    legendrank: t.legendrank,
+                    hoverinfo: "skip"
+                });
+            }
+            if (proxies.length) fig.data = fig.data.concat(proxies);
+        }
+        return fig;
+    },
+
+    /**
+     * Home trend wrapper — runs the standard `smoothChartNoRange` and then
+     * tightens the legend so 5-6 MDs (or other dimension values) fit on one row.
+     */
+    homeTrend: function(rawData, smoothPct, chartType, stackOverride, currentFig) {
+        var fig = window.dash_clientside.census.smoothChartNoRange(
+            rawData, smoothPct, chartType, stackOverride, currentFig
+        );
+        fig = window.dash_clientside.census._homeCompactLegend(fig);
+
+        // Home-scoped x-axis override:
+        //  - Line/area: Plotly's date axis auto-adds a "year" parent label
+        //    (e.g. "2026") when tickformat omits the year. Switch to a
+        //    category axis with explicit tickvals/ticktext to suppress it.
+        //  - Bar: existing category labels ("3/16 '26") are too dense for
+        //    the narrow home-card width. Thin to ~7 ticks with readable
+        //    "Jan 11" labels (year suffix only on year transitions).
+        if (fig && fig !== window.dash_clientside.no_update && fig.layout
+            && rawData && rawData.dates && rawData.dates.length) {
+            var hDates = rawData.dates;
+            var nH = hDates.length;
+            var firstH = parseIsoDate(hDates[0]);
+            var lastH = parseIsoDate(hDates[nH - 1]);
+            var spanDaysH = 0;
+            if (firstH.valid && lastH.valid) {
+                spanDaysH = Math.round(
+                    (Date.UTC(lastH.year, lastH.month, lastH.day) -
+                     Date.UTC(firstH.year, firstH.month, firstH.day)) / 86400000
+                );
+            }
+            // For multi-year views (>5y) fall back to just "2026" style.
+            var useYearOnlyH = spanDaysH > 1825;
+            var aggLevelH = (typeof detectAggLevel === "function") ? detectAggLevel(hDates) : "D";
+            var monthNamesH = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+            // Bar mode: traces use the formatted bar-label strings as their
+            // x-values (from formatDatesForBars). Map our stride indices to
+            // those strings so tickvals match the category axis.
+            var barLabelsArr = null;
+            if (chartType === "bar" && typeof formatDatesForBars === "function") {
+                var fb = formatDatesForBars(hDates);
+                barLabelsArr = fb.labels || null;
+            }
+
+            var strideH = Math.max(1, Math.round(nH / 7));
+            var hTickVals = [], hTickText = [];
+            for (var hi = 0; hi < nH; hi += strideH) {
+                var hp = parseIsoDate(hDates[hi]);
+                if (!hp.valid) continue;
+                var lblH;
+                if (useYearOnlyH) {
+                    lblH = String(hp.year);
+                } else if (chartType === "bar" && aggLevelH === "M") {
+                    // Monthly bars: "Apr" alone (the 1st-of-month day adds noise).
+                    lblH = monthNamesH[hp.month];
+                } else {
+                    lblH = monthNamesH[hp.month] + " " + hp.day;
+                }
+                if (chartType === "bar") {
+                    if (barLabelsArr && barLabelsArr[hi] !== undefined) {
+                        hTickVals.push(barLabelsArr[hi]);
+                        hTickText.push(lblH);
+                    }
+                } else {
+                    hTickVals.push(hDates[hi]);
+                    hTickText.push(lblH);
+                }
+            }
+
+            fig.layout.xaxis = fig.layout.xaxis || {};
+            fig.layout.xaxis.tickmode = "array";
+            fig.layout.xaxis.tickvals = hTickVals;
+            fig.layout.xaxis.ticktext = hTickText;
+            fig.layout.xaxis.tickformat = null;
+            fig.layout.xaxis.dtick = null;
+            // Pin bottom padding so Total and sliced modes match. Plotly's
+            // default automargin otherwise expands the bottom by a few px when
+            // the legend changes, producing visibly uneven plot heights in a
+            // side-by-side row of home cards.
+            fig.layout.xaxis.automargin = false;
+            fig.layout.margin = Object.assign({}, fig.layout.margin || {}, {b: 24});
+            if (chartType !== "bar") {
+                fig.layout.xaxis.type = "category";
+                fig.layout.xaxis.categoryorder = "array";
+                fig.layout.xaxis.categoryarray = hDates;
+            }
+            // Bar mode already has type:"category" + categoryarray from
+            // smoothChartWithType — leave it alone.
+        }
+
+        // Plotly.react (invoked by dcc.Graph) sometimes preserves the prior
+        // render's plot-area geometry even when margin/legend change and
+        // uirevision flips. After Dash applies the figure, call
+        // Plotly.Plots.resize on every home trend plot to force a fresh
+        // plot-area computation from the new margin.
+        if (typeof window !== "undefined" && window.Plotly && window.Plotly.Plots) {
+            setTimeout(function() {
+                try {
+                    var els = document.querySelectorAll('[id^="home-chart-"][id$="-trend"]');
+                    for (var i = 0; i < els.length; i++) {
+                        var p = els[i].querySelector(".js-plotly-plot") || els[i];
+                        if (p && p._fullLayout) window.Plotly.Plots.resize(p);
+                    }
+                } catch (e) {}
+            }, 80);
+        }
+        return fig;
+    },
+
+    /**
+     * Home cumulative dispatcher — routes prior-mode stores (current_year YoY)
+     * to the shared cumulative.renderCumulative, and slice-mode stores (other
+     * presets) to the per-series cumulative line renderer. Accepts chartType,
+     * grouping, and prior-periods so both paths feel like the other pages'
+     * cumulative cards.
+     */
+    homeCumulative: function(rawData, smoothPct, chartType, maxPrior, projectOn, currentFig) {
+        if (!rawData) return window.dash_clientside.no_update;
+        chartType = chartType || "line";
+        // Home cum cards are unidimensional — force "stacked" so bar mode still
+        // renders per-period total annotations.
+        var stackVal = "stacked";
+
+        if (rawData.mode === "prior") {
+            // Projection is rendered automatically by renderCumulative; suppress
+            // it by stripping the projection fields when the toggle is off.
+            if (!projectOn) {
+                rawData = JSON.parse(JSON.stringify(rawData));
+                if (rawData.current) delete rawData.current.projection;
+                delete rawData.projectionTotal;
+            }
+            return window.dash_clientside.census._homeCompactLegend(
+                window.dash_clientside.cumulative.renderCumulative(
+                    rawData, smoothPct, chartType, currentFig, stackVal, maxPrior
+                )
+            );
+        }
+
+        // Slice mode: cumsum each series clientside, render via unified
+        // chart-with-type so area/line pick up their usual treatment.
+        // Bar mode on a single-period cumulative isn't meaningful — fall back to line.
+        var renderType = (chartType === "bar") ? "line" : chartType;
+        var data = JSON.parse(JSON.stringify(rawData));
+        for (var si = 0; si < data.series.length; si++) {
+            var vals = data.series[si].values;
+            var cum = 0;
+            for (var di = 0; di < vals.length; di++) {
+                if (vals[di] === null || vals[di] === undefined) {
+                    vals[di] = null;  // propagate gaps
+                } else {
+                    cum += vals[di];
+                    vals[di] = cum;
+                }
+            }
+        }
+        data.stacked = false;  // cumulative progression doesn't stack
+        return window.dash_clientside.census._homeCompactLegend(
+            window.dash_clientside.census.smoothChartWithTypeAndRange(
+                data, smoothPct, renderType, "0", "grouped", currentFig
+            )
+        );
+    },
+
+    /**
+     * Cumulative variant: rebase each series to a running total that resets at the
+     * start of the visible range, then render as a non-stacked line chart.
+     * Pre-range values are nulled so no line is drawn before the rebase point.
+     */
+    smoothCumulativeWithRange: function(rawData, smoothPct, rangeDays, currentFig) {
+        if (!rawData || !rawData.dates || rawData.dates.length === 0) {
+            return window.dash_clientside.census._buildWithRange(
+                rawData, smoothPct, "line", rangeDays, currentFig, "grouped"
+            );
+        }
+
+        // Deep-copy so we don't mutate the store payload
+        var data = JSON.parse(JSON.stringify(rawData));
+
+        // Determine startIdx based on rangeDays relative to last date
+        var days = parseInt(rangeDays) || 0;
+        var startIdx = 0;
+        var dates = data.dates;
+        if (days > 0 && dates.length > 0) {
+            var lp = parseIsoDate(dates[dates.length - 1]);
+            if (lp.valid) {
+                var startObj = new Date(lp.year, lp.month, lp.day - days);
+                var startIso = localDateToIso(startObj);
+                startIdx = dates.length;
+                for (var i = 0; i < dates.length; i++) {
+                    if (dates[i].split('T')[0] >= startIso) { startIdx = i; break; }
+                }
+            }
+        }
+
+        // Rebuild values: null before startIdx, cumulative sum from startIdx onward
+        for (var si = 0; si < data.series.length; si++) {
+            var vals = data.series[si].values;
+            var cum = 0;
+            for (var di = 0; di < vals.length; di++) {
+                if (di < startIdx) {
+                    vals[di] = null;
+                } else {
+                    cum += (typeof vals[di] === "number" && !isNaN(vals[di])) ? vals[di] : 0;
+                    vals[di] = cum;
+                }
+            }
+        }
+
+        // No future projection for cumulative (keeps the visible window meaningful)
+        data.futureDates = [];
+
+        // Force non-stacked line rendering
+        data.stacked = false;
+
+        var chartElId = data.chartId || currentFig && currentFig.layout && currentFig.layout._chartElId;
+        // Inject chartId so _buildWithRange/debounce targets right element
+        return window.dash_clientside.census._buildWithRange(
+            data, smoothPct, "line", rangeDays, currentFig, "grouped"
+        );
     }
 };
 
@@ -838,6 +1201,22 @@ window.dash_clientside.censusYAxis = {
         if (!relayoutData || !currentFigure || !rawData ||
             !rawData.dates || rawData.dates.length === 0) {
             return window.dash_clientside.no_update;
+        }
+
+        // Staleness guard: relayoutData fires during Plotly's own react (not
+        // just user pans). If the captured State(figure) doesn't contain every
+        // series in rawData, it's the pre-toggle figure — deep-copying and
+        // patching it would overwrite the fresh figure produced by homeTrend
+        // with the prior render's layout (including its margin). Bail out.
+        var figNames = {};
+        for (var _fi = 0; _fi < (currentFigure.data || []).length; _fi++) {
+            var _nm = currentFigure.data[_fi].name;
+            if (_nm) figNames[_nm] = true;
+        }
+        for (var _si = 0; _si < rawData.series.length; _si++) {
+            if (!figNames[rawData.series[_si].name]) {
+                return window.dash_clientside.no_update;
+            }
         }
 
         chartType = chartType || "area";
@@ -1226,6 +1605,22 @@ window.dash_clientside.barAggGuard = {
 
 window.dash_clientside.cumulative = {
     /**
+     * Wrapper that strips projection fields when the per-card "Project to year
+     * end" toggle is off, then delegates to renderCumulative. This lets every
+     * page's cum chart callback wire a shared projection toggle without
+     * re-implementing the strip logic.
+     */
+    renderWithProjectToggle: function(rawData, smoothPct, chartType, stackVal, maxPrior, projectOn, currentFig) {
+        if (!projectOn && rawData) {
+            rawData = JSON.parse(JSON.stringify(rawData));
+            if (rawData.current) delete rawData.current.projection;
+            delete rawData.projectionTotal;
+        }
+        return window.dash_clientside.cumulative.renderCumulative(
+            rawData, smoothPct, chartType, currentFig, stackVal, maxPrior
+        );
+    },
+    /**
      * Render a cumulative visit volume chart.
      * Supports two modes:
      *   - "prior": current period (bold purple) + up to 5 prior periods (thin gray)
@@ -1314,8 +1709,9 @@ window.dash_clientside.cumulative = {
                 // Trim bar breakdown to maxPrior + 1 (current + N priors)
                 // Periods are oldest-first, so keep the LAST maxBars entries (most recent)
                 var maxBars = (maxPrior && maxPrior > 0) ? maxPrior + 1 : periods.length;
+                var trimStart = 0;
                 if (periods.length > maxBars) {
-                    var trimStart = periods.length - maxBars;
+                    trimStart = periods.length - maxBars;
                     periods = periods.slice(trimStart);
                     slices = slices.map(function(s) {
                         return Object.assign({}, s, {values: s.values.slice(trimStart)});
@@ -1397,6 +1793,34 @@ window.dash_clientside.cumulative = {
                     }
                 }
 
+                // Current_year projection: transparent overlay bar + faint annotation
+                // at the projected year-end total.
+                var projTotal = rawData.projectionTotal;
+                if (projTotal && projTotal.remainder > 0) {
+                    var pIdx = projTotal.periodIdx - trimStart;
+                    if (pIdx >= 0 && pIdx < periods.length) {
+                        var projY = periods.map(function(_, i) { return i === pIdx ? projTotal.remainder : 0; });
+                        var projColor = (rawData.current && rawData.current.color) || "#7C2A83";
+                        traces.push({
+                            x: barIndices, y: projY,
+                            name: (rawData.current && rawData.current.label ? rawData.current.label : "") + " (projected)",
+                            type: "bar",
+                            marker: {color: projColor, opacity: 0.25, line: {width: 0}},
+                            showlegend: false,
+                            hovertemplate: "Projected year-end: <b>" + fmtVal(projTotal.endVal) + "</b><extra></extra>"
+                        });
+                        if (projTotal.endVal > yMaxBar) yMaxBar = projTotal.endVal;
+                        if (!isGrouped) {
+                            barAnnotations.push({
+                                x: pIdx, y: projTotal.endVal,
+                                text: "<i>" + fmtVal(projTotal.endVal) + "</i>",
+                                showarrow: false, yshift: 8,
+                                font: {size: 10, color: "#6B7280", family: "Inter, system-ui, sans-serif"}
+                            });
+                        }
+                    }
+                }
+
                 return {
                     data: traces,
                     layout: {
@@ -1418,7 +1842,9 @@ window.dash_clientside.cumulative = {
                         showlegend: slices.length > 1,
                         legend: {
                             orientation: "h", yanchor: "bottom", y: 1.02,
-                            xanchor: "left", x: 0
+                            xanchor: "left", x: 0,
+                            entrywidth: 45,
+                            entrywidthmode: "pixels", tracegroupgap: 0
                         },
                         margin: {l: 36, r: 16, t: 28, b: 20},
                         plot_bgcolor: "white",
@@ -1494,6 +1920,28 @@ window.dash_clientside.cumulative = {
             }
             traces.push(currentTrace);
 
+            // Current_year projection: dashed extension from (startIdx, startVal)
+            // to (endIdx, endVal). Emitted by apply_current_year_projection.
+            // Fine dash pattern ("3px,3px") reads as a visibly "projected" line
+            // without looking heavy like the default "dash" style.
+            //
+            // NOTE: do NOT set legendgroup here. Plotly reserves a legend slot
+            // for any trace with a legendgroup even when showlegend=false, which
+            // pushes the total legend width over the plot width and forces the
+            // horizontal legend to wrap into a vertical stack.
+            if (current.projection) {
+                var cp = current.projection;
+                traces.push({
+                    x: [cp.startIdx, cp.endIdx],
+                    y: [cp.startVal, cp.endVal],
+                    name: (current.label || "Current") + " (projected)",
+                    mode: "lines",
+                    line: {color: current.color || "#7C2A83", width: 2.5, dash: "3px,3px"},
+                    showlegend: false,
+                    hovertemplate: "Projected year-end: <b>" + fmtVal(cp.endVal) + "</b><extra></extra>"
+                });
+            }
+
             // Summary hover trace — current period first, then prior (oldest last)
             var allTraceEntries = [{name: current.label || "Current", color: current.color || "#7C2A83"}];
             for (var pi = 0; pi < prior.length; pi++) {
@@ -1537,7 +1985,10 @@ window.dash_clientside.cumulative = {
 
             // Endpoint annotations — oldest prior first, current last (later = drawn on top)
             var annotations = [];
-            // Prior period endpoint annotations (oldest → most recent)
+            // Prior period endpoint annotations (oldest → most recent).
+            // Home page opts out via hidePriorEndpointLabels to keep the small
+            // cumulative cards uncluttered — only the current (purple) endpoint shows.
+            if (!rawData.hidePriorEndpointLabels) {
             for (var ai = prior.length - 1; ai >= 0; ai--) {
                 var pVals = prior[ai].values || [];
                 var pColor = prior[ai].color || "#D1D5DB";
@@ -1561,7 +2012,10 @@ window.dash_clientside.cumulative = {
                     });
                 }
             }
-            // Current period endpoint (last = on top)
+            }
+            // Current period endpoint label — placed to the TOP-LEFT of the
+            // endpoint so it sits in the blank space above the solid line rather
+            // than overlapping the dashed projection that extends to the upper right.
             if (trimmedY.length > 0) {
                 var endVal = trimmedY[trimmedY.length - 1];
                 var endX = trimmedX[trimmedX.length - 1];
@@ -1572,10 +2026,10 @@ window.dash_clientside.cumulative = {
                         y: endVal,
                         text: "<b>" + endFmt + "</b>",
                         showarrow: false,
-                        xanchor: "left",
+                        xanchor: "right",
                         yanchor: "bottom",
-                        xshift: 6,
-                        yshift: 2,
+                        xshift: -4,
+                        yshift: 4,
                         font: {color: current.color || "#7C2A83", size: 13, family: "Inter, system-ui, sans-serif"}
                     });
                 }
@@ -1615,11 +2069,17 @@ window.dash_clientside.cumulative = {
                     },
                     showlegend: true,
                     legend: {
+                        // Keep legend entries on a single horizontal row even when
+                        // the chart is narrow: smaller font + tight fixed-width
+                        // entries prevent Plotly's auto-wrap into a stacked list.
                         orientation: "h",
                         yanchor: "bottom",
                         y: 1.02,
                         xanchor: "left",
-                        x: 0
+                        x: 0,
+                        entrywidth: 45,
+                        entrywidthmode: "pixels",
+                        tracegroupgap: 0
                     },
                     margin: {l: 36, r: 16, t: 28, b: 20},
                     plot_bgcolor: "white",
@@ -1732,7 +2192,9 @@ window.dash_clientside.cumulative = {
                         },
                         bargap: 0.15,
                         showlegend: slices.length > 1,
-                        legend: {orientation: "h", yanchor: "bottom", y: 1.02, xanchor: "left", x: 0},
+                        legend: {orientation: "h", yanchor: "bottom", y: 1.02, xanchor: "left", x: 0,
+                                 entrywidth: 45,
+                                 entrywidthmode: "pixels", tracegroupgap: 0},
                         margin: {l: 36, r: 16, t: 8, b: 20},
                         plot_bgcolor: "white", paper_bgcolor: "white",
                         font: {family: "Inter, system-ui, sans-serif", size: 12, color: "#374151"},
@@ -1846,7 +2308,9 @@ window.dash_clientside.cumulative = {
                         autorange: false
                     },
                     showlegend: true,
-                    legend: {orientation: "h", yanchor: "bottom", y: 1.02, xanchor: "left", x: 0},
+                    legend: {orientation: "h", yanchor: "bottom", y: 1.02, xanchor: "left", x: 0,
+                             entrywidth: 45,
+                             entrywidthmode: "pixels", tracegroupgap: 0},
                     margin: {l: 36, r: 16, t: 28, b: 20},
                     plot_bgcolor: "white", paper_bgcolor: "white",
                     font: {family: "Inter, system-ui, sans-serif", size: 12, color: "#374151"},

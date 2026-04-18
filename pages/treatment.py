@@ -25,7 +25,7 @@ from utils.charts import apply_default_layout, empty_figure, dept_color
 from utils.holidays import get_holidays
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, SLIDER_MARKS,
-    preset_to_slider_val,
+    preset_to_slider_val, preset_to_exact_dates,
 )
 
 dash.register_page(__name__, path="/treatment", name="Treatment", order=8)
@@ -226,6 +226,7 @@ def _build_tx_filter_bar():
                             {"value": "3mo", "label": "Prior 3 mo"},
                             {"value": "30d", "label": "Prior 30 days"},
                             {"value": "ytd", "label": "Year to Date"},
+                            {"value": "current_year", "label": "Current Year"},
                             {"value": "last_year", "label": "Last Year"},
                             {"value": "this_month", "label": "This Month"},
                             {"value": "last_month", "label": "Last Month"},
@@ -384,6 +385,7 @@ layout = dmc.Stack(
                     ],
                     show_smooth=True,
                     show_prior_periods=True,
+                    show_project_toggle=True,
                     smooth_min=0,
                     smooth_max=1,
                     smooth_step=0.05,
@@ -873,12 +875,7 @@ def _register_tx_filter_callbacks():
         if not preset or preset == "custom":
             return (dash.no_update,) * 3
         sv = preset_to_slider_val(preset, MAX_IDX)
-        s = idx_to_date(sv[0]).strftime("%Y-%m-%d")
-        e_ts = idx_to_date(sv[1], end_of_month=True)
-        today = pd.Timestamp.now().normalize()
-        if e_ts > today:
-            e_ts = today
-        e = e_ts.strftime("%Y-%m-%d")
+        s, e = preset_to_exact_dates(preset)
         return sv, s, e
 
     # B) Slider -> DatePicker + Label (clientside)
@@ -1190,8 +1187,10 @@ def _prepare_cumulative_data(df, start, end, date_preset,
     if df.empty or "ScheduledDateTime" not in df.columns:
         return None
 
+    from utils.cumulative_current_year import setup_current_year_range, apply_current_year_projection
     today = pd.Timestamp.now().normalize()
-    if end.normalize() > today:
+    start, end, _cy_last_actual = setup_current_year_range(date_preset, mode, start, end)
+    if _cy_last_actual is None and end.normalize() > today:
         end = today
 
     period_days = (end - start).days + 1
@@ -1331,7 +1330,7 @@ def _prepare_cumulative_data(df, start, end, date_preset,
     slice_breakdown = {"periods": breakdown_periods, "slices": breakdown_slices}
 
     if mode == "prior":
-        return {
+        _result = {
             "mode": "prior",
             "startDate": start_norm.isoformat(),
             "dayIndices": day_indices,
@@ -1351,6 +1350,9 @@ def _prepare_cumulative_data(df, start, end, date_preset,
             "height": 350,
             "yTitle": "Cumulative Treatments",
         }
+        if _cy_last_actual is not None:
+            apply_current_year_projection(_result, _cy_last_actual, start)
+        return _result
 
     # Slice mode
     mask = (dff_all["ScheduledDateTime"] >= start) & (dff_all["ScheduledDateTime"] <= end)
@@ -1507,11 +1509,18 @@ def _apply_grid_row_filter(df, grid_rows):
 
 
 def _apply_filters(_n, slider_val, date_preset, departments, physician,
-                   machines, diagnosis_cats, diag_mode, physician_role):
+                   machines, diagnosis_cats, diag_mode, physician_role,
+                   business_days_only=True):
     """Load and filter both Treatment and Treatment-Detail DataFrames.
 
+    When `business_days_only` is True (default), weekends and observed
+    holidays are dropped — appropriate for KPIs like "Daily Treatments (avg)"
+    and for daily-aggregation charts where weekend zero-points would create
+    visual dips. Chart callbacks with a D/W/M/Y toggle pass
+    `business_days_only=(agg == "D")` so weekly+ views reflect all activity.
+
     Returns (df_agg_filtered, df_det_filtered, df_agg_prior, df_det_prior,
-             start, end, trend_label).
+             start, end, trend_label, df_det_f).
     """
     from data.loader import load_treatment, load_treatment_detail
     from utils.diagnosis_categories import build_code_to_category, filter_by_diagnosis
@@ -1532,9 +1541,10 @@ def _apply_filters(_n, slider_val, date_preset, departments, physician,
         df_agg = df_agg[df_agg["Department"].isin(_SITE_DEPTS)].copy()
         if departments:
             df_agg = df_agg[df_agg["Department"].isin(departments)]
-        df_agg = df_agg[df_agg["ScheduledDate"].dt.weekday < 5]
-        if holidays:
-            df_agg = df_agg[~df_agg["ScheduledDate"].dt.normalize().isin(holidays)]
+        if business_days_only:
+            df_agg = df_agg[df_agg["ScheduledDate"].dt.weekday < 5]
+            if holidays:
+                df_agg = df_agg[~df_agg["ScheduledDate"].dt.normalize().isin(holidays)]
         df_agg_filtered = df_agg[
             (df_agg["ScheduledDate"] >= start) & (df_agg["ScheduledDate"] <= end)
         ]
@@ -1555,9 +1565,10 @@ def _apply_filters(_n, slider_val, date_preset, departments, physician,
             df_det_f = df_det_f[(df_det_f["Department"] != "Lacey") | df_det_f["Machine"].isin(machines)]
         if diagnosis_cats:
             df_det_f = filter_by_diagnosis(df_det_f, diagnosis_cats, c2b, mode=diag_mode or "primary")
-        df_det_f = df_det_f[df_det_f["ScheduledDateTime"].dt.weekday < 5]
-        if holidays:
-            df_det_f = df_det_f[~df_det_f["ScheduledDateTime"].dt.normalize().isin(holidays)]
+        if business_days_only:
+            df_det_f = df_det_f[df_det_f["ScheduledDateTime"].dt.weekday < 5]
+            if holidays:
+                df_det_f = df_det_f[~df_det_f["ScheduledDateTime"].dt.normalize().isin(holidays)]
         df_det_filtered = df_det_f[
             (df_det_f["ScheduledDateTime"] >= start) & (df_det_f["ScheduledDateTime"] <= end)
         ]
@@ -1697,13 +1708,17 @@ def _update_kpis(*args):
         if hover_fmt:
             sparkline_data[key]["hover_fmt"] = hover_fmt
 
-    # 1. Daily Treatments (avg per business day) — sum across sites, then avg
-    if not df_agg_filtered.empty and "CompletedAppointments" in df_agg_filtered.columns:
-        daily_tx = df_agg_filtered.groupby("ScheduledDate")["CompletedAppointments"].sum()
+    # 1. Daily Treatments (avg per business day) — Treatment-Detail session count.
+    # Detail is the canonical source (matches actual machine beam-delivery log);
+    # Treatment.csv's CompletedAppointments counts scheduled appointments capped
+    # at session count, which diverges on multi-session days and the occasional
+    # scheduled-no-delivery appointment.
+    if not df_det_filtered.empty and "ScheduledDateTime" in df_det_filtered.columns:
+        daily_tx = df_det_filtered.groupby(df_det_filtered["ScheduledDateTime"].dt.normalize()).size()
         val = daily_tx.mean()
         t_text, t_dir = None, None
-        if not df_agg_prior.empty:
-            prior_daily = df_agg_prior.groupby("ScheduledDate")["CompletedAppointments"].sum()
+        if not df_det_prior.empty and "ScheduledDateTime" in df_det_prior.columns:
+            prior_daily = df_det_prior.groupby(df_det_prior["ScheduledDateTime"].dt.normalize()).size()
             t_text, t_dir = _trend(val, prior_daily.mean())
             if t_text:
                 t_text = f"{t_text} {trend_label}"
@@ -1718,17 +1733,19 @@ def _update_kpis(*args):
     else:
         kpis.append(na_kpi)
 
-    # 2. New Starts
-    ns_col = "NewStarts_ByFraction"
-    if not df_agg_filtered.empty and ns_col in df_agg_filtered.columns:
-        ns_val = df_agg_filtered[ns_col].sum()
+    # 2. New Starts (by fraction — count of Treatment-Detail rows where FractionNumber=1)
+    ns_col = "IsNewStart_ByFraction"
+    if not df_det_filtered.empty and ns_col in df_det_filtered.columns:
+        ns_val = int(df_det_filtered[ns_col].sum())
         t_text, t_dir = None, None
-        if not df_agg_prior.empty and ns_col in df_agg_prior.columns:
-            ns_prior = df_agg_prior[ns_col].sum()
+        if not df_det_prior.empty and ns_col in df_det_prior.columns:
+            ns_prior = int(df_det_prior[ns_col].sum())
             t_text, t_dir = _trend(ns_val, ns_prior)
             if t_text:
                 t_text = f"{t_text} {trend_label}"
-        spark_s = df_agg_filtered.set_index("ScheduledDate")[ns_col].sort_index()
+        tmp = df_det_filtered[["ScheduledDateTime", ns_col]].copy()
+        tmp["_d"] = tmp["ScheduledDateTime"].dt.normalize()
+        spark_s = tmp.groupby("_d")[ns_col].sum().sort_index()
         spark_w = spark_s.resample("W").sum()
         if len(spark_w) >= 3:
             sparkline_data["newstarts"] = {
@@ -1737,7 +1754,7 @@ def _update_kpis(*args):
                 "color": SEMANTIC_COLORS["info"],
             }
         kpis.append(kpi_card(
-            "New Starts (period)", f"{int(ns_val):,}",
+            "New Starts (period)", f"{ns_val:,}",
             accent_color=SEMANTIC_COLORS["info"],
             trend_text=t_text, trend_direction=t_dir,
             sparkline_id="tx-spark-newstarts",
@@ -1745,13 +1762,13 @@ def _update_kpis(*args):
     else:
         kpis.append(na_kpi)
 
-    # 3. Unique Patients (avg per day) — sum across sites, then avg
-    if not df_agg_filtered.empty and "UniquePatients" in df_agg_filtered.columns:
-        daily_pts = df_agg_filtered.groupby("ScheduledDate")["UniquePatients"].sum()
+    # 3. Unique Patients (avg per day) — distinct PatientIds per day in Treatment-Detail
+    if not df_det_filtered.empty and "PatientId" in df_det_filtered.columns:
+        daily_pts = df_det_filtered.groupby(df_det_filtered["ScheduledDateTime"].dt.normalize())["PatientId"].nunique()
         val = daily_pts.mean()
         t_text, t_dir = None, None
-        if not df_agg_prior.empty:
-            prior_daily = df_agg_prior.groupby("ScheduledDate")["UniquePatients"].sum()
+        if not df_det_prior.empty and "PatientId" in df_det_prior.columns:
+            prior_daily = df_det_prior.groupby(df_det_prior["ScheduledDateTime"].dt.normalize())["PatientId"].nunique()
             t_text, t_dir = _trend(val, prior_daily.mean())
             if t_text:
                 t_text = f"{t_text} {trend_label}"
@@ -1861,10 +1878,11 @@ def _update_kpis(*args):
 def _update_volume(*args):
     groupby, vol_agg, vol_pct, grid_rows = args[-4], args[-3], args[-2], args[-1]
     filt_args = args[:-4]
-    df_agg_filtered, df_det_filtered, *_ = _apply_filters(*filt_args)
-    df_det_filtered = _apply_grid_row_filter(df_det_filtered, grid_rows)
-
     _vol_agg = vol_agg or "D"
+    df_agg_filtered, df_det_filtered, *_ = _apply_filters(
+        *filt_args, business_days_only=(_vol_agg == "D")
+    )
+    df_det_filtered = _apply_grid_row_filter(df_det_filtered, grid_rows)
     _by_machine = groupby == "machine"
     _by_total = not groupby
 
@@ -1878,11 +1896,15 @@ def _update_volume(*args):
         _machines, _machine_colors = [], {}
 
     result = None
-    if _by_total and not df_agg_filtered.empty and "CompletedAppointments" in df_agg_filtered.columns:
-        tdf = df_agg_filtered[["ScheduledDate", "CompletedAppointments"]].copy()
-        tdf["_grp"] = "Total"
+    # All three slices (Total / Machine / Department) count Treatment-Detail rows
+    # so the numbers are internally consistent across slice toggles.
+    if _by_total and not df_det_filtered.empty:
+        vdf = df_det_filtered[["ScheduledDateTime"]].copy()
+        vdf["_d"] = vdf["ScheduledDateTime"].dt.normalize()
+        vdf["_grp"] = "Total"
+        vdf["_count"] = 1
         result = _build_census_store(
-            tdf, "ScheduledDate", "_grp", "CompletedAppointments",
+            vdf, "_d", "_grp", "_count",
             ["Total"], {"Total": PRIMARY},
             agg=_vol_agg, agg_func="sum", y_title="Treatments",
         )
@@ -1894,9 +1916,12 @@ def _update_volume(*args):
             vdf, "_d", "Machine", "_count", _machines, _machine_colors,
             agg=_vol_agg, agg_func="sum", y_title="Treatments",
         )
-    elif not df_agg_filtered.empty and "CompletedAppointments" in df_agg_filtered.columns:
+    elif not df_det_filtered.empty and "Department" in df_det_filtered.columns:
+        vdf = df_det_filtered[["ScheduledDateTime", "Department"]].copy()
+        vdf["_d"] = vdf["ScheduledDateTime"].dt.normalize()
+        vdf["_count"] = 1
         result = _build_census_store(
-            df_agg_filtered, "ScheduledDate", "Department", "CompletedAppointments",
+            vdf, "_d", "Department", "_count",
             DEPARTMENTS, DEPARTMENT_COLORS,
             agg=_vol_agg, agg_func="sum", y_title="Treatments",
         )
@@ -1917,10 +1942,11 @@ def _update_volume(*args):
 def _update_technique(*args):
     tech_agg, tech_pct, grid_rows = args[-3], args[-2], args[-1]
     filt_args = args[:-3]
-    _, df_det_filtered, *_ = _apply_filters(*filt_args)
-    df_det_filtered = _apply_grid_row_filter(df_det_filtered, grid_rows)
-
     _tech_agg = tech_agg or "D"
+    _, df_det_filtered, *_ = _apply_filters(
+        *filt_args, business_days_only=(_tech_agg == "D")
+    )
+    df_det_filtered = _apply_grid_row_filter(df_det_filtered, grid_rows)
 
     if not df_det_filtered.empty and "PlanTechniques" in df_det_filtered.columns:
         tdf = df_det_filtered[["ScheduledDateTime", "PlanTechniques"]].copy()
@@ -1950,10 +1976,11 @@ def _update_technique(*args):
 def _update_fieldtype(*args):
     ft_agg, ft_pct, grid_rows = args[-3], args[-2], args[-1]
     filt_args = args[:-3]
-    _, df_det_filtered, *_ = _apply_filters(*filt_args)
-    df_det_filtered = _apply_grid_row_filter(df_det_filtered, grid_rows)
-
     _ft_agg = ft_agg or "D"
+    _, df_det_filtered, *_ = _apply_filters(
+        *filt_args, business_days_only=(_ft_agg == "D")
+    )
+    df_det_filtered = _apply_grid_row_filter(df_det_filtered, grid_rows)
 
     if df_det_filtered.empty:
         return None
@@ -1993,7 +2020,10 @@ def _update_fieldtype(*args):
 def _update_cumulative(*args):
     cumul_mode, cumul_period_type, cumul_slice, grid_rows = args[-4], args[-3], args[-2], args[-1]
     filt_args = args[:-4]
-    results = _apply_filters(*filt_args)
+    # Cumulative chart monotonically accumulates — a Saturday is a small step
+    # up, not a dip — so include weekends/holidays to match the underlying
+    # session log (and the home page's YTD count).
+    results = _apply_filters(*filt_args, business_days_only=False)
     # df_det_f (index 7) is dimension-filtered but NOT date-filtered — needed for prior periods
     df_det_all = results[7] if len(results) > 7 else results[1]
     df_det_all = _apply_grid_row_filter(df_det_all, grid_rows)
@@ -2164,11 +2194,14 @@ def _update_igrt(_n, slider_val, date_preset, departments,
     start, end = _get_date_range(slider_val, None)
     df_all = df_all[(df_all["ActivityDate"] >= start) & (df_all["ActivityDate"] <= end)]
 
-    # Exclude weekends and holidays
-    df_all = df_all[df_all["ActivityDate"].dt.weekday < 5]
-    holidays = get_holidays()
-    if holidays:
-        df_all = df_all[~df_all["ActivityDate"].dt.normalize().isin(holidays)]
+    _agg = igrt_agg or "D"
+    # Exclude weekends/holidays only for daily aggregation (avoids visual
+    # zero-dips); weekly+ rolls up all activity.
+    if _agg == "D":
+        df_all = df_all[df_all["ActivityDate"].dt.weekday < 5]
+        holidays = get_holidays()
+        if holidays:
+            df_all = df_all[~df_all["ActivityDate"].dt.normalize().isin(holidays)]
 
     # Department filter via Site
     if departments:
@@ -2178,7 +2211,6 @@ def _update_igrt(_n, slider_val, date_preset, departments,
         return None
 
     df_all["_d"] = df_all["ActivityDate"].dt.normalize()
-    _agg = igrt_agg or "D"
 
     # Imaging rows only for the chart
     df = df_all[df_all["RecordType"].isin(["Image", "PortFilm"])].copy()
@@ -2247,12 +2279,14 @@ def _update_igrt(_n, slider_val, date_preset, departments,
 def _update_newstarts(*args):
     groupby, newstarts_metric, ns_agg, grid_rows = args[-4], args[-3], args[-2], args[-1]
     filt_args = args[:-4]
-    df_agg_filtered, df_det_filtered, *_ = _apply_filters(*filt_args)
+    _agg = ns_agg or "D"
+    df_agg_filtered, df_det_filtered, *_ = _apply_filters(
+        *filt_args, business_days_only=(_agg == "D")
+    )
     df_det_filtered = _apply_grid_row_filter(df_det_filtered, grid_rows)
 
     _by_machine = groupby == "machine"
     _by_total = not groupby
-    _agg = ns_agg or "D"
 
     if _by_machine and not df_det_filtered.empty and "Machine" in df_det_filtered.columns:
         _machines = sorted(df_det_filtered["Machine"].dropna().unique())
@@ -2263,30 +2297,31 @@ def _update_newstarts(*args):
     else:
         _machines, _machine_colors = [], {}
 
-    ns_metric_agg = ("NewStarts_ByCourseFirstTreatmentDate"
-                     if newstarts_metric == "course"
-                     else "NewStarts_ByFraction")
-    ns_metric_det = ("IsNewStart_ByCourseFirstTreatmentDate"
+    # All slices count Treatment-Detail rows where the new-start flag is true.
+    # "fraction" mode uses IsNewStart_ByFraction (one row per first-fraction of a plan);
+    # "course" mode uses IsNewStart_ByCourse (one row per first-ever course fraction).
+    ns_metric_det = ("IsNewStart_ByCourse"
                      if newstarts_metric == "course"
                      else "IsNewStart_ByFraction")
-    if _by_total and not df_agg_filtered.empty and ns_metric_agg in df_agg_filtered.columns:
-        nsdf = df_agg_filtered[["ScheduledDate", ns_metric_agg]].copy()
+    if df_det_filtered.empty or ns_metric_det not in df_det_filtered.columns:
+        return None
+    nsdf = df_det_filtered[["ScheduledDateTime", "Department", "Machine", ns_metric_det]].copy()
+    nsdf["_d"] = nsdf["ScheduledDateTime"].dt.normalize()
+    if _by_total:
         nsdf["_grp"] = "Total"
         return _build_census_store(
-            nsdf, "ScheduledDate", "_grp", ns_metric_agg,
+            nsdf, "_d", "_grp", ns_metric_det,
             ["Total"], {"Total": PRIMARY},
             agg=_agg, agg_func="sum", y_title="New Starts",
         )
-    elif _by_machine and _machines and not df_det_filtered.empty and ns_metric_det in df_det_filtered.columns:
-        nsdf = df_det_filtered[["ScheduledDateTime", "Machine", ns_metric_det]].copy()
-        nsdf["_d"] = nsdf["ScheduledDateTime"].dt.normalize()
+    elif _by_machine and _machines:
         return _build_census_store(
             nsdf, "_d", "Machine", ns_metric_det, _machines, _machine_colors,
             agg=_agg, agg_func="sum", y_title="New Starts",
         )
-    elif not df_agg_filtered.empty and ns_metric_agg in df_agg_filtered.columns:
+    elif "Department" in nsdf.columns:
         return _build_census_store(
-            df_agg_filtered, "ScheduledDate", "Department", ns_metric_agg,
+            nsdf, "_d", "Department", ns_metric_det,
             DEPARTMENTS, DEPARTMENT_COLORS,
             agg=_agg, agg_func="sum", y_title="New Starts",
         )
@@ -2345,7 +2380,10 @@ def _sliced_store(df, date_col, val_col, sliceby, agg, agg_func, y_title):
 def _update_multiiso(*args):
     sliceby, agg, grid_rows = args[-3], args[-2], args[-1]
     filt_args = args[:-3]
-    _, df_det_filtered, *_ = _apply_filters(*filt_args)
+    _agg = agg or "D"
+    _, df_det_filtered, *_ = _apply_filters(
+        *filt_args, business_days_only=(_agg == "D")
+    )
     df_det_filtered = _apply_grid_row_filter(df_det_filtered, grid_rows)
 
     if df_det_filtered.empty or "UniqueIsocenters" not in df_det_filtered.columns:
@@ -2356,7 +2394,7 @@ def _update_multiiso(*args):
     cdf = df_det_filtered[cols].dropna(subset=["UniqueIsocenters"]).copy()
     cdf["_d"] = cdf["ScheduledDateTime"].dt.normalize()
     cdf["_multi"] = (cdf["UniqueIsocenters"] > 1).astype(float) * 100
-    return _sliced_store(cdf, "_d", "_multi", sliceby, agg or "D", "mean",
+    return _sliced_store(cdf, "_d", "_multi", sliceby, _agg, "mean",
                          "% Multi-Iso Sessions")
 
 
@@ -2374,7 +2412,10 @@ def _update_multiiso(*args):
 def _update_avgfields(*args):
     sliceby, agg, grid_rows = args[-3], args[-2], args[-1]
     filt_args = args[:-3]
-    _, df_det_filtered, *_ = _apply_filters(*filt_args)
+    _agg = agg or "D"
+    _, df_det_filtered, *_ = _apply_filters(
+        *filt_args, business_days_only=(_agg == "D")
+    )
     df_det_filtered = _apply_grid_row_filter(df_det_filtered, grid_rows)
 
     if df_det_filtered.empty or "FieldCount" not in df_det_filtered.columns:
@@ -2384,7 +2425,7 @@ def _update_avgfields(*args):
         cols.append("PlanTechniques")
     cdf = df_det_filtered[cols].dropna(subset=["FieldCount"]).copy()
     cdf["_d"] = cdf["ScheduledDateTime"].dt.normalize()
-    return _sliced_store(cdf, "_d", "FieldCount", sliceby, agg or "D", "mean",
+    return _sliced_store(cdf, "_d", "FieldCount", sliceby, _agg, "mean",
                          "Avg Fields / Session")
 
 
@@ -2404,15 +2445,16 @@ def _update_avgfields(*args):
 def _update_gating(*args):
     gating_metric, gating_slice, gating_agg, gating_pct, grid_rows = args[-5], args[-4], args[-3], args[-2], args[-1]
     filt_args = args[:-5]
-    _, df_det_filtered, *_ = _apply_filters(*filt_args)
+    _metric = gating_metric or "any"
+    _slice = gating_slice or ""
+    _agg = gating_agg or "D"
+    _, df_det_filtered, *_ = _apply_filters(
+        *filt_args, business_days_only=(_agg == "D")
+    )
     df_det_filtered = _apply_grid_row_filter(df_det_filtered, grid_rows)
 
     if df_det_filtered.empty:
         return None
-
-    _metric = gating_metric or "any"
-    _slice = gating_slice or ""
-    _agg = gating_agg or "D"
 
     # Build boolean flag column based on selected metric
     gdf = df_det_filtered[["ScheduledDateTime", "Department", "Machine",
@@ -2693,15 +2735,15 @@ clientside_callback(
 )
 
 clientside_callback(
-    """function(rawData, smoothPct, chartType, stackVal, maxPrior, currentFig) {
-        return window.dash_clientside.cumulative.renderCumulative(rawData, smoothPct, chartType, currentFig, stackVal, maxPrior);
-    }""",
+    ClientsideFunction(namespace="cumulative", function_name="renderWithProjectToggle"),
     Output("tx-chart-cumulative", "figure"),
     Input("tx-store-cumulative", "data"),
     Input("tx-cumulative-settings-smooth", "value"),
     Input("tx-cumulative-settings-type", "value"),
     Input("tx-cumulative-settings-stack", "value"),
     Input("tx-cumulative-settings-prior-periods", "value"),
+
+    Input("tx-cumulative-project", "checked"),
     State("tx-chart-cumulative", "figure"),
 )
 
@@ -2897,3 +2939,14 @@ clientside_callback(
     Input("tx-grid-filter-badge", "n_clicks"),
     prevent_initial_call=True,
 )
+
+
+# Project-to-year-end toggle visibility (shown only for current_year preset)
+clientside_callback(
+    """function(preset) {
+        return preset === "current_year" ? {} : {"display": "none"};
+    }""",
+    Output("tx-cumulative" + "-project-wrap", "style"),
+    Input("tx-filter-date-preset", "value"),
+)
+

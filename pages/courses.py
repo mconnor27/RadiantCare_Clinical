@@ -25,7 +25,7 @@ from components.detail_table import detail_table
 from utils.charts import apply_default_layout, empty_figure, dept_color
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, DEFAULT_SLIDER, SLIDER_MARKS,
-    preset_to_slider_val,
+    preset_to_slider_val, preset_to_exact_dates,
 )
 from components.diagnosis_filter import diagnosis_accordion, register_diagnosis_callbacks
 from utils.diagnosis_categories import (
@@ -246,6 +246,7 @@ def _build_courses_filter_bar():
                             {"value": "3mo", "label": "Prior 3 mo"},
                             {"value": "30d", "label": "Prior 30 days"},
                             {"value": "ytd", "label": "Year to Date"},
+                            {"value": "current_year", "label": "Current Year"},
                             {"value": "last_year", "label": "Last Year"},
                             {"value": "this_month", "label": "This Month"},
                             {"value": "last_month", "label": "Last Month"},
@@ -422,6 +423,7 @@ layout = dmc.Stack(
                     ],
                     show_smooth=True,
                     show_prior_periods=True,
+                    show_project_toggle=True,
                     smooth_min=0,
                     smooth_max=1,
                     smooth_step=0.05,
@@ -657,12 +659,7 @@ def _register_courses_filter_callbacks():
         if not preset or preset == "custom":
             return (dash.no_update,) * 3
         sv = preset_to_slider_val(preset, MAX_IDX)
-        s = idx_to_date(sv[0]).strftime("%Y-%m-%d")
-        e_ts = idx_to_date(sv[1], end_of_month=True)
-        today = pd.Timestamp.now().normalize()
-        if e_ts > today:
-            e_ts = today
-        e = e_ts.strftime("%Y-%m-%d")
+        s, e = preset_to_exact_dates(preset)
         return sv, s, e
 
     # B) Slider → DatePicker + Label (clientside)
@@ -2103,8 +2100,10 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
     if df_all.empty or date_col not in df_all.columns:
         return None
 
+    from utils.cumulative_current_year import setup_current_year_range, apply_current_year_projection
     today = pd.Timestamp.now().normalize()
-    if end.normalize() > today:
+    start, end, _cy_last_actual = setup_current_year_range(date_preset, mode, start, end)
+    if _cy_last_actual is None and end.normalize() > today:
         end = today
 
     period_days = (end - start).days + 1
@@ -2260,7 +2259,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
     slice_breakdown = {"periods": breakdown_periods, "slices": breakdown_slices}
 
     if mode == "prior":
-        return {
+        _result = {
             "mode": "prior",
             "startDate": start_norm.isoformat(),
             "dayIndices": day_indices,
@@ -2280,6 +2279,9 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             "yTitle": "Cumulative Courses",
             **_prior_meta,
         }
+        if _cy_last_actual is not None:
+            apply_current_year_projection(_result, _cy_last_actual, start)
+        return _result
 
     else:  # mode == "slice"
         dff_period = dff_all.loc[_window_mask(dff_all, start, end)]
@@ -3669,15 +3671,15 @@ clientside_callback(
 )
 
 clientside_callback(
-    """function(rawData, smoothPct, chartType, stackVal, maxPrior, currentFig) {
-        return window.dash_clientside.cumulative.renderCumulative(rawData, smoothPct, chartType, currentFig, stackVal, maxPrior);
-    }""",
+    ClientsideFunction(namespace="cumulative", function_name="renderWithProjectToggle"),
     Output("courses-chart-cumulative", "figure"),
     Input("courses-store-cumulative", "data"),
     Input("courses-cumulative-settings-smooth", "value"),
     Input("courses-cumulative-settings-type", "value"),
     Input("courses-cumulative-settings-stack", "value"),
     Input("courses-cumulative-settings-prior-periods", "value"),
+
+    Input("courses-cumulative-project", "checked"),
     State("courses-chart-cumulative", "figure"),
 )
 
@@ -4314,3 +4316,14 @@ clientside_callback(
     Input("courses-grid-filter-badge", "n_clicks"),
     prevent_initial_call=True,
 )
+
+
+# Project-to-year-end toggle visibility (shown only for current_year preset)
+clientside_callback(
+    """function(preset) {
+        return preset === "current_year" ? {} : {"display": "none"};
+    }""",
+    Output("courses-cumulative" + "-project-wrap", "style"),
+    Input("courses-filter-date-preset", "value"),
+)
+

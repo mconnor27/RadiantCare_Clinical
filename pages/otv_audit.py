@@ -23,7 +23,7 @@ from utils.charts import apply_default_layout, empty_figure
 from utils.tables import sanitize_for_grid
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, SLIDER_MARKS,
-    preset_to_slider_val,
+    preset_to_slider_val, preset_to_exact_dates,
 )
 from utils.diagnosis_categories import build_code_to_category, primary_category, filter_by_diagnosis
 
@@ -154,6 +154,7 @@ def _build_otv_filter_bar():
                             {"value": "3mo", "label": "Prior 3 mo"},
                             {"value": "30d", "label": "Prior 30 days"},
                             {"value": "ytd", "label": "Year to Date"},
+                            {"value": "current_year", "label": "Current Year"},
                             {"value": "last_year", "label": "Last Year"},
                             {"value": "this_month", "label": "This Month"},
                             {"value": "last_month", "label": "Last Month"},
@@ -476,12 +477,7 @@ def _sync_preset(preset):
     if not preset or preset == "custom":
         return (dash.no_update,) * 3
     sv = preset_to_slider_val(preset, MAX_IDX)
-    s = idx_to_date(sv[0]).strftime("%Y-%m-%d")
-    e_ts = idx_to_date(sv[1], end_of_month=True)
-    today = pd.Timestamp.now().normalize()
-    if e_ts > today:
-        e_ts = today
-    e = e_ts.strftime("%Y-%m-%d")
+    s, e = preset_to_exact_dates(preset)
     return sv, s, e
 
 

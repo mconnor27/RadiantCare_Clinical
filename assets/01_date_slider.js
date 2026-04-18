@@ -70,6 +70,13 @@
                     + String(today.getDate()).padStart(2, "0");
                 if (endDate > todayStr) { endDate = todayStr; }
 
+                // If current start date is not the 1st of a month, a preset
+                // callback set exact dates — preserve them, just update label.
+                if (curStart && curStart.slice(8, 10) !== "01") {
+                    return [window.dash_clientside.no_update,
+                            window.dash_clientside.no_update, label];
+                }
+
                 if (curStart === startDate && curEnd === endDate) {
                     return [window.dash_clientside.no_update,
                             window.dash_clientside.no_update, label];
