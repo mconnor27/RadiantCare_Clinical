@@ -452,30 +452,81 @@ def _render_auth_chip(_pathname):
         return None
     email = session.get("email") or ""
     display = email.split("@")[0] if email else "Account"
-    # Plain anchor + icon — no dmc.Menu. Simpler and rules out any DMC prop
-    # shim differences between the pinned version and what's on Railway.
-    return html.A(
-        href="/logout",
-        title=f"Signed in as {email} — click to sign out",
+    # Clerk hosted user portal — "Manage account" opens password + MFA settings
+    # without us needing to re-mount Clerk's JS on every page.
+    import os as _os
+    _frontend = _os.environ.get("CLERK_FRONTEND_HOST", "").strip()
+    if not _frontend:
+        # Derive from publishable key once.
+        from auth import _clerk_frontend_host
+        _pub = _os.environ.get("CLERK_PUBLISHABLE_KEY", "")
+        try:
+            _frontend = _clerk_frontend_host(_pub) if _pub else ""
+        except Exception:
+            _frontend = ""
+    _account_url = f"https://{_frontend}/user" if _frontend else "#"
+
+    return dmc.Menu(
+        trigger="click-hover",
+        position="bottom-end",
+        shadow="md",
+        width=220,
+        offset=6,
         children=[
-            DashIconify(icon="tabler:user-circle", width=14,
-                        color=NEUTRAL["text_secondary"],
-                        style={"verticalAlign": "middle", "marginRight": 4}),
-            html.Span(display, style={
-                "fontSize": "12px",
-                "color": NEUTRAL["text_secondary"],
-                "fontWeight": 500,
-                "verticalAlign": "middle",
-            }),
+            dmc.MenuTarget(
+                html.Button(
+                    children=[
+                        DashIconify(icon="tabler:user-circle", width=16,
+                                    color=NEUTRAL["text_secondary"],
+                                    style={"flexShrink": 0}),
+                        html.Span(display, style={
+                            "fontSize": "12px",
+                            "color": NEUTRAL["text_secondary"],
+                            "fontWeight": 500,
+                            "maxWidth": "120px",
+                            "overflow": "hidden",
+                            "textOverflow": "ellipsis",
+                            "whiteSpace": "nowrap",
+                        }),
+                    ],
+                    style={
+                        "display": "inline-flex",
+                        "alignItems": "center",
+                        "gap": "4px",
+                        "padding": "4px 8px",
+                        "border": "none",
+                        "background": "transparent",
+                        "borderRadius": "12px",
+                        "cursor": "pointer",
+                    },
+                ),
+            ),
+            dmc.MenuDropdown(
+                children=[
+                    dmc.MenuLabel(email or "Signed in"),
+                    dmc.MenuDivider(),
+                    dmc.MenuItem(
+                        "Manage account",
+                        href=_account_url,
+                        target="_blank",
+                        leftSection=DashIconify(icon="tabler:settings", width=14),
+                    ),
+                    dmc.MenuItem(
+                        "Reset password",
+                        href=_account_url + "#/security" if _account_url != "#" else "#",
+                        target="_blank",
+                        leftSection=DashIconify(icon="tabler:key", width=14),
+                    ),
+                    dmc.MenuDivider(),
+                    dmc.MenuItem(
+                        "Sign out",
+                        href="/logout",
+                        leftSection=DashIconify(icon="tabler:logout", width=14),
+                        color="red",
+                    ),
+                ],
+            ),
         ],
-        style={
-            "display": "inline-flex",
-            "alignItems": "center",
-            "padding": "2px 8px",
-            "borderRadius": "12px",
-            "textDecoration": "none",
-            "cursor": "pointer",
-        },
     )
 
 
