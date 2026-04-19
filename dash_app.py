@@ -1,5 +1,7 @@
 """RadiantCare Clinical Dashboard — main application entry point."""
 
+import os
+
 import dash
 import dash_mantine_components as dmc
 from dash import Dash, html, dcc, page_container, callback, Input, Output, State, no_update
@@ -23,6 +25,12 @@ app = Dash(
     update_title="Loading...",
 )
 server = app.server  # for gunicorn
+
+# Optional Supabase-Auth gating. Set AUTH_ENABLED=true in production
+# (and provide FLASK_SECRET, SUPABASE_URL, SUPABASE_ANON_KEY).
+if os.environ.get("AUTH_ENABLED", "").lower() in ("1", "true", "yes", "on"):
+    from auth import register_auth
+    register_auth(server)
 
 # Inject theme-init script into <head> so data-theme is applied BEFORE render
 # (prevents flash of light content when dark mode is the user's saved preference).
@@ -154,6 +162,9 @@ app.layout = dmc.MantineProvider(
                     size="lg",
                     radius="xl",
                 ),
+                # Signed-in user chip — populated by a server callback from
+                # flask.session. Empty div when auth is off / not logged in.
+                html.Div(id="auth-user-chip", style={"marginLeft": "4px"}),
             ],
         ),
         # Theme state store (synced to localStorage via clientside)
@@ -421,6 +432,54 @@ def _update_preload_status(_n):
         "fontWeight": 500,
     }
     return text, bar_style, False
+
+
+# --- Signed-in user chip (top-right, only when auth is enabled) ---
+
+@callback(
+    Output("auth-user-chip", "children"),
+    Input("_pages_location", "pathname"),
+)
+def _render_auth_chip(_pathname):
+    """Read flask.session inside the Dash request context and render a
+    small hover menu with the signed-in user's email + Sign Out link.
+    Returns nothing when no session (e.g. AUTH_ENABLED=false)."""
+    try:
+        from flask import session, has_request_context
+    except ImportError:
+        return None
+    if not has_request_context() or not session.get("user_id"):
+        return None
+    email = session.get("email") or ""
+    display = email.split("@")[0] if email else "Account"
+    return dmc.Menu(
+        trigger="hover",
+        position="bottom-end",
+        shadow="md",
+        withArrow=True,
+        children=[
+            dmc.MenuTarget(
+                dmc.Button(
+                    display,
+                    id="auth-user-btn",
+                    variant="subtle",
+                    color="gray",
+                    size="compact-xs",
+                    leftSection=DashIconify(icon="tabler:user-circle", width=14),
+                    styles={"root": {"fontWeight": 500}},
+                ),
+            ),
+            dmc.MenuDropdown([
+                dmc.MenuLabel(email or "Signed in"),
+                dmc.MenuDivider(),
+                dmc.MenuItem(
+                    "Sign out",
+                    href="/logout",
+                    leftSection=DashIconify(icon="tabler:logout", width=14),
+                ),
+            ]),
+        ],
+    )
 
 
 # --- Page navigation triggers priority loading ---

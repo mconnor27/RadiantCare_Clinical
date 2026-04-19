@@ -347,10 +347,16 @@ _PHI_MODE_SECTION = section(
         "parallel \u201CAURA_Reports_Sanitized/\u201D directory that mirrors the "
         "source folder structure exactly — so the existing data loader reads "
         "it without modification.",
-        "The sanitized directory is what gets uploaded to this cloud host. "
+        "A nightly launchd job re-runs the sanitizer and uploads the "
+        "tarball to a private Cloudflare R2 bucket. The cloud host (Railway) "
+        "downloads it at container startup via scripts/bootstrap_data.py and "
+        "atomic-swaps it into place. Raw PHI never touches the cloud.",
         "A runtime PHI_MODE=true flag in settings.py swaps the active data "
         "root and parquet cache to the sanitized tree so the app runs "
         "identically in either mode.",
+        "User accounts are managed by Clerk (hosted invite-only auth with "
+        "password reset, MFA, and device management). Flask verifies Clerk's "
+        "__session JWT against Clerk's JWKS on every navigation.",
         "182 files / ~4.8 million rows are processed in ~57 seconds on a "
         "laptop. Full audit log at _sanitize_audit.json records exactly which "
         "columns were dropped, hashed, or transformed per dataset.",

@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Nightly job: sanitize OneDrive → upload to Supabase Storage.
+
+  Install:
+    cp scripts/com.radiantcare.sanitize.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.radiantcare.sanitize.plist
+
+  Verify it loaded:
+    launchctl list | grep radiantcare
+
+  Trigger immediately (don't wait for 4 AM):
+    launchctl start com.radiantcare.sanitize
+
+  Uninstall:
+    launchctl unload ~/Library/LaunchAgents/com.radiantcare.sanitize.plist
+    rm ~/Library/LaunchAgents/com.radiantcare.sanitize.plist
+
+  Requires in project .env: PHI_SALT, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.radiantcare.sanitize</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-c</string>
+    <string>cd /Users/Mike/RadiantCare_Clinical &amp;&amp; /Users/Mike/RadiantCare_Clinical/.venv/bin/python scripts/sanitize.py --upload</string>
+  </array>
+
+  <!-- Run daily at 4:00 AM local time — after ARIA's overnight exports land. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>4</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+
+  <!-- If the laptop was asleep at 4am, run as soon as it wakes. -->
+  <key>RunAtLoad</key>
+  <false/>
+
+  <!-- Logs — tail these to debug: tail -f /tmp/radiantcare_sanitize.log -->
+  <key>StandardOutPath</key>
+  <string>/tmp/radiantcare_sanitize.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/radiantcare_sanitize.err.log</string>
+
+  <!-- Ensure PATH includes homebrew / system bins for openssl etc. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+</dict>
+</plist>
