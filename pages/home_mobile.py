@@ -298,7 +298,7 @@ def _smoothed_cum(cum, frac=0.05):
     return pd.Series(smoothed, index=cum.index)
 
 
-def _build_cum_line_fig(counts, label, color, range_key, prior_counts, prior_shift):
+def _build_cum_line_fig(counts, label, color, range_key, prior_counts, prior_shift, project=True):
     title_text = f"{label} — Cumulative"
     if counts is None or counts.empty:
         return _empty_fig(title_text)
@@ -340,6 +340,36 @@ def _build_cum_line_fig(counts, label, color, range_key, prior_counts, prior_shi
         xshift=-4, yshift=4,
         font=dict(family=FONT_FAMILY, size=13, color=color),
     )
+
+    # YTD-only: dashed projection from current endpoint through year-end.
+    extra_annotations = []
+    if range_key == "ytd" and project:
+        year = end_x.year
+        year_start = pd.Timestamp(year=year, month=1, day=1)
+        year_end = pd.Timestamp(year=year, month=12, day=31)
+        days_elapsed = (end_x - year_start).days + 1
+        days_in_year = 366 if year_start.is_leap_year else 365
+        if days_elapsed > 0:
+            rate = end_y_raw / days_elapsed
+            projected_end = end_y_raw + rate * (days_in_year - days_elapsed)
+            fig.add_trace(go.Scatter(
+                x=[end_x, year_end], y=[end_y_raw, projected_end],
+                mode="lines",
+                line=dict(color=color, width=2.5, dash="3px,3px"),
+                hoverinfo="skip",
+                name="Projected",
+                showlegend=False,
+            ))
+            extra_annotations.append(dict(
+                x=year_end, y=projected_end,
+                text=f"<i>{int(round(projected_end)):,}</i>",
+                showarrow=False,
+                xanchor="right", yanchor="bottom",
+                xshift=-2, yshift=4,
+                font=dict(family=FONT_FAMILY, size=11, color=color),
+                opacity=0.65,
+            ))
+
     apply_default_layout(fig, title=dict(text=title_text, **_TITLE_OPTS))
     fig.update_layout(
         showlegend=False,
@@ -347,12 +377,12 @@ def _build_cum_line_fig(counts, label, color, range_key, prior_counts, prior_shi
         margin=dict(l=10, r=10, t=48, b=28),
         xaxis=dict(showgrid=False, title=None, tickformat="%b '%y"),
         yaxis=dict(title=None),
-        annotations=[total_annotation],
+        annotations=[total_annotation] + extra_annotations,
     )
     return fig
 
 
-def _build_cum_bar_fig(df, date_col, label, color, range_key, n_periods=4):
+def _build_cum_bar_fig(df, date_col, label, color, range_key, n_periods=4, project=True):
     """Totals for current + (n_periods-1) prior equivalents as bars, with YTD projection stack."""
     title_text = f"{label} — Cumulative"
     if df is None or df.empty or date_col not in df.columns:
@@ -399,7 +429,7 @@ def _build_cum_bar_fig(df, date_col, label, color, range_key, n_periods=4):
     # YTD projection: linear extrapolation of current-year pace to year-end.
     projection_remainder = 0
     projected_end = None
-    if range_key == "ytd":
+    if range_key == "ytd" and project:
         current = periods[-1]
         year = current["start"].year
         days_elapsed = (last - current["start"]).days + 1
@@ -438,7 +468,9 @@ def _build_cum_bar_fig(df, date_col, label, color, range_key, n_periods=4):
         ))
 
     # YTD: stack each prior bar's rest-of-year actuals on top, lighter shade.
-    if range_key == "ytd" and any(r > 0 for r in rest_ys):
+    # Gated by `project` — turning off the projection hides prior full-year
+    # extensions too so the chart cleanly compares YTD-equivalent totals only.
+    if range_key == "ytd" and project and any(r > 0 for r in rest_ys):
         # Per-bar colors — lighter shade of each underlying bar's color.
         rest_colors = []
         for p, base_c in zip(periods, bar_colors):
@@ -485,7 +517,14 @@ def _build_cum_bar_fig(df, date_col, label, color, range_key, n_periods=4):
         ))
 
     apply_default_layout(fig, title=dict(text=title_text, **_TITLE_OPTS))
-    top_val = max(ys + [projected_end or 0] + [p["full_year_total"] for p in periods])
+    # Y-axis range tracks whatever's actually rendered. When projection is off
+    # we exclude full-year prior extensions and the projected year-end so bars
+    # scale to the YTD-equivalent totals.
+    candidates = list(ys)
+    if range_key == "ytd" and project:
+        candidates += [projected_end or 0]
+        candidates += [p["full_year_total"] for p in periods]
+    top_val = max(candidates) if candidates else 1
     fig.update_layout(
         barmode="stack",
         showlegend=False,
@@ -507,6 +546,17 @@ def _build_cum_bar_fig(df, date_col, label, color, range_key, n_periods=4):
 
 
 _SETTINGS_BTN_ID = f"{PAGE_ID}-filters-open"
+
+_HEADER_BTN_STYLE = {
+    "background": "transparent",
+    "border": "none",
+    "padding": "6px",
+    "cursor": "pointer",
+    "outline": "none",
+    "display": "inline-flex",
+    "alignItems": "center",
+    "justifyContent": "center",
+}
 _SETTINGS_DRAWER_ID = f"{PAGE_ID}-settings-drawer"
 _SETTINGS_STORE_ID = f"{PAGE_ID}-settings-store"
 _SETTINGS_DEPT_ID = f"{PAGE_ID}-settings-dept"
@@ -519,34 +569,6 @@ def layout():
         children=[
             dcc.Interval(id=f"{PAGE_ID}-interval", interval=5 * 60 * 1000, n_intervals=0),
             dcc.Store(id=_SETTINGS_STORE_ID, data={"dept": "all", "physician": "all"}),
-
-            # Settings button (fixed top-left, mobile only). z-index is below
-            # Mantine's modal layer (200) so the drawer overlay naturally hides
-            # the gear when opened — no extra callback needed.
-            html.Button(
-                DashIconify(
-                    id=f"{PAGE_ID}-settings-icon",
-                    icon="tabler:settings",
-                    width=22,
-                    color="#000000",
-                ),
-                id=_SETTINGS_BTN_ID,
-                n_clicks=0,
-                style={
-                    "position": "fixed",
-                    "top": 12,
-                    "left": 14,
-                    "zIndex": 50,
-                    "background": "transparent",
-                    "border": "none",
-                    "padding": "6px",
-                    "cursor": "pointer",
-                    "outline": "none",
-                    "display": "inline-flex",
-                    "alignItems": "center",
-                    "justifyContent": "center",
-                },
-            ),
 
             dmc.Drawer(
                 id=_SETTINGS_DRAWER_ID,
@@ -591,14 +613,40 @@ def layout():
                 ],
             ),
 
+            # Top header row: gear — logo — theme toggle, flowing with scroll.
             dmc.Group(
-                justify="center",
+                justify="space-between",
+                align="center",
                 mt=0,
                 mb="xs",
-                children=html.Img(
-                    src="/assets/radiantcare.png",
-                    style={"height": "38px", "objectFit": "contain"},
-                ),
+                children=[
+                    html.Button(
+                        DashIconify(
+                            id=f"{PAGE_ID}-settings-icon",
+                            icon="tabler:settings",
+                            width=22,
+                            color="#4B5563",
+                        ),
+                        id=_SETTINGS_BTN_ID,
+                        n_clicks=0,
+                        style=_HEADER_BTN_STYLE,
+                    ),
+                    html.Img(
+                        src="/assets/radiantcare.png",
+                        style={"height": "38px", "objectFit": "contain"},
+                    ),
+                    html.Button(
+                        DashIconify(
+                            id=f"{PAGE_ID}-theme-icon",
+                            icon="tabler:moon",
+                            width=22,
+                            color="#4B5563",
+                        ),
+                        id=f"{PAGE_ID}-theme-btn",
+                        n_clicks=0,
+                        style=_HEADER_BTN_STYLE,
+                    ),
+                ],
             ),
 
             dmc.SegmentedControl(
@@ -622,66 +670,150 @@ def layout():
                 mb="sm",
             ),
 
-            dcc.Loading(
-                type="circle",
+            dmc.Paper(
+                withBorder=True, radius="md", shadow="xs", p=4, mb="sm",
+                style={"position": "relative"},
                 children=[
-                    dmc.Paper(
-                        withBorder=True, radius="md", shadow="xs", p=4, mb="sm",
-                        style={"position": "relative"},
+                    html.Div(
+                        style={
+                            "position": "absolute",
+                            "top": 10,
+                            "right": 10,
+                            "zIndex": 2,
+                            "display": "flex",
+                            "alignItems": "center",
+                            "gap": "6px",
+                        },
                         children=[
+                            html.Button(
+                                DashIconify(icon="tabler:info-circle", width=18, color="#6B7280"),
+                                id=f"{PAGE_ID}-trend-info-btn",
+                                n_clicks=0,
+                                style={
+                                    "background": "transparent",
+                                    "border": "none",
+                                    "padding": 0,
+                                    "cursor": "pointer",
+                                    "outline": "none",
+                                    "display": "inline-flex",
+                                    "alignItems": "center",
+                                },
+                            ),
                             dmc.Button(
                                 "Daily",
                                 id=f"{PAGE_ID}-trend-agg-btn",
                                 size="compact-xs",
                                 radius="sm",
                                 style={
-                                    "position": "absolute",
-                                    "top": 10,
-                                    "right": 10,
-                                    "zIndex": 2,
                                     "minWidth": "64px",
                                     "backgroundColor": PRIMARY,
                                     "color": "#FFFFFF",
                                     "border": "none",
                                 },
                             ),
-                            dcc.Store(id=f"{PAGE_ID}-trend-agg", data="D"),
-                            dcc.Graph(
-                                id=f"{PAGE_ID}-trend",
-                                config={"displayModeBar": False, "responsive": True},
-                                style={"height": "240px"},
-                            ),
                         ],
                     ),
-                    dmc.Paper(
-                        withBorder=True, radius="md", shadow="xs", p=4, mb="sm",
-                        style={"position": "relative"},
+                    dcc.Store(id=f"{PAGE_ID}-trend-agg", data="D"),
+                    dcc.Store(id=f"{PAGE_ID}-trend-summary"),
+                    dcc.Loading(
+                        type="circle",
+                        children=dcc.Graph(
+                            id=f"{PAGE_ID}-trend",
+                            config={"displayModeBar": False, "responsive": True},
+                            style={"height": "240px"},
+                        ),
+                    ),
+                ],
+            ),
+            dmc.Paper(
+                withBorder=True, radius="md", shadow="xs", p=4, mb="sm",
+                style={"position": "relative"},
+                children=[
+                    html.Div(
+                        style={
+                            "position": "absolute",
+                            "top": 10,
+                            "right": 10,
+                            "zIndex": 2,
+                            "display": "flex",
+                            "alignItems": "center",
+                            "gap": "6px",
+                        },
                         children=[
+                            html.Button(
+                                DashIconify(icon="tabler:info-circle", width=18, color="#6B7280"),
+                                id=f"{PAGE_ID}-cum-info-btn",
+                                n_clicks=0,
+                                style={
+                                    "background": "transparent",
+                                    "border": "none",
+                                    "padding": 0,
+                                    "cursor": "pointer",
+                                    "outline": "none",
+                                    "display": "inline-flex",
+                                    "alignItems": "center",
+                                },
+                            ),
+                            # Project toggle — only rendered in YTD range (style
+                            # controlled by a clientside callback).
+                            dmc.Button(
+                                "Proj",
+                                id=f"{PAGE_ID}-cum-proj-btn",
+                                size="compact-xs",
+                                radius="sm",
+                                style={
+                                    "minWidth": "44px",
+                                    "backgroundColor": PRIMARY,
+                                    "color": "#FFFFFF",
+                                    "border": "none",
+                                },
+                            ),
                             dmc.Button(
                                 "Line",
                                 id=f"{PAGE_ID}-cum-mode-btn",
                                 size="compact-xs",
                                 radius="sm",
                                 style={
-                                    "position": "absolute",
-                                    "top": 10,
-                                    "right": 10,
-                                    "zIndex": 2,
                                     "minWidth": "64px",
                                     "backgroundColor": PRIMARY,
                                     "color": "#FFFFFF",
                                     "border": "none",
                                 },
                             ),
-                            dcc.Store(id=f"{PAGE_ID}-cum-mode", data="line"),
-                            dcc.Graph(
-                                id=f"{PAGE_ID}-cum",
-                                config={"displayModeBar": False, "responsive": True},
-                                style={"height": "240px"},
-                            ),
                         ],
                     ),
+                    dcc.Store(id=f"{PAGE_ID}-cum-mode", data="line"),
+                    dcc.Store(id=f"{PAGE_ID}-cum-proj", data=True),
+                    dcc.Store(id=f"{PAGE_ID}-cum-summary"),
+                    dcc.Loading(
+                        type="circle",
+                        children=dcc.Graph(
+                            id=f"{PAGE_ID}-cum",
+                            config={"displayModeBar": False, "responsive": True},
+                            style={"height": "240px"},
+                        ),
+                    ),
                 ],
+            ),
+
+            # Info drawers (bottom sheet) for trend + cum chart details.
+            dmc.Drawer(
+                id=f"{PAGE_ID}-trend-info-drawer",
+                title="Trend details",
+                position="bottom",
+                size=280,
+                opened=False,
+                padding="md",
+                children=html.Div(id=f"{PAGE_ID}-trend-info-body"),
+            ),
+            dmc.Drawer(
+                id=f"{PAGE_ID}-cum-info-drawer",
+                title="Cumulative details",
+                position="bottom",
+                size=320,
+                opened=False,
+                padding="md",
+                children=html.Div(id=f"{PAGE_ID}-cum-info-body"),
             ),
 
             dmc.SegmentedControl(
@@ -728,40 +860,155 @@ def _apply_page_filters(df, spec, settings):
     return df
 
 
+def _trend_summary(df, spec, range_key, counts, agg):
+    """Build summary dict for the trend info drawer."""
+    out = {"metric": spec["label"], "range": _RANGE_LABEL.get(range_key, ""), "agg": _AGG_LABEL.get(agg, "Daily")}
+    if counts is None or counts.empty:
+        out["total"] = 0
+        return out
+    out["total"] = int(counts.sum())
+    # Business-day daily counts for average.
+    daily_nz = counts[(counts > 0) & (counts.index.weekday < 5)]
+    out["biz_days"] = int(len(daily_nz))
+    out["daily_avg"] = round(float(daily_nz.mean()), 1) if not daily_nz.empty else 0
+    out["peak_day"] = int(daily_nz.max()) if not daily_nz.empty else 0
+    # Prior-period comparison.
+    date_col = spec["date_col"]
+    if date_col in df.columns and not df[date_col].dropna().empty:
+        last = df[date_col].dropna().dt.normalize().max()
+        p_start, p_end = _resolve_prior_range(range_key, last)
+        if p_start is not None:
+            prior = _counts_between(df, date_col, p_start, p_end)
+            out["prior_total"] = int(prior.sum()) if prior is not None else 0
+            if out["prior_total"] > 0:
+                pct = (out["total"] - out["prior_total"]) / out["prior_total"] * 100
+                out["prior_delta_pct"] = round(pct, 1)
+    return out
+
+
 @callback(
     Output(f"{PAGE_ID}-trend", "figure"),
-    Output(f"{PAGE_ID}-cum", "figure"),
+    Output(f"{PAGE_ID}-trend-summary", "data"),
     Input(f"{PAGE_ID}-metric", "value"),
     Input(f"{PAGE_ID}-range", "value"),
     Input(f"{PAGE_ID}-trend-agg", "data"),
-    Input(f"{PAGE_ID}-cum-mode", "data"),
     Input(_SETTINGS_STORE_ID, "data"),
     Input(f"{PAGE_ID}-interval", "n_intervals"),
 )
-def update_metric_charts(metric, range_key, agg, cum_mode, settings, _n):
+def update_trend_chart(metric, range_key, agg, settings, _n):
+    spec = _METRIC_BY_VALUE.get(metric) or _METRICS[0]
+    df = _apply_page_filters(None, spec, settings)
+    counts, _rng = _daily_counts(df, spec["date_col"], range_key)
+    agg = agg if agg in _AGG_CYCLE else "D"
+    fig = _build_trend_fig(counts, spec["label"], spec["color"], range_key, agg=agg)
+    summary = _trend_summary(df, spec, range_key, counts, agg)
+    return fig, summary
+
+
+def _cum_summary(df, spec, range_key, counts, cum_mode="line"):
+    """Build summary dict for the cumulative info drawer.
+
+    In line mode: current + immediate prior + (for YTD) full prior year + projection.
+    In bar mode: current + 3 prior periods (YTD-equivalent totals and full-period totals
+    where applicable), plus YTD projection when range is YTD.
+    """
+    out = {"metric": spec["label"], "range": _RANGE_LABEL.get(range_key, ""), "mode": cum_mode}
+    if counts is None or counts.empty:
+        out["current_total"] = 0
+        return out
+    out["current_total"] = int(counts.sum())
+    date_col = spec["date_col"]
+    if not (date_col in df.columns and not df[date_col].dropna().empty):
+        return out
+    last = df[date_col].dropna().dt.normalize().max()
+
+    if cum_mode == "bar":
+        # 4 periods (current + 3 priors), oldest → newest for display.
+        periods = []
+        for offset in range(4):
+            ps, pe = _resolve_range_offset(range_key, last, offset)
+            if ps is None:
+                break
+            s = _counts_between(df, date_col, ps, pe)
+            total = int(s.sum()) if s is not None else 0
+            period = {
+                "label": _period_label(range_key, ps, pe),
+                "total": total,
+                "is_current": offset == 0,
+            }
+            # For YTD priors, also include full calendar-year total.
+            if range_key == "ytd" and offset > 0:
+                fy = _counts_between(df, date_col, ps,
+                                     pd.Timestamp(year=ps.year, month=12, day=31))
+                period["full_year"] = int(fy.sum()) if fy is not None else total
+            periods.append(period)
+        out["periods"] = list(reversed(periods))
+
+    # Immediate prior always (for line-mode delta + context in bar mode too).
+    p_start, p_end = _resolve_prior_range(range_key, last)
+    if p_start is not None:
+        prior_eq = _counts_between(df, date_col, p_start, p_end)
+        out["prior_eq_total"] = int(prior_eq.sum()) if prior_eq is not None else 0
+        if out["prior_eq_total"] > 0:
+            pct = (out["current_total"] - out["prior_eq_total"]) / out["prior_eq_total"] * 100
+            out["prior_eq_delta_pct"] = round(pct, 1)
+
+    # YTD-only extras: full prior year + projection.
+    if range_key == "ytd":
+        py_start = pd.Timestamp(year=last.year - 1, month=1, day=1)
+        py_end = pd.Timestamp(year=last.year - 1, month=12, day=31)
+        prior_full = _counts_between(df, date_col, py_start, py_end)
+        out["prior_full_year"] = int(prior_full.sum()) if prior_full is not None else 0
+        year_start = pd.Timestamp(year=last.year, month=1, day=1)
+        days_elapsed = (last - year_start).days + 1
+        days_in_year = 366 if year_start.is_leap_year else 365
+        if days_elapsed > 0:
+            rate = out["current_total"] / days_elapsed
+            projected = out["current_total"] + rate * (days_in_year - days_elapsed)
+            out["projected_year_end"] = int(round(projected))
+    return out
+
+
+@callback(
+    Output(f"{PAGE_ID}-cum", "figure"),
+    Output(f"{PAGE_ID}-cum-summary", "data"),
+    Input(f"{PAGE_ID}-metric", "value"),
+    Input(f"{PAGE_ID}-range", "value"),
+    Input(f"{PAGE_ID}-cum-mode", "data"),
+    Input(f"{PAGE_ID}-cum-proj", "data"),
+    Input(_SETTINGS_STORE_ID, "data"),
+    Input(f"{PAGE_ID}-interval", "n_intervals"),
+)
+def update_cum_chart(metric, range_key, cum_mode, project_on, settings, _n):
     spec = _METRIC_BY_VALUE.get(metric) or _METRICS[0]
     df = _apply_page_filters(None, spec, settings)
     counts, rng = _daily_counts(df, spec["date_col"], range_key)
-    agg = agg if agg in _AGG_CYCLE else "D"
-    trend_fig = _build_trend_fig(counts, spec["label"], spec["color"], range_key, agg=agg)
-
+    project_on = bool(project_on) if project_on is not None else True
+    summary = _cum_summary(df, spec, range_key, counts, cum_mode=cum_mode)
     if cum_mode == "bar":
-        cum_fig = _build_cum_bar_fig(df, spec["date_col"], spec["label"], spec["color"], range_key)
-    else:
-        # Line mode — need prior period series shifted onto current x-axis.
-        prior_counts = None
-        prior_shift = None
-        if rng is not None:
-            start, _end = rng
-            last = df[spec["date_col"]].dropna().dt.normalize().max() if (df is not None and spec["date_col"] in df.columns) else None
-            if last is not None:
-                p_start, p_end = _resolve_prior_range(range_key, last)
-                if p_start is not None:
-                    prior_counts = _counts_between(df, spec["date_col"], p_start, p_end)
-                    prior_shift = start - p_start
-        cum_fig = _build_cum_line_fig(counts, spec["label"], spec["color"], range_key,
-                                      prior_counts=prior_counts, prior_shift=prior_shift)
-    return trend_fig, cum_fig
+        fig = _build_cum_bar_fig(df, spec["date_col"], spec["label"], spec["color"],
+                                 range_key, project=project_on)
+        return fig, summary
+    # Line mode — need prior period series shifted onto current x-axis.
+    prior_counts = None
+    prior_shift = None
+    if rng is not None:
+        start, _end = rng
+        last = df[spec["date_col"]].dropna().dt.normalize().max() if (df is not None and spec["date_col"] in df.columns) else None
+        if last is not None:
+            p_start, p_end = _resolve_prior_range(range_key, last)
+            # YTD + projection-on: extend prior trace to full prior calendar
+            # year so the gray line shows the full-year shape. When projection
+            # is off, keep prior aligned to the YTD-equivalent window only.
+            if range_key == "ytd" and project_on and p_start is not None:
+                p_end = pd.Timestamp(year=p_start.year, month=12, day=31)
+            if p_start is not None:
+                prior_counts = _counts_between(df, spec["date_col"], p_start, p_end)
+                prior_shift = start - p_start
+    fig = _build_cum_line_fig(counts, spec["label"], spec["color"], range_key,
+                              prior_counts=prior_counts, prior_shift=prior_shift,
+                              project=project_on)
+    return fig, summary
 
 
 clientside_callback(
@@ -803,6 +1050,46 @@ clientside_callback(
     }""",
     Output(f"{PAGE_ID}-cum-mode-btn", "children"),
     Input(f"{PAGE_ID}-cum-mode", "data"),
+)
+
+
+# Projection toggle store — click cycles on/off.
+clientside_callback(
+    """function(n, current) {
+        return !current;
+    }""",
+    Output(f"{PAGE_ID}-cum-proj", "data"),
+    Input(f"{PAGE_ID}-cum-proj-btn", "n_clicks"),
+    State(f"{PAGE_ID}-cum-proj", "data"),
+    prevent_initial_call=True,
+)
+
+
+# Proj button styling — dim when off. Hide entirely outside YTD range.
+clientside_callback(
+    """function(on, rangeKey) {
+        var base = {
+            "minWidth": "44px",
+            "border": "none",
+        };
+        if (rangeKey !== "ytd") {
+            base.display = "none";
+            return base;
+        }
+        if (on) {
+            base.backgroundColor = "#7C2A83";
+            base.color = "#FFFFFF";
+            base.opacity = "1";
+        } else {
+            base.backgroundColor = "rgba(124,42,131,0.18)";
+            base.color = "#7C2A83";
+            base.opacity = "0.85";
+        }
+        return base;
+    }""",
+    Output(f"{PAGE_ID}-cum-proj-btn", "style"),
+    Input(f"{PAGE_ID}-cum-proj", "data"),
+    Input(f"{PAGE_ID}-range", "value"),
 )
 
 
@@ -854,6 +1141,39 @@ clientside_callback(
     Input("global-theme-store", "data"),
 )
 
+clientside_callback(
+    """function(theme) {
+        return (theme === 'dark') ? '#D1D5DB' : '#4B5563';
+    }""",
+    Output(f"{PAGE_ID}-theme-icon", "color"),
+    Input("global-theme-store", "data"),
+)
+
+# Mobile theme toggle — flips theme, updates store + <html> data attributes.
+clientside_callback(
+    """function(n, current) {
+        if (!n) return window.dash_clientside.no_update;
+        var next = (current === 'dark') ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next);
+        document.documentElement.setAttribute('data-mantine-color-scheme', next);
+        try { localStorage.setItem('rc_theme', next); } catch(e) {}
+        return next;
+    }""",
+    Output("global-theme-store", "data", allow_duplicate=True),
+    Input(f"{PAGE_ID}-theme-btn", "n_clicks"),
+    State("global-theme-store", "data"),
+    prevent_initial_call=True,
+)
+
+# Icon swap based on current theme (moon when light, sun when dark).
+clientside_callback(
+    """function(theme) {
+        return (theme === 'dark') ? 'tabler:sun' : 'tabler:moon';
+    }""",
+    Output(f"{PAGE_ID}-theme-icon", "icon"),
+    Input("global-theme-store", "data"),
+)
+
 # Group B: settings-store update.
 clientside_callback(
     """function(dept, phys) {
@@ -872,6 +1192,134 @@ clientside_callback(
     State(_SETTINGS_DRAWER_ID, "opened"),
     prevent_initial_call=True,
 )
+
+
+# Info-drawer open toggles.
+clientside_callback(
+    """function(n, opened) { return !opened; }""",
+    Output(f"{PAGE_ID}-trend-info-drawer", "opened"),
+    Input(f"{PAGE_ID}-trend-info-btn", "n_clicks"),
+    State(f"{PAGE_ID}-trend-info-drawer", "opened"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """function(n, opened) { return !opened; }""",
+    Output(f"{PAGE_ID}-cum-info-drawer", "opened"),
+    Input(f"{PAGE_ID}-cum-info-btn", "n_clicks"),
+    State(f"{PAGE_ID}-cum-info-drawer", "opened"),
+    prevent_initial_call=True,
+)
+
+
+def _fmt_int(v):
+    return f"{int(v):,}" if v is not None else "—"
+
+
+def _fmt_delta(pct):
+    if pct is None:
+        return ""
+    sign = "+" if pct >= 0 else ""
+    return f"{sign}{pct:.1f}%"
+
+
+def _row(label, value, sub=None):
+    return dmc.Group(
+        justify="space-between", align="baseline",
+        children=[
+            dmc.Text(label, size="sm", c="dimmed"),
+            dmc.Group(gap=6, children=[
+                dmc.Text(value, size="md", fw=600),
+                *( [dmc.Text(sub, size="xs", c="dimmed")] if sub else [] ),
+            ]),
+        ],
+    )
+
+
+@callback(
+    Output(f"{PAGE_ID}-trend-info-body", "children"),
+    Input(f"{PAGE_ID}-trend-summary", "data"),
+)
+def render_trend_info(summary):
+    summary = summary or {}
+    title = f"{summary.get('metric', '')} — {summary.get('range', '')}  ({summary.get('agg', 'Daily')})"
+    rows = [
+        dmc.Text(title, size="sm", c="dimmed", mb="xs"),
+        _row("Total", _fmt_int(summary.get("total"))),
+    ]
+    if "prior_total" in summary:
+        rows.append(_row("Prior period", _fmt_int(summary["prior_total"]),
+                         sub=_fmt_delta(summary.get("prior_delta_pct"))))
+    if "daily_avg" in summary:
+        rows.append(_row("Daily avg (biz days)",
+                         f"{summary['daily_avg']:g}",
+                         sub=f"{summary.get('biz_days', 0)} days"))
+    if "peak_day" in summary:
+        rows.append(_row("Peak day", _fmt_int(summary["peak_day"])))
+    return dmc.Stack(gap=8, children=rows)
+
+
+@callback(
+    Output(f"{PAGE_ID}-cum-info-body", "children"),
+    Input(f"{PAGE_ID}-cum-summary", "data"),
+)
+def render_cum_info(summary):
+    summary = summary or {}
+    title = f"{summary.get('metric', '')} — {summary.get('range', '')}"
+    blocks = [dmc.Text(title, size="sm", c="dimmed", mb="xs")]
+
+    # Bar mode: per-period breakdown.
+    if summary.get("mode") == "bar" and summary.get("periods"):
+        has_full = any("full_year" in p for p in summary["periods"])
+        rows = []
+        header_cells = [
+            dmc.Text("Period", size="xs", c="dimmed", fw=600, style={"flex": 2}),
+            dmc.Text("YTD" if has_full else "Total", size="xs", c="dimmed", fw=600,
+                     ta="right", style={"flex": 1}),
+        ]
+        if has_full:
+            header_cells.append(dmc.Text("Full", size="xs", c="dimmed", fw=600,
+                                         ta="right", style={"flex": 1}))
+        rows.append(dmc.Group(gap=8, children=header_cells))
+
+        for p in summary["periods"]:
+            is_cur = p.get("is_current", False)
+            # Label cell — only set color on the current row.
+            label_kwargs = dict(size="sm", fw=700 if is_cur else 400, style={"flex": 2})
+            if is_cur:
+                label_kwargs["c"] = PRIMARY
+            cells = [
+                dmc.Text(p.get("label", ""), **label_kwargs),
+                dmc.Text(_fmt_int(p.get("total")), size="sm",
+                         fw=700 if is_cur else 500,
+                         ta="right", style={"flex": 1}),
+            ]
+            if has_full:
+                fy_val = p.get("full_year")
+                if is_cur and "projected_year_end" in summary:
+                    cells.append(dmc.Text(
+                        f"~{_fmt_int(summary['projected_year_end'])}",
+                        size="sm", fw=600, c=PRIMARY, fs="italic",
+                        ta="right", style={"flex": 1},
+                    ))
+                else:
+                    cells.append(dmc.Text(
+                        _fmt_int(fy_val) if fy_val is not None else "—",
+                        size="sm", ta="right", style={"flex": 1},
+                    ))
+            rows.append(dmc.Group(gap=8, children=cells))
+        blocks.append(dmc.Stack(gap=4, children=rows))
+    else:
+        rows = [_row("Current total", _fmt_int(summary.get("current_total")))]
+        if "prior_eq_total" in summary:
+            rows.append(_row("Prior (same period)", _fmt_int(summary["prior_eq_total"]),
+                             sub=_fmt_delta(summary.get("prior_eq_delta_pct"))))
+        if "prior_full_year" in summary:
+            rows.append(_row("Prior full year", _fmt_int(summary["prior_full_year"])))
+        if "projected_year_end" in summary:
+            rows.append(_row("Projected year-end", _fmt_int(summary["projected_year_end"])))
+        blocks.append(dmc.Stack(gap=8, children=rows))
+    return dmc.Stack(gap=8, children=blocks)
 
 
 @callback(

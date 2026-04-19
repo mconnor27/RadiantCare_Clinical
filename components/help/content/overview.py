@@ -7,10 +7,12 @@ of the standard SQL-data-source / UI-processing tabs. The modal reads
 
 from __future__ import annotations
 
+from pathlib import Path as _Path
+
 import dash_mantine_components as dmc
 from dash_iconify import DashIconify
 
-from config.settings import PRIMARY
+from config.settings import NAV_PAGES, PRIMARY, PROJECT_ROOT
 from ..sql_summaries import (
     LARGEST_SCRIPT,
     SMALLEST_SCRIPT,
@@ -54,16 +56,65 @@ def _screenshot(src: str, caption: str | None = None,
 
 
 # ---------------------------------------------------------------------------
-# Front-end stats (updated when significant refactors land)
+# Front-end stats — LOC is recounted from the live project tree at import so
+# the help modal stays accurate across refactors. Commit metadata stays
+# hardcoded (requires git access to compute and can be stale in deployed
+# environments).
 # ---------------------------------------------------------------------------
-FRONTEND_PYTHON_LOC = 63_858
-FRONTEND_JS_LOC = 10_112
-FRONTEND_CSS_LOC = 905
+def _count_lines(path: _Path) -> int:
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as f:
+            return sum(1 for _ in f)
+    except OSError:
+        return 0
+
+
+# Source dirs (app code only — excludes archive/, tools/, scripts/,
+# docs/, tests, caches, vendored deps).
+_PY_DIRS = ["pages", "components", "data", "utils", "config"]
+_ROOT_PY = ["dash_app.py"]  # top-level app entry points
+
+_FRONTEND_PY_BY_DIR: dict[str, int] = {}
+for _dname in _PY_DIRS:
+    _d = PROJECT_ROOT / _dname
+    if _d.is_dir():
+        _FRONTEND_PY_BY_DIR[_dname] = sum(
+            _count_lines(p) for p in _d.rglob("*.py")
+            if "__pycache__" not in p.parts
+        )
+
+_ROOT_PY_LOC = sum(
+    _count_lines(PROJECT_ROOT / f) for f in _ROOT_PY
+    if (PROJECT_ROOT / f).is_file()
+)
+
+FRONTEND_PYTHON_LOC = sum(_FRONTEND_PY_BY_DIR.values()) + _ROOT_PY_LOC
+FRONTEND_PAGES_LOC = _FRONTEND_PY_BY_DIR.get("pages", 0)
+FRONTEND_PY_NON_PAGES_LOC = FRONTEND_PYTHON_LOC - FRONTEND_PAGES_LOC
+
+_ASSETS = PROJECT_ROOT / "assets"
+FRONTEND_JS_LOC = sum(_count_lines(p) for p in _ASSETS.rglob("*.js")) if _ASSETS.is_dir() else 0
+FRONTEND_CSS_LOC = sum(_count_lines(p) for p in _ASSETS.rglob("*.css")) if _ASSETS.is_dir() else 0
 FRONTEND_TOTAL_LOC = FRONTEND_PYTHON_LOC + FRONTEND_JS_LOC + FRONTEND_CSS_LOC
+
+# Smallest / largest page file (for the overview bullet).
+_PAGES_DIR = PROJECT_ROOT / "pages"
+_PAGE_SIZES: list[tuple[int, str]] = []
+if _PAGES_DIR.is_dir():
+    for _p in _PAGES_DIR.glob("*.py"):
+        if _p.name == "__init__.py":
+            continue
+        _n = _count_lines(_p)
+        if _n > 0:
+            _PAGE_SIZES.append((_n, _p.stem))
+_PAGE_SIZES.sort()
+PAGE_LOC_MIN = _PAGE_SIZES[0] if _PAGE_SIZES else (0, "")
+PAGE_LOC_MAX = _PAGE_SIZES[-1] if _PAGE_SIZES else (0, "")
+
 FRONTEND_FIRST_COMMIT = "2025-11-01"
 FRONTEND_LATEST_COMMIT = "2026-04-17"
 FRONTEND_COMMIT_COUNT = 59
-NUM_PAGES = 20
+NUM_PAGES = len(NAV_PAGES)
 
 
 def _stat(label: str, value: str, sublabel: str | None = None) -> dmc.Paper:
@@ -298,10 +349,12 @@ FRONTEND_CONTENT = dmc.Stack(
                     "head": ["Layer", "Lines", "Role"],
                     "body": [
                         ["Python — pages/",
-                         "53,437",
-                         "One file per page; 20 pages, ranging from 735 (machine_stats) to 6,008 (referrals)"],
+                         f"{FRONTEND_PAGES_LOC:,}",
+                         f"One file per page; {NUM_PAGES} pages, ranging from "
+                         f"{PAGE_LOC_MIN[0]:,} ({PAGE_LOC_MIN[1]}) to "
+                         f"{PAGE_LOC_MAX[0]:,} ({PAGE_LOC_MAX[1]})"],
                         ["Python — components/ data/ utils/ config/",
-                         f"{FRONTEND_PYTHON_LOC - 53_437:,}",
+                         f"{FRONTEND_PY_NON_PAGES_LOC:,}",
                          "Reusable components, loaders (1,476 lines), SQLite ORM (983 lines), statistical utilities, "
                          "chart helpers, NPI lookup, payor manager, help system"],
                         ["JavaScript (assets/)",

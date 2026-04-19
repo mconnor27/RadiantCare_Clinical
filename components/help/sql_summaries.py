@@ -583,19 +583,19 @@ SQL_SCRIPTS = {
     },
 
     "Treatment": {
-        "total": 1753, "sql": 728,
+        "total": 1550, "sql": 619,
         "purpose": (
             "Daily aggregated treatment statistics at the date × location × machine "
-            "grain, with intelligent session-based appointment verification and the "
-            "full 10-tier plan-level technique classification. For each daily row the "
-            "report reports total patients, plans, fractions, and fields — plus "
-            "Plans_*, Patients_*, and Fields_* broken out by technique category. "
-            "Physician data is explicitly removed here (it lives in Treatment_Detail.sql) "
-            "so the aggregate counts aren't fanned out by physician attribution."
+            "grain, with the full 10-tier plan-level technique classification. For "
+            "each daily row the report reports total patients, plans, fractions, and "
+            "fields — plus Plans_*, Patients_*, and Fields_* broken out by technique "
+            "category. Physician data is explicitly removed here (it lives in "
+            "Treatment_Detail.sql) so the aggregate counts aren't fanned out by "
+            "physician attribution."
         ),
         "unique_logic": [
-            "Highly optimized with materialized temp tables: #TreatmentsByLocation (referenced 7× — "
-            "previously re-evaluated every time as a CTE), #TreatedPlans, #PlanTechnique.",
+            "Materialized temp tables: #TreatmentsByLocation (referenced 7× — previously re-evaluated "
+            "every time as a CTE), #TreatedPlans, #PlanTechnique.",
             "4-tier field-level classification (Electron → Arc → StaticMLC → DynamicMLC with photon "
             "fallback) drives the Fields_* columns. Arc is checked before MLC types because arc fields "
             "may use either StdMLCPlan or DynMLCPlan.",
@@ -603,13 +603,11 @@ SQL_SCRIPTS = {
             "Electron > Plan-name keywords > Course+Fractionation > Field Mix > SRS Arc > RapidArc > "
             "MLC Type > Billing > Field Count > Unknown. A patient is counted once per technique if ANY "
             "of their plans have that technique.",
-            "Session detection: 240-min gap threshold with two corrections — "
-            "(1) CONTINUATION suppression (if ARIA marks a delivery as TreatmentDeliveryType='CONTINUATION', "
-            "it never triggers a new session boundary even with a > 4 hr gap); "
-            "(2) FractionNumber cross-check (IsFirstFxAppearance — if a > 240-min gap occurs but the same "
-            "Plan+FractionNumber combo already appeared earlier that day, suppress the gap).",
-            "Deterministic tiebreakers (FactTreatmentHistoryID) added to all ORDER BY clauses in "
-            "treatment-session window functions to prevent non-deterministic results when timestamps tie.",
+            "Session counting replaced by direct SUM(NumTreatmentSessions) from FactTreatmentHistory "
+            "(2026-04-17 refactor) — dropped the appointment-side session-matching pipeline and its "
+            "240-min gap / CONTINUATION / FractionNumber cross-check logic. Net reduction of 203 file "
+            "lines (1,753 → 1,550) while preserving every output column. Treatment_Detail.sql retains "
+            "the gap-based session detector for per-row drill-through.",
             "Reference-point deduplication: COUNT(DISTINCT DimFieldID) in PlanFieldInfo; SELECT DISTINCT "
             "with DimFieldID in FieldTechnique CTE — same fix as DailyVolume_Past.sql.",
             "Aggregation key: date × location × machine. DoseDeliveredPerFraction pre-included in "
@@ -738,6 +736,80 @@ SHARED_CONVENTIONS = [
     "SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED (no blocking on the live warehouse).",
     "Standard patient / course / plan quality filters exclude test / QA / DNU / demo data.",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Dynamic recount — if the production SQL directory is reachable, re-count
+# every script's `total` and `sql` line counts in place so the help modal
+# always reflects the current source. Falls back silently to the hardcoded
+# values above if the directory is missing (e.g., running on a host that
+# doesn't have the ARIA scripts synced).
+# ---------------------------------------------------------------------------
+import os
+import re
+from pathlib import Path
+
+
+def _count_sql_lines(text: str) -> tuple[int, int]:
+    """Return (total_lines, sql_code_lines). SQL excludes blank lines,
+    single-line `--` comments, and `/* ... */` block comments."""
+    lines = text.splitlines()
+    total = len(lines)
+    sql = 0
+    in_block = False
+    for raw in lines:
+        s = raw.strip()
+        if not s:
+            continue
+        if in_block:
+            if "*/" in s:
+                in_block = False
+                rest = s.split("*/", 1)[1].strip()
+                if rest and not rest.startswith("--"):
+                    sql += 1
+            continue
+        if s.startswith("--"):
+            continue
+        if s.startswith("/*"):
+            if "*/" in s:
+                stripped = re.sub(r"/\*.*?\*/", "", s).strip()
+                if stripped and not stripped.startswith("--"):
+                    sql += 1
+            else:
+                in_block = True
+            continue
+        sql += 1
+    return total, sql
+
+
+def _find_sql_dir() -> Path | None:
+    candidates = [
+        os.environ.get("ARIA_SQL_DIR"),
+        "~/Aria/Production",
+        "~/Library/CloudStorage/OneDrive-ProvidenceSt.JosephHealth/Aria/Production",
+    ]
+    for c in candidates:
+        if not c:
+            continue
+        p = Path(os.path.expanduser(c))
+        if p.is_dir():
+            return p
+    return None
+
+
+_sql_dir = _find_sql_dir()
+if _sql_dir is not None:
+    for _name, _entry in SQL_SCRIPTS.items():
+        _file = _sql_dir / f"{_name}.sql"
+        if not _file.is_file():
+            continue
+        try:
+            _text = _file.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        _total, _sql = _count_sql_lines(_text)
+        _entry["total"] = _total
+        _entry["sql"] = _sql
 
 
 # Aggregate project-level stats — used by the Overview help page.

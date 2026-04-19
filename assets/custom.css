@@ -1126,7 +1126,8 @@ html[data-mobile-view="true"] .mantine-AppShell-main {
     padding-left: 0 !important;
     padding-right: 0 !important;
 }
-html[data-mobile-view="true"] #global-refresh-btn {
+html[data-mobile-view="true"] #global-refresh-btn,
+html[data-mobile-view="true"] #global-theme-btn {
     display: none !important;
 }
 /* Only show the mobile filters icon on /mobile */
@@ -1138,5 +1139,18 @@ html[data-mobile-view="true"] #mobilehome-filters-open { display: inline-flex !i
 .mobile-primary-seg .mantine-SegmentedControl-input:checked + .mantine-SegmentedControl-label,
 .mobile-primary-seg .mantine-SegmentedControl-label[data-active] {
     color: #FFFFFF !important;
+}
+
+/* Mobile-only: give SegmentedControl tracks a visible gray background in
+   light mode so the unselected segments don't vanish against the page bg. */
+html[data-mobile-view="true"]:not([data-theme="dark"]) .mantine-SegmentedControl-root {
+    background-color: #E5E7EB !important;
+    border: 1px solid #D1D5DB !important;
+}
+
+/* Mobile-only: tighten SegmentedControl track padding so the indicator
+   sits closer to the track edges (less gray border around the pill). */
+html[data-mobile-view="true"] .mantine-SegmentedControl-root {
+    padding: 2px !important;
 }
 
