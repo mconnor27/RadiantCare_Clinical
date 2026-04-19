@@ -315,6 +315,63 @@ def _verifier() -> _ClerkVerifier:
     return _ClerkVerifier(host)
 
 
+# Small LRU for user->email lookups so we don't hammer Clerk's API every
+# callback. Cache for 10 min matches our CLERK_RECHECK_INTERVAL cadence.
+_USER_EMAIL_CACHE: dict[str, tuple[float, str]] = {}
+_USER_EMAIL_TTL = 600
+
+
+def _fetch_user_email(user_id: str) -> str:
+    """Look up a Clerk user's primary email via the backend API.
+
+    Clerk's default session JWT only carries `sub` (user_id), `sid`, and
+    standard timing claims — not email. Fetching via the backend API with
+    CLERK_SECRET_KEY gives us the email we need for the ALLOWED_EMAILS
+    allowlist. Cached briefly so the allowlist check stays cheap.
+    """
+    now = time.time()
+    cached = _USER_EMAIL_CACHE.get(user_id)
+    if cached and cached[0] > now:
+        return cached[1]
+
+    secret = os.environ.get("CLERK_SECRET_KEY", "").strip()
+    if not secret:
+        logger.warning("auth: CLERK_SECRET_KEY not set; cannot fetch user email")
+        return ""
+
+    try:
+        import httpx
+        r = httpx.get(
+            f"https://api.clerk.com/v1/users/{user_id}",
+            headers={"Authorization": f"Bearer {secret}"},
+            timeout=5,
+        )
+        if r.status_code != 200:
+            logger.warning("auth: Clerk user fetch %s returned %d", user_id, r.status_code)
+            return ""
+        data = r.json()
+    except Exception as exc:
+        logger.warning("auth: Clerk user fetch %s failed: %s", user_id, exc)
+        return ""
+
+    # Primary email — Clerk returns a list of email addresses; pick the one
+    # whose id matches `primary_email_address_id`.
+    primary_id = data.get("primary_email_address_id")
+    email = ""
+    for e in data.get("email_addresses", []) or []:
+        if e.get("id") == primary_id:
+            email = (e.get("email_address") or "").strip().lower()
+            break
+    if not email:
+        # Fallback: first email in the list
+        emails = data.get("email_addresses") or []
+        if emails:
+            email = (emails[0].get("email_address") or "").strip().lower()
+
+    _USER_EMAIL_CACHE[user_id] = (now + _USER_EMAIL_TTL, email)
+    return email
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -371,9 +428,12 @@ def register_auth(server: Flask) -> None:
             # Mirror identity into our Flask session for fast subsequent checks.
             user_id = claims.get("sub")
             if user_id:
+                # Clerk's default session JWT doesn't carry email — we pull
+                # it from the backend API (cached per-user for 10 min).
                 email = (
                     claims.get("email")
-                    or (claims.get("primary_email_address") or "")
+                    or claims.get("primary_email_address")
+                    or _fetch_user_email(user_id)
                     or ""
                 )
                 # App-level allowlist. Clerk's own allowlist is paywalled, so
