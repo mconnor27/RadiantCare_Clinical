@@ -27,6 +27,37 @@ _CAP_CONSULT_LEAD = 30   # > 30 days booking-to-consult = outlier
 _CAP_SIM_LEAD = 21       # > 21 days booking-to-sim = outlier
 
 
+# ---------------------------------------------------------------------------
+# Double-import guard
+# ---------------------------------------------------------------------------
+# Dash's page-importer uses spec.loader.exec_module() which re-executes the
+# module body even if Python already has it in sys.modules (via an earlier
+# `from pages.home import …` elsewhere, e.g. pages/home_mobile.py). Without
+# this guard, every @callback and clientside_callback in this file gets
+# registered twice on the second pass, producing "Duplicate callback outputs"
+# errors across the entire home page. We detect the second pass by checking
+# the live Dash app's callback_map for a stable home-page output, then
+# neuter `callback` and `clientside_callback` for the rest of this pass so
+# only function/helper definitions are rebound.
+try:
+    _existing_app = dash.get_app()
+    _already_registered = "home-tx-trend-store.data" in (
+        _existing_app.callback_map or {}
+    )
+except Exception:
+    _already_registered = False
+
+if _already_registered:
+    def _noop_callback(*args, **kwargs):
+        if len(args) == 1 and callable(args[0]):
+            return args[0]
+        def _decorator(fn):
+            return fn
+        return _decorator
+    callback = _noop_callback          # type: ignore[assignment]
+    clientside_callback = _noop_callback  # type: ignore[assignment]
+
+
 def _apply_loess(series, frac):
     """Apply LOESS smoothing to a pandas Series."""
     if frac <= 0 or len(series) < 4:
@@ -1656,6 +1687,7 @@ _HIDE_STACK_JS = """function(sliceVal, chartType) {
     return (single || chartType === "line") ? {"display": "none"} : {};
 }"""
 
+
 for _m, _t, _d, _defaults in _HOME_METRICS:
     _register_metric_callbacks(_m, "trend", is_cumulative=False)
     _register_metric_callbacks(_m, "cum",   is_cumulative=True)
@@ -1746,8 +1778,9 @@ def _home_preset_range(last_date, preset):
 # Operating Hours Ribbon — reusable component callbacks + server data
 # ---------------------------------------------------------------------------
 
-register_hours_ribbon_callbacks("home")
-register_outlier_callbacks(PAGE_ID, n_transitions=2, defaults=[_CAP_CONSULT_LEAD, _CAP_SIM_LEAD])
+if not _already_registered:
+    register_hours_ribbon_callbacks("home")
+    register_outlier_callbacks(PAGE_ID, n_transitions=2, defaults=[_CAP_CONSULT_LEAD, _CAP_SIM_LEAD])
 
 @callback(
     Output("home-store-hours", "data"),
@@ -1797,9 +1830,10 @@ clientside_callback(
 # ---------------------------------------------------------------------------
 # Settings toggle + PNG export (clientside via shared helpers)
 # ---------------------------------------------------------------------------
-_home_chart_registry = []
-for _m, _t, _d, _defaults in _HOME_METRICS:
-    _home_chart_registry.append((f"home-{_m}-trend", f"home-chart-{_m}-trend", f"home-{_m}-trend-store"))
-    _home_chart_registry.append((f"home-{_m}-cum",   f"home-chart-{_m}-cum",   f"home-{_m}-cum-store"))
-_home_chart_registry.append(("home-avail", "home-chart-availability"))
-register_chart_callbacks(_home_chart_registry)
+if not _already_registered:
+    _home_chart_registry = []
+    for _m, _t, _d, _defaults in _HOME_METRICS:
+        _home_chart_registry.append((f"home-{_m}-trend", f"home-chart-{_m}-trend", f"home-{_m}-trend-store"))
+        _home_chart_registry.append((f"home-{_m}-cum",   f"home-chart-{_m}-cum",   f"home-{_m}-cum-store"))
+    _home_chart_registry.append(("home-avail", "home-chart-availability"))
+    register_chart_callbacks(_home_chart_registry)
