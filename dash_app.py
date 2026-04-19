@@ -123,50 +123,6 @@ app.layout = dmc.MantineProvider(
                 "zIndex": 9999,
             },
         ),
-        # Theme toggle + refresh buttons — fixed top-right corner
-        html.Div(
-            style={
-                "position": "fixed",
-                "top": 10,
-                "right": 16,
-                "zIndex": 1000,
-                "display": "flex",
-                "gap": "4px",
-                "alignItems": "center",
-            },
-            children=[
-                *(
-                    [dmc.Badge(
-                        "De-Identified",
-                        leftSection=DashIconify(icon="tabler:shield-lock", width=12),
-                        color="violet",
-                        variant="light",
-                        size="sm",
-                        radius="sm",
-                        style={"marginRight": "4px"},
-                    )]
-                    if PHI_MODE else []
-                ),
-                dmc.ActionIcon(
-                    DashIconify(id="global-theme-icon", icon="tabler:moon", width=22, color="#4B5563"),
-                    id="global-theme-btn",
-                    variant="transparent",
-                    size="lg",
-                    radius="xl",
-                ),
-                dmc.ActionIcon(
-                    DashIconify(icon="tabler:refresh", width=20),
-                    id="global-refresh-btn",
-                    variant="subtle",
-                    color="gray",
-                    size="lg",
-                    radius="xl",
-                ),
-                # Signed-in user chip — populated by a server callback from
-                # flask.session. Empty div when auth is off / not logged in.
-                html.Div(id="auth-user-chip", style={"marginLeft": "4px"}),
-            ],
-        ),
         # Theme state store (synced to localStorage via clientside)
         dcc.Store(id="global-theme-store", data="light"),
         # Global help modal
@@ -179,7 +135,52 @@ app.layout = dmc.MantineProvider(
             children=[
                 create_sidebar(),
                 dmc.AppShellMain(
-                    children=[page_container],
+                    children=[
+                        # Global header strip — lives in document flow, scrolls
+                        # with content (no longer fixed overlay). Right-aligned
+                        # so page-level controls (Smoothing sliders, etc.) stay
+                        # to its left without being covered.
+                        html.Div(
+                            style={
+                                "display": "flex",
+                                "justifyContent": "flex-end",
+                                "alignItems": "center",
+                                "gap": "4px",
+                                "padding": "4px 4px 8px 0",
+                            },
+                            children=[
+                                *(
+                                    [dmc.Badge(
+                                        "De-Identified",
+                                        leftSection=DashIconify(icon="tabler:shield-lock", width=12),
+                                        color="violet",
+                                        variant="light",
+                                        size="sm",
+                                        radius="sm",
+                                        style={"marginRight": "4px"},
+                                    )]
+                                    if PHI_MODE else []
+                                ),
+                                dmc.ActionIcon(
+                                    DashIconify(id="global-theme-icon", icon="tabler:moon", width=22, color="#4B5563"),
+                                    id="global-theme-btn",
+                                    variant="transparent",
+                                    size="lg",
+                                    radius="xl",
+                                ),
+                                dmc.ActionIcon(
+                                    DashIconify(icon="tabler:refresh", width=20),
+                                    id="global-refresh-btn",
+                                    variant="subtle",
+                                    color="gray",
+                                    size="lg",
+                                    radius="xl",
+                                ),
+                                html.Div(id="auth-user-chip", style={"marginLeft": "4px"}),
+                            ],
+                        ),
+                        page_container,
+                    ],
                     style={
                         "backgroundColor": "var(--bg-page)",
                         "minHeight": "100vh",
