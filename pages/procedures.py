@@ -19,6 +19,7 @@ from components.filter_bar import department_chips
 from components.kpi_card import kpi_card, kpi_placeholder
 from components.chart_card import chart_card, register_chart_callbacks
 from components.detail_table import detail_table
+from components.phi import apply_phi_grid_rules
 from utils.charts import apply_default_layout, empty_figure, dept_color
 from utils.tables import sanitize_for_grid
 from utils.date_slider import (
@@ -1332,7 +1333,7 @@ def _prepare_cumul_data(dff_all, cat_name, start, end, date_preset="12mo",
 
 def _build_tab_grid_data(dff):
     """Build AG Grid column defs and row data for a category tab."""
-    cols = [
+    cols = apply_phi_grid_rules([
         {"field": "ScheduledDateTime", "headerName": "Date", "minWidth": 120,
          "sort": "desc"},
         {"field": "PatientFullName", "headerName": "Patient", "minWidth": 160},
@@ -1344,7 +1345,7 @@ def _build_tab_grid_data(dff):
         {"field": "ReferringPhysician", "headerName": "Referring MD", "minWidth": 130},
         {"field": "AppointmentNotes", "headerName": "Appt Notes", "minWidth": 200,
          "wrapText": True, "autoHeight": True},
-    ]
+    ])
     if dff.empty:
         return cols, []
     display_cols = [c["field"] for c in cols if c["field"] in dff.columns]

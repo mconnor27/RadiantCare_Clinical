@@ -20,7 +20,7 @@ if _env_path.is_file():
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-DATA_DIR = Path(
+DATA_DIR_RAW = Path(
     os.environ.get(
         "DATA_DIR",
         os.path.expanduser(
@@ -28,10 +28,28 @@ DATA_DIR = Path(
         ),
     )
 )
+DATA_DIR_SANITIZED = Path(
+    os.environ.get(
+        "DATA_SANITIZED",
+        str(DATA_DIR_RAW.parent / f"{DATA_DIR_RAW.name}_Sanitized"),
+    )
+)
+
+# PHI_MODE toggles the active data root. When on, the app reads from the
+# pre-sanitized directory produced by scripts/sanitize.py — patient names,
+# MRNs, DOBs, addresses, and free-text notes are removed there.
+PHI_MODE = os.environ.get("PHI_MODE", "").lower() in ("1", "true", "yes", "on")
+
+# Salt for hashing PatientId into stable pseudonyms across datasets.
+# Used at sanitization time (build script) and by scripts/lookup_patient.py
+# for reverse lookup. Must never be committed or deployed to the cloud host.
+PHI_SALT = os.environ.get("PHI_SALT", "")
+
+DATA_DIR = DATA_DIR_SANITIZED if PHI_MODE else DATA_DIR_RAW
 DATA_COMPLETE = DATA_DIR / "Complete"
 DATA_INCREMENTAL = DATA_DIR / "Incremental"
 DATA_LOOKUP = DATA_DIR / "Lookup"
-DATA_CACHE = PROJECT_ROOT / ".data_cache"
+DATA_CACHE = PROJECT_ROOT / (".data_cache_phi" if PHI_MODE else ".data_cache")
 
 MAPBOX_TOKEN = os.environ.get("MAPBOX_TOKEN", "")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")

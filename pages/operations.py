@@ -55,7 +55,7 @@ layout = dmc.Stack(
                 dmc.Title("Operations", order=2, className="page-title"),
                 dmc.Group(
                     gap=8, align="center",
-                    style={"position": "absolute", "right": 40, "bottom": 0},
+                    style={"position": "absolute", "right": 100, "bottom": 6},
                     children=[
                         dmc.Text("Smoothing", size="xs", c="#9CA3AF", fw=500),
                         dmc.Slider(

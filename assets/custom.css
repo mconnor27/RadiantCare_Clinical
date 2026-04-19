@@ -301,6 +301,12 @@ body {
     text-overflow: ellipsis;
 }
 
+/* Prevent purple sidebar bg from bleeding through the transparent 1px
+   border-right in light mode (default background-clip is border-box). */
+.mantine-AppShell-navbar {
+    background-clip: padding-box;
+}
+
 /* Scrollbar styling for nav */
 .mantine-AppShell-navbar::-webkit-scrollbar {
     width: 4px;

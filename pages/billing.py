@@ -17,6 +17,7 @@ from config.settings import (
 )
 from components.filter_bar import department_chips
 from components.detail_table import detail_table
+from components.phi import apply_phi_grid_rules
 from utils.tables import sanitize_for_grid
 from components.kpi_card import kpi_card, kpi_placeholder
 from components.chart_card import chart_card, register_chart_callbacks
@@ -3098,6 +3099,7 @@ def _build_billing_table(bf):
         return [], []
 
     existing_cols = [c for c in _BILLING_TABLE_COLS if c["field"] in bf.columns]
+    existing_cols = apply_phi_grid_rules(existing_cols)
 
     table_df = bf.head(1000).copy()
     table_df["_row_idx"] = range(len(table_df))

@@ -19,6 +19,7 @@ from config.settings import (
 from components.kpi_card import kpi_card, kpi_placeholder
 from components.chart_card import chart_card, register_chart_callbacks
 from components.detail_table import detail_table
+from components.phi import apply_phi_grid_rules
 from utils.charts import apply_default_layout, empty_figure
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, SLIDER_MARKS, DEFAULT_SLIDER,
@@ -2452,7 +2453,7 @@ def update_main_data(_n, machines, filter_rules, slider_val, date_preset, grid_f
     else:
         narrative = ""
 
-    detail_col_defs = [
+    detail_col_defs = apply_phi_grid_rules([
         {"field": "Date", "headerName": "Date", "maxWidth": 130, "sort": "desc"},
         {"field": "Patient", "headerName": "Patient", "maxWidth": 160},
         {"field": "Machine", "headerName": "Machine", "maxWidth": 145},
@@ -2468,7 +2469,7 @@ def update_main_data(_n, machines, filter_rules, slider_val, date_preset, grid_f
         {"field": "CourseName", "headerName": "Course"},
         {"field": "DowntimeNote", "headerName": "Downtime Note"},
         {"field": "AppointmentNote", "headerName": "Appointment Note", "minWidth": 500},
-    ]
+    ])
 
     return (
         kpi_children,

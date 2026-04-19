@@ -12,7 +12,7 @@ from pathlib import Path as _Path
 import dash_mantine_components as dmc
 from dash_iconify import DashIconify
 
-from config.settings import NAV_PAGES, PRIMARY, PROJECT_ROOT
+from config.settings import NAV_PAGES, PHI_MODE, PRIMARY, PROJECT_ROOT
 from ..sql_summaries import (
     LARGEST_SCRIPT,
     SMALLEST_SCRIPT,
@@ -313,9 +313,37 @@ BACKEND_SQL_CONTENT = dmc.Stack(
 # Front-End App tab
 # ---------------------------------------------------------------------------
 
+_PHI_MODE_ALERT = dmc.Alert(
+    color="violet", variant="filled",
+    title="De-Identified Mode",
+    icon=DashIconify(icon="tabler:shield-lock", width=20),
+    mb="md",
+    children=dmc.Stack(gap=6, children=[
+        dmc.Text(
+            "This deployment serves HIPAA-sanitized data. Patient names, "
+            "medical record numbers, dates of birth, street addresses, and "
+            "appointment free-text notes are removed at build time by "
+            "scripts/sanitize.py before any data reaches this server.",
+            size="xs",
+        ),
+        dmc.Text(
+            "PatientId values are replaced with salted SHA-256 hashes so "
+            "joins still work across datasets. Exact dates, physician names, "
+            "and referring-physician public info are retained. The Patients "
+            "map is aggregated to ZIP-3 with small-cell suppression (n<11). "
+            "CPT Audit and OTV Audit grids show a 6-character PatientCode "
+            "that can be reverse-looked-up against the raw data on the "
+            "author's machine via scripts/lookup_patient.py.",
+            size="xs",
+        ),
+    ]),
+) if PHI_MODE else None
+
+
 FRONTEND_CONTENT = dmc.Stack(
     gap="md",
     children=[
+        _PHI_MODE_ALERT,
         dmc.Text(
             "The Dash application that consumes the SQL extracts. Per-page "
             "UI details are under each individual page entry in the sidebar at left.",

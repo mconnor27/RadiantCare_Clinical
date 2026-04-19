@@ -16,6 +16,7 @@ from config.settings import (
 from components.filter_bar import department_chips, physician_short_name
 from components.chart_card import chart_card, register_chart_callbacks
 from components.chart_settings import chart_settings_popover
+from components.phi import apply_phi_grid_rules
 from utils.diagnosis_categories import SUBCATEGORIES as DIAG_SUBCATEGORIES
 from utils.charts import apply_default_layout, empty_figure
 from utils.date_slider import (
@@ -1080,14 +1081,14 @@ layout = dmc.Stack(
                         ),
                         dag.AgGrid(
                             id="diag-mgr-detail-grid",
-                            columnDefs=[
+                            columnDefs=apply_phi_grid_rules([
                                 {"field": "ScheduledDateTime", "headerName": "Date", "flex": 0.6, "sort": "desc"},
                                 {"field": "PatientId", "headerName": "MRN", "flex": 0.5},
                                 {"field": "PatientFullName", "headerName": "Patient", "flex": 1},
                                 {"field": "ActivityName", "headerName": "Activity", "flex": 1},
                                 {"field": "DiagnosisCodes", "headerName": "Diagnosis Codes", "flex": 1.5},
                                 {"field": "Department", "headerName": "Dept", "flex": 0.5},
-                            ],
+                            ]),
                             defaultColDef={"sortable": True, "resizable": True,
                                            "filter": True, "floatingFilter": True,
                                            "valueFormatter": {"function": "params.value == null || params.value === '' ? '–' : params.value"}},

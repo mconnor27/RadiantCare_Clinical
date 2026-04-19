@@ -22,6 +22,7 @@ from components.kpi_card import kpi_card, kpi_placeholder
 from components.chart_card import chart_card, register_chart_callbacks
 from components.chart_settings import chart_settings_popover
 from components.detail_table import detail_table
+from components.phi import apply_phi_grid_rules
 from utils.charts import apply_default_layout, empty_figure, dept_color
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, DEFAULT_SLIDER, SLIDER_MARKS,
@@ -3573,6 +3574,7 @@ def _update_courses_kpis(*args):
         ]
         column_defs = [cd for cd in column_defs if cd["field"] in available_cols]
         column_defs.append({"field": "_row_idx", "hide": True})
+        column_defs = apply_phi_grid_rules(column_defs)
 
     return (
         kpi_active, kpi_started, kpi_completed, kpi_median_frac, kpi_median_dur, kpi_multiplan,

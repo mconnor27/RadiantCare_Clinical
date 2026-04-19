@@ -7,7 +7,7 @@ from dash_iconify import DashIconify
 
 from dash import clientside_callback
 
-from config.settings import DMC_THEME, NEUTRAL, PRIMARY, MAPBOX_TOKEN
+from config.settings import DMC_THEME, NEUTRAL, PRIMARY, MAPBOX_TOKEN, PHI_MODE
 from components.nav import create_sidebar
 from components.help_modal import create_help_modal
 from utils.diagnosis_categories import get_taxonomy
@@ -127,6 +127,18 @@ app.layout = dmc.MantineProvider(
                 "alignItems": "center",
             },
             children=[
+                *(
+                    [dmc.Badge(
+                        "De-Identified",
+                        leftSection=DashIconify(icon="tabler:shield-lock", width=12),
+                        color="violet",
+                        variant="light",
+                        size="sm",
+                        radius="sm",
+                        style={"marginRight": "4px"},
+                    )]
+                    if PHI_MODE else []
+                ),
                 dmc.ActionIcon(
                     DashIconify(id="global-theme-icon", icon="tabler:moon", width=22, color="#4B5563"),
                     id="global-theme-btn",

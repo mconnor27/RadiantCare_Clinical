@@ -18,7 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from functools import lru_cache
 
-from config.settings import PROJECT_ROOT, DEPARTMENTS, DEPARTMENT_COLORS
+from config.settings import PROJECT_ROOT, DEPARTMENTS, DEPARTMENT_COLORS, PHI_MODE
 
 logger = logging.getLogger(__name__)
 
@@ -517,31 +517,39 @@ def geocode_addresses(addr_records, max_nominatim=20):
 # Patient data aggregation
 # ---------------------------------------------------------------------------
 
-def prepare_patient_geo_data(df):
+def prepare_patient_geo_data(df, phi_mode: bool = None):
     """Add geocoded lat/lon to patient data and aggregate by ZIP + Department.
 
     Args:
         df: Patient DataFrame with at least Zip, City, Department, PatientId columns.
+        phi_mode: When True, aggregate to ZIP3 (Safe Harbor) and suppress groups
+                  with fewer than 11 patients. Defaults to the global PHI_MODE flag.
 
     Returns:
         DataFrame with columns:
             zip5, lat, lon, patient_count, primary_city, department
+
+        In phi_mode the ``zip5`` column contains ZIP3 values (e.g. "985") and
+        ``lat``/``lon`` are patient-weighted centroids across all ZIP5 codes
+        sharing that ZIP3 prefix.
     """
+    if phi_mode is None:
+        phi_mode = PHI_MODE
+
+    empty_cols = ["zip5", "lat", "lon", "patient_count", "primary_city", "department"]
+
     if df.empty:
-        return pd.DataFrame(
-            columns=["zip5", "lat", "lon", "patient_count", "primary_city", "department"]
-        )
+        return pd.DataFrame(columns=empty_cols)
 
     work = df.copy()
     work["zip5"] = work["Zip"].apply(normalize_zip)
     work = work.dropna(subset=["zip5"])
 
     if work.empty:
-        return pd.DataFrame(
-            columns=["zip5", "lat", "lon", "patient_count", "primary_city", "department"]
-        )
+        return pd.DataFrame(columns=empty_cols)
 
-    # Ensure cache covers all ZIPs
+    # Ensure cache covers all ZIPs (still geocoded at ZIP5 level; ZIP3 centroid
+    # is computed as the patient-weighted mean of its contained ZIP5 centroids).
     unique_zips = work["zip5"].unique().tolist()
     cache = geocode_zips(unique_zips)
 
@@ -566,6 +574,42 @@ def prepare_patient_geo_data(df):
     # Merge with geocode cache
     agg = agg.merge(cache[["zip5", "lat", "lon"]], on="zip5", how="left")
     agg = agg.dropna(subset=["lat", "lon"])
+
+    if phi_mode:
+        # Safe Harbor ZIP3 prefixes that must report as '000' (<20k pop).
+        # We just drop them in the Patient map since a marker at lat 0, lon 0
+        # is meaningless for re-identification OR for visualization.
+        _RESTRICTED_ZIP3 = {
+            "036", "059", "063", "102", "203", "556", "692", "790", "821",
+            "823", "830", "831", "878", "879", "884", "890", "893",
+        }
+        agg["zip3"] = agg["zip5"].str[:3]
+        agg = agg[~agg["zip3"].isin(_RESTRICTED_ZIP3)]
+
+        # Collapse ZIP5 → ZIP3, patient-weighted centroid and largest city label.
+        group_cols_3 = ["zip3"] + (["Department"] if has_dept else [])
+        rolled = (
+            agg.assign(_w_lat=agg["lat"] * agg["patient_count"],
+                       _w_lon=agg["lon"] * agg["patient_count"])
+               .groupby(group_cols_3, as_index=False)
+               .agg(
+                   patient_count=("patient_count", "sum"),
+                   _w_lat=("_w_lat", "sum"),
+                   _w_lon=("_w_lon", "sum"),
+                   primary_city=("primary_city",
+                                 lambda s: s.mode().iloc[0] if not s.mode().empty else ""),
+               )
+        )
+        rolled["lat"] = rolled["_w_lat"] / rolled["patient_count"]
+        rolled["lon"] = rolled["_w_lon"] / rolled["patient_count"]
+        rolled = rolled.drop(columns=["_w_lat", "_w_lon"])
+        rolled = rolled.rename(columns={"zip3": "zip5"})
+
+        # Suppress small cells at the ZIP3-level: the ONE place small-cell
+        # suppression earns its keep — geography stacks automatically with
+        # filters and a ZIP3 with <11 patients narrows too far.
+        rolled = rolled[rolled["patient_count"] >= 11]
+        return rolled
 
     return agg
 

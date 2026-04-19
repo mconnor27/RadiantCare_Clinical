@@ -18,6 +18,7 @@ from config.settings import (
 from components.chart_card import chart_card, register_chart_callbacks
 from components.detail_table import detail_table
 from components.kpi_card import kpi_card, kpi_placeholder
+from components.phi import apply_phi_grid_rules
 from utils.charts import apply_default_layout, empty_figure, color_for_index
 from utils.tables import sanitize_for_grid
 from utils.date_slider import (
@@ -2630,7 +2631,7 @@ def _build_table(df, is_completed):
         )
     table_df = sanitize_for_grid(table_df)
 
-    return table_df.to_dict("records"), display_cols
+    return table_df.to_dict("records"), apply_phi_grid_rules(display_cols)
 
 
 def _build_day_index_ticks(start_norm, n_days, max_ticks=12):

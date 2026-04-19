@@ -10,10 +10,11 @@ import pandas as pd
 from dash_iconify import DashIconify
 
 from config.settings import (
-    PRIMARY, NEUTRAL, SEMANTIC_COLORS,
+    PRIMARY, NEUTRAL, SEMANTIC_COLORS, PHI_MODE,
     DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, DEFAULT_GRID_STYLE, DEFAULT_GRID_CLASS,
 )
 from components.filter_bar import department_chips
+from components.phi import apply_phi_grid_rules
 from utils.charts import apply_default_layout, empty_figure
 from utils.date_slider import month_idx, idx_to_date, MAX_IDX, preset_to_slider_val, preset_to_exact_dates
 
@@ -32,10 +33,14 @@ dash.register_page(__name__, path="/cpt-audit", name="CPT Audit", order=12)
 # ---------------------------------------------------------------------------
 # Column definitions (needed by layout)
 # ---------------------------------------------------------------------------
-_COL_DEFS = [
+_COL_DEFS = apply_phi_grid_rules([
     {"field": "TreatmentDate", "headerName": "Date", "sort": "desc", "flex": 1.1},
     {"field": "_patient_display", "headerName": "Patient"},
     {"field": "PatientMRN", "headerName": "MRN", "flex": 1.2},
+    # PatientCode (6-char hash) is present in sanitized CSVs only; in PHI_MODE
+    # it's the user-visible identifier that can be reverse-looked-up via
+    # scripts/lookup_patient.py. Column renders blank outside PHI_MODE.
+    *([{"field": "PatientCode", "headerName": "Code", "width": 90}] if PHI_MODE else []),
     {"field": "Department", "headerName": "Dept"},
     {"field": "Machine", "headerName": "Machine", "flex": 1.3},
     {"field": "CourseName", "headerName": "Course", "flex": 1.2},
@@ -52,7 +57,7 @@ _COL_DEFS = [
      ]}},
     {"field": "ReviewStatus", "headerName": "Review", "flex": 2.3, "minWidth": 180,
      "cellRenderer": "CptReviewButtons", "sortable": False, "filter": False},
-]
+])
 
 # ---------------------------------------------------------------------------
 # Layout

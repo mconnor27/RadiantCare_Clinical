@@ -21,6 +21,7 @@ from components.chart_card import chart_card, register_chart_callbacks
 from components.diagnosis_filter import diagnosis_accordion, register_diagnosis_callbacks
 from components.detail_table import detail_table
 from components.chart_settings import chart_settings_popover
+from components.phi import apply_phi_grid_rules
 from utils.charts import apply_default_layout, empty_figure
 from utils.tables import sanitize_for_grid
 from utils.date_slider import (
@@ -3310,6 +3311,7 @@ def _build_detail_table(df):
             d["sort"] = "desc"
         col_defs.append(d)
     col_defs.append({"field": "_row_idx", "hide": True})
+    col_defs = apply_phi_grid_rules(col_defs)
 
     return table_df.to_dict("records"), col_defs
 

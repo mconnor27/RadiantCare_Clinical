@@ -21,6 +21,7 @@ from components.diagnosis_filter import diagnosis_accordion, register_diagnosis_
 from components.kpi_card import kpi_card, kpi_placeholder
 from components.chart_card import chart_card, register_chart_callbacks
 from components.detail_table import detail_table
+from components.phi import apply_phi_grid_rules
 from utils.charts import apply_default_layout, empty_figure, dept_color
 from utils.holidays import get_holidays
 from utils.date_slider import (
@@ -1644,6 +1645,7 @@ def _update_table(*filt_args):
         col_defs.append(cd)
     # Hidden _row_idx column for grid filter sync
     col_defs.append({"field": "_row_idx", "hide": True})
+    col_defs = apply_phi_grid_rules(col_defs)
 
     tbl = df_det_filtered.sort_values("ScheduledDateTime", ascending=False).head(5000)
     tbl = tbl.copy()

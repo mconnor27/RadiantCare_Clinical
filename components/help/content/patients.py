@@ -114,9 +114,9 @@ UI_CONTENT = dmc.Stack(
             bullets([
                 "ZIPs are normalized to 5-digit strings (leading zeros "
                 "preserved) before cache lookup.",
-                "Department site markers are hard-coded in DEPT_COORDS: Lacey "
-                "(47.0343, -122.8231), Centralia (46.7162, -122.9543), Aberdeen "
-                "(46.9754, -123.8157).",
+                "Department site markers are hard-coded in utils.geocoding."
+                "DEPT_COORDS: Lacey (47.0452, -122.8258), Centralia "
+                "(46.7141, -123.0101), Aberdeen (46.9754, -123.8157).",
                 "Flow-line arcs use a quadratic bezier for visual clarity, not "
                 "a geodesic great-circle path — the curves are purely aesthetic.",
                 "Requires MAPBOX_TOKEN in the environment. Without it the map "

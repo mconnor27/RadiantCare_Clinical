@@ -23,6 +23,7 @@ from components.kpi_card import kpi_card, kpi_placeholder
 from components.chart_card import chart_card, register_chart_callbacks
 from components.chart_settings import chart_settings_popover
 from components.detail_table import detail_table
+from components.phi import apply_phi_grid_rules
 from utils.charts import apply_default_layout, empty_figure, dept_color
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, DEFAULT_SLIDER, SLIDER_MARKS,
@@ -2640,8 +2641,9 @@ _COMPLEXITY_FACETS = [
 ]
 
 
-# Detail table column definitions (static)
-_TABLE_COLUMN_DEFS = [
+# Detail table column definitions (static). Wrapped with apply_phi_grid_rules
+# so PHI_MODE removes PatientFullName and restricts free-text filters.
+_TABLE_COLUMN_DEFS = apply_phi_grid_rules([
     {"field": "FirstTreatmentDate", "headerName": "First Tx", "maxWidth": 130, "sort": "desc"},
     {"field": "LastTreatmentDate", "headerName": "Last Tx", "maxWidth": 130},
     {"field": "PlanCreationDate", "headerName": "Created", "maxWidth": 130},
@@ -2658,7 +2660,7 @@ _TABLE_COLUMN_DEFS = [
     {"field": "SessionBasedFractionCount", "headerName": "Fx Del", "width": 100, "type": "numericColumn"},
     {"field": "TreatmentDurationDays", "headerName": "Duration (d)", "width": 120, "type": "numericColumn"},
     {"field": "PrescriptionSite", "headerName": "Rx Site", "width": 160},
-]
+])
 
 _TABLE_FIELDS = [
     "FirstTreatmentDate", "LastTreatmentDate", "PlanCreationDate",

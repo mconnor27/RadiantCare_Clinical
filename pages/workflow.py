@@ -21,6 +21,7 @@ from components.filter_bar import department_chips
 from components.chart_card import register_chart_callbacks
 from components.chart_settings import chart_settings_popover
 from components.detail_table import detail_table
+from components.phi import apply_phi_grid_rules
 
 dash.register_page(__name__, path="/workflow", name="Workflow", order=2)
 
@@ -2736,7 +2737,7 @@ def _build_table_data(pivot, use_business_days=False):
         if c == "Exam":
             d["sort"] = "desc"
         col_defs.append(d)
-    return table.to_dict("records"), col_defs
+    return table.to_dict("records"), apply_phi_grid_rules(col_defs)
 
 
 # ---------------------------------------------------------------------------

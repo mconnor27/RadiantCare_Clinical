@@ -30,6 +30,7 @@ from components.chart_card import chart_card, register_chart_callbacks
 from components.chart_settings import chart_settings_popover
 from components.detail_table import detail_table
 from components.outlier_panel import outlier_panel, register_outlier_callbacks
+from components.phi import apply_phi_grid_rules
 from utils.charts import apply_default_layout, empty_figure, dept_color, color_for_index
 from utils.tables import sanitize_for_grid
 from utils.diagnosis_categories import (
@@ -1233,7 +1234,7 @@ layout = dmc.Stack(
                                         ),
                                         dag.AgGrid(
                                             id=f"{PAGE_ID}-rpm-detail-grid",
-                                            columnDefs=[
+                                            columnDefs=apply_phi_grid_rules([
                                                 {"field": "Created", "headerName": "Date", "flex": 0.6,
                                                  "sort": "desc"},
                                                 {"field": "MRN", "headerName": "MRN", "flex": 0.5},
@@ -1244,7 +1245,7 @@ layout = dmc.Stack(
                                                 {"field": "First Appt", "headerName": "First Appt", "flex": 0.6},
                                                 {"field": "Days to First Appt", "headerName": "Days", "flex": 0.4,
                                                  "type": "numericColumn"},
-                                            ],
+                                            ]),
                                             defaultColDef={"sortable": True, "resizable": True,
                                                            "filter": True, "floatingFilter": True,
                                                            "valueFormatter": {"function": "params.value == null || params.value === '' ? '–' : params.value"}},
@@ -1436,14 +1437,14 @@ layout = dmc.Stack(
                                         ),
                                         dag.AgGrid(
                                             id=f"{PAGE_ID}-rpm-diag-detail-grid",
-                                            columnDefs=[
+                                            columnDefs=apply_phi_grid_rules([
                                                 {"field": "Created", "headerName": "Date", "flex": 0.6, "sort": "desc"},
                                                 {"field": "MRN", "headerName": "MRN", "flex": 0.5},
                                                 {"field": "Patient Name", "headerName": "Patient", "flex": 1},
                                                 {"field": "Rfl Prim Dx", "headerName": "Primary Dx", "flex": 1.2},
                                                 {"field": "Diagnoses", "headerName": "Diagnoses", "flex": 1.5},
                                                 {"field": "Status", "headerName": "Status", "flex": 0.6},
-                                            ],
+                                            ]),
                                             defaultColDef={"sortable": True, "resizable": True,
                                                            "filter": True, "floatingFilter": True,
                                                            "valueFormatter": {"function": "params.value == null || params.value === '' ? '–' : params.value"}},

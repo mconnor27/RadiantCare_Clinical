@@ -10,7 +10,7 @@ import pandas as pd
 from datetime import timedelta
 
 from config.settings import (
-    DEPARTMENTS, DEPARTMENT_COLORS, PRIMARY, NEUTRAL,
+    DEPARTMENTS, DEPARTMENT_COLORS, PRIMARY, NEUTRAL, PHI_MODE,
     SEMANTIC_COLORS, CHART_COLORWAY, CHART_PAPER_HEIGHT,
     DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, DEFAULT_GRID_STYLE, DEFAULT_GRID_CLASS,
 )
@@ -18,6 +18,7 @@ from components.filter_bar import department_chips, physician_short_name
 from components.kpi_card import kpi_card, kpi_placeholder
 from components.chart_card import chart_card, register_chart_callbacks
 from components.detail_table import detail_table
+from components.phi import apply_phi_grid_rules
 from components.diagnosis_filter import diagnosis_accordion, register_diagnosis_callbacks
 from utils.charts import apply_default_layout, empty_figure
 from utils.tables import sanitize_for_grid
@@ -1680,6 +1681,7 @@ def _build_table(df, result_filter="all", course_status="all"):
         {"field": "FirstTreatmentDate", "headerName": "First Tx"},
         {"field": "PatientName", "headerName": "Patient"},
         {"field": "PatientId", "headerName": "MRN"},
+        *([{"field": "PatientCode", "headerName": "Code", "width": 90}] if PHI_MODE else []),
         {"field": "CourseId", "headerName": "Course"},
         {"field": "Department", "headerName": "Dept"},
         {"field": "TreatingPhysician", "headerName": "Treating MD"},
@@ -1698,8 +1700,9 @@ def _build_table(df, result_filter="all", course_status="all"):
         }},
     ]
 
-    # Filter to only existing columns
+    # Filter to only existing columns, then apply PHI_MODE redaction
     existing_cols = [c for c in display_cols if c["field"] in df.columns]
+    existing_cols = apply_phi_grid_rules(existing_cols)
 
     table_df = df.head(500).copy()
     table_df["_row_idx"] = range(len(table_df))
