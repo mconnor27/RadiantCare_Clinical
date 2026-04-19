@@ -64,7 +64,7 @@ _PUBLIC_PATH_PREFIXES = (
     "/logout",
     "/favicon.ico",
     "/health",
-    "/_auth/",
+    "/_auth/",   # includes /_auth/debug and /_auth/me
 )
 
 
@@ -463,4 +463,37 @@ def register_auth(server: Flask) -> None:
         return {
             "authenticated": True,
             "email": session.get("email"),
+        }, 200
+
+    @server.route("/_auth/debug")
+    def auth_debug():
+        """Temporary diagnostic. Safe to ship: returns cookie NAMES only
+        (not values), JWT verification status, and claim keys if verified."""
+        cookie_names = list(request.cookies.keys())
+        clerk_jwt = request.cookies.get("__session")
+        verification = None
+        claim_keys = None
+        if clerk_jwt:
+            claims = _verifier().verify(clerk_jwt)
+            if claims:
+                verification = "valid"
+                # Return only claim names, not values, to avoid leaking identity
+                claim_keys = sorted(claims.keys())
+            else:
+                verification = "invalid_or_expired"
+        else:
+            verification = "no_cookie"
+        return {
+            "host": request.host,
+            "is_secure": request.is_secure,
+            "forwarded_proto": request.headers.get("X-Forwarded-Proto"),
+            "cookies_received_names": cookie_names,
+            "has_clerk_session_cookie": "__session" in request.cookies,
+            "clerk_verification": verification,
+            "clerk_claim_keys": claim_keys,
+            "flask_session_user_id": bool(session.get("user_id")),
+            "flask_session_email": session.get("email"),
+            "allowed_origins_note": (
+                "Verify Clerk's allowed_origins include this host"
+            ),
         }, 200
