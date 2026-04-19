@@ -318,24 +318,125 @@ _PHI_MODE_ALERT = dmc.Alert(
     title="De-Identified Mode",
     icon=DashIconify(icon="tabler:shield-lock", width=20),
     mb="md",
-    children=dmc.Stack(gap=6, children=[
-        dmc.Text(
-            "This deployment serves HIPAA-sanitized data. Patient names, "
-            "medical record numbers, dates of birth, street addresses, and "
-            "appointment free-text notes are removed at build time by "
-            "scripts/sanitize.py before any data reaches this server.",
-            size="xs",
-        ),
-        dmc.Text(
-            "PatientId values are replaced with salted SHA-256 hashes so "
-            "joins still work across datasets. Exact dates, physician names, "
-            "and referring-physician public info are retained. The Patients "
-            "map is aggregated to ZIP-3 with small-cell suppression (n<11). "
-            "CPT Audit and OTV Audit grids show a 6-character PatientCode "
-            "that can be reverse-looked-up against the raw data on the "
-            "author's machine via scripts/lookup_patient.py.",
-            size="xs",
-        ),
+    children=dmc.Text(
+        "This deployment serves HIPAA-sanitized data. Patient names, MRNs, "
+        "dates of birth, street addresses, and appointment free-text notes are "
+        "removed before the data leaves the author's machine. See the "
+        "\u201CHIPAA de-identification pipeline\u201D section below for details.",
+        size="xs",
+    ),
+) if PHI_MODE else None
+
+
+_PHI_MODE_SECTION = section(
+    "HIPAA de-identification pipeline",
+    "tabler:shield-lock",
+    body(
+        "This app was originally built to run on the clinic's internal network "
+        "against the raw ARIA warehouse. To make it shareable with coworkers "
+        "outside that network — without waiting on IT to provision hosting — "
+        "a build-time sanitization pipeline produces a de-identified mirror of "
+        "the data, which is what this deployment reads. Raw PHI never touches "
+        "this host."
+    ),
+
+    subheading("Pipeline"),
+    bullets([
+        "On the author's workstation, scripts/sanitize.py reads the raw "
+        "OneDrive export, applies per-dataset redaction rules, and writes a "
+        "parallel \u201CAURA_Reports_Sanitized/\u201D directory that mirrors the "
+        "source folder structure exactly — so the existing data loader reads "
+        "it without modification.",
+        "The sanitized directory is what gets uploaded to this cloud host. "
+        "A runtime PHI_MODE=true flag in settings.py swaps the active data "
+        "root and parquet cache to the sanitized tree so the app runs "
+        "identically in either mode.",
+        "182 files / ~4.8 million rows are processed in ~57 seconds on a "
+        "laptop. Full audit log at _sanitize_audit.json records exactly which "
+        "columns were dropped, hashed, or transformed per dataset.",
+    ]),
+
+    subheading("What is removed"),
+    bullets([
+        "Patient names (PatientName, PatientFullName) — all variants dropped.",
+        "Medical record numbers in their raw form — PatientId and PatientMRN "
+        "columns are replaced by an opaque numeric hash (see below).",
+        "Date of birth — replaced by an AgeAtLoad column capped at 90+ per "
+        "Safe Harbor \u00A7164.514(b)(2)(i)(C).",
+        "Home addresses — PatientAddressLine1 / Line2 columns dropped entirely.",
+        "ZIP codes — truncated to 3 digits, with Safe Harbor's restricted-"
+        "prefix list (populations < 20k) collapsed further.",
+        "Free-text clinical notes — AppointmentNotes, ActivityNote, ExamNotes "
+        "dropped in full, since they often contain names or other identifiers "
+        "that can't be reliably redacted by regex.",
+        "OtherInsurers string lists (free-text insurance history).",
+    ]),
+
+    subheading("What is kept"),
+    bullets([
+        "Exact dates of service, simulation, treatment, etc. Under HIPAA "
+        "Safe Harbor these are technically PHI, but once patient names, MRNs, "
+        "DOBs, addresses, and free-text notes are gone, the residual "
+        "re-identification risk from a bare date on an otherwise-anonymous "
+        "row is very small. This is Expert Determination reasoning rather "
+        "than Safe Harbor and warrants a privacy officer's sign-off.",
+        "Treating, consulting, and referring physician names. The four "
+        "radiation oncologists are public information on the RadiantCare "
+        "website, and the app's core purpose is operational performance "
+        "by physician.",
+        "Referring physician offices, phone numbers, addresses, NPIs, and "
+        "specialties — these are public NPPES data, not patient PHI.",
+        "All diagnosis codes, descriptions, body systems, and procedure "
+        "codes. None of these are patient identifiers on their own.",
+        "Coarse demographics: City, County, PrimaryInsurance (single-value, "
+        "no list), Department, machine, course/plan names.",
+    ]),
+
+    subheading("How the hashing works"),
+    bullets([
+        "PatientId is deterministically hashed with SHA-256 using a salt "
+        "that lives only on the author's workstation — never committed to the "
+        "repo, never deployed to the cloud host.",
+        "The hash is canonicalized so \u201812345\u2019, \u201812345.0\u2019, "
+        "and \u201800012345\u2019 all collapse to the same value. Without "
+        "this, identifiers that arrive as floats (from Excel) or "
+        "zero-padded legacy MRNs would hash differently across datasets and "
+        "silently break joins.",
+        "Hash output is truncated to 52 bits so it survives Excel's float64 "
+        "cell precision intact during the Referrals xlsx round-trip, while "
+        "still giving a ~10\u207B\u2078 collision probability at this "
+        "patient volume.",
+        "The same hash is used in every dataset, so the entire relational "
+        "graph (TreatmentDetail \u21E2 Courses \u21E2 Plans \u21E2 Billing "
+        "\u21E2 Referrals, etc.) stays joinable — verified against a "
+        "byte-identical overlap with the raw baseline across all 14 "
+        "patient-level datasets.",
+    ]),
+
+    subheading("Reversible audit codes (CPT Audit and OTV Audit only)"),
+    body(
+        "The audit workflows on those two pages sometimes need to trace a "
+        "flagged row back to a real chart. Each row shows a six-character "
+        "hex \u201CPatientCode\u201D (first 6 chars of the same SHA-256) which "
+        "is opaque to anyone without the salt. On the author's workstation, "
+        "scripts/lookup_patient.py takes a code and returns the real name + "
+        "MRN + appointment range. The salt never leaves that workstation, "
+        "so no other deployment — this cloud host included — can reverse it."
+    ),
+
+    subheading("UI-level guards"),
+    bullets([
+        "Every AG Grid across the app has patient-identifying columns stripped "
+        "at render time in PHI_MODE (components/phi.py::apply_phi_grid_rules).",
+        "Free-text column filters are disabled in PHI_MODE except on "
+        "CourseId / CourseName and PlanSetupId / PlanName — those stay "
+        "searchable because they're operational identifiers, not patient PHI.",
+        "Patients map aggregates to ZIP-3 centroids and suppresses any ZIP-3 "
+        "with fewer than 11 patients. Geography is the one dimension that "
+        "stacks automatically with whatever filter the user picks, so "
+        "small-cell suppression genuinely earns its keep here.",
+        "Referrals map unchanged — the markers are doctor offices (public "
+        "NPPES data), not patient homes.",
     ]),
 ) if PHI_MODE else None
 
@@ -359,6 +460,8 @@ FRONTEND_CONTENT = dmc.Stack(
                 dmc.GridCol(_stat("Commits", f"{FRONTEND_COMMIT_COUNT}", f"{FRONTEND_FIRST_COMMIT} → {FRONTEND_LATEST_COMMIT}"), span=3),
             ],
         ),
+
+        _PHI_MODE_SECTION,
 
         section(
             "Code layout",
