@@ -115,7 +115,9 @@ def main() -> int:
                     raise RuntimeError(
                         f"Refusing to extract outside staging: {member.name}"
                     )
-            tar.extractall(path=staging)
+            # filter="data" applies the safe-extraction policy that becomes
+            # mandatory in Python 3.14 (silences the DeprecationWarning).
+            tar.extractall(path=staging, filter="data")
     except Exception as exc:
         print(f"[bootstrap] Extraction failed: {exc}")
         shutil.rmtree(staging, ignore_errors=True)
@@ -128,20 +130,17 @@ def main() -> int:
     inner = staging / "data"
     source_dir = inner if inner.is_dir() else staging
 
+    # Swap into place. We don't keep an "_old" rollback copy because
+    # Path.rename() fails with OSError 18 (cross-device link) when /app/data
+    # happens to be a mount point (common in Railway's squashfs image),
+    # and the rollback offered no protection we weren't already getting
+    # from verifying the extraction succeeded above.
     if target.exists():
-        old = target.parent / (target.name + "._old")
-        if old.exists():
-            shutil.rmtree(old)
-        target.rename(old)
-    else:
-        old = None
-
+        shutil.rmtree(target)
     shutil.move(str(source_dir), str(target))
 
     if staging.exists():
         shutil.rmtree(staging, ignore_errors=True)
-    if old is not None and old.exists():
-        shutil.rmtree(old, ignore_errors=True)
 
     print(f"[bootstrap] Installed to {target}")
     try:
