@@ -13,7 +13,7 @@ def _create_nav_link(page, active_path):
     return dmc.NavLink(
         label=page["label"],
         href=page["path"],
-        leftSection=DashIconify(icon=page["icon"], width=18, color="white"),
+        leftSection=DashIconify(icon=page["icon"], width=18, color="currentColor"),
         active=is_active,
         variant="subtle",
         color="white",
@@ -24,9 +24,9 @@ def _create_nav_link(page, active_path):
                 "marginBottom": "2px",
                 "padding": "6px 8px 6px 12px",
                 "minHeight": "unset",
-                "color": "white",
+                "color": "var(--sidebar-text)",
             },
-            "label": {"color": "white", "fontWeight": "700" if is_active else "400", "fontSize": "13px"},
+            "label": {"color": "var(--sidebar-text)", "fontWeight": "700" if is_active else "400", "fontSize": "13px"},
         },
     )
 
@@ -37,7 +37,7 @@ def _create_section_header(section_name):
         section_name,
         size="xs",
         fw=600,
-        c="rgba(255,255,255,0.5)",
+        c="var(--sidebar-text-muted)",
         pl=12,
         pt=10,
         pb=3,
@@ -65,7 +65,7 @@ def create_sidebar():
             dmc.Stack(
                 gap=0,
                 children=[
-                    # Brand header with logo — white background
+                    # Brand header with logo — themes to match sidebar
                     dmc.Group(
                         children=[
                             html.Img(
@@ -79,8 +79,8 @@ def create_sidebar():
                         py="md",
                         justify="flex-start",
                         style={
-                            "backgroundColor": "#FFFFFF",
-                            "borderBottom": "1px solid #E0E0E0",
+                            "backgroundColor": "var(--bg-sidebar-header)",
+                            "borderBottom": "1px solid var(--sidebar-border)",
                         },
                     ),
                     # Navigation links
@@ -98,7 +98,7 @@ def create_sidebar():
                         ),
                     ),
                     # Bottom section
-                    dmc.Divider(color=NEUTRAL["bg_nav_hover"]),
+                    dmc.Divider(color="var(--sidebar-border, rgba(255,255,255,0.12))"),
                     dmc.Stack(
                         gap=2,
                         px="xs",
@@ -107,14 +107,20 @@ def create_sidebar():
                             dmc.NavLink(
                                 label="Help",
                                 leftSection=DashIconify(
-                                    icon="tabler:help-circle", width=18, color="white"
+                                    icon="tabler:help-circle", width=18, color="currentColor"
                                 ),
                                 variant="subtle",
                                 color="white",
                                 id="nav-help-btn",
+                                className="nav-link-item",
                                 styles={
-                                    "root": {"borderRadius": "6px", "color": "white"},
-                                    "label": {"color": "white", "fontSize": "13px"},
+                                    "root": {
+                                        "borderRadius": "6px",
+                                        "padding": "6px 8px 6px 12px",
+                                        "minHeight": "unset",
+                                        "color": "var(--sidebar-text)",
+                                    },
+                                    "label": {"color": "var(--sidebar-text)", "fontSize": "13px"},
                                 },
                             ),
                         ],
@@ -124,7 +130,8 @@ def create_sidebar():
             ),
         ],
         style={
-            "backgroundColor": NEUTRAL["bg_nav"],
+            "backgroundColor": "var(--bg-sidebar)",
+            "borderRight": "1px solid var(--sidebar-border)",
         },
     )
 

@@ -48,7 +48,7 @@ def _screenshot(src: str, caption: str | None = None,
         )
     return dmc.Paper(
         p="xs", radius="md", withBorder=True, mt="xs", mb="sm",
-        style={"backgroundColor": "#FAFAFB"},
+        style={"backgroundColor": "var(--bg-card-alt)"},
         children=children,
     )
 

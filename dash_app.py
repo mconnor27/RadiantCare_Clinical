@@ -2,7 +2,7 @@
 
 import dash
 import dash_mantine_components as dmc
-from dash import Dash, html, dcc, page_container, callback, Input, Output, no_update
+from dash import Dash, html, dcc, page_container, callback, Input, Output, State, no_update
 from dash_iconify import DashIconify
 
 from dash import clientside_callback
@@ -23,6 +23,35 @@ app = Dash(
     update_title="Loading...",
 )
 server = app.server  # for gunicorn
+
+# Inject theme-init script into <head> so data-theme is applied BEFORE render
+# (prevents flash of light content when dark mode is the user's saved preference).
+app.index_string = """<!DOCTYPE html>
+<html>
+    <head>
+        {%metas%}
+        <title>{%title%}</title>
+        {%favicon%}
+        {%css%}
+        <script>
+            (function() {
+                try {
+                    var saved = localStorage.getItem('rc_theme') || 'light';
+                    document.documentElement.setAttribute('data-theme', saved);
+                    document.documentElement.setAttribute('data-mantine-color-scheme', saved);
+                } catch(e) {}
+            })();
+        </script>
+    </head>
+    <body>
+        {%app_entry%}
+        <footer>
+            {%config%}
+            {%scripts%}
+            {%renderer%}
+        </footer>
+    </body>
+</html>"""
 
 
 # Disable browser caching for JS/CSS assets during development
@@ -67,9 +96,9 @@ app.layout = dmc.MantineProvider(
                         "flexDirection": "column",
                         "alignItems": "center",
                         "padding": "48px 72px",
-                        "backgroundColor": "white",
+                        "backgroundColor": "var(--bg-card)",
                         "borderRadius": "16px",
-                        "boxShadow": "0 8px 32px rgba(0,0,0,0.15)",
+                        "boxShadow": "var(--shadow-md)",
                     },
                 ),
             ],
@@ -79,28 +108,44 @@ app.layout = dmc.MantineProvider(
                 "left": 220,
                 "right": 0,
                 "height": "100vh",
-                "backgroundColor": NEUTRAL["bg_page"],
+                "backgroundColor": "var(--bg-page)",
                 "display": "flex",
                 "alignItems": "center",
                 "justifyContent": "center",
                 "zIndex": 9999,
             },
         ),
-        # Refresh data button — fixed top-right corner
-        dmc.ActionIcon(
-            DashIconify(icon="tabler:refresh", width=20),
-            id="global-refresh-btn",
-            variant="subtle",
-            color="gray",
-            size="lg",
-            radius="xl",
+        # Theme toggle + refresh buttons — fixed top-right corner
+        html.Div(
             style={
                 "position": "fixed",
                 "top": 10,
                 "right": 16,
                 "zIndex": 1000,
+                "display": "flex",
+                "gap": "4px",
+                "alignItems": "center",
             },
+            children=[
+                dmc.ActionIcon(
+                    DashIconify(id="global-theme-icon", icon="tabler:moon", width=22, color="#4B5563"),
+                    id="global-theme-btn",
+                    variant="transparent",
+                    size="lg",
+                    radius="xl",
+                ),
+                dmc.ActionIcon(
+                    DashIconify(icon="tabler:refresh", width=20),
+                    id="global-refresh-btn",
+                    variant="subtle",
+                    color="gray",
+                    size="lg",
+                    radius="xl",
+                ),
+            ],
         ),
+        # Theme state store (synced to localStorage via clientside)
+        dcc.Store(id="global-theme-store", data="light"),
         # Global help modal
         create_help_modal(),
         # Hidden div to trigger page reload via clientside callback
@@ -113,7 +158,7 @@ app.layout = dmc.MantineProvider(
                 dmc.AppShellMain(
                     children=[page_container],
                     style={
-                        "backgroundColor": NEUTRAL["bg_page"],
+                        "backgroundColor": "var(--bg-page)",
                         "minHeight": "100vh",
                         "padding": "12px 24px 12px 24px",
                     },
@@ -161,6 +206,37 @@ app.clientside_callback(
     }""",
     Output("global-diag-taxonomy", "id"),
     Input("global-diag-taxonomy", "data"),
+)
+
+# ---------------------------------------------------------------------------
+# Theme toggle — clientside (reads/writes localStorage, flips data-theme
+# attributes on <html>, updates icon). Initial state seeded from localStorage
+# via the index_string <head> script so the first paint matches the saved theme.
+# ---------------------------------------------------------------------------
+app.clientside_callback(
+    """function(n_clicks, current) {
+        // On first load (n_clicks is None/0), read localStorage and seed store.
+        var saved = null;
+        try { saved = localStorage.getItem('rc_theme'); } catch(e) {}
+
+        var next;
+        if (!n_clicks) {
+            next = saved || current || 'light';
+        } else {
+            next = (current === 'dark') ? 'light' : 'dark';
+        }
+
+        document.documentElement.setAttribute('data-theme', next);
+        document.documentElement.setAttribute('data-mantine-color-scheme', next);
+        try { localStorage.setItem('rc_theme', next); } catch(e) {}
+
+        var icon = (next === 'dark') ? 'tabler:sun' : 'tabler:moon';
+        return [next, icon];
+    }""",
+    [Output("global-theme-store", "data"),
+     Output("global-theme-icon", "icon")],
+    Input("global-theme-btn", "n_clicks"),
+    State("global-theme-store", "data"),
 )
 
 # ---------------------------------------------------------------------------
@@ -321,14 +397,14 @@ def _update_preload_status(_n):
         "left": 220,
         "right": 0,
         "height": "28px",
-        "backgroundColor": "#F3E8F5",
-        "borderTop": "1px solid #E8D5EB",
+        "backgroundColor": "var(--bg-hover)",
+        "borderTop": "1px solid var(--border-tint)",
         "display": "flex",
         "alignItems": "center",
         "justifyContent": "center",
         "zIndex": 1000,
         "fontSize": "12px",
-        "color": "#7C2A83",
+        "color": "var(--color-primary)",
         "fontFamily": "Inter, system-ui, sans-serif",
         "fontWeight": 500,
     }

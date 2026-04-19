@@ -24,8 +24,8 @@ def empty_figure(message="No data for selected filters"):
     fig.update_layout(
         xaxis=dict(visible=False),
         yaxis=dict(visible=False),
-        plot_bgcolor="#FFFFFF",
-        paper_bgcolor="#FFFFFF",
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
         margin=dict(l=0, r=0, t=0, b=0),
     )
     return fig

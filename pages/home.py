@@ -353,7 +353,7 @@ def _prepare_hours_data(departments, days_back=30):
 # Helper: Slot Availability Calendar (Dual - Exam & Sim)
 # ---------------------------------------------------------------------------
 
-def _build_availability_calendar(departments, consults_only=True):
+def _build_availability_calendar(departments, consults_only=True, view="both"):
     """Build 4-week availability calendar with Exam and Sim side by side.
 
     Layout: Mon-Fri as columns (like a calendar), weeks as rows.
@@ -364,6 +364,7 @@ def _build_availability_calendar(departments, consults_only=True):
     Args:
         departments: list of departments to filter by, or None/empty for all.
         consults_only: if True, filter consult calendar to Consult activities only.
+        view: "both" (default, side-by-side), "consults" (exam only), or "sims".
     """
     from data.loader import load_availability, load_clinic_visits, load_simulations
 
@@ -588,11 +589,23 @@ def _build_availability_calendar(departments, consults_only=True):
         exam_hover = _exam_hover_grid(exam_pct, exam_scheduled, exam_total)
         sim_hover = _sim_hover_grid(sim_pct, sim_scheduled, sim_total)
 
-        # Create subplots - two heatmaps side by side
+        # Determine which panels to render
         exam_title = "Consults" if consults_only else "All Clinic Visits"
+        panels = []
+        if view in ("both", "consults"):
+            panels.append(("exam", exam_title, exam_z, y_labels_exam, exam_hover,
+                           exam_pct, exam_scheduled, exam_total, exam_lead))
+        if view in ("both", "sims"):
+            panels.append(("sim", "Simulations", sim_z, y_labels_sim, sim_hover,
+                           sim_pct, sim_scheduled, sim_total, sim_lead))
+        if not panels:
+            panels.append(("exam", exam_title, exam_z, y_labels_exam, exam_hover,
+                           exam_pct, exam_scheduled, exam_total, exam_lead))
+
+        # Skip subplot titles for single-panel view — caller's toggle/header is enough
         fig = make_subplots(
-            rows=1, cols=2,
-            subplot_titles=[exam_title, "Simulations"],
+            rows=1, cols=len(panels),
+            subplot_titles=[p[1] for p in panels] if len(panels) > 1 else None,
             horizontal_spacing=0.12,
         )
 
@@ -624,52 +637,32 @@ def _build_availability_calendar(departments, consults_only=True):
                 labels.append(row)
             return labels
 
-        exam_labels = _cell_labels(exam_pct, exam_scheduled, exam_total)
-        sim_labels = _cell_labels(sim_pct, sim_scheduled, sim_total)
-
-        # Exam heatmap
-        fig.add_trace(go.Heatmap(
-            z=exam_z,
-            x=x_labels,
-            y=y_labels_exam,
-            colorscale=colorscale,
-            zmin=0, zmax=100,
-            text=exam_hover,
-            hovertemplate="%{text}<extra></extra>",
-            showscale=False,
-        ), row=1, col=1)
-
-        # Sim heatmap
-        fig.add_trace(go.Heatmap(
-            z=sim_z,
-            x=x_labels,
-            y=y_labels_sim,
-            colorscale=colorscale,
-            zmin=0, zmax=100,
-            text=sim_hover,
-            hovertemplate="%{text}<extra></extra>",
-            showscale=False,
-        ), row=1, col=2)
+        # Build traces per panel
+        panel_labels = []
+        for col_i, (_, _, z, ylbls, hover, pct_s, sched_s, total_s, _lead) in enumerate(panels, start=1):
+            fig.add_trace(go.Heatmap(
+                z=z, x=x_labels, y=ylbls,
+                colorscale=colorscale, zmin=0, zmax=100,
+                text=hover, hovertemplate="%{text}<extra></extra>",
+                showscale=False,
+            ), row=1, col=col_i)
+            panel_labels.append(_cell_labels(pct_s, sched_s, total_s))
 
         # Add lead time annotations at bottom
         annotations = list(fig.layout.annotations)  # Keep subplot titles
-        # Move subplot titles up
         for ann in annotations:
             ann.y = 1.08
             ann.font = dict(size=12, color="#374151")
 
         # Overlay cell labels as annotations
-        for row_idx, week_start in enumerate(weeks):
-            for col_idx in range(5):
-                for subplot_col, labels, ylbls in [
-                    (1, exam_labels, y_labels_exam),
-                    (2, sim_labels, y_labels_sim),
-                ]:
-                    label = labels[row_idx][col_idx]
+        for col_i, ((_, _, _, ylbls, _, _, _, _, _), labels_grid) in enumerate(zip(panels, panel_labels), start=1):
+            ax_suffix = "" if col_i == 1 else str(col_i)
+            for row_idx, week_start in enumerate(weeks):
+                for col_idx in range(5):
+                    label = labels_grid[row_idx][col_idx]
                     if not label:
                         continue
                     is_full = label == "Full"
-                    ax_suffix = "" if subplot_col == 1 else "2"
                     annotations.append(dict(
                         text=f"<b>{label}</b>" if is_full else label,
                         xref=f"x{ax_suffix}",
@@ -685,26 +678,25 @@ def _build_availability_calendar(departments, consults_only=True):
                     ))
 
         # Add next-available annotation below each chart
-        for lead, xref, yref in [
-            (exam_lead, "x domain", "y domain"),
-            (sim_lead, "x2 domain", "y2 domain"),
-        ]:
-            if lead is not None:
-                label = "Today" if lead == 0 else f"{lead}d out"
-                annotations.append(dict(
-                    text=f"Next available: {label}",
-                    xref=xref, yref=yref,
-                    x=0.5, y=-0.06,
-                    showarrow=False,
-                    font=dict(size=13, color="#6B7280"),
-                    xanchor="center",
-                ))
+        for col_i, (_, _, _, _, _, _, _, _, lead) in enumerate(panels, start=1):
+            if lead is None:
+                continue
+            ax_suffix = "" if col_i == 1 else str(col_i)
+            label = "Today" if lead == 0 else f"{lead}d out"
+            annotations.append(dict(
+                text=f"Next available: {label}",
+                xref=f"x{ax_suffix} domain", yref=f"y{ax_suffix} domain",
+                x=0.5, y=-0.06,
+                showarrow=False,
+                font=dict(size=13, color="#6B7280"),
+                xanchor="center",
+            ))
 
         fig.update_layout(
             height=380,
             font=dict(family=FONT_FAMILY, size=11),
-            plot_bgcolor="#FFFFFF",
-            paper_bgcolor="#FFFFFF",
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
             margin=dict(l=45, r=8, t=50, b=32),
             annotations=annotations,
             hoverlabel=dict(

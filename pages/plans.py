@@ -2029,7 +2029,7 @@ def _build_ridgeline_figure(data, bw_factor=0.5, mode="density"):
                 x=x_list,
                 y=y_list,
                 mode="lines",
-                line=dict(color="rgba(255,255,255,0.98)", width=2.4),
+                line=dict(color="rgba(255,255,255,0.45)", width=1.5),
                 name=str(yr),
                 showlegend=False,
                 customdata=np.full(len(x_list), r["median_fx"]).tolist(),
@@ -3616,11 +3616,11 @@ def _update_session_dist(data, mode, bw):
 
     # Median vertical line
     med = data["median"]
-    fig.add_vline(x=med, line_dash="dash", line_color=NEUTRAL["text_secondary"])
+    fig.add_vline(x=med, line_dash="dash", line_color="#6B7280")
     fig.add_annotation(
         x=med, y=1.0, yref="paper", yshift=2,
         text=f"Median: {med:.0f}", showarrow=False,
-        font=dict(size=11, color=NEUTRAL["text_secondary"]),
+        font=dict(size=11, color="#6B7280"),
         yanchor="bottom", xanchor="center",
     )
 

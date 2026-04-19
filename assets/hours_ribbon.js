@@ -26,8 +26,8 @@ window.dash_clientside.hoursRibbon = {
                 data: [],
                 layout: {
                     uirevision: "hours-timeseries",
-                    plot_bgcolor: "#FFFFFF",
-                    paper_bgcolor: "#FFFFFF",
+                    plot_bgcolor: "rgba(0,0,0,0)",
+                    paper_bgcolor: "rgba(0,0,0,0)",
                     margin: {l: 36, r: 8, t: 8, b: 32, pad: 0},
                     xaxis: {visible: false},
                     yaxis: {visible: false},
@@ -459,8 +459,8 @@ window.dash_clientside.hoursRibbon = {
         var layout = {
             uirevision: "hours-timeseries",
             font: {family: "Inter, system-ui, sans-serif", size: 11},
-            plot_bgcolor: "#FFFFFF",
-            paper_bgcolor: "#FFFFFF",
+            plot_bgcolor: "rgba(0,0,0,0)",
+            paper_bgcolor: "rgba(0,0,0,0)",
             margin: {l: 36, r: 8, t: 8, b: 32, pad: 0},
             showlegend: false,
             hovermode: "x unified",
@@ -765,12 +765,18 @@ window.dash_clientside.hoursRibbon = {
             });
         }
 
+        // Theme-aware grid + separator colors (shapes use fixed values,
+        // so pick at build time based on current <html data-theme>).
+        var _isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+        var _hourGridColor = _isDark ? "rgba(140,145,160,0.08)" : "#E5E7EB";
+        var _daySepColor   = _isDark ? "rgba(140,145,160,0.14)" : "#E5E7EB";
+
         // Horizontal gridlines at each hour
         for (var h = Math.ceil(yMin); h <= Math.floor(yMax); h++) {
             shapes.push({
                 type: "line",
                 x0: -0.5, x1: 4.5, y0: h, y1: h,
-                line: {color: "#E5E7EB", width: 0.5},
+                line: {color: _hourGridColor, width: 0.5},
                 xref: "x", yref: "y", layer: "below"
             });
         }
@@ -780,7 +786,7 @@ window.dash_clientside.hoursRibbon = {
             shapes.push({
                 type: "line",
                 x0: d + 0.5, x1: d + 0.5, y0: yMin, y1: yMax,
-                line: {color: "#E5E7EB", width: 1},
+                line: {color: _daySepColor, width: 1},
                 xref: "x", yref: "y", layer: "below"
             });
         }
@@ -893,8 +899,8 @@ window.dash_clientside.hoursRibbon = {
         var layout = {
             uirevision: "hours-calendar",
             font: {family: "Inter, system-ui, sans-serif", size: 11},
-            plot_bgcolor: "#FFFFFF",
-            paper_bgcolor: "#FFFFFF",
+            plot_bgcolor: "rgba(0,0,0,0)",
+            paper_bgcolor: "rgba(0,0,0,0)",
             margin: {l: 44, r: 8, t: 32, b: 8, pad: 0, autoexpand: false},
             showlegend: false,
             hovermode: "closest",

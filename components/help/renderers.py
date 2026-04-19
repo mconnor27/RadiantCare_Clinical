@@ -94,7 +94,7 @@ def sql_tab(script_keys: list[str], intro: str | None = None) -> dmc.Stack:
     children.append(
         dmc.Paper(
             p="sm", radius="md", withBorder=False,
-            style={"backgroundColor": "#F3E8F5"},
+            style={"backgroundColor": "var(--bg-hover)"},
             mb="md",
             children=[
                 dmc.Group(

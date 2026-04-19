@@ -151,7 +151,7 @@ def chart_settings_button(
                         dmc.Text("Projection", size="xs", fw=500, c="#6B7280"),
                         dmc.Switch(
                             id=f"{chart_id}-project",
-                            label="Project to year end",
+                            label="Project Year",
                             size="sm",
                             checked=project_toggle_default,
                         ),
@@ -194,7 +194,7 @@ def chart_settings_button(
                     radius="md",
                     shadow="md",
                     withBorder=True,
-                    style={"backgroundColor": "white"},
+                    style={"backgroundColor": "var(--bg-card)"},
                 ),
                 id=f"{chart_id}-settings-panel",
                 className="chart-settings-panel",

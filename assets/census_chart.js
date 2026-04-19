@@ -471,8 +471,8 @@ window.dash_clientside.census = {
                 x: 0
             },
             margin: {l: stacked ? 28 : 40, r: 8, t: rawData.hideLegend ? 4 : 8, b: 20},
-            plot_bgcolor: "white",
-            paper_bgcolor: "white",
+            plot_bgcolor: "rgba(0,0,0,0)",
+            paper_bgcolor: "rgba(0,0,0,0)",
             font: {family: "Inter, system-ui, sans-serif", size: 12, color: "#374151"},
             hovermode: chartType === "bar" ? "closest" : "x",
             hoverlabel: {
@@ -1409,8 +1409,8 @@ window.dash_clientside.efficiency = {
                         showarrow: false,
                         font: {size: 14, color: "#9CA3AF"}
                     }],
-                    plot_bgcolor: "white",
-                    paper_bgcolor: "white"
+                    plot_bgcolor: "rgba(0,0,0,0)",
+                    paper_bgcolor: "rgba(0,0,0,0)"
                 }
             };
         }
@@ -1846,8 +1846,8 @@ window.dash_clientside.cumulative = {
                             tracegroupgap: 0
                         },
                         margin: {l: 36, r: 16, t: 28, b: 20},
-                        plot_bgcolor: "white",
-                        paper_bgcolor: "white",
+                        plot_bgcolor: "rgba(0,0,0,0)",
+                        paper_bgcolor: "rgba(0,0,0,0)",
                         font: {family: "Inter, system-ui, sans-serif", size: 12, color: "#374151"},
                         hovermode: "closest",
                         hoverlabel: {
@@ -2076,8 +2076,8 @@ window.dash_clientside.cumulative = {
                         tracegroupgap: 0
                     },
                     margin: {l: 36, r: 16, t: 28, b: 20},
-                    plot_bgcolor: "white",
-                    paper_bgcolor: "white",
+                    plot_bgcolor: "rgba(0,0,0,0)",
+                    paper_bgcolor: "rgba(0,0,0,0)",
                     font: {family: "Inter, system-ui, sans-serif", size: 12, color: "#374151"},
                     hovermode: "x",
                     hoverlabel: {
@@ -2189,7 +2189,7 @@ window.dash_clientside.cumulative = {
                         legend: {orientation: "h", yanchor: "bottom", y: 1.02, xanchor: "left", x: 0,
                                  tracegroupgap: 0},
                         margin: {l: 36, r: 16, t: 8, b: 20},
-                        plot_bgcolor: "white", paper_bgcolor: "white",
+                        plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
                         font: {family: "Inter, system-ui, sans-serif", size: 12, color: "#374151"},
                         hovermode: "closest",
                         hoverlabel: {
@@ -2304,7 +2304,7 @@ window.dash_clientside.cumulative = {
                     legend: {orientation: "h", yanchor: "bottom", y: 1.02, xanchor: "left", x: 0,
                              tracegroupgap: 0},
                     margin: {l: 36, r: 16, t: 28, b: 20},
-                    plot_bgcolor: "white", paper_bgcolor: "white",
+                    plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
                     font: {family: "Inter, system-ui, sans-serif", size: 12, color: "#374151"},
                     hovermode: "x",
                     hoverlabel: {

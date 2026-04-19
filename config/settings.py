@@ -57,18 +57,38 @@ SEMANTIC_COLORS = {
 }
 
 NEUTRAL = {
-    "bg_page": "#F5F6F8",
-    "bg_card": "#FFFFFF",
-    "bg_nav": "#7C2A83",
+    # CSS variables — auto-swap between light/dark via :root / [data-theme="dark"]
+    # in assets/custom.css. Works in all DMC `c=` props and inline style dicts.
+    "bg_page": "var(--bg-page)",
+    "bg_card": "var(--bg-card)",
+    "bg_nav": "#7C2A83",  # sidebar stays purple in both themes
     "bg_nav_hover": "#6B2472",
-    "bg_filter_bar": "#FFFFFF",
-    "border": "#E0E0E0",
-    "border_light": "#F0F0F0",
-    "text_primary": "#1A1A2E",
-    "text_secondary": "#6B7280",
-    "text_muted": "#9CA3AF",
+    "bg_filter_bar": "var(--bg-card)",
+    "border": "var(--border)",
+    "border_light": "var(--border-light)",
+    "text_primary": "var(--text-primary)",
+    "text_secondary": "var(--text-muted)",
+    "text_muted": "var(--text-faint)",
     "text_nav": "#A0A4B8",
     "text_nav_active": "#FFFFFF",
+}
+
+# Raw hex fallbacks — required for Plotly figures (CSS vars don't work inside
+# figure JSON) and anywhere a real color value is needed. Use these only when
+# NEUTRAL (CSS var) won't work; clientside theme-swap will adapt them in Phase 3.
+NEUTRAL_HEX = {
+    "bg_page_light":   "#F5F6F8",
+    "bg_page_dark":    "#0F1115",
+    "bg_card_light":   "#FFFFFF",
+    "bg_card_dark":    "#1A1C22",
+    "border_light":    "#E0E0E0",
+    "border_dark":     "#2D2F38",
+    "gridline_light":  "#F0F0F0",
+    "gridline_dark":   "#24262E",
+    "text_primary_light": "#1A1A2E",
+    "text_primary_dark":  "#E6E7EC",
+    "text_secondary_light": "#6B7280",
+    "text_secondary_dark":  "#8A8F9B",
 }
 
 CHART_COLORWAY = [
@@ -153,8 +173,10 @@ CHART_GRAPH_HEIGHT = "380px"     # Graph area height within card (legacy, unused
 # ---------------------------------------------------------------------------
 DEFAULT_LAYOUT = dict(
     font=dict(family=FONT_FAMILY, size=13),
-    plot_bgcolor="#FFFFFF",
-    paper_bgcolor="#FFFFFF",
+    # Transparent bg — inherits from the card (DMC Paper), which is itself
+    # themed via CSS vars. Works automatically in light + dark.
+    plot_bgcolor="rgba(0,0,0,0)",
+    paper_bgcolor="rgba(0,0,0,0)",
     margin=dict(l=28, r=8, t=8, b=32),
     xaxis=dict(gridcolor="#F0F0F0", linecolor="#E0E0E0", showgrid=False),
     yaxis=dict(gridcolor="#F0F0F0", linecolor="#E0E0E0", showgrid=True),

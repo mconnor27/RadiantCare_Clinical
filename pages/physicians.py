@@ -352,7 +352,7 @@ layout = dmc.Stack(
                                                         radius="md",
                                                         shadow="md",
                                                         withBorder=True,
-                                                        style={"backgroundColor": "white", "minWidth": "260px"},
+                                                        style={"backgroundColor": "var(--bg-card)", "minWidth": "260px"},
                                                     ),
                                                     id=f"{PAGE_ID}-ah-filter-panel",
                                                     className="chart-settings-panel chart-settings-panel--left",

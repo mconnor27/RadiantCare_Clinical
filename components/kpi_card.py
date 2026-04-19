@@ -219,6 +219,7 @@ def kpi_card(
                 ) if sparkline_past else create_sparkline(),
                 config={"displayModeBar": False, "scrollZoom": False},
                 style={"height": "44px", "marginTop": "2px"},
+                className="kpi-sparkline",
             )
         )
 

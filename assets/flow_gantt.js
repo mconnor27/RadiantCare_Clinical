@@ -1344,7 +1344,7 @@ window.dash_clientside.flowGantt = {
                 layout: {
                     font: {family: font, size: 12},
                     margin: {l: 48, r: 16, t: 16, b: 32},
-                    plot_bgcolor: "#FFFFFF", paper_bgcolor: "#FFFFFF",
+                    plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
                     xaxis: {visible: false}, yaxis: {visible: false},
                     autosize: true,
                     annotations: [{
@@ -1528,7 +1528,7 @@ window.dash_clientside.flowGantt = {
             var tLay = {
                 font: {family: font, size: 12},
                 margin: {l: 48, r: 16, t: 32, b: 42},
-                plot_bgcolor: "#FFFFFF", paper_bgcolor: "#FFFFFF",
+                plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
                 xaxis: {showgrid: false, title: tu.axisTitle, autorange: true},
                 yaxis: {gridcolor: "#F0F0F0", gridwidth: 1},
                 autosize: true, showlegend: false, hovermode: "closest",
@@ -1611,7 +1611,7 @@ window.dash_clientside.flowGantt = {
         var baseLay = {
             font: {family: font, size: 12},
             margin: {l: 48, r: 16, t: 32, b: 42},
-            plot_bgcolor: "#FFFFFF", paper_bgcolor: "#FFFFFF",
+            plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
             xaxis: {showgrid: false, title: u.axisTitle, autorange: true},
             yaxis: {gridcolor: "#F0F0F0", gridwidth: 1},
             autosize: true, showlegend: false, hovermode: "closest",
@@ -1688,7 +1688,7 @@ window.dash_clientside.flowGantt = {
                 layout: {
                     font: {family: font, size: 12},
                     margin: {l: 48, r: 16, t: 16, b: 32},
-                    plot_bgcolor: "#FFFFFF", paper_bgcolor: "#FFFFFF",
+                    plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
                     xaxis: {visible: false}, yaxis: {visible: false},
                     autosize: true,
                     annotations: [{
@@ -1830,7 +1830,7 @@ window.dash_clientside.flowGantt = {
         var baseLay = {
             font: {family: font, size: 12},
             margin: {l: 48, r: 16, t: 32, b: 42},
-            plot_bgcolor: "#FFFFFF", paper_bgcolor: "#FFFFFF",
+            plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
             xaxis: {showgrid: false},
             yaxis: {gridcolor: "#F0F0F0", gridwidth: 1, title: statLabel + " Days"},
             autosize: true,
@@ -1970,7 +1970,7 @@ window.dash_clientside.flowGantt = {
                 layout: {
                     font: {family: font, size: 12},
                     margin: {l: 48, r: 16, t: 16, b: 42},
-                    plot_bgcolor: "#FFFFFF", paper_bgcolor: "#FFFFFF",
+                    plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
                     xaxis: {visible: false}, yaxis: {visible: false},
                     autosize: true,
                     annotations: [{
@@ -2072,7 +2072,7 @@ window.dash_clientside.flowGantt = {
         var layout = {
             font: {family: font, size: 12},
             margin: {l: 48, r: 16, t: 32, b: 42},
-            plot_bgcolor: "#FFFFFF", paper_bgcolor: "#FFFFFF",
+            plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
             xaxis: {showgrid: false},
             yaxis: {gridcolor: "#F0F0F0", gridwidth: 1, title: "%",
                     rangemode: "tozero"},

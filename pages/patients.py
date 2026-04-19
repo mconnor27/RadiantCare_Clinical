@@ -640,7 +640,7 @@ def _build_top_cities_bar(df, top_n=12):
                 text=f" {total:,}",
                 showarrow=False,
                 xanchor="left",
-                font=dict(size=11, color=NEUTRAL["text_secondary"]),
+                font=dict(size=11, color="#6B7280"),
             )
     else:
         city_counts = (
@@ -914,7 +914,7 @@ def _build_patient_map(
         height=700,
         margin=dict(l=0, r=0, t=0, b=0),
         font=dict(family=FONT_FAMILY, size=13),
-        paper_bgcolor="#FFFFFF",
+        paper_bgcolor="rgba(0,0,0,0)",
         showlegend=False,
         uirevision=uirevision,
     )
@@ -1134,11 +1134,11 @@ def _update_age_dist(data, mode, group, bandwidth_pct):
 
     # Median vertical line
     med = data["median"]
-    fig.add_vline(x=med, line_dash="dash", line_color=NEUTRAL["text_secondary"])
+    fig.add_vline(x=med, line_dash="dash", line_color="#6B7280")
     fig.add_annotation(
         x=med, y=1.03, yref="paper", yshift=0,
         text=f"Median: {med:.0f}", showarrow=False,
-        font=dict(size=11, color=NEUTRAL["text_secondary"]),
+        font=dict(size=11, color="#6B7280"),
         yanchor="bottom", xanchor="center",
     )
 
@@ -1190,7 +1190,7 @@ def update_map(geo_data, selected_dept, departments, show_flows, region, min_pat
             ),
             height=700,
             margin=dict(l=0, r=0, t=0, b=0),
-            paper_bgcolor="#FFFFFF",
+            paper_bgcolor="rgba(0,0,0,0)",
             showlegend=False,
             uirevision=reset_rev,
         )

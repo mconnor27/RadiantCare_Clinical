@@ -2218,7 +2218,7 @@ def _build_referral_map(geo_df, departments_filter, selected_dept="All",
         ),
         height=700, margin=dict(l=0, r=0, t=0, b=0),
         font=dict(family=FONT_FAMILY, size=13),
-        paper_bgcolor="#FFFFFF", showlegend=False,
+        paper_bgcolor="rgba(0,0,0,0)", showlegend=False,
         uirevision=uirevision,
     )
     return fig

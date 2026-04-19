@@ -1693,8 +1693,8 @@ def update_heatmap(*args):
         fig.update_layout(
             height=380,
             font=dict(family=FONT_FAMILY, size=10),
-            plot_bgcolor="#FFFFFF",
-            paper_bgcolor="#FFFFFF",
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
             margin=dict(l=76, r=8, t=24, b=16),
             annotations=annotations,
             shapes=shapes,

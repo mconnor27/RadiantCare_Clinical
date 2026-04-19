@@ -540,8 +540,8 @@ def _build_timeline(lifetime, machines, chart_height=None):
 
     fig.update_layout(
         font=DEFAULT_LAYOUT["font"],
-        plot_bgcolor="#FFFFFF",
-        paper_bgcolor="#FFFFFF",
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
         hoverlabel=DEFAULT_LAYOUT["hoverlabel"],
         xaxis=dict(
             type="date",
