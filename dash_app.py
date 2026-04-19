@@ -452,33 +452,30 @@ def _render_auth_chip(_pathname):
         return None
     email = session.get("email") or ""
     display = email.split("@")[0] if email else "Account"
-    return dmc.Menu(
-        trigger="hover",
-        position="bottom-end",
-        shadow="md",
-        withArrow=True,
+    # Plain anchor + icon — no dmc.Menu. Simpler and rules out any DMC prop
+    # shim differences between the pinned version and what's on Railway.
+    return html.A(
+        href="/logout",
+        title=f"Signed in as {email} — click to sign out",
         children=[
-            dmc.MenuTarget(
-                dmc.Button(
-                    display,
-                    id="auth-user-btn",
-                    variant="subtle",
-                    color="gray",
-                    size="compact-xs",
-                    leftSection=DashIconify(icon="tabler:user-circle", width=14),
-                    styles={"root": {"fontWeight": 500}},
-                ),
-            ),
-            dmc.MenuDropdown([
-                dmc.MenuLabel(email or "Signed in"),
-                dmc.MenuDivider(),
-                dmc.MenuItem(
-                    "Sign out",
-                    href="/logout",
-                    leftSection=DashIconify(icon="tabler:logout", width=14),
-                ),
-            ]),
+            DashIconify(icon="tabler:user-circle", width=14,
+                        color=NEUTRAL["text_secondary"],
+                        style={"verticalAlign": "middle", "marginRight": 4}),
+            html.Span(display, style={
+                "fontSize": "12px",
+                "color": NEUTRAL["text_secondary"],
+                "fontWeight": 500,
+                "verticalAlign": "middle",
+            }),
         ],
+        style={
+            "display": "inline-flex",
+            "alignItems": "center",
+            "padding": "2px 8px",
+            "borderRadius": "12px",
+            "textDecoration": "none",
+            "cursor": "pointer",
+        },
     )
 
 
