@@ -95,6 +95,26 @@ def _count_lines(path: Path) -> int:
         return 0
 
 
+def _count_xlsx_rows(path: Path) -> int | None:
+    """Row count for an .xlsx file via openpyxl read-only streaming.
+
+    Streams the active sheet with `iter_rows(values_only=True)` and counts —
+    `ws.max_row` is unreliable in read-only mode when the file omits the
+    dimension header. Subtracts 1 for the header row. Returns None on failure.
+    """
+    try:
+        from openpyxl import load_workbook
+        wb = load_workbook(path, read_only=True, data_only=True)
+        try:
+            ws = wb.active
+            n = sum(1 for _ in ws.iter_rows(values_only=True))
+            return max(0, n - 1)
+        finally:
+            wb.close()
+    except Exception:
+        return None
+
+
 def _latest_incremental(folder: Path) -> dict | None:
     """Find the most recent file in an incremental folder + raw row total."""
     if not folder.is_dir():
@@ -121,7 +141,11 @@ def _latest_incremental(folder: Path) -> dict | None:
 
 
 def _latest_referrals() -> dict | None:
-    """Find the most recent Referrals report Excel file in DATA_DIR root."""
+    """Find all Referrals report Excel files in DATA_DIR root.
+
+    Returns the newest file's metadata plus the list of all matching paths
+    (so callers can sum raw row counts across every snapshot).
+    """
     if not DATA_DIR.is_dir():
         return None
     files = [
@@ -134,6 +158,7 @@ def _latest_referrals() -> dict | None:
     stat = latest.stat()
     return {
         "path": latest,
+        "paths": files,
         "name": latest.name,
         "size": stat.st_size,
         "mtime": _dt.datetime.fromtimestamp(stat.st_mtime).date(),
@@ -318,8 +343,7 @@ def _build_content():
             "mtime": ref["mtime"],
             "size": ref["size"],
             "file_count": ref["file_count"],
-            # Excel — skip line-count, rely on loader for rows.
-            "raw_rows": None,
+            "raw_rows": sum((_count_xlsx_rows(p) or 0) for p in ref["paths"]),
             "unique_rows": _row_count("load_referrals"),
         })
     else:

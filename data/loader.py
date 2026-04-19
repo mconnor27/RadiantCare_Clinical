@@ -883,9 +883,11 @@ def load_patients():
 def load_referrals():
     """Load the Referrals Report Excel file.
 
-    Source: Referrals_Report_RadiantCare_All_*.xlsx (single file, not incremental).
-    Contains referral lifecycle data: created, assigned, authorized, first appt,
-    referring provider/dept, status, diagnoses, payer, lead-time columns.
+    Source: Referrals_Report_RadiantCare_All_*.xlsx. Each export is a snapshot
+    of the full referral list, so multiple files may exist. Concatenate all
+    matches in chronological order and dedupe on `Referral ID` keeping the
+    latest row — preserves any referrals dropped from a newer snapshot while
+    letting newer exports overwrite status/date updates.
 
     Columns include MRN (patient ID matching CV PatientId), DOB, and
     Rfl Prim Dx (structured primary diagnosis from referral).
@@ -897,14 +899,15 @@ def load_referrals():
     if not matches:
         return pd.DataFrame()
 
-    # Try parquet cache (Excel parsing is slow — 2+ seconds)
-    src_path = Path(matches[-1])
-    cached = _read_parquet_cache("Referrals", [src_path])
+    src_paths = [Path(m) for m in matches]
+    cached = _read_parquet_cache("Referrals", src_paths)
     if cached is not None:
         return cached
 
-    # Use the latest file if multiple exist
-    df = pd.read_excel(matches[-1])
+    frames = [pd.read_excel(m) for m in matches]
+    df = pd.concat(frames, ignore_index=True)
+    if "Referral ID" in df.columns:
+        df = df.drop_duplicates(subset=["Referral ID"], keep="last").reset_index(drop=True)
 
     # Parse date columns
     date_cols = ["Created", "Expires", "First Appt", "Assigned On",

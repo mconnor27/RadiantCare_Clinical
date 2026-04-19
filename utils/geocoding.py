@@ -522,16 +522,16 @@ def prepare_patient_geo_data(df, phi_mode: bool = None):
 
     Args:
         df: Patient DataFrame with at least Zip, City, Department, PatientId columns.
-        phi_mode: When True, aggregate to ZIP3 (Safe Harbor) and suppress groups
-                  with fewer than 11 patients. Defaults to the global PHI_MODE flag.
+        phi_mode: When True, treat Zip values as already-truncated ZIP3 (the
+                  sanitizer emits 3-digit strings), look up ZIP3 centroids,
+                  and suppress groups with fewer than 11 patients. Defaults
+                  to the global PHI_MODE flag.
 
     Returns:
         DataFrame with columns:
             zip5, lat, lon, patient_count, primary_city, department
 
-        In phi_mode the ``zip5`` column contains ZIP3 values (e.g. "985") and
-        ``lat``/``lon`` are patient-weighted centroids across all ZIP5 codes
-        sharing that ZIP3 prefix.
+        In phi_mode the ``zip5`` column contains ZIP3 values (e.g. "985").
     """
     if phi_mode is None:
         phi_mode = PHI_MODE
@@ -541,6 +541,11 @@ def prepare_patient_geo_data(df, phi_mode: bool = None):
     if df.empty:
         return pd.DataFrame(columns=empty_cols)
 
+    has_dept = "Department" in df.columns
+
+    if phi_mode:
+        return _prepare_patient_geo_data_zip3(df, has_dept, empty_cols)
+
     work = df.copy()
     work["zip5"] = work["Zip"].apply(normalize_zip)
     work = work.dropna(subset=["zip5"])
@@ -548,12 +553,10 @@ def prepare_patient_geo_data(df, phi_mode: bool = None):
     if work.empty:
         return pd.DataFrame(columns=empty_cols)
 
-    # Ensure cache covers all ZIPs (still geocoded at ZIP5 level; ZIP3 centroid
-    # is computed as the patient-weighted mean of its contained ZIP5 centroids).
+    # Ensure cache covers all ZIPs
     unique_zips = work["zip5"].unique().tolist()
     cache = geocode_zips(unique_zips)
 
-    has_dept = "Department" in work.columns
     group_cols = ["zip5"]
     if has_dept:
         group_cols.append("Department")
@@ -575,42 +578,62 @@ def prepare_patient_geo_data(df, phi_mode: bool = None):
     agg = agg.merge(cache[["zip5", "lat", "lon"]], on="zip5", how="left")
     agg = agg.dropna(subset=["lat", "lon"])
 
-    if phi_mode:
-        # Safe Harbor ZIP3 prefixes that must report as '000' (<20k pop).
-        # We just drop them in the Patient map since a marker at lat 0, lon 0
-        # is meaningless for re-identification OR for visualization.
-        _RESTRICTED_ZIP3 = {
-            "036", "059", "063", "102", "203", "556", "692", "790", "821",
-            "823", "830", "831", "878", "879", "884", "890", "893",
-        }
-        agg["zip3"] = agg["zip5"].str[:3]
-        agg = agg[~agg["zip3"].isin(_RESTRICTED_ZIP3)]
+    return agg
 
-        # Collapse ZIP5 → ZIP3, patient-weighted centroid and largest city label.
-        group_cols_3 = ["zip3"] + (["Department"] if has_dept else [])
-        rolled = (
-            agg.assign(_w_lat=agg["lat"] * agg["patient_count"],
-                       _w_lon=agg["lon"] * agg["patient_count"])
-               .groupby(group_cols_3, as_index=False)
-               .agg(
-                   patient_count=("patient_count", "sum"),
-                   _w_lat=("_w_lat", "sum"),
-                   _w_lon=("_w_lon", "sum"),
-                   primary_city=("primary_city",
-                                 lambda s: s.mode().iloc[0] if not s.mode().empty else ""),
-               )
+
+# Safe Harbor ZIP3 prefixes that must report as '000' (<20k pop).
+_RESTRICTED_ZIP3 = frozenset({
+    "036", "059", "063", "102", "203", "556", "692", "790", "821",
+    "823", "830", "831", "878", "879", "884", "890", "893", "000",
+})
+
+
+def _prepare_patient_geo_data_zip3(df, has_dept: bool, empty_cols):
+    """ZIP3-aggregated branch used when PHI_MODE is on.
+
+    Expects ``Zip`` values that are already 3-digit strings (produced by
+    data/sanitize/rules.py's ``truncate_zip3``). Looks up ZIP3 centroids via
+    the existing ZCTA table (median of all ZIP5s sharing the prefix), then
+    suppresses any ZIP3 with fewer than 11 patients.
+    """
+    work = df.copy()
+    work["zip3"] = work["Zip"].astype(str).str.strip().str[:3]
+    work = work[work["zip3"].str.fullmatch(r"\d{3}")]
+    work = work[~work["zip3"].isin(_RESTRICTED_ZIP3)]
+    if work.empty:
+        return pd.DataFrame(columns=empty_cols)
+
+    group_cols = ["zip3"] + (["Department"] if has_dept else [])
+    agg = (
+        work.groupby(group_cols)
+        .agg(
+            patient_count=("PatientId", "nunique"),
+            primary_city=("City", lambda x: x.mode().iloc[0] if not x.mode().empty else ""),
         )
-        rolled["lat"] = rolled["_w_lat"] / rolled["patient_count"]
-        rolled["lon"] = rolled["_w_lon"] / rolled["patient_count"]
-        rolled = rolled.drop(columns=["_w_lat", "_w_lon"])
-        rolled = rolled.rename(columns={"zip3": "zip5"})
+        .reset_index()
+    )
+    agg["primary_city"] = agg["primary_city"].str.strip().str.title()
 
-        # Suppress small cells at the ZIP3-level: the ONE place small-cell
-        # suppression earns its keep — geography stacks automatically with
-        # filters and a ZIP3 with <11 patients narrows too far.
-        rolled = rolled[rolled["patient_count"] >= 11]
-        return rolled
+    # Small-cell suppression: drop any ZIP3 with <11 patients summed across
+    # all departments (then re-apply post-merge for per-dept rows, so a
+    # single-dept sliver with <11 doesn't surface).
+    if has_dept:
+        zip_totals = agg.groupby("zip3")["patient_count"].sum()
+        keep_zips = zip_totals[zip_totals >= 11].index
+        agg = agg[agg["zip3"].isin(keep_zips)]
+    else:
+        agg = agg[agg["patient_count"] >= 11]
+    if agg.empty:
+        return pd.DataFrame(columns=empty_cols)
 
+    # Look up ZIP3 centroid from the existing ZCTA prefix table.
+    prefix_centroids = _build_prefix_centroids()
+    agg["lat"] = agg["zip3"].map(lambda z: prefix_centroids.get(z, (None, None))[0])
+    agg["lon"] = agg["zip3"].map(lambda z: prefix_centroids.get(z, (None, None))[1])
+    agg = agg.dropna(subset=["lat", "lon"])
+
+    # Downstream code references the ``zip5`` column name; keep that contract.
+    agg = agg.rename(columns={"zip3": "zip5"})
     return agg
 
 

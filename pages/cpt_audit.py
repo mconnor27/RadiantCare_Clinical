@@ -366,7 +366,7 @@ def update_cpt_audit(_n, start_date, end_date, departments):
     # --- Serialize table rows ---
     table_cols = [
         "SessionUniqueID", "TreatmentDate", "PatientName", "PatientFullName",
-        "PatientMRN", "Department", "Machine", "CourseName",
+        "PatientMRN", "PatientCode", "Department", "Machine", "CourseName",
         "RxTechnique_Day", "UniqueIsocenters", "FieldGating",
         "CPT_Correct", "CPT_Billed", "AuditResult",
     ]

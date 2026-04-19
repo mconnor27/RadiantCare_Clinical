@@ -43,17 +43,64 @@ def _hash_hex(value: str, salt: str) -> str:
     return h.hexdigest()
 
 
-def hash_patient_id(pid, salt: str) -> str | float:
-    """Return 'PAT_' + 16 hex chars. Deterministic; stable across datasets.
+def _canonical_pid(pid) -> str | None:
+    """Canonicalize a patient-identifier value before hashing.
+
+    A single real MRN can arrive as int (``12345`` from a CSV), float
+    (``12345.0`` from an xlsx), or string (``"12345"`` from a text column).
+    Without canonicalization these hash to three different values and cross-
+    dataset joins collapse. We coerce numeric whole-number values to their
+    plain integer string form so all three converge.
+
+    Returns None for null / empty / sentinel values.
+    """
+    if pid is None:
+        return None
+    if isinstance(pid, float):
+        if pd.isna(pid):
+            return None
+        if pid.is_integer():
+            return str(int(pid))
+        return repr(pid)
+    if isinstance(pid, (int,)) and not isinstance(pid, bool):
+        return str(pid)
+    s = str(pid).strip()
+    if not s or s.lower() in ("nan", "none", "<na>"):
+        return None
+    # Normalize any integer-representable string to its plain int form:
+    #   "12345.0"  → "12345"   (Excel-read float rendered as string)
+    #   "06217"    → "6217"    (legacy zero-padded MRN)
+    #   "  123  "  → "123"     (whitespace already stripped above)
+    # Non-numeric strings fall through unchanged (e.g., "PT-12345" if any).
+    try:
+        f = float(s)
+        if f.is_integer():
+            return str(int(f))
+    except ValueError:
+        pass
+    return s
+
+
+def hash_patient_id(pid, salt: str):
+    """Return a deterministic pseudonym as a large integer (Int64-compatible).
+
+    Returning an integer (rather than a 'PAT_...' string) lets downstream code
+    that does ``pd.to_numeric(PatientId)`` or ``int(PatientId)`` keep working
+    unchanged. 60-bit truncation keeps the value well inside Int64 range
+    (max 2^63 − 1 ≈ 9.22e18) while preserving collision resistance for
+    any realistic patient count.
 
     Returns pandas NA for null/empty input so joins remain correct.
     """
-    if pid is None or (isinstance(pid, float) and pd.isna(pid)):
+    s = _canonical_pid(pid)
+    if s is None:
         return pd.NA
-    s = str(pid).strip()
-    if not s or s.lower() in ("nan", "none", "<na>"):
-        return pd.NA
-    return "PAT_" + _hash_hex(s, salt)[:16].upper()
+    # First 13 hex chars = 52 bits; max value 2^52 − 1 ≈ 4.5e15. Capped at 52
+    # bits (not 60 or 63) because float64 can only represent integers exactly
+    # up to 2^53. xlsx cells store numeric values as float64, so wider hashes
+    # lose precision on Referrals xlsx round-trip and break the MRN↔PatientId
+    # join. 52 bits still collides with probability ~10⁻⁸ at 12k patients.
+    return int(_hash_hex(s, salt)[:13], 16)
 
 
 def short_patient_code(pid, salt: str) -> str | float:
@@ -61,10 +108,8 @@ def short_patient_code(pid, salt: str) -> str | float:
     grids where the user needs to trace audit rows back to real patients via
     scripts/lookup_patient.py.
     """
-    if pid is None or (isinstance(pid, float) and pd.isna(pid)):
-        return pd.NA
-    s = str(pid).strip()
-    if not s or s.lower() in ("nan", "none", "<na>"):
+    s = _canonical_pid(pid)
+    if s is None:
         return pd.NA
     return _hash_hex(s, salt)[:6].upper()
 
