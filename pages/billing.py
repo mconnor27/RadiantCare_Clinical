@@ -19,6 +19,11 @@ from components.filter_bar import department_chips
 from components.detail_table import detail_table
 from components.phi import apply_phi_grid_rules
 from utils.tables import sanitize_for_grid
+from utils.permissions import (
+    can_see_money,
+    can_see_professional_rvu,
+    can_see_manager_modals,
+)
 from components.kpi_card import kpi_card, kpi_placeholder
 from components.chart_card import chart_card, register_chart_callbacks
 from components.chart_settings import chart_settings_popover
@@ -3098,7 +3103,20 @@ def _build_billing_table(bf):
     if bf is None or bf.empty:
         return [], []
 
-    existing_cols = [c for c in _BILLING_TABLE_COLS if c["field"] in bf.columns]
+    # Role-based column filtering: hide dollar columns from non-partners and
+    # the wRVU (professional RVU) column from non-partners as well. Hospital
+    # revenue stays visible — user-facing requirement.
+    _hide_money = not can_see_money()
+    _hide_pro_rvu = not can_see_professional_rvu()
+    _gated_fields = set()
+    if _hide_money:
+        _gated_fields |= {"Pro_Revenue", "Total_Revenue", "Hosp_Revenue"}
+    if _hide_pro_rvu:
+        _gated_fields.add("wRVU")
+    existing_cols = [
+        c for c in _BILLING_TABLE_COLS
+        if c["field"] in bf.columns and c["field"] not in _gated_fields
+    ]
     existing_cols = apply_phi_grid_rules(existing_cols)
 
     table_df = bf.head(1000).copy()
@@ -3311,16 +3329,22 @@ def _update_billing_main(*args):
     hosp_dollars = bf["Hosp_Revenue"].sum() if not bf.empty else 0
     total_dollars = group_dollars + hosp_dollars
 
+    # Role-gated dollar KPI row. Non-partners never see Professional or
+    # All-In Total; Hospital revenue stays visible for everyone.
+    _money_ok = can_see_money()
     if component == "pro":
-        dollar_children = [_dollar_card("Est. Professional Revenue", group_dollars, PRIMARY)]
+        dollar_children = [_dollar_card("Est. Professional Revenue", group_dollars, PRIMARY)] if _money_ok else []
     elif component == "hospital":
         dollar_children = [_dollar_card("Est. Hospital Revenue", hosp_dollars, PRIMARY)]
     else:
-        dollar_children = [
-            _dollar_card("Est. Professional Revenue", group_dollars, PRIMARY),
-            _dollar_card("Est. Hospital Revenue", hosp_dollars),
-            _dollar_card("Est. All-In Total", total_dollars, SEMANTIC_COLORS["success"]),
-        ]
+        if _money_ok:
+            dollar_children = [
+                _dollar_card("Est. Professional Revenue", group_dollars, PRIMARY),
+                _dollar_card("Est. Hospital Revenue", hosp_dollars),
+                _dollar_card("Est. All-In Total", total_dollars, SEMANTIC_COLORS["success"]),
+            ]
+        else:
+            dollar_children = [_dollar_card("Est. Hospital Revenue", hosp_dollars, PRIMARY)]
 
     # ---- Shared dimension setup (computed once for all stores) ----
     dept_names = [d for d in DEPARTMENTS if d in bf["Department"].unique()] if "Department" in bf.columns else []
@@ -3371,8 +3395,13 @@ def _update_billing_main(*args):
     # ---- Volume Store ----
     volume_store = _build_store("Quantity", "Billing Units")
 
-    # ---- RVU Store (skip when hospital-only — RVUs don't apply to OPPS) ----
-    rvu_store = None if component == "hospital" else _build_store("wRVU", "wRVU")
+    # ---- RVU Store (skip when hospital-only — RVUs don't apply to OPPS).
+    # Also skip entirely for non-partners: wRVU = professional RVU which is
+    # gated the same as dollar amounts.
+    if component == "hospital" or not can_see_professional_rvu():
+        rvu_store = None
+    else:
+        rvu_store = _build_store("wRVU", "wRVU")
 
     # ---- Dollar Store ----
     if component == "pro":
@@ -4252,10 +4281,44 @@ seed_insurance_rates()
 def _irm_open(n):
     if not n:
         return (dash.no_update,) * 3
+    # Defense-in-depth: the button is hidden in the UI for non-admins, but
+    # a determined user could fire this callback directly. Refuse non-admins.
+    if not can_see_manager_modals():
+        return (dash.no_update,) * 3
     rows = get_all_insurance_rates()
     for r in rows:
         r["_delete"] = "\u2716"  # ✖ symbol for delete
     return True, rows, f"{len(rows)} payors"
+
+
+# ---------------------------------------------------------------------------
+# Role-gate: hide the IRM button and the "Professional" codetype option
+# from users who shouldn't see them. Fires once on page mount.
+# ---------------------------------------------------------------------------
+@callback(
+    Output(f"{PAGE_ID}-irm-btn", "style"),
+    Output(f"{PAGE_ID}-filter-codetype", "data"),
+    Output(f"{PAGE_ID}-filter-codetype", "value"),
+    Input(f"{PAGE_ID}-irm-btn", "id"),  # dummy, fires once on mount
+    State(f"{PAGE_ID}-filter-codetype", "value"),
+)
+def _role_gate(_id, current_code):
+    admin = can_see_manager_modals()
+    partner = can_see_professional_rvu()
+
+    btn_style = dash.no_update if admin else {"display": "none"}
+
+    data = [{"value": "all", "label": "All"}]
+    if partner:
+        data.append({"value": "pro", "label": "Professional"})
+    data.append({"value": "hospital", "label": "Hospital"})
+
+    # If a non-partner had "pro" selected (defensive), fall back to "all".
+    new_value = dash.no_update
+    if current_code == "pro" and not partner:
+        new_value = "all"
+
+    return btn_style, data, new_value
 
 
 @callback(
