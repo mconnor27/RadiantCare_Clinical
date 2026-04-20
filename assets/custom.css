@@ -1160,3 +1160,14 @@ html[data-mobile-view="true"] .mantine-SegmentedControl-root {
     padding: 2px !important;
 }
 
+
+/* Hide the De-Identified badge on mobile — the sign that data is
+   sanitized still belongs in the help modal, just not cluttering the
+   compressed mobile header row. The redirect script sets
+   data-mobile-view="true" when path=/mobile or viewport ≤ 768px. */
+html[data-mobile-view="true"] .hide-on-mobile {
+    display: none !important;
+}
+@media (max-width: 768px) {
+    .hide-on-mobile { display: none !important; }
+}

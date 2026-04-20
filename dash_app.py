@@ -156,6 +156,7 @@ app.layout = dmc.MantineProvider(
                                         variant="light",
                                         size="sm",
                                         radius="sm",
+                                        className="hide-on-mobile",
                                         style={"marginRight": "4px"},
                                     )]
                                     if PHI_MODE else []
