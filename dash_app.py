@@ -136,17 +136,16 @@ app.layout = dmc.MantineProvider(
                 create_sidebar(),
                 dmc.AppShellMain(
                     children=[
-                        # Global header strip — lives in document flow, scrolls
-                        # with content (no longer fixed overlay). Right-aligned
-                        # so page-level controls (Smoothing sliders, etc.) stay
-                        # to its left without being covered.
+                        # Global header strip — floated right so the page's
+                        # first element (title) flows to its left on the same
+                        # row. Scrolls with content; no longer a fixed overlay.
                         html.Div(
                             style={
+                                "float": "right",
                                 "display": "flex",
-                                "justifyContent": "flex-end",
                                 "alignItems": "center",
                                 "gap": "4px",
-                                "padding": "4px 4px 8px 0",
+                                "marginLeft": "12px",
                             },
                             children=[
                                 *(
@@ -452,7 +451,6 @@ def _render_auth_chip(_pathname):
     if not has_request_context() or not session.get("user_id"):
         return None
     email = session.get("email") or ""
-    display = email.split("@")[0] if email else "Account"
     # Clerk hosted user portal — "Manage account" opens password + MFA settings
     # without us needing to re-mount Clerk's JS on every page.
     import os as _os
@@ -477,27 +475,17 @@ def _render_auth_chip(_pathname):
             dmc.MenuTarget(
                 html.Button(
                     children=[
-                        DashIconify(icon="tabler:user-circle", width=16,
-                                    color=NEUTRAL["text_secondary"],
-                                    style={"flexShrink": 0}),
-                        html.Span(display, style={
-                            "fontSize": "12px",
-                            "color": NEUTRAL["text_secondary"],
-                            "fontWeight": 500,
-                            "maxWidth": "120px",
-                            "overflow": "hidden",
-                            "textOverflow": "ellipsis",
-                            "whiteSpace": "nowrap",
-                        }),
+                        DashIconify(icon="tabler:user-circle", width=22,
+                                    color=NEUTRAL["text_secondary"]),
                     ],
+                    title=f"Signed in as {email}" if email else "Account",
                     style={
                         "display": "inline-flex",
                         "alignItems": "center",
-                        "gap": "4px",
-                        "padding": "4px 8px",
+                        "padding": "4px",
                         "border": "none",
                         "background": "transparent",
-                        "borderRadius": "12px",
+                        "borderRadius": "50%",
                         "cursor": "pointer",
                     },
                 ),
