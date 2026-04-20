@@ -62,14 +62,21 @@ app.index_string = """<!DOCTYPE html>
 </html>"""
 
 
-# Disable browser caching for JS/CSS assets during development
+# Long-cache static assets so Fastly (Railway's CDN) and the browser can
+# skip round-trips on repeat visits. All static URLs are hash-versioned —
+# Dash appends ``?m=<timestamp>`` to /assets/* and a ``.v<ver>m<build>``
+# fragment to /_dash-component-suites/* — so content changes invalidate
+# the URL automatically.
 from flask import request as _flask_request
+
+_IMMUTABLE_CACHE = "public, max-age=31536000, immutable"
 
 
 @server.after_request
-def _no_cache(response):
-    if _flask_request.path.startswith("/assets/"):
-        response.headers["Cache-Control"] = "no-store"
+def _cache_static(response):
+    path = _flask_request.path
+    if path.startswith("/assets/") or path.startswith("/_dash-component-suites/"):
+        response.headers["Cache-Control"] = _IMMUTABLE_CACHE
     return response
 
 

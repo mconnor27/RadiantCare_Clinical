@@ -74,11 +74,39 @@ _DEFAULT_FLOOR_IDX = month_idx(
 ) if _DEFAULT_MODE in _MODE_FLOOR else 0
 
 
+_MODE_CACHE: dict = {}
+
+
+def _classified_clinic_visits():
+    """Return clinic-visits df with a cached ``_visit_type`` column.
+
+    Runs ``_classify_visit_type`` (a slow row-wise classifier) exactly once
+    per process so consults / followups / virtual modes can slice with a
+    cheap boolean comparison.
+    """
+    cache_key = "__clinic_visits_classified__"
+    cached = _MODE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    from data.loader import load_clinic_visits
+    df = load_clinic_visits()
+    if df.empty or "ActivityName" not in df.columns:
+        df = df.assign(_visit_type=pd.Series(dtype="object"))
+    else:
+        from pages.clinic_visits import _classify_visit_type
+        df = df.copy()
+        df["_visit_type"] = df.apply(_classify_visit_type, axis=1)
+    _MODE_CACHE[cache_key] = df
+    return df
+
+
 def _load_for_mode(mode):
     """Load the dataset for *mode* and return ``(df, date_col, phys_col)``.
 
-    Applies a per-mode floor date to exclude periods where DiagnosisCodes
-    was not reliably populated in ARIA.
+    Results are cached per-mode at module scope — the underlying loaders are
+    already ``@lru_cache``'d, and the per-mode post-processing (consult
+    classification, OTV status filter, floor-date clamp) is deterministic.
 
     Modes
     -----
@@ -90,25 +118,26 @@ def _load_for_mode(mode):
     courses    – Treatment Courses
     otvs       – OTV Audit records
     """
+    cached = _MODE_CACHE.get(mode)
+    if cached is not None:
+        return cached
+
     from data.loader import (
-        load_clinic_visits, load_courses, load_simulations,
+        load_courses, load_simulations,
         load_treatment_detail, load_weekly_visits,
     )
 
     if mode in ("consults", "followups", "virtual"):
-        df = load_clinic_visits()
-        if df.empty:
-            return df, "ScheduledDateTime", "AppointmentPhysician"
-        if mode == "virtual":
-            if "ActivityName" in df.columns:
-                df = df[df["ActivityName"].str.lower().str.contains("virtual", na=False)]
-        else:
-            from pages.home import _is_consult
-            if "ActivityName" in df.columns:
-                is_consult = df.apply(_is_consult, axis=1)
-                df = df[is_consult] if mode == "consults" else df[~is_consult]
+        df = _classified_clinic_visits()
         date_col = "ScheduledDateTime"
         phys_col = "AppointmentPhysician"
+        if not df.empty and "_visit_type" in df.columns:
+            if mode == "consults":
+                df = df[df["_visit_type"] == "Consult"]
+            elif mode == "followups":
+                df = df[df["_visit_type"] == "Follow-Up"]
+            else:
+                df = df[df["_visit_type"] == "Virtual"]
 
     elif mode == "simulations":
         df, date_col, phys_col = load_simulations(), "ScheduledDateTime", "SupervisingPhysician"
@@ -131,7 +160,43 @@ def _load_for_mode(mode):
     if floor is not None and not df.empty and date_col in df.columns:
         df = df[df[date_col] >= floor]
 
-    return df, date_col, phys_col
+    result = (df, date_col, phys_col)
+    _MODE_CACHE[mode] = result
+    return result
+
+
+_C2B_CACHE: dict = {}
+
+
+def _cached_c2b():
+    """Cache build_code_to_category(load_diagnosis()) per process."""
+    if "c2b" in _C2B_CACHE:
+        return _C2B_CACHE["c2b"]
+    from data.loader import load_diagnosis
+    try:
+        diag_df = load_diagnosis()
+    except Exception:
+        diag_df = None
+    c2b = build_code_to_category(diag_df)
+    _C2B_CACHE["c2b"] = c2b
+    _C2B_CACHE["diag_df"] = diag_df
+    return c2b
+
+
+def _cached_diag_df():
+    if "diag_df" not in _C2B_CACHE:
+        _cached_c2b()
+    return _C2B_CACHE.get("diag_df")
+
+
+def _invalidate_c2b_cache():
+    """Drop the cached code→category map after a Classification Manager edit."""
+    _C2B_CACHE.clear()
+    try:
+        from data.loader import load_diagnosis
+        load_diagnosis.cache_clear()
+    except Exception:
+        pass
 
 
 def _assign_diagnosis(df, c2b):
@@ -1317,7 +1382,6 @@ def _slider_to_preset(slider_val):
 def _populate_physician_chips(_n, slider_val, departments, diag_filter,
                               diag_mode, mode):
     """Populate physician chips from the active dataset, applying all filters."""
-    from data.loader import load_diagnosis
     try:
         df, date_col, phys_col = _load_for_mode(mode or "consults")
     except Exception:
@@ -1339,8 +1403,7 @@ def _populate_physician_chips(_n, slider_val, departments, diag_filter,
     diag_mode = diag_mode or "primary"
     if diag_filter:
         try:
-            diag_df = load_diagnosis()
-            c2b = build_code_to_category(diag_df)
+            c2b = _cached_c2b()
             if c2b:
                 from utils.diagnosis_categories import filter_by_diagnosis
                 df = filter_by_diagnosis(df, [diag_filter], c2b, mode=diag_mode)
@@ -1390,19 +1453,14 @@ def _populate_physician_chips(_n, slider_val, departments, diag_filter,
 )
 def update_diagnosis(_n, slider_val, departments, physicians, diag_filter,
                      diag_mode, mode, period_type, max_prior, sort_order):
-    from data.loader import load_diagnosis
-
     max_prior = max_prior if max_prior is not None else 1
     empty_bar = empty_figure("No data for selected filters")
     empty_bar.update_layout(height=_RIDGE_HEIGHT)
     # Default control outputs (no change)
     no_ctrl = (dash.no_update,) * 5
 
-    try:
-        diag_df = load_diagnosis()
-    except Exception:
-        diag_df = None
-    c2b = build_code_to_category(diag_df)
+    c2b = _cached_c2b()
+    diag_df = _cached_diag_df()
 
     start, end = _get_date_range(slider_val)
 
@@ -1803,6 +1861,7 @@ def _diag_mgr_save_edit(changed, full_data, unreviewed_only):
     upsert_diagnosis_override(code, category=cat, subcategory=sub, source="manual")
     if col == "reviewed":
         set_diagnosis_reviewed_bulk([code], reviewed=bool(reviewed))
+    _invalidate_c2b_cache()
 
     for r in row_data:
         if r["icd_code"] == code:
@@ -1918,6 +1977,8 @@ def _diag_mgr_delete(n, full_data, selected_rows, unreviewed_only):
             delete_diagnosis_override(code)
     except Exception:
         pass
+
+    _invalidate_c2b_cache()
 
     total = len(row_data)
     categorized = sum(1 for r in row_data if r.get("category"))

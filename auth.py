@@ -66,6 +66,12 @@ _PUBLIC_PATH_PREFIXES = (
     "/favicon.ico",
     "/health",
     "/_auth/",   # includes /_auth/debug and /_auth/me
+    # Static assets: JS bundles and user assets. Hash-versioned URLs are safe
+    # to expose — Dash appends ``?m=<timestamp>`` / ``.v<ver>m<build>`` so the
+    # filename changes on every deploy. Making these public lets Fastly cache
+    # them (auth-gated responses have ``Vary: Cookie`` and are per-user).
+    "/_dash-component-suites/",
+    "/assets/",
 )
 
 
