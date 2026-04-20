@@ -464,6 +464,10 @@ def register_auth(server: Flask) -> None:
                 session["user_id"] = user_id
                 session["email"] = email
                 session["clerk_last_check"] = now
+                # Cache the Clerk session id so /logout can revoke it server-side.
+                sid = claims.get("sid")
+                if sid:
+                    session["clerk_sid"] = sid
                 return None
 
         # Not authenticated.
@@ -509,62 +513,69 @@ def register_auth(server: Flask) -> None:
     def logout():
         """Fully sign the user out.
 
-        Clerk uses both per-subdomain cookies (``__session``, ``__clerk_db_jwt``)
-        and parent-domain "client" cookies (``__client_uat``, ``__client_uat_*``)
-        scoped to ``.radiantcare.app``. If we only clear the per-subdomain
-        ones, the browser will immediately re-authenticate on refresh using
-        the parent-domain ``__client_uat`` via Clerk's handshake protocol.
+        Three coordinated moves, because Clerk sessions survive in
+        surprising places otherwise:
 
-        We clear both local + parent-domain cookies, *then* redirect to Clerk's
-        hosted sign-out endpoint which revokes the session server-side and
-        returns the user to our /login page.
+        1. Revoke the Clerk session server-side via the Backend API so the
+           token is invalid even if a cookie leaks back in.
+        2. Clear every Clerk-owned cookie in the current request — both
+           per-subdomain (``__session``, ``__clerk_db_jwt`` and their
+           suffixed variants) and parent-domain (``__client_uat*``).
+           Suffix patterns (``__client_uat_<id>``) vary per instance so
+           we enumerate whatever the browser actually sent us rather than
+           guessing.
+        3. Redirect to our own /login which forwards to the Portal's
+           /sign-in. (Clerk has no hosted /sign-out URL — SDK-only.)
         """
+        import httpx as _httpx
+        sid = session.get("clerk_sid")
+        if not sid:
+            # Fall back to reading the JWT's sid claim if we didn't cache it.
+            clerk_jwt = request.cookies.get("__session")
+            if clerk_jwt:
+                claims = _verifier().verify(clerk_jwt)
+                if claims:
+                    sid = claims.get("sid")
+
+        secret = os.environ.get("CLERK_SECRET_KEY", "").strip()
+        if sid and secret:
+            try:
+                _httpx.post(
+                    f"https://api.clerk.com/v1/sessions/{sid}/revoke",
+                    headers={"Authorization": f"Bearer {secret}"},
+                    timeout=5,
+                )
+            except Exception as exc:
+                logger.warning("auth: clerk session revoke failed: %s", exc)
+
         session.clear()
 
-        # Figure out the parent-domain we should scope cookie clears against.
-        # In production that's ``.radiantcare.app``; in local dev the Host
-        # header is the right default and Flask will scope cookies correctly
-        # without an explicit domain.
         host = (request.host or "").split(":", 1)[0]
         parts = host.split(".")
         parent_domain = "." + ".".join(parts[-2:]) if len(parts) >= 2 else None
 
-        # For Clerk hosted sign-out we use the Account Portal host
-        # (accounts.<root>), NOT the Frontend API host (clerk.<root>).
-        # The portal handles the full sign-out + revocation flow and then
-        # 302s back to our /login.
-        proto = "https" if request.is_secure else "http"
-        return_to = f"{proto}://{host}/login"
-        if parent_domain:
-            accounts_host = "accounts" + parent_domain  # ".radiantcare.app" → "accounts.radiantcare.app"
-            final_redirect = (
-                f"https://{accounts_host}/sign-out?redirect_url="
-                f"{quote(return_to, safe=':/?=&')}"
-            )
-        else:
-            final_redirect = "/login"
+        resp = redirect("/login")
 
-        resp = redirect(final_redirect)
-
-        # Per-subdomain cookies
-        for name in (server.config["SESSION_COOKIE_NAME"], "__session"):
-            resp.set_cookie(
-                name, "", expires=0, path="/",
-                httponly=(name == server.config["SESSION_COOKIE_NAME"]),
-                secure=cookie_secure, samesite="Lax",
-            )
-
-        # Parent-domain Clerk client-session cookies. There are base + suffixed
-        # variants (e.g. ``__client_uat_juP2OGU-``); since we can't enumerate
-        # unknown suffixes from the server, we just clear the known base names
-        # and rely on Clerk's sign-out endpoint to clear the rest.
-        if parent_domain:
-            for name in ("__client_uat", "__client"):
+        # Per-subdomain Clerk + Flask cookies — clear every cookie whose name
+        # matches any Clerk pattern, regardless of suffix.
+        clerk_subdomain_prefixes = ("__session", "__clerk_db_jwt", "__refresh", "__client")
+        for name in request.cookies.keys():
+            if name == server.config["SESSION_COOKIE_NAME"] or any(
+                name.startswith(p) for p in clerk_subdomain_prefixes
+            ):
                 resp.set_cookie(
                     name, "", expires=0, path="/",
-                    domain=parent_domain,
-                    httponly=False, secure=cookie_secure, samesite="Lax",
+                    httponly=(name == server.config["SESSION_COOKIE_NAME"]),
+                    secure=cookie_secure, samesite="Lax",
                 )
+                # Also try clearing at the parent-domain in case the cookie was
+                # actually set there (e.g. __client_uat_* on .radiantcare.app).
+                if parent_domain:
+                    resp.set_cookie(
+                        name, "", expires=0, path="/",
+                        domain=parent_domain,
+                        httponly=False, secure=cookie_secure, samesite="Lax",
+                    )
 
         return resp
 
