@@ -136,16 +136,16 @@ app.layout = dmc.MantineProvider(
                 create_sidebar(),
                 dmc.AppShellMain(
                     children=[
-                        # Global header strip — floated right so the page's
-                        # first element (title) flows to its left on the same
-                        # row. Scrolls with content; no longer a fixed overlay.
+                        # Global controls strip — right-aligned row above the
+                        # page content. Scrolls with content (no fixed overlay),
+                        # sits above the page title rather than on its row.
                         html.Div(
                             style={
-                                "float": "right",
                                 "display": "flex",
+                                "justifyContent": "flex-end",
                                 "alignItems": "center",
                                 "gap": "4px",
-                                "marginLeft": "12px",
+                                "padding": "4px 0 8px 0",
                             },
                             children=[
                                 *(
@@ -162,9 +162,10 @@ app.layout = dmc.MantineProvider(
                                     if PHI_MODE else []
                                 ),
                                 dmc.ActionIcon(
-                                    DashIconify(id="global-theme-icon", icon="tabler:moon", width=22, color="#4B5563"),
+                                    DashIconify(id="global-theme-icon", icon="tabler:moon", width=20),
                                     id="global-theme-btn",
-                                    variant="transparent",
+                                    variant="subtle",
+                                    color="gray",
                                     size="lg",
                                     radius="xl",
                                 ),
@@ -176,7 +177,7 @@ app.layout = dmc.MantineProvider(
                                     size="lg",
                                     radius="xl",
                                 ),
-                                html.Div(id="auth-user-chip", style={"marginLeft": "4px"}),
+                                html.Div(id="auth-user-chip"),
                             ],
                         ),
                         page_container,
@@ -474,21 +475,14 @@ def _render_auth_chip(_pathname):
         offset=6,
         children=[
             dmc.MenuTarget(
-                html.Button(
-                    children=[
-                        DashIconify(icon="tabler:user-circle", width=22,
-                                    color=NEUTRAL["text_secondary"]),
-                    ],
+                dmc.ActionIcon(
+                    DashIconify(icon="tabler:user-circle", width=20),
+                    id="auth-user-btn",
+                    variant="subtle",
+                    color="gray",
+                    size="lg",
+                    radius="xl",
                     title=f"Signed in as {email}" if email else "Account",
-                    style={
-                        "display": "inline-flex",
-                        "alignItems": "center",
-                        "padding": "4px",
-                        "border": "none",
-                        "background": "transparent",
-                        "borderRadius": "50%",
-                        "cursor": "pointer",
-                    },
                 ),
             ),
             dmc.MenuDropdown(
