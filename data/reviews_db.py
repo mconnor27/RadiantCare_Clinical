@@ -1,10 +1,20 @@
-"""SQLite-backed persistence for CPT audit reviews.
+"""Persistence for CPT audit reviews and related admin data.
 
-Stores review decisions (OK / Fixed) with reviewer and timestamp.
-The database file lives alongside the project at PROJECT_ROOT/reviews.db.
+Supports two backends:
+  - SQLite (default) — ``PROJECT_ROOT/reviews.db``, used for local dev.
+  - Postgres (when ``REVIEWS_DB_URL`` or ``DATABASE_URL`` is set to a
+    postgres:// URL) — used in production on Railway → Supabase.
+
+The two dialects are bridged by a thin connection wrapper so the ~45
+functions below keep their ``with _connect() as conn: conn.execute(...)``
+style unchanged. Placeholder and conflict-syntax differences are handled
+transparently by ``_translate()``.
+
 Thread-safe — each call opens and closes its own connection.
 """
 
+import os
+import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,7 +23,20 @@ from config.settings import PROJECT_ROOT
 
 DB_PATH = PROJECT_ROOT / "reviews.db"
 
-_SCHEMA = """
+_DB_URL = (os.environ.get("REVIEWS_DB_URL") or os.environ.get("DATABASE_URL") or "").strip()
+_USE_POSTGRES = _DB_URL.startswith(("postgresql://", "postgres://", "postgresql+"))
+_PG_SCHEMA = os.environ.get("REVIEWS_DB_SCHEMA", "clinical")
+
+if _USE_POSTGRES:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+
+
+# ---------------------------------------------------------------------------
+# Schema — two dialect variants
+# ---------------------------------------------------------------------------
+
+_SCHEMA_SQLITE = """
 CREATE TABLE IF NOT EXISTS cpt_reviews (
     session_id  TEXT PRIMARY KEY,
     status      TEXT NOT NULL,
@@ -109,27 +132,121 @@ CREATE TABLE IF NOT EXISTS revenue_adj_settings (
 );
 """
 
+# Postgres schema matches SQLite on purpose (same data types: TEXT/INTEGER/REAL)
+# except AUTOINCREMENT → SERIAL. Keeps row data interchangeable.
+_SCHEMA_POSTGRES = _SCHEMA_SQLITE.replace(
+    "id            INTEGER PRIMARY KEY AUTOINCREMENT",
+    "id            SERIAL PRIMARY KEY",
+)
+
+
+# ---------------------------------------------------------------------------
+# Postgres connection wrapper — makes psycopg2 behave like sqlite3.Connection
+# for the tight call-site vocabulary used by this module.
+# ---------------------------------------------------------------------------
+
+_PLACEHOLDER_RE = re.compile(r"(?<!%)\?")  # match lone ? placeholders
+
+
+def _translate(sql: str) -> str:
+    """SQLite → Postgres SQL translation for the patterns this file uses."""
+    # ? placeholders → %s
+    sql = _PLACEHOLDER_RE.sub("%s", sql)
+    # INSERT OR IGNORE → INSERT ... ON CONFLICT DO NOTHING
+    if "INSERT OR IGNORE" in sql:
+        sql = sql.replace("INSERT OR IGNORE", "INSERT")
+        if " ON CONFLICT " not in sql.upper():
+            sql = sql.rstrip().rstrip(";") + " ON CONFLICT DO NOTHING"
+    return sql
+
+
+class _PgCursorWrap:
+    def __init__(self, cur):
+        self._cur = cur
+
+    def fetchone(self):
+        return self._cur.fetchone()
+
+    def fetchall(self):
+        return self._cur.fetchall()
+
+    @property
+    def rowcount(self):
+        return self._cur.rowcount
+
+
+class _PgConnWrapper:
+    """Mimics sqlite3.Connection: context manager commits/rolls back,
+    ``.execute(sql, params)`` returns something with fetchone/fetchall/rowcount,
+    and ``.executescript(sql)`` runs a multi-statement DDL string."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc is None:
+            self._conn.commit()
+        else:
+            self._conn.rollback()
+        self._conn.close()
+        return False
+
+    def execute(self, sql, params=()):
+        cur = self._conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(_translate(sql), params)
+        return _PgCursorWrap(cur)
+
+    def executescript(self, script: str):
+        # Split on ; and run each non-empty statement. Safe for our schema
+        # where no statement contains a semicolon inside a string literal.
+        stmts = [s.strip() for s in script.split(";") if s.strip()]
+        cur = self._conn.cursor()
+        for stmt in stmts:
+            cur.execute(_translate(stmt))
+        cur.close()
+
 
 def _connect():
+    if _USE_POSTGRES:
+        conn = psycopg2.connect(_DB_URL)
+        with conn.cursor() as cur:
+            cur.execute(f'SET search_path TO "{_PG_SCHEMA}", public')
+        return _PgConnWrapper(conn)
+
+    # SQLite (default, local dev)
     conn = sqlite3.connect(str(DB_PATH), timeout=5)
     conn.execute("PRAGMA journal_mode=WAL")  # better concurrent reads
     conn.row_factory = sqlite3.Row
     return conn
 
 
+# ---------------------------------------------------------------------------
+# Ensure tables + apply lightweight column migrations
+# ---------------------------------------------------------------------------
+
 def _ensure_table():
+    if _USE_POSTGRES:
+        # In Postgres the schema is created by the one-shot migration script;
+        # tables are created by this DDL run the first time the app boots
+        # against an empty clinical schema. No PRAGMA-based column migrations
+        # needed — the tables are born with all current columns.
+        with _connect() as conn:
+            conn.executescript(_SCHEMA_POSTGRES)
+        return
+
+    # SQLite path (unchanged behaviour)
     with _connect() as conn:
-        conn.executescript(_SCHEMA)
-        # Migration: add reviewed column to diagnosis_overrides if missing
+        conn.executescript(_SCHEMA_SQLITE)
         cols = [r[1] for r in conn.execute("PRAGMA table_info(diagnosis_overrides)").fetchall()]
         if "reviewed" not in cols:
             conn.execute("ALTER TABLE diagnosis_overrides ADD COLUMN reviewed INTEGER NOT NULL DEFAULT 0")
-        # Migration: add address columns to referring_physicians if missing
         rp_cols = [r[1] for r in conn.execute("PRAGMA table_info(referring_physicians)").fetchall()]
         for col, default in [("address", ""), ("city", ""), ("state", ""), ("zip_code", ""), ("address_source", "")]:
             if col not in rp_cols:
                 conn.execute(f"ALTER TABLE referring_physicians ADD COLUMN {col} TEXT NOT NULL DEFAULT '{default}'")
-        # Migration: add phdsc_category column to payor_mappings if missing
         pm_cols = [r[1] for r in conn.execute("PRAGMA table_info(payor_mappings)").fetchall()]
         if "phdsc_category" not in pm_cols:
             conn.execute("ALTER TABLE payor_mappings ADD COLUMN phdsc_category TEXT NOT NULL DEFAULT '9'")

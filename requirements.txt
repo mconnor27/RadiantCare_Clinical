@@ -13,3 +13,4 @@ httpx~=0.27
 pyarrow>=17,<22
 pyjwt[crypto]~=2.8
 boto3~=1.35
+psycopg2-binary~=2.9
