@@ -1187,3 +1187,9 @@ html[data-theme="dark"] .rc-icon-btn:active { background-color: rgba(255, 255, 2
 html[data-theme="dark"] #global-refresh-btn svg,
 html[data-theme="dark"] #auth-user-btn svg,
 html[data-theme="dark"] #mobile-auth-user-btn svg { color: #D1D5DB !important; }
+
+/* Ensure user menu (and other Mantine popovers) render above header bar */
+.mantine-Menu-dropdown,
+.mantine-Popover-dropdown {
+  z-index: 10000 !important;
+}

@@ -478,6 +478,7 @@ def _build_auth_menu(btn_id, trigger="click-hover", icon_width=20, button_style=
         shadow="md",
         width=220,
         offset=6,
+        zIndex=10000,
         children=[
             dmc.MenuTarget(
                 html.Button(
