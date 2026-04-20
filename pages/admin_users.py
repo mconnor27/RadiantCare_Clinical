@@ -13,7 +13,7 @@ import dash_ag_grid as dag
 from dash import callback, Input, Output, State, html, no_update
 from dash_iconify import DashIconify
 
-from config.settings import PRIMARY, NEUTRAL, SEMANTIC_COLORS
+from config.settings import PRIMARY, NEUTRAL, SEMANTIC_COLORS, DEFAULT_GRID_CLASS
 from data.profiles_db import (
     VALID_ROLES,
     delete_profile,
@@ -168,6 +168,7 @@ def layout():
                     ],
                     defaultColDef={"sortable": True, "filter": True, "resizable": True},
                     dashGridOptions={"animateRows": True, "rowHeight": 36, "headerHeight": 36},
+                    className=DEFAULT_GRID_CLASS,
                     style={"height": "60vh", "width": "100%"},
                 ),
             ),
