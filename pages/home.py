@@ -9,6 +9,7 @@ from plotly.subplots import make_subplots
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
+from functools import lru_cache
 
 from config.settings import (
     DEPARTMENTS, DEPARTMENT_COLORS, CHART_COLORWAY, PRIMARY,
@@ -1258,34 +1259,47 @@ clientside_callback(
 # Home metric callbacks (4 metrics × 2 rows = 8 cards)
 # ---------------------------------------------------------------------------
 
-def _metric_df_tx(departments):
-    """Treatment-session per-row dataframe, department-filtered."""
+def _dept_key(departments):
+    """Hashable key for memoization. None / empty → None (all depts)."""
+    if not departments:
+        return None
+    return tuple(sorted(departments))
+
+
+@lru_cache(maxsize=4)
+def _metric_df_tx_cached(dept_key):
     from data.loader import load_treatment_detail
     td = load_treatment_detail()
-    if departments and "Department" in td.columns:
-        td = td[td["Department"].isin(departments)]
+    if dept_key and "Department" in td.columns:
+        td = td[td["Department"].isin(dept_key)]
     return td
+
+
+def _metric_df_tx(departments):
+    """Treatment-session per-row dataframe, department-filtered."""
+    return _metric_df_tx_cached(_dept_key(departments))
+
+
+@lru_cache(maxsize=4)
+def _metric_df_consults_cached(dept_key):
+    from data.loader import load_clinic_visits
+    cv = load_clinic_visits()
+    if dept_key and "Department" in cv.columns:
+        cv = cv[cv["Department"].isin(dept_key) | cv["Department"].isna()]
+    return _apply_attended_filter(_classify_consults(cv))
 
 
 def _metric_df_consults(departments):
     """Consult rows (Attended status) from clinic visits — matches CV page KPI."""
-    from data.loader import load_clinic_visits
-    cv = load_clinic_visits()
-    if departments and "Department" in cv.columns:
-        cv = cv[cv["Department"].isin(departments) | cv["Department"].isna()]
-    return _apply_attended_filter(_classify_consults(cv))
+    return _metric_df_consults_cached(_dept_key(departments))
 
 
-def _metric_df_sims(departments):
-    """Simulation rows (completed or billed, sim-like activities), patient-day deduped.
-
-    Uses the "all" scope (blacklist of placeholder activities) so the trend/cum
-    chart totals match the simulations page's "Total Simulations" KPI.
-    """
+@lru_cache(maxsize=4)
+def _metric_df_sims_cached(dept_key):
     from data.loader import load_simulations
     sims = load_simulations()
-    if departments and "Department" in sims.columns:
-        sims = sims[sims["Department"].isin(departments) | sims["Department"].isna()]
+    if dept_key and "Department" in sims.columns:
+        sims = sims[sims["Department"].isin(dept_key) | sims["Department"].isna()]
     sims = _filter_sims_scope(sims, "all")
     if not sims.empty:
         completed = sims["Status"].str.contains("Completed", case=False, na=False) if "Status" in sims.columns else pd.Series(False, index=sims.index)
@@ -1298,8 +1312,23 @@ def _metric_df_sims(departments):
     return sims
 
 
-def _metric_df_refs(departments):
-    """Referrals with derived _OurDept (our dept mapping) and _DxCat (diagnosis) columns."""
+def _metric_df_sims(departments):
+    """Simulation rows (completed or billed, sim-like activities), patient-day deduped.
+
+    Uses the "all" scope (blacklist of placeholder activities) so the trend/cum
+    chart totals match the simulations page's "Total Simulations" KPI.
+    """
+    return _metric_df_sims_cached(_dept_key(departments))
+
+
+@lru_cache(maxsize=1)
+def _refs_with_derived_columns():
+    """Build the full referrals dataframe with _OurDept and _DxCat added.
+
+    The .apply row-loop is the expensive part — cache it once so the 2+
+    store callbacks (trend + cum) and any other consumer share one pass.
+    Department filtering is cheap; do it downstream in the non-cached layer.
+    """
     from data.loader import load_referrals
     from pages.referrals import _categorise_diagnosis as _ref_dx, _map_to_our_dept as _ref_dept
     refs = load_referrals()
@@ -1312,15 +1341,19 @@ def _metric_df_refs(departments):
         refs["_OurDept"] = refs["Referred to Department"].apply(_ref_dept)
     else:
         refs["_OurDept"] = None
-    if departments:
-        refs = refs[refs["_OurDept"].isin(departments)]
-    if refs.empty:
-        return refs
     refs["_DxCat"] = refs.apply(
         lambda r: _ref_dx(r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("MRN")),
         axis=1,
     )
     return refs
+
+
+def _metric_df_refs(departments):
+    """Referrals with derived _OurDept (our dept mapping) and _DxCat (diagnosis) columns."""
+    refs = _refs_with_derived_columns()
+    if refs.empty or not departments:
+        return refs
+    return refs[refs["_OurDept"].isin(departments)]
 
 
 # (date_col, unique_id_col-or-None, dim→groupcol map, dataframe loader)
