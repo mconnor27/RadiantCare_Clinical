@@ -436,33 +436,49 @@ def register_auth(server: Flask) -> None:
                     or _fetch_user_email(user_id)
                     or ""
                 )
-                # App-level allowlist. Clerk's own allowlist is paywalled, so
-                # we enforce it here: only emails explicitly listed in the
-                # ALLOWED_EMAILS env var (comma-separated) can complete login.
-                # If ALLOWED_EMAILS is unset, any Clerk-verified user is allowed
-                # (useful for local dev). In Railway, always set this.
-                allowlist = [
-                    e.strip().lower()
-                    for e in os.environ.get("ALLOWED_EMAILS", "").split(",")
-                    if e.strip()
-                ]
-                if allowlist and email.lower() not in allowlist:
-                    logger.warning(
-                        "auth: Clerk-verified user %s not in ALLOWED_EMAILS",
-                        email,
-                    )
+                # App-level allowlist + role lookup (Clerk's own allowlist is
+                # paywalled). Access is gated by a row in clinical.profiles
+                # keyed by email; role ∈ {admin, partner, user}.
+                from data.profiles_db import get_profile, upsert_profile
+                profile = get_profile(email)
+                # Fallback: first time Dr. Connor (or any ALLOWED_EMAILS entry)
+                # signs in after the profiles table is created, auto-seed an
+                # admin row so he's never locked out.
+                if not profile:
+                    legacy_allowlist = [
+                        e.strip().lower()
+                        for e in os.environ.get("ALLOWED_EMAILS", "").split(",")
+                        if e.strip()
+                    ]
+                    if email.lower() in legacy_allowlist:
+                        upsert_profile(email, role="admin", clerk_user_id=user_id)
+                        profile = get_profile(email)
+                if not profile:
+                    logger.warning("auth: Clerk-verified user %s has no clinical.profile", email)
                     session.clear()
                     if _is_ajax_or_dash_request():
                         return make_response(("Not authorized", 403))
-                    # Bounce to /logout so Clerk's __session cookie is cleared too,
-                    # then /logout redirects to /login where they can try another email.
                     return redirect("/logout")
+
+                # Backfill clerk_user_id on the profile row if missing.
+                if profile.get("clerk_user_id") != user_id:
+                    try:
+                        upsert_profile(
+                            email,
+                            role=profile["role"],
+                            display_name=profile.get("display_name"),
+                            clerk_user_id=user_id,
+                        )
+                    except Exception as exc:
+                        logger.warning("auth: backfill clerk_user_id failed: %s", exc)
 
                 if not session.get("user_id") or session.get("user_id") != user_id:
                     session.clear()
                     session.permanent = True
                 session["user_id"] = user_id
                 session["email"] = email
+                session["role"] = profile["role"]
+                session["display_name"] = profile.get("display_name") or ""
                 session["clerk_last_check"] = now
                 # Cache the Clerk session id so /logout can revoke it server-side.
                 sid = claims.get("sid")
