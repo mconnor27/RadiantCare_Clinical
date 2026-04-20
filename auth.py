@@ -519,14 +519,35 @@ def register_auth(server: Flask) -> None:
         if clerk_jwt and _verifier().verify(clerk_jwt):
             return redirect(next_url)
 
-        # Otherwise bounce to the shared Clerk Account Portal. Single
-        # sign-in UI for all RadiantCare apps, no double-branded shells.
+        # SSO from a sibling radiantcare.app app: if we see Clerk's
+        # parent-domain ``__client_uat`` cookie, the user is already
+        # authenticated elsewhere. Hit Clerk's handshake endpoint, which
+        # mints a per-subdomain ``__session`` cookie for us and bounces
+        # back. This is what the Portal sign-in flow DOESN'T do on its own
+        # across subdomains (we used to loop).
         host = (request.host or "").split(":", 1)[0]
         parts = host.split(".")
         parent = ".".join(parts[-2:]) if len(parts) >= 2 else host
-        accounts_host = f"accounts.{parent}"
         proto = "https" if request.is_secure else "http"
         full_return = f"{proto}://{host}{next_url}"
+        has_parent_session = any(
+            name == "__client_uat" or name.startswith("__client_uat_")
+            for name in request.cookies.keys()
+        )
+        frontend_host = (
+            os.environ.get("CLERK_FRONTEND_HOST", "").strip()
+            or _clerk_frontend_host(clerk_pub_key)
+        )
+        if has_parent_session and frontend_host:
+            handshake_url = (
+                f"https://{frontend_host}/v1/client/handshake?redirect_url="
+                f"{quote(full_return, safe=':/?=&')}"
+            )
+            return redirect(handshake_url)
+
+        # No existing session — send them to the Clerk Account Portal's
+        # sign-in page (single-branded UI for all RadiantCare apps).
+        accounts_host = f"accounts.{parent}"
         portal_url = (
             f"https://{accounts_host}/sign-in?redirect_url="
             f"{quote(full_return, safe=':/?=&')}"
