@@ -520,18 +520,16 @@ def register_auth(server: Flask) -> None:
         parts = host.split(".")
         parent_domain = "." + ".".join(parts[-2:]) if len(parts) >= 2 else None
 
-        # For Clerk hosted sign-out, Clerk will 302 back to our /login after
-        # revoking the session. Build the URL from the configured frontend host.
-        pub = os.environ.get("CLERK_PUBLISHABLE_KEY", "").strip()
-        frontend_host = (
-            os.environ.get("CLERK_FRONTEND_HOST", "").strip()
-            or (_clerk_frontend_host(pub) if pub else "")
-        )
+        # For Clerk hosted sign-out we use the Account Portal host
+        # (accounts.<root>), NOT the Frontend API host (clerk.<root>).
+        # The portal handles the full sign-out + revocation flow and then
+        # 302s back to our /login.
         proto = "https" if request.is_secure else "http"
         return_to = f"{proto}://{host}/login"
-        if frontend_host:
+        if parent_domain:
+            accounts_host = "accounts" + parent_domain  # ".radiantcare.app" → "accounts.radiantcare.app"
             final_redirect = (
-                f"https://{frontend_host}/sign-out?redirect_url="
+                f"https://{accounts_host}/sign-out?redirect_url="
                 f"{quote(return_to, safe=':/?=&')}"
             )
         else:
