@@ -94,13 +94,13 @@ def _period_label(range_key, start, end):
     return f"{start.month}/{start.strftime('%y')}–{end.month}/{end.strftime('%y')}"
 
 
-def _empty_fig(title):
+def _empty_fig(title=None):
     fig = go.Figure()
-    apply_default_layout(fig, title=title)
+    apply_default_layout(fig, title=None)
     fig.update_layout(
         annotations=[dict(text="No data", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False, font=dict(size=13, color="#888"))],
         height=240,
-        margin=dict(l=10, r=10, t=36, b=28),
+        margin=dict(l=10, r=10, t=12, b=28),
     )
     return fig
 
@@ -236,7 +236,7 @@ def _build_trend_fig(counts, label, color, range_key, agg="D"):
                 hoverinfo="skip",
                 name="Smoothed",
             ))
-    apply_default_layout(fig, title=dict(text=title_text, **_TITLE_OPTS))
+    apply_default_layout(fig, title=None)
     if agg == "D":
         xaxis_opts = dict(
             showgrid=False, title=None, tickformat="%b '%y",
@@ -267,7 +267,7 @@ def _build_trend_fig(counts, label, color, range_key, agg="D"):
     fig.update_layout(
         showlegend=False,
         height=240,
-        margin=dict(l=10, r=10, t=48, b=28),
+        margin=dict(l=10, r=10, t=12, b=28),
         xaxis=xaxis_opts,
         yaxis=dict(title=None),
         bargap=0.1,
@@ -370,11 +370,11 @@ def _build_cum_line_fig(counts, label, color, range_key, prior_counts, prior_shi
                 opacity=0.65,
             ))
 
-    apply_default_layout(fig, title=dict(text=title_text, **_TITLE_OPTS))
+    apply_default_layout(fig, title=None)
     fig.update_layout(
         showlegend=False,
         height=240,
-        margin=dict(l=10, r=10, t=48, b=28),
+        margin=dict(l=10, r=10, t=12, b=28),
         xaxis=dict(showgrid=False, title=None, tickformat="%b '%y"),
         yaxis=dict(title=None),
         annotations=[total_annotation] + extra_annotations,
@@ -516,7 +516,7 @@ def _build_cum_bar_fig(df, date_col, label, color, range_key, n_periods=4, proje
             opacity=0.65,
         ))
 
-    apply_default_layout(fig, title=dict(text=title_text, **_TITLE_OPTS))
+    apply_default_layout(fig, title=None)
     # Y-axis range tracks whatever's actually rendered. When projection is off
     # we exclude full-year prior extensions and the projected year-end so bars
     # scale to the YTD-equivalent totals.
@@ -529,7 +529,7 @@ def _build_cum_bar_fig(df, date_col, label, color, range_key, n_periods=4, proje
         barmode="stack",
         showlegend=False,
         height=240,
-        margin=dict(l=10, r=10, t=48, b=28),
+        margin=dict(l=10, r=10, t=12, b=28),
         xaxis=dict(
             showgrid=False, title=None,
             tickmode="array",
@@ -613,21 +613,21 @@ def layout():
                 ],
             ),
 
-            # Top header row: gear — logo — theme toggle, flowing with scroll.
+            # Top header row: theme toggle — logo — user chip, flowing with scroll.
             dmc.Group(
                 justify="space-between",
                 align="center",
                 mt=0,
-                mb="xs",
+                mb="md",
                 children=[
                     html.Button(
                         DashIconify(
-                            id=f"{PAGE_ID}-settings-icon",
-                            icon="tabler:settings",
-                            width=22,
+                            id=f"{PAGE_ID}-theme-icon",
+                            icon="tabler:moon",
+                            width=26,
                             color="#4B5563",
                         ),
-                        id=_SETTINGS_BTN_ID,
+                        id=f"{PAGE_ID}-theme-btn",
                         n_clicks=0,
                         style=_HEADER_BTN_STYLE,
                     ),
@@ -635,17 +635,7 @@ def layout():
                         src="/assets/radiantcare.png",
                         style={"height": "38px", "objectFit": "contain"},
                     ),
-                    html.Button(
-                        DashIconify(
-                            id=f"{PAGE_ID}-theme-icon",
-                            icon="tabler:moon",
-                            width=22,
-                            color="#4B5563",
-                        ),
-                        id=f"{PAGE_ID}-theme-btn",
-                        n_clicks=0,
-                        style=_HEADER_BTN_STYLE,
-                    ),
+                    html.Div(id="mobile-auth-user-chip"),
                 ],
             ),
 
@@ -655,7 +645,7 @@ def layout():
                 data=[{"value": m["value"], "label": m["label"]} for m in _METRICS],
                 fullWidth=True,
                 size="sm",
-                mb="xs",
+                mb=4,
                 className="mobile-primary-seg",
                 styles={"indicator": {"backgroundColor": PRIMARY}},
             ),
@@ -667,49 +657,87 @@ def layout():
                 fullWidth=True,
                 color="gray",
                 size="xs",
-                mb="sm",
+                mb=4,
             ),
+
+            # Filter row: dept + physician cycle buttons. Each tap advances
+            # to the next value; disabled when the filter doesn't apply to
+            # the current metric (Sims has no dept; Referrals has no phys).
+            html.Div(
+                style={"display": "flex", "gap": "6px", "marginBottom": "6px"},
+                children=[
+                    dmc.Button(
+                        "All Sites",
+                        id=f"{PAGE_ID}-dept-cycle-btn",
+                        size="xs",
+                        radius="sm",
+                        variant="default",
+                        style={"flex": 1, "fontWeight": 500},
+                    ),
+                    dmc.Button(
+                        "All MDs",
+                        id=f"{PAGE_ID}-phys-cycle-btn",
+                        size="xs",
+                        radius="sm",
+                        variant="default",
+                        style={"flex": 1, "fontWeight": 500},
+                    ),
+                ],
+            ),
+            dcc.Store(id=f"{PAGE_ID}-dept-sel", data="all"),
+            dcc.Store(id=f"{PAGE_ID}-phys-sel", data="all"),
 
             dmc.Paper(
                 withBorder=True, radius="md", shadow="xs", p=4, mb="sm",
-                style={"position": "relative"},
                 children=[
                     html.Div(
                         style={
-                            "position": "absolute",
-                            "top": 10,
-                            "right": 10,
-                            "zIndex": 2,
                             "display": "flex",
                             "alignItems": "center",
+                            "justifyContent": "space-between",
+                            "padding": "6px 6px 4px 8px",
                             "gap": "6px",
                         },
                         children=[
-                            html.Button(
-                                DashIconify(icon="tabler:info-circle", width=18, color="#6B7280"),
-                                id=f"{PAGE_ID}-trend-info-btn",
-                                n_clicks=0,
+                            html.Div(
+                                id=f"{PAGE_ID}-trend-title",
                                 style={
-                                    "background": "transparent",
-                                    "border": "none",
-                                    "padding": 0,
-                                    "cursor": "pointer",
-                                    "outline": "none",
-                                    "display": "inline-flex",
-                                    "alignItems": "center",
+                                    "fontFamily": FONT_FAMILY,
+                                    "fontWeight": 600,
+                                    "fontSize": "15px",
+                                    "color": "#1F2937",
                                 },
                             ),
-                            dmc.Button(
-                                "Daily",
-                                id=f"{PAGE_ID}-trend-agg-btn",
-                                size="compact-xs",
-                                radius="sm",
-                                style={
-                                    "minWidth": "64px",
-                                    "backgroundColor": PRIMARY,
-                                    "color": "#FFFFFF",
-                                    "border": "none",
-                                },
+                            html.Div(
+                                style={"display": "flex", "alignItems": "center", "gap": "6px"},
+                                children=[
+                                    html.Button(
+                                        DashIconify(icon="tabler:info-circle", width=18, color="#6B7280"),
+                                        id=f"{PAGE_ID}-trend-info-btn",
+                                        n_clicks=0,
+                                        style={
+                                            "background": "transparent",
+                                            "border": "none",
+                                            "padding": 0,
+                                            "cursor": "pointer",
+                                            "outline": "none",
+                                            "display": "inline-flex",
+                                            "alignItems": "center",
+                                        },
+                                    ),
+                                    dmc.Button(
+                                        "Daily",
+                                        id=f"{PAGE_ID}-trend-agg-btn",
+                                        size="compact-xs",
+                                        radius="sm",
+                                        style={
+                                            "minWidth": "64px",
+                                            "backgroundColor": PRIMARY,
+                                            "color": "#FFFFFF",
+                                            "border": "none",
+                                        },
+                                    ),
+                                ],
                             ),
                         ],
                     ),
@@ -719,7 +747,7 @@ def layout():
                         type="circle",
                         children=dcc.Graph(
                             id=f"{PAGE_ID}-trend",
-                            config={"displayModeBar": False, "responsive": True},
+                            config={"displayModeBar": False, "responsive": True, "staticPlot": True},
                             style={"height": "240px"},
                         ),
                     ),
@@ -727,58 +755,69 @@ def layout():
             ),
             dmc.Paper(
                 withBorder=True, radius="md", shadow="xs", p=4, mb="sm",
-                style={"position": "relative"},
                 children=[
                     html.Div(
                         style={
-                            "position": "absolute",
-                            "top": 10,
-                            "right": 10,
-                            "zIndex": 2,
                             "display": "flex",
                             "alignItems": "center",
+                            "justifyContent": "space-between",
+                            "padding": "6px 6px 4px 8px",
                             "gap": "6px",
                         },
                         children=[
-                            html.Button(
-                                DashIconify(icon="tabler:info-circle", width=18, color="#6B7280"),
-                                id=f"{PAGE_ID}-cum-info-btn",
-                                n_clicks=0,
+                            html.Div(
+                                id=f"{PAGE_ID}-cum-title",
                                 style={
-                                    "background": "transparent",
-                                    "border": "none",
-                                    "padding": 0,
-                                    "cursor": "pointer",
-                                    "outline": "none",
-                                    "display": "inline-flex",
-                                    "alignItems": "center",
+                                    "fontFamily": FONT_FAMILY,
+                                    "fontWeight": 600,
+                                    "fontSize": "15px",
+                                    "color": "#1F2937",
                                 },
                             ),
-                            # Project toggle — only rendered in YTD range (style
-                            # controlled by a clientside callback).
-                            dmc.Button(
-                                "Proj",
-                                id=f"{PAGE_ID}-cum-proj-btn",
-                                size="compact-xs",
-                                radius="sm",
-                                style={
-                                    "minWidth": "44px",
-                                    "backgroundColor": PRIMARY,
-                                    "color": "#FFFFFF",
-                                    "border": "none",
-                                },
-                            ),
-                            dmc.Button(
-                                "Line",
-                                id=f"{PAGE_ID}-cum-mode-btn",
-                                size="compact-xs",
-                                radius="sm",
-                                style={
-                                    "minWidth": "64px",
-                                    "backgroundColor": PRIMARY,
-                                    "color": "#FFFFFF",
-                                    "border": "none",
-                                },
+                            html.Div(
+                                style={"display": "flex", "alignItems": "center", "gap": "6px"},
+                                children=[
+                                    html.Button(
+                                        DashIconify(icon="tabler:info-circle", width=18, color="#6B7280"),
+                                        id=f"{PAGE_ID}-cum-info-btn",
+                                        n_clicks=0,
+                                        style={
+                                            "background": "transparent",
+                                            "border": "none",
+                                            "padding": 0,
+                                            "cursor": "pointer",
+                                            "outline": "none",
+                                            "display": "inline-flex",
+                                            "alignItems": "center",
+                                        },
+                                    ),
+                                    # Project toggle — only rendered in YTD range (style
+                                    # controlled by a clientside callback).
+                                    dmc.Button(
+                                        "Proj",
+                                        id=f"{PAGE_ID}-cum-proj-btn",
+                                        size="compact-xs",
+                                        radius="sm",
+                                        style={
+                                            "minWidth": "44px",
+                                            "backgroundColor": PRIMARY,
+                                            "color": "#FFFFFF",
+                                            "border": "none",
+                                        },
+                                    ),
+                                    dmc.Button(
+                                        "Line",
+                                        id=f"{PAGE_ID}-cum-mode-btn",
+                                        size="compact-xs",
+                                        radius="sm",
+                                        style={
+                                            "minWidth": "64px",
+                                            "backgroundColor": PRIMARY,
+                                            "color": "#FFFFFF",
+                                            "border": "none",
+                                        },
+                                    ),
+                                ],
                             ),
                         ],
                     ),
@@ -789,7 +828,7 @@ def layout():
                         type="circle",
                         children=dcc.Graph(
                             id=f"{PAGE_ID}-cum",
-                            config={"displayModeBar": False, "responsive": True},
+                            config={"displayModeBar": False, "responsive": True, "staticPlot": True},
                             style={"height": "240px"},
                         ),
                     ),
@@ -825,16 +864,37 @@ def layout():
                 ],
                 fullWidth=True,
                 size="xs",
-                mb="xs",
+                mb=4,
                 className="mobile-primary-seg",
                 styles={"indicator": {"backgroundColor": PRIMARY}},
+            ),
+
+            # Dept filter for the availability calendar only. Independent
+            # from the trend/cumulative dept cycle button above. Hidden when
+            # the view toggle is set to Sims (dept filter doesn't apply there).
+            html.Div(
+                id=f"{PAGE_ID}-avail-dept-wrap",
+                children=dmc.SegmentedControl(
+                    id=f"{PAGE_ID}-avail-dept",
+                    value="all",
+                    data=[
+                        {"value": "all",       "label": "All"},
+                        {"value": "Lacey",     "label": "Lacey"},
+                        {"value": "Centralia", "label": "Centralia"},
+                        {"value": "Aberdeen",  "label": "Aberdeen"},
+                    ],
+                    fullWidth=True,
+                    color="gray",
+                    size="xs",
+                    mb=4,
+                ),
             ),
 
             dmc.Paper(
                 withBorder=True, radius="md", shadow="xs", p=4,
                 children=dcc.Graph(
                     id=f"{PAGE_ID}-avail",
-                    config={"displayModeBar": False, "responsive": True},
+                    config={"displayModeBar": False, "responsive": True, "staticPlot": True},
                     style={"height": "300px"},
                 ),
             ),
@@ -889,6 +949,7 @@ def _trend_summary(df, spec, range_key, counts, agg):
 @callback(
     Output(f"{PAGE_ID}-trend", "figure"),
     Output(f"{PAGE_ID}-trend-summary", "data"),
+    Output(f"{PAGE_ID}-trend-title", "children"),
     Input(f"{PAGE_ID}-metric", "value"),
     Input(f"{PAGE_ID}-range", "value"),
     Input(f"{PAGE_ID}-trend-agg", "data"),
@@ -902,7 +963,7 @@ def update_trend_chart(metric, range_key, agg, settings, _n):
     agg = agg if agg in _AGG_CYCLE else "D"
     fig = _build_trend_fig(counts, spec["label"], spec["color"], range_key, agg=agg)
     summary = _trend_summary(df, spec, range_key, counts, agg)
-    return fig, summary
+    return fig, summary, f"{spec['label']} — Trend"
 
 
 def _cum_summary(df, spec, range_key, counts, cum_mode="line"):
@@ -972,6 +1033,7 @@ def _cum_summary(df, spec, range_key, counts, cum_mode="line"):
 @callback(
     Output(f"{PAGE_ID}-cum", "figure"),
     Output(f"{PAGE_ID}-cum-summary", "data"),
+    Output(f"{PAGE_ID}-cum-title", "children"),
     Input(f"{PAGE_ID}-metric", "value"),
     Input(f"{PAGE_ID}-range", "value"),
     Input(f"{PAGE_ID}-cum-mode", "data"),
@@ -985,10 +1047,11 @@ def update_cum_chart(metric, range_key, cum_mode, project_on, settings, _n):
     counts, rng = _daily_counts(df, spec["date_col"], range_key)
     project_on = bool(project_on) if project_on is not None else True
     summary = _cum_summary(df, spec, range_key, counts, cum_mode=cum_mode)
+    title = f"{spec['label']} — Cumulative"
     if cum_mode == "bar":
         fig = _build_cum_bar_fig(df, spec["date_col"], spec["label"], spec["color"],
                                  range_key, project=project_on)
-        return fig, summary
+        return fig, summary, title
     # Line mode — need prior period series shifted onto current x-axis.
     prior_counts = None
     prior_shift = None
@@ -1008,7 +1071,7 @@ def update_cum_chart(metric, range_key, cum_mode, project_on, settings, _n):
     fig = _build_cum_line_fig(counts, spec["label"], spec["color"], range_key,
                               prior_counts=prior_counts, prior_shift=prior_shift,
                               project=project_on)
-    return fig, summary
+    return fig, summary, title
 
 
 clientside_callback(
@@ -1092,17 +1155,24 @@ clientside_callback(
     Input(f"{PAGE_ID}-range", "value"),
 )
 
+# Hide the calendar dept filter when the view is Sims (dept doesn't apply).
+clientside_callback(
+    """function(view) {
+        return (view === 'sims') ? {display: 'none'} : {};
+    }""",
+    Output(f"{PAGE_ID}-avail-dept-wrap", "style"),
+    Input(f"{PAGE_ID}-avail-view", "value"),
+)
+
 
 @callback(
     Output(f"{PAGE_ID}-avail", "figure"),
     Input(f"{PAGE_ID}-avail-view", "value"),
-    Input(_SETTINGS_STORE_ID, "data"),
+    Input(f"{PAGE_ID}-avail-dept", "value"),
     Input(f"{PAGE_ID}-interval", "n_intervals"),
 )
-def update_availability(view, settings, _n):
+def update_availability(view, dept, _n):
     view = view if view in ("consults", "sims") else "consults"
-    settings = settings or {}
-    dept = settings.get("dept", "all")
     departments = [dept] if view == "consults" and dept and dept != "all" else None
     try:
         fig = _build_availability_calendar(departments, consults_only=True, view=view)
@@ -1112,10 +1182,22 @@ def update_availability(view, settings, _n):
             font=dict(family=FONT_FAMILY, size=10),
         )
         # Nudge the "Next available" annotation down a bit so it doesn't hug
-        # the bottom row of cells on the compact mobile chart.
+        # the bottom row of cells on the compact mobile chart. Also beef up
+        # cell-label font size + contrast for readability on small screens.
         for ann in fig.layout.annotations:
-            if "Next available" in (ann.text or ""):
+            text = ann.text or ""
+            if "Next available" in text:
                 ann.y = -0.14
+                continue
+            # Cell labels: "<b>Full</b>" (white on red) or numeric counts.
+            if ann.font is None:
+                continue
+            if "<b>Full</b>" in text:
+                ann.font.size = 15
+                ann.font.color = "#FFFFFF"
+            elif text.strip().isdigit():
+                ann.font.size = 15
+                ann.font.color = "#111111"
         return fig
     except Exception:
         return _empty_fig("Availability")
@@ -1174,15 +1256,78 @@ clientside_callback(
     Input("global-theme-store", "data"),
 )
 
-# Group B: settings-store update.
-clientside_callback(
-    """function(dept, phys) {
-        return {"dept": dept || "all", "physician": phys || "all"};
-    }""",
+# Mobile filter row: dept + physician cycle buttons.
+# Clicking advances to the next value; disabled when the filter doesn't
+# apply to the current metric. On metric change, the physician list may
+# shrink — reset to "all" if the previous value is no longer valid.
+_DEPTS = ["all", "Lacey", "Centralia", "Aberdeen"]
+_DEPT_LABEL = {"all": "All Sites", "Lacey": "Lacey",
+               "Centralia": "Centralia", "Aberdeen": "Aberdeen"}
+
+
+@callback(
+    Output(f"{PAGE_ID}-dept-sel", "data"),
+    Output(f"{PAGE_ID}-phys-sel", "data"),
     Output(_SETTINGS_STORE_ID, "data"),
-    Input(_SETTINGS_DEPT_ID, "value"),
-    Input(_SETTINGS_PHYS_ID, "value"),
+    Output(f"{PAGE_ID}-dept-cycle-btn", "children"),
+    Output(f"{PAGE_ID}-phys-cycle-btn", "children"),
+    Output(f"{PAGE_ID}-dept-cycle-btn", "disabled"),
+    Output(f"{PAGE_ID}-phys-cycle-btn", "disabled"),
+    Input(f"{PAGE_ID}-dept-cycle-btn", "n_clicks"),
+    Input(f"{PAGE_ID}-phys-cycle-btn", "n_clicks"),
+    Input(f"{PAGE_ID}-metric", "value"),
+    State(f"{PAGE_ID}-dept-sel", "data"),
+    State(f"{PAGE_ID}-phys-sel", "data"),
 )
+def cycle_filters(_dept_n, _phys_n, metric, dept_cur, phys_cur):
+    from dash import ctx
+    spec = _METRIC_BY_VALUE.get(metric) or _METRICS[0]
+    phys_col = spec.get("physician_col")
+    dept_applies = metric != "sims"
+    phys_applies = phys_col is not None
+
+    # Physicians present in this metric's data (filtered to the four
+    # named radiation oncologists, per CLAUDE.md).
+    phys_options = ["all"]
+    if phys_col:
+        try:
+            df = spec["frame_fn"](None)
+            if not df.empty and phys_col in df.columns:
+                present = set(df[phys_col].dropna().astype(str).unique())
+                phys_options += [n for n in PHYSICIANS if n in present]
+        except Exception:
+            pass
+
+    dept = dept_cur if dept_cur in _DEPTS else "all"
+    phys = phys_cur if phys_cur in phys_options else "all"
+
+    trig = ctx.triggered_id
+    if trig == f"{PAGE_ID}-dept-cycle-btn" and dept_applies:
+        i = _DEPTS.index(dept)
+        dept = _DEPTS[(i + 1) % len(_DEPTS)]
+    elif trig == f"{PAGE_ID}-phys-cycle-btn" and phys_applies:
+        i = phys_options.index(phys) if phys in phys_options else 0
+        phys = phys_options[(i + 1) % len(phys_options)]
+
+    if not dept_applies:
+        dept = "all"
+    if not phys_applies:
+        phys = "all"
+
+    settings = {"dept": dept, "physician": phys}
+
+    dept_label = "N/A" if not dept_applies else _DEPT_LABEL.get(dept, dept)
+    if not phys_applies:
+        phys_label = "N/A"
+    elif phys == "all":
+        phys_label = "All MDs"
+    else:
+        # Show last name only (names are "Last, First").
+        phys_label = phys.split(",")[0].strip()
+
+    return (dept, phys, settings,
+            dept_label, phys_label,
+            not dept_applies, not phys_applies)
 
 # Group C: drawer toggle.
 clientside_callback(

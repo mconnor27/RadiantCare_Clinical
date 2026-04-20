@@ -140,63 +140,54 @@ app.layout = dmc.MantineProvider(
                         "minHeight": "100vh",
                         "padding": "12px 24px 12px 24px",
                     },
+                    children=[page_container],
+                ),
+                # Global controls strip — position:fixed at viewport top-right.
+                # Lifted out of AppShellMain because nested absolute positioning
+                # inside AppShellMain was getting covered by the page content's
+                # stacking context (icons were in the DOM but visually hidden).
+                html.Div(
+                    id="global-controls-strip",
+                    style={
+                        "position": "fixed",
+                        "top": "12px",
+                        "right": "24px",
+                        "display": "flex",
+                        "alignItems": "center",
+                        "gap": "4px",
+                        "zIndex": 1000,
+                    },
                     children=[
-                        # Wrap everything in a position:relative container so
-                        # our absolute-positioned control strip has a known
-                        # positioning context (decoupled from Mantine's
-                        # AppShellMain internal CSS which may override).
-                        html.Div(
-                            style={"position": "relative"},
-                            children=[
-                                # Global controls — absolute top-right within
-                                # this wrapper. Out of flow so page content
-                                # below lays out full-width; scrolls with page.
-                                html.Div(
-                                    style={
-                                        "position": "absolute",
-                                        "top": 0,
-                                        "right": 0,
-                                        "display": "flex",
-                                        "alignItems": "center",
-                                        "gap": "4px",
-                                        "zIndex": 10,
-                                    },
-                                    children=[
-                                        *(
-                                            [dmc.Badge(
-                                                "De-Identified",
-                                                leftSection=DashIconify(icon="tabler:shield-lock", width=12),
-                                                color="violet",
-                                                variant="light",
-                                                size="sm",
-                                                radius="sm",
-                                                className="hide-on-mobile",
-                                                style={"marginRight": "4px"},
-                                            )]
-                                            if PHI_MODE else []
-                                        ),
-                                        dmc.ActionIcon(
-                                            DashIconify(id="global-theme-icon", icon="tabler:moon", width=20),
-                                            id="global-theme-btn",
-                                            variant="subtle",
-                                            color="gray",
-                                            size="lg",
-                                            radius="xl",
-                                        ),
-                                        dmc.ActionIcon(
-                                            DashIconify(icon="tabler:refresh", width=20),
-                                            id="global-refresh-btn",
-                                            variant="subtle",
-                                            color="gray",
-                                            size="lg",
-                                            radius="xl",
-                                        ),
-                                        html.Div(id="auth-user-chip"),
-                                    ],
-                                ),
-                                page_container,
-                            ],
+                        *(
+                            [dmc.Badge(
+                                "De-Identified",
+                                leftSection=DashIconify(icon="tabler:shield-lock", width=12),
+                                color="violet",
+                                variant="light",
+                                size="sm",
+                                radius="sm",
+                                className="hide-on-mobile",
+                                style={"marginRight": "4px"},
+                            )]
+                            if PHI_MODE else []
                         ),
+                        dmc.ActionIcon(
+                            DashIconify(id="global-theme-icon", icon="tabler:moon", width=20, color="#4B5563"),
+                            id="global-theme-btn",
+                            variant="subtle",
+                            color="gray",
+                            size="lg",
+                            radius="xl",
+                        ),
+                        dmc.ActionIcon(
+                            DashIconify(icon="tabler:refresh", width=20),
+                            id="global-refresh-btn",
+                            variant="subtle",
+                            color="gray",
+                            size="lg",
+                            radius="xl",
+                        ),
+                        html.Div(id="auth-user-chip"),
                     ],
                 ),
             ],
@@ -274,7 +265,6 @@ app.clientside_callback(
     Input("global-theme-btn", "n_clicks"),
     State("global-theme-store", "data"),
 )
-
 # ---------------------------------------------------------------------------
 # Page-aware preload with progress tracking
 # ---------------------------------------------------------------------------
@@ -449,21 +439,25 @@ def _update_preload_status(_n):
 
 # --- Signed-in user chip (top-right, only when auth is enabled) ---
 
-@callback(
-    Output("auth-user-chip", "children"),
-    Input("_pages_location", "pathname"),
-)
-def _render_auth_chip(_pathname):
-    """Read flask.session inside the Dash request context and render a
-    small hover menu with the signed-in user's email + Sign Out link.
-    Returns nothing when no session (e.g. AUTH_ENABLED=false)."""
-    try:
-        from flask import session, has_request_context
-    except ImportError:
-        return None
-    if not has_request_context() or not session.get("user_id"):
-        return None
+def _build_auth_menu(btn_id, trigger="click-hover", icon_width=20, button_style=None, no_hover_bg=False):
+    """Build the auth menu with a given button id.
+    Caller decides btn id so desktop and mobile instances don't collide.
+    Mobile passes trigger='click' since hover is not reliable on touch."""
+    from flask import session
     email = session.get("email") or ""
+    _default_btn_style = {
+        "width": "34px",
+        "height": "34px",
+        "border": "none",
+        "background": "transparent",
+        "borderRadius": "50%",
+        "cursor": "pointer",
+        "display": "inline-flex",
+        "alignItems": "center",
+        "justifyContent": "center",
+        "padding": 0,
+    }
+    _btn_style = button_style if button_style is not None else _default_btn_style
     # Clerk hosted user portal — "Manage account" opens password + MFA settings
     # without us needing to re-mount Clerk's JS on every page.
     import os as _os
@@ -479,7 +473,7 @@ def _render_auth_chip(_pathname):
     _account_url = f"https://{_frontend}/user" if _frontend else "#"
 
     return dmc.Menu(
-        trigger="click-hover",
+        trigger=trigger,
         position="bottom-end",
         shadow="md",
         width=220,
@@ -487,23 +481,11 @@ def _render_auth_chip(_pathname):
         children=[
             dmc.MenuTarget(
                 html.Button(
-                    DashIconify(icon="tabler:user-circle", width=20,
-                                color="#868e96"),
-                    id="auth-user-btn",
-                    className="rc-icon-btn",
+                    DashIconify(icon="tabler:user-circle", width=icon_width),
+                    id=btn_id,
+                    className="" if no_hover_bg else "rc-icon-btn",
                     title=f"Signed in as {email}" if email else "Account",
-                    style={
-                        "width": "34px",
-                        "height": "34px",
-                        "border": "none",
-                        "background": "transparent",
-                        "borderRadius": "50%",
-                        "cursor": "pointer",
-                        "display": "inline-flex",
-                        "alignItems": "center",
-                        "justifyContent": "center",
-                        "padding": 0,
-                    },
+                    style=_btn_style,
                 ),
             ),
             dmc.MenuDropdown(
@@ -533,6 +515,54 @@ def _render_auth_chip(_pathname):
             ),
         ],
     )
+
+
+def _render_auth_chip_children(_pathname):
+    """Render auth menu if signed-in, else None. btn_id unique per caller."""
+    try:
+        from flask import session, has_request_context
+    except ImportError:
+        return None
+    if not has_request_context() or not session.get("user_id"):
+        return None
+    return _build_auth_menu("auth-user-btn")
+
+
+def _render_mobile_auth_chip_children(_pathname):
+    try:
+        from flask import session, has_request_context
+    except ImportError:
+        return None
+    if not has_request_context() or not session.get("user_id"):
+        return None
+    _mobile_btn_style = {
+        "background": "transparent",
+        "border": "none",
+        "padding": "6px",
+        "cursor": "pointer",
+        "outline": "none",
+        "display": "inline-flex",
+        "alignItems": "center",
+        "justifyContent": "center",
+    }
+    return _build_auth_menu(
+        "mobile-auth-user-btn",
+        trigger="click",
+        icon_width=26,
+        button_style=_mobile_btn_style,
+        no_hover_bg=True,
+    )
+
+
+callback(
+    Output("auth-user-chip", "children"),
+    Input("_pages_location", "pathname"),
+)(_render_auth_chip_children)
+
+callback(
+    Output("mobile-auth-user-chip", "children"),
+    Input("_pages_location", "pathname"),
+)(_render_mobile_auth_chip_children)
 
 
 # --- Page navigation triggers priority loading ---

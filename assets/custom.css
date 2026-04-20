@@ -1132,8 +1132,7 @@ html[data-mobile-view="true"] .mantine-AppShell-main {
     padding-left: 0 !important;
     padding-right: 0 !important;
 }
-html[data-mobile-view="true"] #global-refresh-btn,
-html[data-mobile-view="true"] #global-theme-btn {
+html[data-mobile-view="true"] #global-controls-strip {
     display: none !important;
 }
 /* Only show the mobile filters icon on /mobile */
@@ -1179,3 +1178,12 @@ html[data-mobile-view="true"] .hide-on-mobile {
 .rc-icon-btn:active { background-color: rgba(0, 0, 0, 0.10) !important; }
 html[data-theme="dark"] .rc-icon-btn:hover { background-color: rgba(255, 255, 255, 0.08) !important; }
 html[data-theme="dark"] .rc-icon-btn:active { background-color: rgba(255, 255, 255, 0.12) !important; }
+
+/* Force global top-right icon colors to match the theme toggle icon.
+   DashIconify sets the SVG color inline, so we need !important to override. */
+#global-refresh-btn svg,
+#auth-user-btn svg,
+#mobile-auth-user-btn svg { color: #4B5563 !important; }
+html[data-theme="dark"] #global-refresh-btn svg,
+html[data-theme="dark"] #auth-user-btn svg,
+html[data-theme="dark"] #mobile-auth-user-btn svg { color: #D1D5DB !important; }
