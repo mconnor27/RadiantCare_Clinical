@@ -40,10 +40,11 @@ _CAP_SIM_LEAD = 21       # > 21 days booking-to-sim = outlier
 # neuter `callback` and `clientside_callback` for the rest of this pass so
 # only function/helper definitions are rebound.
 try:
-    _existing_app = dash.get_app()
-    _already_registered = "home-tx-trend-store.data" in (
-        _existing_app.callback_map or {}
-    )
+    # `dash.callback` writes to the GLOBAL maps at decoration time; the
+    # per-app ``callback_map`` isn't populated until ``_setup_server()``
+    # runs, so checking that attribute always returns False on re-exec.
+    from dash._callback import GLOBAL_CALLBACK_MAP as _GLOBAL_CB_MAP
+    _already_registered = "home-tx-trend-store.data" in _GLOBAL_CB_MAP
 except Exception:
     _already_registered = False
 
