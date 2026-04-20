@@ -1,8 +1,9 @@
 """Admin-only page: manage Clinical user roles.
 
 Lists all rows in ``clinical.profiles`` with a role dropdown. Admins can
-change role, add a new user (by email), or delete a profile. Non-admins
-who somehow reach ``/admin/users`` see a 403 card instead of the table.
+change role or delete a profile. New users are provisioned from the
+radiantcare-landing app — this page is read/edit only. Non-admins who
+somehow reach ``/admin/users`` see a 403 card instead of the table.
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ from __future__ import annotations
 import dash
 import dash_mantine_components as dmc
 import dash_ag_grid as dag
-from dash import callback, Input, Output, State, html, no_update
+from dash import callback, Input, Output, html, no_update
 from dash_iconify import DashIconify
 
 from config.settings import PRIMARY, NEUTRAL, SEMANTIC_COLORS, DEFAULT_GRID_CLASS
@@ -95,40 +96,10 @@ def layout():
                         ],
                     ),
                     dmc.Group(
-                        justify="space-between",
+                        justify="flex-end",
                         align="center",
                         mt=12,
                         children=[
-                            dmc.Group(
-                                gap="xs",
-                                children=[
-                                    dmc.TextInput(
-                                        id=f"{PAGE_ID}-new-email",
-                                        placeholder="email@radiantcare.com",
-                                        w=260,
-                                    ),
-                                    dmc.TextInput(
-                                        id=f"{PAGE_ID}-new-name",
-                                        placeholder="Display name (optional)",
-                                        w=220,
-                                    ),
-                                    dmc.Select(
-                                        id=f"{PAGE_ID}-new-role",
-                                        data=[
-                                            {"value": r, "label": r.capitalize()}
-                                            for r in VALID_ROLES
-                                        ],
-                                        value="user",
-                                        w=140,
-                                    ),
-                                    dmc.Button(
-                                        "Add user",
-                                        id=f"{PAGE_ID}-add-btn",
-                                        leftSection=DashIconify(icon="tabler:user-plus", width=16),
-                                        color="violet",
-                                    ),
-                                ],
-                            ),
                             html.Div(id=f"{PAGE_ID}-status", style={"minHeight": 24}),
                         ],
                     ),
@@ -191,9 +162,9 @@ def layout():
                         for role, desc in _ROLE_DESCRIPTIONS.items()
                     ],
                     dmc.Text(
-                        "Note: adding a profile here doesn't create a Clerk "
-                        "account — invite the user via the Clerk dashboard "
-                        "first. Clerk ID auto-populates on their first login.",
+                        "Note: new users are provisioned from the "
+                        "radiantcare-landing app. This page edits roles "
+                        "and deletes existing profiles only.",
                         size="xs",
                         c=NEUTRAL["text_secondary"],
                         mt=6,
@@ -207,37 +178,6 @@ def layout():
 # ---------------------------------------------------------------------------
 # Callbacks
 # ---------------------------------------------------------------------------
-
-@callback(
-    Output(f"{PAGE_ID}-grid", "rowData"),
-    Output(f"{PAGE_ID}-status", "children"),
-    Output(f"{PAGE_ID}-new-email", "value"),
-    Output(f"{PAGE_ID}-new-name", "value"),
-    Input(f"{PAGE_ID}-add-btn", "n_clicks"),
-    State(f"{PAGE_ID}-new-email", "value"),
-    State(f"{PAGE_ID}-new-name", "value"),
-    State(f"{PAGE_ID}-new-role", "value"),
-    prevent_initial_call=True,
-)
-def _add_user(n, email, name, role):
-    if not n or not is_admin():
-        return no_update, no_update, no_update, no_update
-    email = (email or "").strip().lower()
-    if not email or "@" not in email:
-        return no_update, dmc.Text("Enter a valid email", c="red", size="xs"), no_update, no_update
-    if role not in VALID_ROLES:
-        return no_update, dmc.Text("Invalid role", c="red", size="xs"), no_update, no_update
-    try:
-        upsert_profile(email, role=role, display_name=(name or None))
-    except Exception as exc:
-        return no_update, dmc.Text(f"Error: {exc}", c="red", size="xs"), no_update, no_update
-    return (
-        _rows(),
-        dmc.Text(f"Added {email} as {role}", c="green", size="xs"),
-        "",
-        "",
-    )
-
 
 @callback(
     Output(f"{PAGE_ID}-grid", "rowData", allow_duplicate=True),

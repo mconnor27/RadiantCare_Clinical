@@ -246,6 +246,27 @@ body {
     background-color: var(--bg-hover) !important;
 }
 
+/* Dark-mode AG Grid: override the AG Grid CSS custom props so the grid
+ * body, viewport, cells, and borders all follow our theme vars — not just
+ * the row backgrounds. Applies regardless of whether the element has
+ * `ag-theme-alpine` or `ag-theme-alpine-dark`, since the JS class-swap
+ * has a 2s lag on first render. */
+html[data-theme="dark"] .ag-theme-alpine,
+html[data-theme="dark"] .ag-theme-alpine-dark {
+    --ag-background-color: var(--bg-card);
+    --ag-foreground-color: var(--text-primary);
+    --ag-data-color: var(--text-primary);
+    --ag-header-background-color: var(--bg-card-alt);
+    --ag-header-foreground-color: var(--text-muted);
+    --ag-border-color: var(--border-tint);
+    --ag-row-border-color: var(--border-tint);
+    --ag-odd-row-background-color: var(--bg-card-alt);
+    --ag-control-panel-background-color: var(--bg-card);
+    --ag-subheader-background-color: var(--bg-card-alt);
+    --ag-input-focus-border-color: var(--color-primary);
+    color: var(--text-primary);
+}
+
 /* Make AG Grid select editor popup taller */
 .ag-select-list {
     max-height: 400px !important;
