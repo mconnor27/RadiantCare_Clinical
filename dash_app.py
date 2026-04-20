@@ -139,58 +139,64 @@ app.layout = dmc.MantineProvider(
                         "backgroundColor": "var(--bg-page)",
                         "minHeight": "100vh",
                         "padding": "12px 24px 12px 24px",
-                        "position": "relative",
                     },
                     children=[
-                        # Global controls strip — absolutely positioned at the
-                        # top-right of the content area. Out of flow so page
-                        # content (title, filter bar, cards) lays out normally
-                        # full-width. Scrolls away with the page since the body
-                        # is the scroll container, not AppShellMain.
+                        # Wrap everything in a position:relative container so
+                        # our absolute-positioned control strip has a known
+                        # positioning context (decoupled from Mantine's
+                        # AppShellMain internal CSS which may override).
                         html.Div(
-                            style={
-                                "position": "absolute",
-                                "top": "12px",
-                                "right": "24px",
-                                "display": "flex",
-                                "alignItems": "center",
-                                "gap": "4px",
-                                "zIndex": 10,
-                            },
+                            style={"position": "relative"},
                             children=[
-                                *(
-                                    [dmc.Badge(
-                                        "De-Identified",
-                                        leftSection=DashIconify(icon="tabler:shield-lock", width=12),
-                                        color="violet",
-                                        variant="light",
-                                        size="sm",
-                                        radius="sm",
-                                        className="hide-on-mobile",
-                                        style={"marginRight": "4px"},
-                                    )]
-                                    if PHI_MODE else []
+                                # Global controls — absolute top-right within
+                                # this wrapper. Out of flow so page content
+                                # below lays out full-width; scrolls with page.
+                                html.Div(
+                                    style={
+                                        "position": "absolute",
+                                        "top": 0,
+                                        "right": 0,
+                                        "display": "flex",
+                                        "alignItems": "center",
+                                        "gap": "4px",
+                                        "zIndex": 10,
+                                    },
+                                    children=[
+                                        *(
+                                            [dmc.Badge(
+                                                "De-Identified",
+                                                leftSection=DashIconify(icon="tabler:shield-lock", width=12),
+                                                color="violet",
+                                                variant="light",
+                                                size="sm",
+                                                radius="sm",
+                                                className="hide-on-mobile",
+                                                style={"marginRight": "4px"},
+                                            )]
+                                            if PHI_MODE else []
+                                        ),
+                                        dmc.ActionIcon(
+                                            DashIconify(id="global-theme-icon", icon="tabler:moon", width=20),
+                                            id="global-theme-btn",
+                                            variant="subtle",
+                                            color="gray",
+                                            size="lg",
+                                            radius="xl",
+                                        ),
+                                        dmc.ActionIcon(
+                                            DashIconify(icon="tabler:refresh", width=20),
+                                            id="global-refresh-btn",
+                                            variant="subtle",
+                                            color="gray",
+                                            size="lg",
+                                            radius="xl",
+                                        ),
+                                        html.Div(id="auth-user-chip"),
+                                    ],
                                 ),
-                                dmc.ActionIcon(
-                                    DashIconify(id="global-theme-icon", icon="tabler:moon", width=20),
-                                    id="global-theme-btn",
-                                    variant="subtle",
-                                    color="gray",
-                                    size="lg",
-                                    radius="xl",
-                                ),
-                                dmc.ActionIcon(
-                                    DashIconify(icon="tabler:refresh", width=20),
-                                    id="global-refresh-btn",
-                                    variant="subtle",
-                                    color="gray",
-                                    size="lg",
-                                    radius="xl",
-                                ),
-                                html.Div(id="auth-user-chip"),
+                                page_container,
                             ],
                         ),
-                        page_container,
                     ],
                 ),
             ],
