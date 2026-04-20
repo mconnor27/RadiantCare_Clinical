@@ -136,16 +136,16 @@ app.layout = dmc.MantineProvider(
                 create_sidebar(),
                 dmc.AppShellMain(
                     children=[
-                        # Global controls strip — right-aligned row above the
-                        # page content. Scrolls with content (no fixed overlay),
-                        # sits above the page title rather than on its row.
+                        # Global controls strip — floated right so the page's
+                        # first element (title) flows to its left on the same
+                        # row. Scrolls with content; no fixed overlay.
                         html.Div(
                             style={
+                                "float": "right",
                                 "display": "flex",
-                                "justifyContent": "flex-end",
                                 "alignItems": "center",
                                 "gap": "4px",
-                                "padding": "4px 0 8px 0",
+                                "marginLeft": "12px",
                             },
                             children=[
                                 *(
@@ -475,14 +475,24 @@ def _render_auth_chip(_pathname):
         offset=6,
         children=[
             dmc.MenuTarget(
-                dmc.ActionIcon(
-                    DashIconify(icon="tabler:user-circle", width=20),
+                html.Button(
+                    DashIconify(icon="tabler:user-circle", width=20,
+                                color="#868e96"),
                     id="auth-user-btn",
-                    variant="subtle",
-                    color="gray",
-                    size="lg",
-                    radius="xl",
+                    className="rc-icon-btn",
                     title=f"Signed in as {email}" if email else "Account",
+                    style={
+                        "width": "34px",
+                        "height": "34px",
+                        "border": "none",
+                        "background": "transparent",
+                        "borderRadius": "50%",
+                        "cursor": "pointer",
+                        "display": "inline-flex",
+                        "alignItems": "center",
+                        "justifyContent": "center",
+                        "padding": 0,
+                    },
                 ),
             ),
             dmc.MenuDropdown(

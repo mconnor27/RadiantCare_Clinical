@@ -1171,3 +1171,11 @@ html[data-mobile-view="true"] .hide-on-mobile {
 @media (max-width: 768px) {
     .hide-on-mobile { display: none !important; }
 }
+
+/* Hover state for plain icon buttons (user chip) — matches
+   dmc.ActionIcon variant="subtle" color="gray" hover visual. */
+.rc-icon-btn { transition: background-color 0.12s ease; }
+.rc-icon-btn:hover { background-color: rgba(0, 0, 0, 0.06) !important; }
+.rc-icon-btn:active { background-color: rgba(0, 0, 0, 0.10) !important; }
+html[data-theme="dark"] .rc-icon-btn:hover { background-color: rgba(255, 255, 255, 0.08) !important; }
+html[data-theme="dark"] .rc-icon-btn:active { background-color: rgba(255, 255, 255, 0.12) !important; }
