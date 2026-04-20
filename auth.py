@@ -484,17 +484,26 @@ def register_auth(server: Flask) -> None:
         next_url = request.args.get("next") or "/"
         if not _is_safe_relative_url(next_url):
             next_url = "/"
-        # If Clerk cookie is already valid, skip straight through.
+
+        # If Clerk already has a valid session (cross-subdomain SSO), send the
+        # user straight to their destination — no portal round-trip needed.
         clerk_jwt = request.cookies.get("__session")
         if clerk_jwt and _verifier().verify(clerk_jwt):
             return redirect(next_url)
-        return render_template_string(
-            _LOGIN_HTML,
-            clerk_pub_key=clerk_pub_key,
-            clerk_frontend_host=clerk_frontend_host,
-            next_url=next_url,
-            error=None,
+
+        # Otherwise bounce to the shared Clerk Account Portal. Single
+        # sign-in UI for all RadiantCare apps, no double-branded shells.
+        host = (request.host or "").split(":", 1)[0]
+        parts = host.split(".")
+        parent = ".".join(parts[-2:]) if len(parts) >= 2 else host
+        accounts_host = f"accounts.{parent}"
+        proto = "https" if request.is_secure else "http"
+        full_return = f"{proto}://{host}{next_url}"
+        portal_url = (
+            f"https://{accounts_host}/sign-in?redirect_url="
+            f"{quote(full_return, safe=':/?=&')}"
         )
+        return redirect(portal_url)
 
     @server.route("/logout", methods=["GET", "POST"])
     def logout():
