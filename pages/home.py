@@ -1052,10 +1052,9 @@ def update_kpis(_n, date_preset, departments, sims_scope,
     except Exception:
         sims = pd.DataFrame()
     try:
-        cv = load_clinic_visits()
-        if departments and "Department" in cv.columns:
-            cv = cv[cv["Department"].isin(departments) | cv["Department"].isna()]
-        consults = _apply_attended_filter(_classify_consults(cv))
+        consults = _consults_full()
+        if departments and "Department" in consults.columns:
+            consults = consults[consults["Department"].isin(departments) | consults["Department"].isna()]
     except Exception:
         consults = pd.DataFrame()
 
@@ -1259,48 +1258,36 @@ clientside_callback(
 # Home metric callbacks (4 metrics × 2 rows = 8 cards)
 # ---------------------------------------------------------------------------
 
-def _dept_key(departments):
-    """Hashable key for memoization. None / empty → None (all depts)."""
-    if not departments:
-        return None
-    return tuple(sorted(departments))
-
-
-@lru_cache(maxsize=4)
-def _metric_df_tx_cached(dept_key):
+def _metric_df_tx(departments):
+    """Treatment-session per-row dataframe, department-filtered."""
     from data.loader import load_treatment_detail
     td = load_treatment_detail()
-    if dept_key and "Department" in td.columns:
-        td = td[td["Department"].isin(dept_key)]
+    if departments and "Department" in td.columns:
+        return td[td["Department"].isin(departments)]
     return td
 
 
-def _metric_df_tx(departments):
-    """Treatment-session per-row dataframe, department-filtered."""
-    return _metric_df_tx_cached(_dept_key(departments))
-
-
-@lru_cache(maxsize=4)
-def _metric_df_consults_cached(dept_key):
+@lru_cache(maxsize=1)
+def _consults_full():
+    """Full classified+attended consults frame (all depts). The row-wise
+    classifier is the expensive bit — run once, slice downstream."""
     from data.loader import load_clinic_visits
-    cv = load_clinic_visits()
-    if dept_key and "Department" in cv.columns:
-        cv = cv[cv["Department"].isin(dept_key) | cv["Department"].isna()]
-    return _apply_attended_filter(_classify_consults(cv))
+    return _apply_attended_filter(_classify_consults(load_clinic_visits()))
 
 
 def _metric_df_consults(departments):
     """Consult rows (Attended status) from clinic visits — matches CV page KPI."""
-    return _metric_df_consults_cached(_dept_key(departments))
+    df = _consults_full()
+    if not departments or "Department" not in df.columns:
+        return df
+    return df[df["Department"].isin(departments) | df["Department"].isna()]
 
 
-@lru_cache(maxsize=4)
-def _metric_df_sims_cached(dept_key):
+@lru_cache(maxsize=1)
+def _sims_full():
+    """Full sim frame: scope=all, completed-or-billed, patient-day deduped."""
     from data.loader import load_simulations
-    sims = load_simulations()
-    if dept_key and "Department" in sims.columns:
-        sims = sims[sims["Department"].isin(dept_key) | sims["Department"].isna()]
-    sims = _filter_sims_scope(sims, "all")
+    sims = _filter_sims_scope(load_simulations(), "all")
     if not sims.empty:
         completed = sims["Status"].str.contains("Completed", case=False, na=False) if "Status" in sims.columns else pd.Series(False, index=sims.index)
         billed = sims["ProcedureCodes"].notna() & (sims["ProcedureCodes"].astype(str).str.strip() != "") if "ProcedureCodes" in sims.columns else pd.Series(False, index=sims.index)
@@ -1318,7 +1305,10 @@ def _metric_df_sims(departments):
     Uses the "all" scope (blacklist of placeholder activities) so the trend/cum
     chart totals match the simulations page's "Total Simulations" KPI.
     """
-    return _metric_df_sims_cached(_dept_key(departments))
+    df = _sims_full()
+    if not departments or "Department" not in df.columns:
+        return df
+    return df[df["Department"].isin(departments) | df["Department"].isna()]
 
 
 @lru_cache(maxsize=1)
