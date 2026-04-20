@@ -4,7 +4,7 @@ import os
 
 import dash
 import dash_mantine_components as dmc
-from dash import Dash, html, dcc, page_container, callback, Input, Output, State, no_update
+from dash import Dash, html, dcc, page_container, callback, Input, Output, State, ALL, no_update
 from dash_iconify import DashIconify
 
 from dash import clientside_callback
@@ -222,6 +222,25 @@ app.clientside_callback(
     """function(children) { location.reload(); return window.dash_clientside.no_update; }""",
     Output("global-refresh-btn", "loading"),
     Input("global-refresh-trigger", "children"),
+    prevent_initial_call=True,
+)
+
+# Force full-page navigation to /logout on Sign out click. Using href="/logout"
+# on the MenuItem gets intercepted by Dash Pages' SPA router (shows 404); this
+# bypasses the router and hits Flask's /logout handler for real.
+app.clientside_callback(
+    """function(n_clicks_list) {
+        if (!n_clicks_list) return window.dash_clientside.no_update;
+        for (var i = 0; i < n_clicks_list.length; i++) {
+            if (n_clicks_list[i]) {
+                window.location.href = '/logout';
+                return window.dash_clientside.no_update;
+            }
+        }
+        return window.dash_clientside.no_update;
+    }""",
+    Output({"type": "auth-sign-out", "id": ALL}, "n_clicks"),
+    Input({"type": "auth-sign-out", "id": ALL}, "n_clicks"),
     prevent_initial_call=True,
 )
 
@@ -508,9 +527,15 @@ def _build_auth_menu(btn_id, trigger="click-hover", icon_width=20, button_style=
                     dmc.MenuDivider(),
                     dmc.MenuItem(
                         "Sign out",
-                        href="/logout",
+                        # No href — we force a full-page nav via clientside
+                        # callback (below). Using href="/logout" gets
+                        # swallowed by Dash Pages' SPA router and never
+                        # reaches Flask's /logout handler.
+                        id={"type": "auth-sign-out", "id": btn_id},
+                        n_clicks=0,
                         leftSection=DashIconify(icon="tabler:logout", width=14),
                         color="red",
+                        style={"cursor": "pointer"},
                     ),
                 ],
             ),

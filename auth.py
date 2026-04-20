@@ -498,18 +498,67 @@ def register_auth(server: Flask) -> None:
 
     @server.route("/logout", methods=["GET", "POST"])
     def logout():
+        """Fully sign the user out.
+
+        Clerk uses both per-subdomain cookies (``__session``, ``__clerk_db_jwt``)
+        and parent-domain "client" cookies (``__client_uat``, ``__client_uat_*``)
+        scoped to ``.radiantcare.app``. If we only clear the per-subdomain
+        ones, the browser will immediately re-authenticate on refresh using
+        the parent-domain ``__client_uat`` via Clerk's handshake protocol.
+
+        We clear both local + parent-domain cookies, *then* redirect to Clerk's
+        hosted sign-out endpoint which revokes the session server-side and
+        returns the user to our /login page.
+        """
         session.clear()
-        # Clerk's own __session cookie is HttpOnly from their JS's perspective;
-        # blow it away too so the browser is fully logged out.
-        resp = redirect("/login")
-        resp.set_cookie(
-            server.config["SESSION_COOKIE_NAME"], "", expires=0,
-            httponly=True, secure=cookie_secure, samesite="Lax",
+
+        # Figure out the parent-domain we should scope cookie clears against.
+        # In production that's ``.radiantcare.app``; in local dev the Host
+        # header is the right default and Flask will scope cookies correctly
+        # without an explicit domain.
+        host = (request.host or "").split(":", 1)[0]
+        parts = host.split(".")
+        parent_domain = "." + ".".join(parts[-2:]) if len(parts) >= 2 else None
+
+        # For Clerk hosted sign-out, Clerk will 302 back to our /login after
+        # revoking the session. Build the URL from the configured frontend host.
+        pub = os.environ.get("CLERK_PUBLISHABLE_KEY", "").strip()
+        frontend_host = (
+            os.environ.get("CLERK_FRONTEND_HOST", "").strip()
+            or (_clerk_frontend_host(pub) if pub else "")
         )
-        resp.set_cookie(
-            "__session", "", expires=0, path="/",
-            httponly=False, secure=cookie_secure, samesite="Lax",
-        )
+        proto = "https" if request.is_secure else "http"
+        return_to = f"{proto}://{host}/login"
+        if frontend_host:
+            final_redirect = (
+                f"https://{frontend_host}/sign-out?redirect_url="
+                f"{quote(return_to, safe=':/?=&')}"
+            )
+        else:
+            final_redirect = "/login"
+
+        resp = redirect(final_redirect)
+
+        # Per-subdomain cookies
+        for name in (server.config["SESSION_COOKIE_NAME"], "__session"):
+            resp.set_cookie(
+                name, "", expires=0, path="/",
+                httponly=(name == server.config["SESSION_COOKIE_NAME"]),
+                secure=cookie_secure, samesite="Lax",
+            )
+
+        # Parent-domain Clerk client-session cookies. There are base + suffixed
+        # variants (e.g. ``__client_uat_juP2OGU-``); since we can't enumerate
+        # unknown suffixes from the server, we just clear the known base names
+        # and rely on Clerk's sign-out endpoint to clear the rest.
+        if parent_domain:
+            for name in ("__client_uat", "__client"):
+                resp.set_cookie(
+                    name, "", expires=0, path="/",
+                    domain=parent_domain,
+                    httponly=False, secure=cookie_secure, samesite="Lax",
+                )
+
         return resp
 
     @server.route("/health")
