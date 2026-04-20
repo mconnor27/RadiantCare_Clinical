@@ -135,17 +135,27 @@ app.layout = dmc.MantineProvider(
             children=[
                 create_sidebar(),
                 dmc.AppShellMain(
+                    style={
+                        "backgroundColor": "var(--bg-page)",
+                        "minHeight": "100vh",
+                        "padding": "12px 24px 12px 24px",
+                        "position": "relative",
+                    },
                     children=[
-                        # Global controls strip — floated right so the page's
-                        # first element (title) flows to its left on the same
-                        # row. Scrolls with content; no fixed overlay.
+                        # Global controls strip — absolutely positioned at the
+                        # top-right of the content area. Out of flow so page
+                        # content (title, filter bar, cards) lays out normally
+                        # full-width. Scrolls away with the page since the body
+                        # is the scroll container, not AppShellMain.
                         html.Div(
                             style={
-                                "float": "right",
+                                "position": "absolute",
+                                "top": "12px",
+                                "right": "24px",
                                 "display": "flex",
                                 "alignItems": "center",
                                 "gap": "4px",
-                                "marginLeft": "12px",
+                                "zIndex": 10,
                             },
                             children=[
                                 *(
@@ -182,11 +192,6 @@ app.layout = dmc.MantineProvider(
                         ),
                         page_container,
                     ],
-                    style={
-                        "backgroundColor": "var(--bg-page)",
-                        "minHeight": "100vh",
-                        "padding": "12px 24px 12px 24px",
-                    },
                 ),
             ],
             navbar={
