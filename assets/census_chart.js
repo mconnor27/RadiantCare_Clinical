@@ -1644,6 +1644,15 @@ window.dash_clientside.cumulative = {
 
         chartType = chartType || "line";
 
+        // Theme-aware palette — keeps cumulative grid/axes in sync with the
+        // dark theme so horizontal gridlines aren't glaring white.
+        var _isDarkCum = (typeof document !== 'undefined') &&
+            document.documentElement.getAttribute('data-theme') === 'dark';
+        var GRID_COL  = _isDarkCum ? "#2D3039" : "#E5E7EB";
+        var FONT_COL  = _isDarkCum ? "#E6E7EC" : "#374151";
+        var HOVER_BG  = _isDarkCum ? "#25282F" : "white";
+        var HOVER_BRD = _isDarkCum ? "#2D3039" : "#E5E7EB";
+
         // Build visibility map from current figure
         var visibilityMap = {};
         if (currentFig && currentFig.data) {
@@ -1788,7 +1797,7 @@ window.dash_clientside.cumulative = {
                             x: pi, y: colTotal,
                             text: "<b>" + fmtVal(colTotal) + "</b>",
                             showarrow: false, yshift: 8,
-                            font: {size: 11, color: "#374151", family: "Inter, system-ui, sans-serif"}
+                            font: {size: 11, color: FONT_COL, family: "Inter, system-ui, sans-serif"}
                         });
                     }
                 }
@@ -1833,7 +1842,7 @@ window.dash_clientside.cumulative = {
                             categoryorder: null, categoryarray: null
                         },
                         yaxis: {
-                            gridcolor: "#E5E7EB", title: "",
+                            gridcolor: GRID_COL, title: "",
                             tickprefix: isDollar ? '$' : '',
                             range: [0, Math.ceil(yMaxBar * 1.13)],
                             autorange: false
@@ -1848,11 +1857,11 @@ window.dash_clientside.cumulative = {
                         margin: {l: 36, r: 16, t: 28, b: 20},
                         plot_bgcolor: "rgba(0,0,0,0)",
                         paper_bgcolor: "rgba(0,0,0,0)",
-                        font: {family: "Inter, system-ui, sans-serif", size: 12, color: "#374151"},
+                        font: {family: "Inter, system-ui, sans-serif", size: 12, color: FONT_COL},
                         hovermode: "closest",
                         hoverlabel: {
-                            align: "left", bgcolor: "white", bordercolor: "#E5E7EB",
-                            font: {color: "#374151", size: 12, family: "Inter, system-ui, sans-serif"}
+                            align: "left", bgcolor: HOVER_BG, bordercolor: HOVER_BRD,
+                            font: {color: FONT_COL, size: 12, family: "Inter, system-ui, sans-serif"}
                         },
                         annotations: barAnnotations
                     }
@@ -2061,7 +2070,7 @@ window.dash_clientside.cumulative = {
                         categoryorder: null, categoryarray: null
                     },
                     yaxis: {
-                        gridcolor: "#E5E7EB", title: "",
+                        gridcolor: GRID_COL, title: "",
                         tickprefix: isDollar ? '$' : '',
                         range: [0, Math.ceil(yMaxLine * 1.1)],
                         autorange: false
@@ -2078,13 +2087,13 @@ window.dash_clientside.cumulative = {
                     margin: {l: 36, r: 16, t: 28, b: 20},
                     plot_bgcolor: "rgba(0,0,0,0)",
                     paper_bgcolor: "rgba(0,0,0,0)",
-                    font: {family: "Inter, system-ui, sans-serif", size: 12, color: "#374151"},
+                    font: {family: "Inter, system-ui, sans-serif", size: 12, color: FONT_COL},
                     hovermode: "x",
                     hoverlabel: {
                         align: "left",
-                        bgcolor: "white",
-                        bordercolor: "#E5E7EB",
-                        font: {color: "#374151", size: 12, family: "Inter, system-ui, sans-serif"}
+                        bgcolor: HOVER_BG,
+                        bordercolor: HOVER_BRD,
+                        font: {color: FONT_COL, size: 12, family: "Inter, system-ui, sans-serif"}
                     },
                     annotations: annotations
                 }
@@ -2162,7 +2171,7 @@ window.dash_clientside.cumulative = {
                             x: pi2, y: ct,
                             text: "<b>" + fmtVal(ct) + "</b>",
                             showarrow: false, yshift: 8,
-                            font: {size: 11, color: "#374151", family: "Inter, system-ui, sans-serif"}
+                            font: {size: 11, color: FONT_COL, family: "Inter, system-ui, sans-serif"}
                         });
                     }
                 }
@@ -2179,7 +2188,7 @@ window.dash_clientside.cumulative = {
                             categoryorder: null, categoryarray: null
                         },
                         yaxis: {
-                            gridcolor: "#E5E7EB", title: "",
+                            gridcolor: GRID_COL, title: "",
                             tickprefix: isDollar ? '$' : '',
                             range: [0, Math.ceil(yMaxBar2 * 1.13)],
                             autorange: false
@@ -2190,11 +2199,11 @@ window.dash_clientside.cumulative = {
                                  tracegroupgap: 0},
                         margin: {l: 36, r: 16, t: 8, b: 20},
                         plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
-                        font: {family: "Inter, system-ui, sans-serif", size: 12, color: "#374151"},
+                        font: {family: "Inter, system-ui, sans-serif", size: 12, color: FONT_COL},
                         hovermode: "closest",
                         hoverlabel: {
-                            align: "left", bgcolor: "white", bordercolor: "#E5E7EB",
-                            font: {color: "#374151", size: 12, family: "Inter, system-ui, sans-serif"}
+                            align: "left", bgcolor: HOVER_BG, bordercolor: HOVER_BRD,
+                            font: {color: FONT_COL, size: 12, family: "Inter, system-ui, sans-serif"}
                         },
                         annotations: barAnnotations2
                     }
@@ -2295,7 +2304,7 @@ window.dash_clientside.cumulative = {
                 layout: {
                     xaxis: effXAxis,
                     yaxis: {
-                        gridcolor: "#E5E7EB", title: "",
+                        gridcolor: GRID_COL, title: "",
                         tickprefix: isDollar ? '$' : '',
                         range: [0, Math.ceil(yMaxSlice * 1.1)],
                         autorange: false
@@ -2305,11 +2314,11 @@ window.dash_clientside.cumulative = {
                              tracegroupgap: 0},
                     margin: {l: 36, r: 16, t: 28, b: 20},
                     plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
-                    font: {family: "Inter, system-ui, sans-serif", size: 12, color: "#374151"},
+                    font: {family: "Inter, system-ui, sans-serif", size: 12, color: FONT_COL},
                     hovermode: "x",
                     hoverlabel: {
-                        align: "left", bgcolor: "white", bordercolor: "#E5E7EB",
-                        font: {color: "#374151", size: 12, family: "Inter, system-ui, sans-serif"}
+                        align: "left", bgcolor: HOVER_BG, bordercolor: HOVER_BRD,
+                        font: {color: FONT_COL, size: 12, family: "Inter, system-ui, sans-serif"}
                     }
                 }
             };

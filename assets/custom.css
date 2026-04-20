@@ -351,12 +351,29 @@ body {
 
 /* Chart settings button - subtle until hover */
 [id$="-settings-btn"] {
-    opacity: 0.5;
+    opacity: 0.28;
     transition: opacity 0.2s ease;
 }
 
 [id$="-settings-btn"]:hover {
+    opacity: 0.85;
+}
+
+[data-theme="dark"] [id$="-settings-btn"] {
+    opacity: 0.55;
+    color: #D1D5DB !important;
+}
+
+[data-theme="dark"] [id$="-settings-btn"] svg {
+    color: #D1D5DB !important;
+}
+
+[data-theme="dark"] [id$="-settings-btn"]:hover {
     opacity: 1;
+}
+
+[data-theme="dark"] [id$="-settings-btn"]:hover svg {
+    color: #F3F4F6 !important;
 }
 
 [id$="-settings-btn"] svg {

@@ -37,7 +37,7 @@
     // Metric colors that are too dark to read on dark bg when used as
     // annotation font colors. Bidirectional swap lets us restore on theme flip.
     var METRIC_COLOR_LIGHT_TO_DARK = {
-        '#7c2a83': '#B866BE',  // PRIMARY (purple)
+        '#7c2a83': '#E4A7EA',  // PRIMARY (purple)
         '#2196f3': '#64B5F6',  // blue
         '#f44336': '#EF9A9A',  // red
         '#4caf50': '#81C784',  // green
