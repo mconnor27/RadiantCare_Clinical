@@ -101,6 +101,9 @@ def _empty_fig(title=None):
         annotations=[dict(text="No data", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False, font=dict(size=13, color="#888"))],
         height=240,
         margin=dict(l=10, r=10, t=12, b=28),
+        dragmode=False,
+        xaxis=dict(fixedrange=True),
+        yaxis=dict(fixedrange=True),
     )
     return fig
 
@@ -264,13 +267,15 @@ def _build_trend_fig(counts, label, color, range_key, agg="D"):
             range=[-0.5, n - 0.5],
             zeroline=False,
         )
+    xaxis_opts["fixedrange"] = True
     fig.update_layout(
         showlegend=False,
         height=240,
         margin=dict(l=10, r=10, t=12, b=28),
         xaxis=xaxis_opts,
-        yaxis=dict(title=None),
+        yaxis=dict(title=None, fixedrange=True),
         bargap=0.1,
+        dragmode=False,
         annotations=bar_annotations,
     )
     return fig
@@ -375,8 +380,9 @@ def _build_cum_line_fig(counts, label, color, range_key, prior_counts, prior_shi
         showlegend=False,
         height=240,
         margin=dict(l=10, r=10, t=12, b=28),
-        xaxis=dict(showgrid=False, title=None, tickformat="%b '%y"),
-        yaxis=dict(title=None),
+        xaxis=dict(showgrid=False, title=None, tickformat="%b '%y", fixedrange=True),
+        yaxis=dict(title=None, fixedrange=True),
+        dragmode=False,
         annotations=[total_annotation] + extra_annotations,
     )
     return fig
@@ -537,9 +543,11 @@ def _build_cum_bar_fig(df, date_col, label, color, range_key, n_periods=4, proje
             tickangle=0,
             range=[-0.5, len(xs) - 0.5],
             zeroline=False,
+            fixedrange=True,
         ),
-        yaxis=dict(title=None, range=[0, top_val * 1.15], zeroline=False),
+        yaxis=dict(title=None, range=[0, top_val * 1.15], zeroline=False, fixedrange=True),
         bargap=0.25,
+        dragmode=False,
         annotations=bar_annotations,
     )
     return fig
@@ -747,7 +755,9 @@ def layout():
                         type="circle",
                         children=dcc.Graph(
                             id=f"{PAGE_ID}-trend",
-                            config={"displayModeBar": False, "responsive": True, "staticPlot": True},
+                            config={"displayModeBar": False, "responsive": True,
+                                    "scrollZoom": False, "doubleClick": False,
+                                    "showAxisDragHandles": False, "showTips": False},
                             style={"height": "240px"},
                         ),
                     ),
@@ -828,7 +838,9 @@ def layout():
                         type="circle",
                         children=dcc.Graph(
                             id=f"{PAGE_ID}-cum",
-                            config={"displayModeBar": False, "responsive": True, "staticPlot": True},
+                            config={"displayModeBar": False, "responsive": True,
+                                    "scrollZoom": False, "doubleClick": False,
+                                    "showAxisDragHandles": False, "showTips": False},
                             style={"height": "240px"},
                         ),
                     ),
@@ -894,7 +906,9 @@ def layout():
                 withBorder=True, radius="md", shadow="xs", p=4,
                 children=dcc.Graph(
                     id=f"{PAGE_ID}-avail",
-                    config={"displayModeBar": False, "responsive": True, "staticPlot": True},
+                    config={"displayModeBar": False, "responsive": True,
+                            "scrollZoom": False, "doubleClick": False,
+                            "showAxisDragHandles": False, "showTips": False},
                     style={"height": "300px"},
                 ),
             ),
@@ -1180,7 +1194,10 @@ def update_availability(view, dept, _n):
             height=300,
             margin=dict(l=56, r=8, t=24, b=32),
             font=dict(family=FONT_FAMILY, size=10),
+            dragmode=False,
         )
+        fig.update_xaxes(fixedrange=True)
+        fig.update_yaxes(fixedrange=True)
         # Nudge the "Next available" annotation down a bit so it doesn't hug
         # the bottom row of cells on the compact mobile chart. Also beef up
         # cell-label font size + contrast for readability on small screens.
