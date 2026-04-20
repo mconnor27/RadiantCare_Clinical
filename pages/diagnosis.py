@@ -27,6 +27,7 @@ from utils.date_slider import (
 from utils.diagnosis_categories import (
     CATEGORIES as BODY_SYSTEMS,
     build_code_to_category,
+    invalidate_code_map_cache,
     primary_category,
 )
 
@@ -190,8 +191,9 @@ def _cached_diag_df():
 
 
 def _invalidate_c2b_cache():
-    """Drop the cached code→category map after a Classification Manager edit."""
+    """Drop cached code→category maps after a Classification Manager edit."""
     _C2B_CACHE.clear()
+    invalidate_code_map_cache()
     try:
         from data.loader import load_diagnosis
         load_diagnosis.cache_clear()

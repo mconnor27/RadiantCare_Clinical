@@ -532,6 +532,22 @@ def seed_diagnosis_db(diag_lookup: pd.DataFrame | None = None) -> int:
     return len(new_records)
 
 
+# Process-level caches for code→category / code→subcategory dicts.
+# Populated lazily; invalidated via invalidate_code_map_cache() after
+# Classification Manager edits (diagnosis_overrides table mutations).
+_CODE_MAP_CACHE: dict[str, dict[str, str]] = {}
+
+
+def invalidate_code_map_cache() -> None:
+    """Clear cached code→category and code→subcategory dicts.
+
+    Call after any write to the ``diagnosis_overrides`` table so the next
+    ``build_code_to_category`` / ``build_code_to_subcategory`` call reflects
+    the edit.
+    """
+    _CODE_MAP_CACHE.clear()
+
+
 def build_code_to_category(diag_lookup: pd.DataFrame | None) -> dict[str, str]:
     """Build a ``{DiagnosisCode: category}`` dict.
 
@@ -541,7 +557,14 @@ def build_code_to_category(diag_lookup: pd.DataFrame | None) -> dict[str, str]:
 
     For codes not yet in the DB (e.g. newly appeared in data), falls back
     to the old resolution chain and seeds them into the DB for next time.
+
+    Cached at module scope — callers hit the DB only on first use (or after
+    ``invalidate_code_map_cache()``).
     """
+    cached = _CODE_MAP_CACHE.get("c2c")
+    if cached is not None:
+        return cached
+
     from data.reviews_db import get_all_diagnosis_overrides, diagnosis_table_row_count
 
     # Auto-seed on first use
@@ -585,6 +608,7 @@ def build_code_to_category(diag_lookup: pd.DataFrame | None) -> dict[str, str]:
             from data.reviews_db import bulk_upsert_diagnosis_overrides
             bulk_upsert_diagnosis_overrides(new_records)
 
+    _CODE_MAP_CACHE["c2c"] = result
     return result
 
 
@@ -601,14 +625,23 @@ def get_categories_for_codes(codes_str: str, c2c: dict[str, str]) -> set[str]:
 
 
 def build_code_to_subcategory(diag_lookup: pd.DataFrame | None = None) -> dict[str, str]:
-    """Build a ``{DiagnosisCode: subcategory}`` dict from the DB."""
+    """Build a ``{DiagnosisCode: subcategory}`` dict from the DB.
+
+    Cached at module scope — invalidate with ``invalidate_code_map_cache()``
+    after writes to ``diagnosis_overrides``.
+    """
+    cached = _CODE_MAP_CACHE.get("c2s")
+    if cached is not None:
+        return cached
     from data.reviews_db import get_all_diagnosis_overrides
     overrides = get_all_diagnosis_overrides()
-    return {
+    result = {
         code: ov["subcategory"]
         for code, ov in overrides.items()
         if ov.get("subcategory")
     }
+    _CODE_MAP_CACHE["c2s"] = result
+    return result
 
 
 def get_subcategories_for_codes(codes_str: str, c2s: dict[str, str]) -> set[str]:
