@@ -33,6 +33,7 @@ from components.outlier_panel import outlier_panel, register_outlier_callbacks
 from components.phi import apply_phi_grid_rules
 from utils.charts import apply_default_layout, empty_figure, dept_color, color_for_index
 from utils.tables import sanitize_for_grid
+from utils.permissions import can_see_manager_modals
 from utils.diagnosis_categories import (
     build_code_to_category, CATEGORIES as BODY_SYSTEMS,
     SUBCATEGORIES as DIAG_SUBCATEGORIES, ALL_SUBCATEGORIES,
@@ -4269,9 +4270,27 @@ def _build_inst_grid_data(phys_rows: list[dict]) -> tuple[list[dict], str]:
 def _rpm_open(n):
     if not n:
         return (dash.no_update,) * 8
+    # Defensive admin gate: button is hidden in UI for non-admins; still
+    # refuse the callback even if someone fires it manually.
+    if not can_see_manager_modals():
+        return (dash.no_update,) * 8
     rows, stats = _build_rpm_grid_data()
     inst_rows, inst_count = _build_inst_grid_data(rows)
     return True, rows, rows, stats, inst_rows, inst_count, str(len(rows)), False
+
+
+# ---------------------------------------------------------------------------
+# Role gate: hide the Referring Physician Manager trigger button from
+# non-admins on page mount.
+# ---------------------------------------------------------------------------
+@callback(
+    Output(f"{PAGE_ID}-rpm-btn", "style"),
+    Input(f"{PAGE_ID}-rpm-btn", "id"),
+)
+def _rpm_role_gate(_id):
+    if can_see_manager_modals():
+        return dash.no_update
+    return {"display": "none"}
 
 
 @callback(

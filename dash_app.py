@@ -491,6 +491,23 @@ def _build_auth_menu(btn_id, trigger="click-hover", icon_width=20, button_style=
             _frontend = ""
     _account_url = f"https://{_frontend}/user" if _frontend else "#"
 
+    # Admin-only items (user management). Checked server-side at render time;
+    # a regular user never sees the link at all.
+    from flask import session as _flask_sess, has_request_context as _has_ctx
+    _is_admin = (
+        _has_ctx() and _flask_sess.get("role") == "admin"
+    )
+    admin_items = []
+    if _is_admin:
+        admin_items = [
+            dmc.MenuDivider(),
+            dmc.MenuItem(
+                "User management",
+                href="/admin/users",
+                leftSection=DashIconify(icon="tabler:users", width=14),
+            ),
+        ]
+
     return dmc.Menu(
         trigger=trigger,
         position="bottom-end",
@@ -524,6 +541,7 @@ def _build_auth_menu(btn_id, trigger="click-hover", icon_width=20, button_style=
                         target="_blank",
                         leftSection=DashIconify(icon="tabler:key", width=14),
                     ),
+                    *admin_items,
                     dmc.MenuDivider(),
                     dmc.MenuItem(
                         "Sign out",

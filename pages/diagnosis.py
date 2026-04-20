@@ -19,6 +19,7 @@ from components.chart_settings import chart_settings_popover
 from components.phi import apply_phi_grid_rules
 from utils.diagnosis_categories import SUBCATEGORIES as DIAG_SUBCATEGORIES
 from utils.charts import apply_default_layout, empty_figure
+from utils.permissions import can_see_manager_modals
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, DEFAULT_SLIDER, SLIDER_MARKS,
     preset_to_slider_val, preset_to_exact_dates,
@@ -1755,8 +1756,22 @@ def _build_diag_mgr_data():
 def _diag_mgr_open(n):
     if not n:
         return (dash.no_update,) * 5
+    # Defensive admin gate: button is hidden in UI for non-admins.
+    if not can_see_manager_modals():
+        return (dash.no_update,) * 5
     rows, stats = _build_diag_mgr_data()
     return True, rows, rows, stats, False
+
+
+# Role gate: hide the Diagnosis Classification Manager trigger for non-admins.
+@callback(
+    Output("diag-mgr-btn", "style"),
+    Input("diag-mgr-btn", "id"),
+)
+def _diag_mgr_role_gate(_id):
+    if can_see_manager_modals():
+        return dash.no_update
+    return {"display": "none"}
 
 
 @callback(
