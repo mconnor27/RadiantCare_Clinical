@@ -62,6 +62,7 @@ CLERK_RECHECK_INTERVAL = 60 * 15  # 15 min
 _PUBLIC_PATH_PREFIXES = (
     "/login",
     "/logout",
+    "/no-access",
     "/favicon.ico",
     "/health",
     "/_auth/",   # includes /_auth/debug and /_auth/me
@@ -455,10 +456,17 @@ def register_auth(server: Flask) -> None:
                         profile = get_profile(email)
                 if not profile:
                     logger.warning("auth: Clerk-verified user %s has no clinical.profile", email)
-                    session.clear()
                     if _is_ajax_or_dash_request():
                         return make_response(("Not authorized", 403))
-                    return redirect("/logout")
+                    # Do NOT redirect to /logout — Clerk's parent-domain
+                    # cookies (shared across all radiantcare.app apps) would
+                    # auto-resume the session and send us right back here,
+                    # producing an infinite loop. Instead show a friendly
+                    # "no access" page while keeping Clerk session alive so
+                    # the user can use other apps they have access to.
+                    if request.path == "/no-access":
+                        return None  # avoid recursion
+                    return redirect("/no-access?email=" + quote(email, safe=""))
 
                 # Backfill clerk_user_id on the profile row if missing.
                 if profile.get("clerk_user_id") != user_id:
@@ -598,6 +606,47 @@ def register_auth(server: Flask) -> None:
     @server.route("/health")
     def health():
         return {"status": "ok"}, 200
+
+    @server.route("/no-access")
+    def no_access():
+        """Friendly 403 page for Clerk-authenticated users who lack a
+        clinical.profiles row. Keeps them signed in at Clerk so they can
+        navigate to other RadiantCare apps they do have access to."""
+        email = request.args.get("email", "").strip()
+        safe_email = email.replace("<", "&lt;").replace(">", "&gt;")
+        return render_template_string(
+            """<!doctype html>
+<html lang=\"en\"><head>
+<meta charset=\"utf-8\"><title>No access — RadiantCare Clinical</title>
+<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
+<style>
+ body { margin:0; min-height:100vh; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+        background:linear-gradient(140deg,#F3E8F5 0%,#F5F6F8 55%,#E8EEF5 100%);
+        display:flex; align-items:center; justify-content:center; padding:16px; }
+ .card { max-width:480px; width:100%; background:#fff; border-radius:16px;
+         padding:40px; box-shadow:0 14px 40px rgba(46,0,50,0.12); text-align:center; }
+ h1 { color:#7C2A83; margin:0 0 8px; font-weight:700; font-size:22px; }
+ p { color:#555; line-height:1.5; margin:8px 0; }
+ .mail { font-family:ui-monospace,Menlo,Consolas,monospace; color:#7C2A83; }
+ .actions { display:flex; gap:12px; justify-content:center; margin-top:24px; flex-wrap:wrap; }
+ .btn { border:0; padding:10px 20px; border-radius:10px; font-size:14px; font-weight:600;
+        cursor:pointer; text-decoration:none; display:inline-block; }
+ .btn-primary { background:#7C2A83; color:#fff; }
+ .btn-secondary { background:transparent; color:#7C2A83; border:1px solid #7C2A83; }
+</style></head><body>
+<div class=\"card\">
+  <h1>No access to Clinical</h1>
+  <p>You're signed in as <span class=\"mail\">{{ email }}</span> but this account
+     doesn't have access to the Clinical app.</p>
+  <p>Contact an administrator if you need access.</p>
+  <div class=\"actions\">
+    <a class=\"btn btn-primary\" href=\"https://radiantcare.app\">Go to RadiantCare</a>
+    <a class=\"btn btn-secondary\" href=\"/logout\">Sign out</a>
+  </div>
+</div>
+</body></html>""",
+            email=safe_email,
+        ), 200
 
     @server.route("/_auth/me")
     def whoami():
