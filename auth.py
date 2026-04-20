@@ -77,79 +77,35 @@ _LOGIN_HTML = """<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Sign in — RadiantCare Clinical</title>
+<title>Signing in — RadiantCare Clinical</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  :root { color-scheme: light; }
-  * { box-sizing: border-box; }
   body {
-    margin: 0;
-    min-height: 100vh;
+    margin: 0; min-height: 100vh;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     background: linear-gradient(140deg, #F3E8F5 0%, #F5F6F8 55%, #E8EEF5 100%);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 16px;
+    display: flex; align-items: center; justify-content: center;
+    padding: 16px; color: #6B7280;
   }
-  .brand {
-    color: #7C2A83;
-    font-weight: 700;
-    font-size: 22px;
-    letter-spacing: -0.01em;
-    margin: 0 0 4px;
+  .spinner {
+    width: 36px; height: 36px; margin-bottom: 14px;
+    border: 3px solid rgba(124, 42, 131, 0.18);
+    border-top-color: #7C2A83; border-radius: 50%;
+    animation: rc-spin 0.9s linear infinite;
+    display: inline-block;
   }
-  .sub {
-    color: #6B7280;
-    margin: 0 0 24px;
-    font-size: 13px;
-    line-height: 1.5;
-    text-align: center;
-    max-width: 360px;
-  }
-  /* The widget itself — let Clerk style it but contain it visually. */
-  #sign-in-mount {
-    width: 100%;
-    max-width: 400px;
-  }
-  .footer {
-    margin-top: 20px;
-    color: #9CA3AF;
-    font-size: 11px;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .footer::before {
-    content: '';
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    background: #7C2A83;
-  }
-  .error {
-    color: #991B1B;
-    background: #FEF2F2;
-    border: 1px solid #FECACA;
-    padding: 10px 14px;
-    border-radius: 8px;
-    font-size: 13px;
-    max-width: 380px;
-    margin-top: 16px;
-  }
+  @keyframes rc-spin { to { transform: rotate(360deg); } }
+  .card { text-align: center; }
+  .brand { color: #7C2A83; font-weight: 700; font-size: 20px; letter-spacing: -0.01em; margin: 0 0 4px; }
+  .sub { font-size: 13px; margin: 0; }
 </style>
 </head>
 <body>
-  <p class="brand">RadiantCare Clinical</p>
-  <p class="sub">Sign in to continue. Accounts are invite-only.</p>
-
-  <div id="sign-in-mount"></div>
-
-  {% if error %}<div class="error">{{ error }}</div>{% endif %}
-
-  <div class="footer">De-Identified Data</div>
+  <div class="card">
+    <span class="spinner" aria-hidden="true"></span>
+    <p class="brand">RadiantCare Clinical</p>
+    <p class="sub">Signing you in&hellip;</p>
+  </div>
 
   <script
     async
@@ -159,46 +115,42 @@ _LOGIN_HTML = """<!doctype html>
     type="text/javascript"
   ></script>
   <script>
-    window.addEventListener('load', async function () {
-      if (!window.Clerk) {
-        document.body.insertAdjacentHTML('beforeend',
-          '<div class="error">Could not load sign-in. Check network and reload.</div>');
-        return;
-      }
-      try {
-        await window.Clerk.load();
-      } catch (e) {
-        document.body.insertAdjacentHTML('beforeend',
-          '<div class="error">Sign-in failed to initialize: ' + (e && e.message || e) + '</div>');
-        return;
-      }
+    // This page exists to perform Clerk's cross-subdomain handshake in JS,
+    // then bounce the user to the original destination. If no session is
+    // available, fall back to the central Clerk Account Portal sign-in so
+    // users see a single consistent sign-in UI across all four apps.
+    (function () {
+      var NEXT = {{ next_url|tojson }};
+      var PORTAL = 'https://accounts.radiantcare.app/sign-in?redirect_url='
+        + encodeURIComponent(window.location.origin + NEXT);
 
-      // If Clerk already has a session (came back from password reset etc.),
-      // kick the server so it can mint our Flask mirror cookie.
-      if (window.Clerk.user) {
-        window.location.replace({{ next_url|tojson }});
-        return;
-      }
+      // Abort quickly if Clerk never loads (e.g. offline / blocked).
+      var fallbackTimer = setTimeout(function () {
+        window.location.replace(PORTAL);
+      }, 6000);
 
-      window.Clerk.mountSignIn(document.getElementById('sign-in-mount'), {
-        afterSignInUrl: {{ next_url|tojson }},
-        afterSignUpUrl: {{ next_url|tojson }},
-        signUpUrl: null,  // no public signup — invitations only
-        appearance: {
-          variables: {
-            colorPrimary: '#7C2A83',
-            colorText: '#1A1A2E',
-            colorBackground: '#FFFFFF',
-            borderRadius: '8px',
-            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-          },
-          elements: {
-            card: { boxShadow: '0 1px 3px rgba(0,0,0,0.04), 0 14px 40px rgba(46,0,50,0.12)' },
-            footer: { display: 'none' },  // hide Clerk's branding footer
-          },
-        },
+      function waitForClerk(done) {
+        if (window.Clerk) { done(); return; }
+        var i = setInterval(function () {
+          if (window.Clerk) { clearInterval(i); done(); }
+        }, 50);
+      }
+      waitForClerk(async function () {
+        try {
+          await window.Clerk.load();
+        } catch (e) {
+          clearTimeout(fallbackTimer);
+          window.location.replace(PORTAL);
+          return;
+        }
+        clearTimeout(fallbackTimer);
+        if (window.Clerk.user) {
+          window.location.replace(NEXT);
+        } else {
+          window.location.replace(PORTAL);
+        }
       });
-    });
+    })();
   </script>
 </body>
 </html>
@@ -513,46 +465,23 @@ def register_auth(server: Flask) -> None:
         if not _is_safe_relative_url(next_url):
             next_url = "/"
 
-        # If Clerk already has a valid session (cross-subdomain SSO), send the
-        # user straight to their destination — no portal round-trip needed.
+        # Fast path: per-subdomain __session cookie is present and valid →
+        # user is already signed in to Clinical specifically, just send them.
         clerk_jwt = request.cookies.get("__session")
         if clerk_jwt and _verifier().verify(clerk_jwt):
             return redirect(next_url)
 
-        # SSO from a sibling radiantcare.app app: if we see Clerk's
-        # parent-domain ``__client_uat`` cookie, the user is already
-        # authenticated elsewhere. Hit Clerk's handshake endpoint, which
-        # mints a per-subdomain ``__session`` cookie for us and bounces
-        # back. This is what the Portal sign-in flow DOESN'T do on its own
-        # across subdomains (we used to loop).
-        host = (request.host or "").split(":", 1)[0]
-        parts = host.split(".")
-        parent = ".".join(parts[-2:]) if len(parts) >= 2 else host
-        proto = "https" if request.is_secure else "http"
-        full_return = f"{proto}://{host}{next_url}"
-        has_parent_session = any(
-            name == "__client_uat" or name.startswith("__client_uat_")
-            for name in request.cookies.keys()
+        # Otherwise serve a tiny "signing in…" page that loads Clerk JS.
+        # Clerk's client SDK does the cross-subdomain handshake natively
+        # via the parent-domain __client_uat cookie and sets a per-subdomain
+        # __session for us. If the user has no active session anywhere, the
+        # page falls through to the shared Clerk Account Portal sign-in.
+        return render_template_string(
+            _LOGIN_HTML,
+            clerk_pub_key=clerk_pub_key,
+            clerk_frontend_host=clerk_frontend_host,
+            next_url=next_url,
         )
-        frontend_host = (
-            os.environ.get("CLERK_FRONTEND_HOST", "").strip()
-            or _clerk_frontend_host(clerk_pub_key)
-        )
-        if has_parent_session and frontend_host:
-            handshake_url = (
-                f"https://{frontend_host}/v1/client/handshake?redirect_url="
-                f"{quote(full_return, safe=':/?=&')}"
-            )
-            return redirect(handshake_url)
-
-        # No existing session — send them to the Clerk Account Portal's
-        # sign-in page (single-branded UI for all RadiantCare apps).
-        accounts_host = f"accounts.{parent}"
-        portal_url = (
-            f"https://{accounts_host}/sign-in?redirect_url="
-            f"{quote(full_return, safe=':/?=&')}"
-        )
-        return redirect(portal_url)
 
     @server.route("/logout", methods=["GET", "POST"])
     def logout():
