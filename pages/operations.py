@@ -1417,7 +1417,7 @@ def update_heatmap(*args):
         cv = load_clinic_visits()
         sims_all = load_simulations()
 
-        today = pd.Timestamp.now().normalize()
+        today = pd.Timestamp.now(tz="America/Los_Angeles").normalize().tz_localize(None)
         four_weeks = today + timedelta(days=28)
 
         # Filter future volume — Department column has machine names after reshape

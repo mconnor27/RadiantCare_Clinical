@@ -152,10 +152,36 @@
         });
     }
 
+    // Ops schedule/availability heatmap uses shape-based week separators +
+    // subplot-group borders. Bake-in colors are light; darken them in dark mode.
+    function restyleOpsHeatmap() {
+        if (typeof Plotly === 'undefined' || !Plotly.relayout) return;
+        var isDark = currentTheme() === 'dark';
+        var weekSepColor  = isDark ? "#1F222A" : "#FFFFFF";
+        var groupBorderColor = isDark ? "#3A3D46" : "#D1D5DB";
+        var wrap = document.getElementById('ops-chart-heatmap');
+        if (!wrap) return;
+        var el = wrap.querySelector('.js-plotly-plot');
+        if (!el || !el.layout || !el.layout.shapes) return;
+        var updates = {};
+        el.layout.shapes.forEach(function(shape, idx) {
+            if (!shape || !shape.line) return;
+            if (shape.type === 'line' && shape.x0 === shape.x1) {
+                updates['shapes[' + idx + '].line.color'] = weekSepColor;
+            } else if (shape.type === 'rect') {
+                updates['shapes[' + idx + '].line.color'] = groupBorderColor;
+            }
+        });
+        if (Object.keys(updates).length > 0) {
+            try { Plotly.relayout(el, updates); } catch(e) {}
+        }
+    }
+
     function applyTheme() {
         restyleCharts();
         restyleGrids();
         restyleHoursCalendar();
+        restyleOpsHeatmap();
     }
 
     // --- Per-chart Plotly event hooks -----------------------------
