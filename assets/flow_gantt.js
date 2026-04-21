@@ -50,6 +50,27 @@ function _updateBandSelection(svg, selectedIdx) {
     }
 }
 
+// Theme-aware color resolver for flow-gantt SVG + Plotly distribution/trend
+// charts. Reads <html data-theme> at call time so charts rebuild correctly
+// after a theme toggle.
+function _flowGanttTheme() {
+    var isDark = document.documentElement.getAttribute("data-theme") === "dark";
+    return {
+        isDark: isDark,
+        // Plotly gridlines on histogram/duration-trend panels
+        grid: isDark ? "#262932" : "#F0F0F0",
+        // Text colors for mid-gray labels (totals, sub-stats)
+        mutedText: isDark ? "#D1D5DB" : "#4B5563",
+        // Flow band (bezier connector between stages) — brighter in dark
+        bandFillOpacity:   isDark ? 0.40 : 0.20,
+        bandStrokeOpacity: isDark ? 0.60 : 0.35,
+        bandHoverFill:     isDark ? 0.55 : 0.30,
+        bandHoverStroke:   isDark ? 0.80 : 0.55,
+        // Pill background behind duration label on flow bands
+        pillBg: isDark ? "rgba(40,44,52,0.92)" : "rgba(255,255,255,0.88)",
+    };
+}
+
 window.dash_clientside.flowGantt = {
 
     renderFlowGantt: function(rawData, showLoopbacks, rawDataB, showLoopbacksB, compareMode) {
@@ -512,10 +533,11 @@ window.dash_clientside.flowGantt = {
             leftEdge[i + 1] = t1;
 
             var poly = bezierBand(bars[i].r, s0, s1, bars[i + 1].l, t0, t1, 36);
-            var baseFill   = hexToRgba(colors[i], 0.20);
-            var baseStroke = hexToRgba(colors[i], 0.35);
-            var hoverFill  = hexToRgba(colors[i], 0.30);
-            var hoverStroke = hexToRgba(colors[i], 0.55);
+            var _fgT = _flowGanttTheme();
+            var baseFill   = hexToRgba(colors[i], _fgT.bandFillOpacity);
+            var baseStroke = hexToRgba(colors[i], _fgT.bandStrokeOpacity);
+            var hoverFill  = hexToRgba(colors[i], _fgT.bandHoverFill);
+            var hoverStroke = hexToRgba(colors[i], _fgT.bandHoverStroke);
 
             var path = svgEl("path", {
                 d: polyToPath(poly),
@@ -1015,7 +1037,11 @@ window.dash_clientside.flowGantt = {
                 var overdue = hasAllotted && mDays[i] > aDays[i];
                 var dtX = sx(midX), dtY = sy(bandMidY);
                 var gapPx = sx(bars[i + 1].l) - sx(bars[i].r);
-                var fillColor = overdue ? "#E53935" : darkenColor(colors[i], 0.65);
+                // In dark mode, the pill bg is dark — use the stage color as-is
+                // (or a lightened variant) so text reads. In light mode, darken.
+                var fillColor = overdue
+                    ? "#E53935"
+                    : (_flowGanttTheme().isDark ? colors[i] : darkenColor(colors[i], 0.65));
 
                 // Two-line layout when gap is tight and we have allotted
                 var twoLine = hasAllotted && gapPx < 70;
@@ -1027,7 +1053,7 @@ window.dash_clientside.flowGantt = {
                         y: (dtY - bgH / 2).toFixed(1),
                         width: bgW.toFixed(1),
                         height: bgH.toFixed(1),
-                        fill: "rgba(255,255,255,0.88)",
+                        fill: _flowGanttTheme().pillBg,
                         rx: "10",
                         "pointer-events": "none",
                     }));
@@ -1058,7 +1084,7 @@ window.dash_clientside.flowGantt = {
                         y: (dtY - 10).toFixed(1),
                         width: bgW.toFixed(1),
                         height: "20",
-                        fill: "rgba(255,255,255,0.88)",
+                        fill: _flowGanttTheme().pillBg,
                         rx: "10",
                         "pointer-events": "none",
                     }));
@@ -1095,7 +1121,7 @@ window.dash_clientside.flowGantt = {
             "dominant-baseline": "auto",
             "font-size": "14",
             "font-weight": "bold",
-            fill: "#4B5563",
+            fill: _flowGanttTheme().mutedText,
             "pointer-events": "none",
         });
         totalLabel.textContent = "Total: " + totalDays + " days";
@@ -1479,7 +1505,7 @@ window.dash_clientside.flowGantt = {
             fig.layout.annotations.push({
                 x: 0.5, y: -0.22, xref: "paper", yref: "paper",
                 text: "B: n=" + bObj.n + (bObj.nCensored ? " (+" + bObj.nCensored + " in progress)" : "") + "  " + bAltL + ": " + bAltDisp + bU.suffix + "  (IQR: " + bP25 + "\u2013" + bP75 + bU.suffix + ")",
-                showarrow: false, font: {size: 11, color: "#4B5563", family: font},
+                showarrow: false, font: {size: 11, color: _flowGanttTheme().mutedText, family: font},
             });
             fig.layout.margin.b = 72;
             title = title + " (Compare)";
@@ -1522,7 +1548,7 @@ window.dash_clientside.flowGantt = {
                 {
                     x: 0.5, y: -0.15, xref: "paper", yref: "paper",
                     text: "n=" + tot.n + (tot.nCensored ? " (+" + tot.nCensored + " in progress)" : "") + "  " + tAltLabel + ": " + tAltDisp + tu.suffix + "  (IQR: " + tP25 + "\u2013" + tP75 + tu.suffix + ")",
-                    showarrow: false, font: {size: 12, color: "#4B5563", family: font},
+                    showarrow: false, font: {size: 12, color: _flowGanttTheme().mutedText, family: font},
                 }
             ];
             var tLay = {
@@ -1530,7 +1556,7 @@ window.dash_clientside.flowGantt = {
                 margin: {l: 48, r: 16, t: 32, b: 42},
                 plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
                 xaxis: {showgrid: false, title: tu.axisTitle, autorange: true},
-                yaxis: {gridcolor: "#F0F0F0", gridwidth: 1},
+                yaxis: {gridcolor: _flowGanttTheme().grid, gridwidth: 1},
                 autosize: true, showlegend: false, hovermode: "closest",
                 shapes: tShapes, annotations: tAnnots,
                 datarevision: (useKM ? "km" : "naive") + distType + (compareMode ? "cmp" : "") + Date.now(),
@@ -1542,7 +1568,7 @@ window.dash_clientside.flowGantt = {
                 var tDensityX = tu.scale === 1 ? tDensity.x : tDensity.x.map(function(v) { return v * tu.scale; });
                 var tDensityY = tu.scale === 1 ? tDensity.y : tDensity.y.map(function(v) { return v / tu.scale; });
                 var tRgba = (typeof hexToRgba === "function") ? hexToRgba(tot.color, 0.2) : tot.color;
-                tLay.yaxis = {gridcolor: "#F0F0F0", gridwidth: 1, title: "Density"};
+                tLay.yaxis = {gridcolor: _flowGanttTheme().grid, gridwidth: 1, title: "Density"};
                 tLay.datarevision += (bwSlider || 0);
                 return addBOverlay([{
                     data: [{
@@ -1558,7 +1584,7 @@ window.dash_clientside.flowGantt = {
             }
             var tHistDays = tu.scale === 1 ? tot.days.map(function(v) { return Math.round(v); }) : tot.days.map(function(v) { return Math.round(v * tu.scale); });
             var tRgbaH = (typeof hexToRgba === "function") ? hexToRgba(tot.color, 0.7) : tot.color;
-            tLay.yaxis = {gridcolor: "#F0F0F0", gridwidth: 1, title: "Patients"};
+            tLay.yaxis = {gridcolor: _flowGanttTheme().grid, gridwidth: 1, title: "Patients"};
             var tRange = Math.max.apply(null, tHistDays) - Math.min.apply(null, tHistDays);
             if (tRange <= 15) tLay.xaxis.dtick = 1;
             else if (tRange <= 30) tLay.xaxis.dtick = 2;
@@ -1604,7 +1630,7 @@ window.dash_clientside.flowGantt = {
             {
                 x: 0.5, y: -0.17, xref: "paper", yref: "paper",
                 text: "n=" + t.n + (t.nCensored ? " (+" + t.nCensored + " in progress)" : "") + "  " + altL + ": " + altDisp + u.suffix + "  (IQR: " + uP25 + "–" + uP75 + u.suffix + ")",
-                showarrow: false, font: {size: 12, color: "#4B5563", family: font},
+                showarrow: false, font: {size: 12, color: _flowGanttTheme().mutedText, family: font},
             }
         ];
 
@@ -1613,7 +1639,7 @@ window.dash_clientside.flowGantt = {
             margin: {l: 48, r: 16, t: 32, b: 42},
             plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
             xaxis: {showgrid: false, title: u.axisTitle, autorange: true},
-            yaxis: {gridcolor: "#F0F0F0", gridwidth: 1},
+            yaxis: {gridcolor: _flowGanttTheme().grid, gridwidth: 1},
             autosize: true, showlegend: false, hovermode: "closest",
             shapes: shapes, annotations: annots,
             datarevision: (useKM ? "km" : "naive") + distType + selectedFlow + (compareMode ? "cmp" : "") + Date.now(),
@@ -1626,7 +1652,7 @@ window.dash_clientside.flowGantt = {
             var densityX = u.scale === 1 ? density.x : density.x.map(function(v) { return v * u.scale; });
             var densityY = u.scale === 1 ? density.y : density.y.map(function(v) { return v / u.scale; });
             var rgba = (typeof hexToRgba === "function") ? hexToRgba(t.color, 0.2) : t.color;
-            baseLay.yaxis = {gridcolor: "#F0F0F0", gridwidth: 1, title: "Density"};
+            baseLay.yaxis = {gridcolor: _flowGanttTheme().grid, gridwidth: 1, title: "Density"};
             baseLay.datarevision += (bwSlider || 0);
             return addBOverlay([{
                 data: [{
@@ -1644,7 +1670,7 @@ window.dash_clientside.flowGantt = {
         // histogram — integer bins (days or hours)
         var histVals = u.scale === 1 ? t.days.map(function(v) { return Math.round(v); }) : t.days.map(function(v) { return Math.round(v * u.scale); });
         var rgbaH = (typeof hexToRgba === "function") ? hexToRgba(t.color, 0.7) : t.color;
-        baseLay.yaxis = {gridcolor: "#F0F0F0", gridwidth: 1, title: "Patients"};
+        baseLay.yaxis = {gridcolor: _flowGanttTheme().grid, gridwidth: 1, title: "Patients"};
         var hRange = Math.max.apply(null, histVals) - Math.min.apply(null, histVals);
         if (hRange <= 15) baseLay.xaxis.dtick = 1;
         else if (hRange <= 30) baseLay.xaxis.dtick = 2;
@@ -1832,7 +1858,7 @@ window.dash_clientside.flowGantt = {
             margin: {l: 48, r: 16, t: 32, b: 42},
             plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
             xaxis: {showgrid: false},
-            yaxis: {gridcolor: "#F0F0F0", gridwidth: 1, title: statLabel + " Days"},
+            yaxis: {gridcolor: _flowGanttTheme().grid, gridwidth: 1, title: statLabel + " Days"},
             autosize: true,
             showlegend: false,
             hovermode: "x unified",
@@ -2074,7 +2100,7 @@ window.dash_clientside.flowGantt = {
             margin: {l: 48, r: 16, t: 32, b: 42},
             plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
             xaxis: {showgrid: false},
-            yaxis: {gridcolor: "#F0F0F0", gridwidth: 1, title: "%",
+            yaxis: {gridcolor: _flowGanttTheme().grid, gridwidth: 1, title: "%",
                     rangemode: "tozero"},
             autosize: true,
             showlegend: series.length > 1,
