@@ -642,9 +642,14 @@ def layout():
                         n_clicks=0,
                         style={**_HEADER_BTN_STYLE, "padding": "0", "display": "flex", "alignItems": "flex-end"},
                     ),
-                    html.Img(
-                        src="/assets/radiantcare.png",
-                        style={"height": "38px", "objectFit": "contain", "display": "block"},
+                    html.A(
+                        html.Img(
+                            src="/assets/radiantcare.png",
+                            style={"height": "38px", "objectFit": "contain", "display": "block"},
+                        ),
+                        href="https://radiantcare.app",
+                        target="_blank",
+                        style={"display": "inline-flex", "alignItems": "center"},
                     ),
                     html.Div(
                         id="mobile-auth-user-chip",

@@ -68,9 +68,14 @@ def create_sidebar():
                     # Brand header with logo — themes to match sidebar
                     dmc.Group(
                         children=[
-                            html.Img(
-                                src="/assets/radiantcare.png",
-                                style={"height": "38px", "objectFit": "contain"},
+                            html.A(
+                                html.Img(
+                                    src="/assets/radiantcare.png",
+                                    style={"height": "38px", "objectFit": "contain"},
+                                ),
+                                href="https://radiantcare.app",
+                                target="_blank",
+                                style={"display": "inline-flex", "alignItems": "center"},
                             ),
                         ],
                         gap="sm",
