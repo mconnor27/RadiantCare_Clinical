@@ -123,9 +123,39 @@
         });
     }
 
+    // Hours-calendar shapes (gridlines + day separators) bake their colors
+    // in at build time. Restyle them on theme change so they track dark/light.
+    function restyleHoursCalendar() {
+        if (typeof Plotly === 'undefined' || !Plotly.relayout) return;
+        var isDark = currentTheme() === 'dark';
+        var hourGridColor = isDark ? "rgba(140,145,160,0.08)" : "#E5E7EB";
+        var daySepColor   = isDark ? "rgba(140,145,160,0.14)" : "#E5E7EB";
+        var wrappers = document.querySelectorAll('[id$="-chart-hours"]');
+        wrappers.forEach(function(wrap) {
+            var el = wrap.querySelector('.js-plotly-plot');
+            if (!el || !el.layout || !el.layout.shapes) return;
+            var updates = {};
+            el.layout.shapes.forEach(function(shape, idx) {
+                if (!shape || shape.type !== 'line' || !shape.line) return;
+                // Horizontal gridline: y0 === y1
+                if (shape.y0 === shape.y1) {
+                    updates['shapes[' + idx + '].line.color'] = hourGridColor;
+                }
+                // Vertical day separator: x0 === x1
+                else if (shape.x0 === shape.x1) {
+                    updates['shapes[' + idx + '].line.color'] = daySepColor;
+                }
+            });
+            if (Object.keys(updates).length > 0) {
+                try { Plotly.relayout(el, updates); } catch(e) {}
+            }
+        });
+    }
+
     function applyTheme() {
         restyleCharts();
         restyleGrids();
+        restyleHoursCalendar();
     }
 
     // --- Per-chart Plotly event hooks -----------------------------
