@@ -1255,3 +1255,22 @@ html[data-theme="dark"] #mobile-auth-user-btn svg { color: #D1D5DB !important; }
 .mantine-Popover-dropdown {
   z-index: 10000 !important;
 }
+
+/* Help modal: pin the loading spinner near the top of the scroll viewport
+   instead of centering it in the (tall) content div, where it would scroll
+   far below the fold.
+   IMPORTANT: only target the rendered spinner element (.dash-spinner).
+   Do NOT target ._dash-loading — Dash applies that class to any component
+   whose callback is running, so matching it would push actual page content
+   off-screen during normal re-renders. */
+.help-modal-loader {
+  position: relative;
+}
+.help-modal-loader > .dash-spinner {
+  position: sticky !important;
+  top: 24px !important;
+  left: 50% !important;
+  transform: translateX(-50%) !important;
+  margin: 24px auto 0 !important;
+  z-index: 10 !important;
+}

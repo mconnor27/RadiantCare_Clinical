@@ -721,30 +721,30 @@ FRONTEND_CONTENT = dmc.Stack(
 
             subheading("Census cumulative plot"),
             body(
-                "A running cumulative count across a single year, overlaid with "
-                "prior-year curves in a fading gray spectrum (most recent year "
-                "darkest, oldest year lightest). The x-axis is day-of-year (Jan "
-                "through Dec with month-start tick labels) so years align "
+                "A running cumulative count across the selected period, "
+                "overlaid with prior-period curves in a fading gray spectrum "
+                "(most recent period darkest, oldest lightest). The x-axis is "
+                "aligned by position within the period so the curves overlay "
                 "regardless of calendar date; the y-axis is the cumulative "
-                "count. The current year uses the purple brand color; prior "
-                "years sit behind it as a reference band. Controls:",
+                "count. The current period uses the purple brand color; prior "
+                "periods sit behind it as a reference band. Controls:",
             ),
             bullets([
-                "Max prior years slider — how many historical years to overlay "
-                "(1 to 5).",
-                "Projection toggle — extends the current year with a dashed "
-                "projection line to end-of-year based on the year-to-date pace.",
+                "Max prior periods slider — how many historical periods to "
+                "overlay (1 to 5).",
+                "Projection toggle — extends the current period with a dashed "
+                "projection line to the period end based on the "
+                "period-to-date pace.",
                 "Chart type toggle and smoothing slider — same as the trend plot.",
             ]),
             body(
-                "Appears on Home metric cards (Consultations, Bookings, "
-                "Simulations, Treatment Starts) when the \"current year\" "
-                "preset is active.",
+                "Appears on Home metric cards (e.g., Consultations, Bookings, "
+                "Simulations, Treatment Starts).",
             ),
             _screenshot(
                 "/assets/cumulative.png",
-                "Example — Cumulative Visit Volume with the current year "
-                "(2026) in brand purple overlaid on three prior years in a "
+                "Example — Cumulative Visit Volume with the current period "
+                "(2026) in brand purple overlaid on three prior periods in a "
                 "fading gray spectrum. Prior Periods / Slice By and Calendar "
                 "/ Rolling toggles switch the comparison basis.",
                 max_width="620px",

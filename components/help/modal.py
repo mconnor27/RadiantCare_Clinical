@@ -134,7 +134,13 @@ def _sidebar_item(page: dict, active_path: str) -> html.Div:
     )
 
 
-def _sidebar_section_header(name: str) -> dmc.Text:
+def _sidebar_section_header(name: str):
+    # Empty section name -> render a divider only (used to visually separate
+    # the Home entry from the OVERVIEW group above and the per-page sections
+    # below, without cluttering the sidebar with another label).
+    if not name:
+        return dmc.Divider(my=8, variant="solid",
+                           color=NEUTRAL.get("border", "#E5E7EB"))
     return dmc.Text(
         name,
         size="xs", fw=600,
@@ -214,6 +220,7 @@ def create_help_modal():
                             type="circle",
                             color=PRIMARY,
                             delay_show=150,
+                            parent_className="help-modal-loader",
                             children=html.Div(id="help-modal-content"),
                         ),
                     ),

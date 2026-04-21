@@ -19,17 +19,6 @@ from __future__ import annotations
 HELP_PAGES = [
     # OVERVIEW ---------------------------------------------------------------
     {
-        # Synthetic path — not a real Dash route. Data Sources renders a
-        # live filesystem scan of every CSV / XLSX feeding the dashboard
-        # (see data.py build_tabs).
-        "path": "/_data",
-        "label": "Data Sources",
-        "icon": "tabler:database-search",
-        "section": "OVERVIEW",
-        "sql": list(),            # unused — data.py defines build_tabs()
-        "ui_module": "data",
-    },
-    {
         # Synthetic path — not a real Dash route. The Overview entry documents
         # the project as a whole and uses its own Back-End / Front-End tabs
         # (see overview.py TABS).
@@ -41,10 +30,24 @@ HELP_PAGES = [
         "ui_module": "overview",
     },
     {
+        # Synthetic path — not a real Dash route. Data Sources renders a
+        # live filesystem scan of every CSV / XLSX feeding the dashboard
+        # (see data.py build_tabs).
+        "path": "/_data",
+        "label": "Data Sources",
+        "icon": "tabler:database-search",
+        "section": "OVERVIEW",
+        "sql": list(),            # unused — data.py defines build_tabs()
+        "ui_module": "data",
+    },
+
+    # HOME — its own bucket so it visually separates project-level docs
+    # (Overview / Data Sources) from per-page help below.
+    {
         "path": "/",
         "label": "Home",
         "icon": "tabler:home",
-        "section": "OVERVIEW",
+        "section": "",
         "sql": [
             "DailyVolume_Past",
             "Treatment_Detail",
