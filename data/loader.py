@@ -679,16 +679,20 @@ def load_downtime_fields_for_date(target_date):
     if not files:
         return pd.DataFrame()
 
-    # Scan files from newest to oldest; stop once we find the target date
+    # Scan files from newest to oldest; stop once we find the target date.
+    # usecols passed as a callable so sanitized (PHI_MODE) files that drop
+    # columns like PatientName don't raise.
+    wanted = set(_FIELDS_USECOLS)
+    usecols = lambda c: c in wanted
     for fpath in reversed(files):
         try:
             df = pd.read_csv(
-                fpath, usecols=_FIELDS_USECOLS,
+                fpath, usecols=usecols,
                 encoding="utf-8-sig", engine="pyarrow",
             )
         except Exception:
             df = pd.read_csv(
-                fpath, usecols=_FIELDS_USECOLS,
+                fpath, usecols=usecols,
                 encoding="utf-8-sig", on_bad_lines="skip", low_memory=False,
             )
 

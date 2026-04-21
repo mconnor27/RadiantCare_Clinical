@@ -784,8 +784,14 @@ def _build_availability_calendar(departments, consults_only=True, view="both"):
         )
 
         # Style both axes - time flows top to bottom (earliest week at top)
-        fig.update_xaxes(side="top", tickfont=dict(size=10))
-        fig.update_yaxes(tickfont=dict(size=10), autorange="reversed")
+        fig.update_xaxes(
+            side="top", tickfont=dict(size=10),
+            showline=False, showgrid=False, zeroline=False, ticks="",
+        )
+        fig.update_yaxes(
+            tickfont=dict(size=10), autorange="reversed",
+            showline=False, showgrid=False, zeroline=False, ticks="",
+        )
 
         return fig
 

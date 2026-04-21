@@ -128,14 +128,21 @@ def _build_patients_filter_bar():
                                 "Age" if PHI_MODE else "Age at",
                                 size="xs", c="#9CA3AF",
                             ),
-                            dmc.SegmentedControl(
-                                id="patients-age-ref",
-                                data=[
-                                    {"value": "first", "label": "First Appt"},
-                                    {"value": "last", "label": "Last Appt"},
-                                ],
-                                value="first",
-                                size="xs",
+                            # In PHI_MODE DOB is dropped and `AgeAtLoad` is the
+                            # only age signal — the First/Last Appt toggle is
+                            # meaningless, so hide it via a wrapper (keeping the
+                            # SegmentedControl in the tree so the existing
+                            # Input("patients-age-ref", "value") resolves).
+                            html.Div(
+                                dmc.SegmentedControl(
+                                    id="patients-age-ref",
+                                    data=[
+                                        {"value": "first", "label": "First Appt"},
+                                        {"value": "last", "label": "Last Appt"},
+                                    ],
+                                    value="first",
+                                    size="xs",
+                                ),
                                 style={"display": "none"} if PHI_MODE else None,
                             ),
                             dmc.RangeSlider(
@@ -221,8 +228,13 @@ layout = dmc.Stack(
             dmc.GridCol(kpi_placeholder(), span={"base": 12, "sm": 6, "md": 2.4}) for _ in range(5)
         ]),
 
-        # Map card with inline controls
+        # Map card with inline controls.
+        # In PHI_MODE the ZIP3 choropleth doesn't carry useful signal at the
+        # resolution it renders, so hide the entire card. Components stay in
+        # the tree (just display:none) so their Input/Output callback wiring
+        # still resolves without needing conditional callbacks.
         dmc.Paper(
+            style={"display": "none"} if PHI_MODE else None,
             children=[
                     dmc.Group(
                     justify="space-between",
@@ -1011,7 +1023,6 @@ def _build_patient_map(
     Output("patients-filter-age", "max"),
     Output("patients-filter-age", "marks"),
     Input("patients-interval", "n_intervals"),
-    Input("patients-geocode-check", "n_intervals"),
     Input("patients-date-slider", "value"),
     Input("patients-filter-date-preset", "value"),
     Input("patients-filter-department", "value"),
@@ -1022,7 +1033,7 @@ def _build_patient_map(
         (Output("patients-chart-age-dist-loading", "visible"), True, False),
     ],
 )
-def update_patients(_n_interval, _n_geocode, slider_val, date_preset,
+def update_patients(_n_interval, slider_val, date_preset,
                     departments, age_range, age_ref):
     """Update all Patients page components based on filters."""
     df = _load_and_prepare()
@@ -1104,6 +1115,27 @@ def update_patients(_n_interval, _n_geocode, slider_val, date_preset,
         else no_update
     )
     return kpis, geo_store, age_dist_data, top_cities, status_style, clear_selection, age_lo, age_hi, age_marks
+
+
+# ---------------------------------------------------------------------------
+# Callback: geocode progress poll
+#
+# Runs only until the geocode cache finishes warming. Updates the status
+# banner and disables itself — crucially, this is NOT wired into the main
+# update_patients callback, so it doesn't cause the whole page to re-render
+# (and the charts to flash) every 5 seconds.
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("patients-geocode-status", "style", allow_duplicate=True),
+    Output("patients-geocode-check", "disabled"),
+    Input("patients-geocode-check", "n_intervals"),
+    prevent_initial_call=True,
+)
+def _poll_geocode_status(_n):
+    if is_geocoding_complete():
+        return {"display": "none"}, True
+    return no_update, no_update
 
 
 # ---------------------------------------------------------------------------

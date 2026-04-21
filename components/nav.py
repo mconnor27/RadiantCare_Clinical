@@ -21,8 +21,8 @@ def _create_nav_link(page, active_path):
         styles={
             "root": {
                 "borderRadius": "6px",
-                "marginBottom": "2px",
-                "padding": "6px 8px 6px 12px",
+                "marginBottom": "0px",
+                "padding": "3px 8px 3px 12px",
                 "minHeight": "unset",
                 "color": "var(--sidebar-text)",
             },
@@ -39,8 +39,8 @@ def _create_section_header(section_name):
         fw=600,
         c="var(--sidebar-text-muted)",
         pl=12,
-        pt=10,
-        pb=3,
+        pt=6,
+        pb=1,
         style={"letterSpacing": "0.5px"},
     )
 
