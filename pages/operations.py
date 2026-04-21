@@ -1660,7 +1660,7 @@ def update_heatmap(*args):
                     xref="x domain",
                     yref="paper",
                     showarrow=False,
-                    font=dict(size=9, color="#374151", weight="bold"),
+                    font=dict(size=9, color="#9CA3AF", weight="bold"),
                     xanchor="center",
                     yanchor="bottom",
                 ))
