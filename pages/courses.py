@@ -1744,7 +1744,7 @@ def _build_ridgeline_figure(data, bw_factor=0.5, mode="density", theme="light"):
     """Build the ridgeline Plotly figure from store data + bandwidth factor."""
     from scipy.stats import gaussian_kde
     _is_dark = (theme or "light") == "dark"
-    _ridge_border = "rgba(160,170,185,0.45)" if _is_dark else "rgba(255,255,255,0.45)"
+    _ridge_border = "rgba(230,234,245,0.75)" if _is_dark else "rgba(255,255,255,0.45)"
 
     if not data:
         fig = empty_figure("No fractions data available")
@@ -3859,7 +3859,7 @@ clientside_callback(
                 layout: {
                     font: {family: "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif", size: 12},
                     margin: {l: 48, r: 16, t: 24, b: 40},
-                    plot_bgcolor: "#FFFFFF", paper_bgcolor: "#FFFFFF",
+                    plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
                     xaxis: {visible: false}, yaxis: {visible: false},
                     annotations: [{text: "No fractions data", showarrow: false,
                         xref: "paper", yref: "paper", x: 0.5, y: 0.5,
@@ -3901,7 +3901,7 @@ clientside_callback(
                 layout: {
                     font: {family: "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif", size: 12},
                     margin: {l: 48, r: 16, t: 24, b: 40},
-                    plot_bgcolor: "#FFFFFF", paper_bgcolor: "#FFFFFF",
+                    plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
                     xaxis: {visible: false}, yaxis: {visible: false},
                     annotations: [{text: "No quit rate data", showarrow: false,
                         xref: "paper", yref: "paper", x: 0.5, y: 0.5,
@@ -4237,6 +4237,7 @@ def _update_technique_dist(data, counting, mode, agg, smooth, chart_type, stack_
         ),
         margin=dict(l=48, r=16, t=56, b=40),
         hovermode="x unified",
+        hoverdistance=-1,
     )
     if mode == "pct" and chart_type != "line":
         fig.update_yaxes(range=[0, 100])

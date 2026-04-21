@@ -852,7 +852,7 @@ def _upcoming_paper(label, value, date_lines, accent_color):
     if date_lines:
         for line in date_lines:
             children.append(
-                dmc.Text(line, size="xs", c=NEUTRAL["text_muted"], lh=1.4)
+                dmc.Text(line, size="xs", c=NEUTRAL["text_secondary"], lh=1.4)
             )
     return dmc.Paper(
         children=[dmc.Stack(children=children, gap=2)],

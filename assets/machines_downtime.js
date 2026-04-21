@@ -53,6 +53,73 @@ function _aggregateDates(rawDates, valueSets, agg) {
 
 window.dash_clientside = window.dash_clientside || {};
 
+// ---- Dark-mode palette for SVG renderers on the machines page ----------
+function _mIsDark() {
+    return (typeof document !== "undefined") &&
+        document.documentElement.getAttribute("data-theme") === "dark";
+}
+function _mTheme() {
+    return _mIsDark() ? {
+        cardBg:      "#1F222A",
+        cardBgRaw:   "#1F222A",
+        cardBorder:  "#2D3039",
+        panelBg:     "#262932",
+        stripRowBg:  "#262932",
+        headText:    "#E6E7EC",
+        bodyText:    "#C8CAD1",
+        secText:     "#A1A4AE",
+        faintText:   "#8A8D97",
+        axisText:    "#A1A4AE",
+        grid:        "#2D3039",
+        gridLight:   "#262932",
+        emptyCell:   "#2D3039",
+        zebra:       "rgba(255,255,255,0.03)",
+        monthSep:    "#3A3D46",
+        skeletonBg:  "#2D3039",
+        tickBg:      "#1F222A",
+    } : {
+        cardBg:      "white",
+        cardBgRaw:   "#FFFFFF",
+        cardBorder:  "#E5E7EB",
+        panelBg:     "#fafafa",
+        stripRowBg:  "#F3F4F6",
+        headText:    "#1F2937",
+        bodyText:    "#374151",
+        secText:     "#6B7280",
+        faintText:   "#9CA3AF",
+        axisText:    "#9CA3AF",
+        grid:        "#E5E7EB",
+        gridLight:   "#F3F4F6",
+        emptyCell:   "#EBEDF0",
+        zebra:       "rgba(0,0,0,0.02)",
+        monthSep:    "#D1D5DB",
+        skeletonBg:  "#E5E7EB",
+        tickBg:      "#FFFFFF",
+    };
+}
+// Cache of last render args so we can re-invoke on theme change
+window._mRenderCache = window._mRenderCache || {};
+
+// Re-render SVG-based views when the theme flips. Plotly charts are handled
+// by assets/02_theme.js via the plotly_afterplot hook.
+(function() {
+    if (typeof document === "undefined" || !document.documentElement) return;
+    var obs = new MutationObserver(function(muts) {
+        for (var i = 0; i < muts.length; i++) {
+            if (muts[i].attributeName !== "data-theme") continue;
+            var ns = window.dash_clientside && window.dash_clientside.machinesDowntime;
+            if (!ns) return;
+            var c = window._mRenderCache;
+            try { if (c.yearCards !== undefined) ns.renderYearCards(c.yearCards); } catch(e) {}
+            try { if (c.heatmap)  ns.renderMonthHeatmap(c.heatmap.daily, c.heatmap.drill); } catch(e) {}
+            try { if (c.timeline) ns.renderTimelineStrip(c.timeline.data, c.timeline.showUnmatched); } catch(e) {}
+            try { if (c.strip !== undefined)    ns.renderStrip(c.strip); } catch(e) {}
+            return;
+        }
+    });
+    obs.observe(document.documentElement, { attributes: true });
+})();
+
 // Skeleton placeholder helpers for loading state
 var _skeletonBar = function(w, h, x, y) {
     return '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h +
@@ -211,6 +278,8 @@ window.dash_clientside.machinesDowntime = {
     renderYearCards: function(agg) {
         var container = document.getElementById("machines-year-cards-container");
         if (!container) return window.dash_clientside.no_update;
+        window._mRenderCache.yearCards = agg;
+        var T = _mTheme();
 
         // null = initial load (show skeleton), object = loaded
         if (agg === null || agg === undefined) {
@@ -263,19 +332,19 @@ window.dash_clientside.machinesDowntime = {
 
             // Card background
             svg += '<rect x="0" y="0" width="' + cardW + '" height="' + cardH +
-                   '" rx="6" fill="white" stroke="#E5E7EB" stroke-width="1" class="machines-year-card"/>';
+                   '" rx="6" fill="' + T.cardBg + '" stroke="' + T.cardBorder + '" stroke-width="1" class="machines-year-card"/>';
 
             // Accent left bar
             svg += '<rect x="0" y="0" width="4" height="' + cardH + '" rx="2" fill="' + accentColor + '"/>';
 
             // Year label
-            svg += '<text x="14" y="24" font-size="20" font-weight="700" fill="#1F2937">' + yr.year + '</text>';
+            svg += '<text x="14" y="24" font-size="20" font-weight="700" fill="' + T.headText + '">' + yr.year + '</text>';
 
             // Stats
-            svg += '<text x="14" y="42" font-size="13" fill="#6B7280">' +
+            svg += '<text x="14" y="42" font-size="13" fill="' + T.secText + '">' +
                    yr.hours.toFixed(0) + ' hrs  \u00B7  ' + yr.availability.toFixed(1) + '% avail</text>';
 
-            svg += '<text x="14" y="58" font-size="11" fill="#9CA3AF">' +
+            svg += '<text x="14" y="58" font-size="11" fill="' + T.faintText + '">' +
                    yr.gapCount + ' events' + (yr.fullDayCount > 0 ? '  \u00B7  ' + yr.fullDayCount + ' full-day' : '') + '</text>';
 
             // Monthly bar sparkline
@@ -343,7 +412,7 @@ window.dash_clientside.machinesDowntime = {
             });
             wrap.addEventListener("mouseleave", function() {
                 if (bgRect) {
-                    bgRect.setAttribute("stroke", "#E5E7EB");
+                    bgRect.setAttribute("stroke", T.cardBorder);
                     bgRect.setAttribute("stroke-width", "1");
                     bgRect.style.filter = "";
                 }
@@ -372,6 +441,8 @@ window.dash_clientside.machinesDowntime = {
     // Each month: columns = M T W T F, rows = weeks (traditional calendar)
     // -----------------------------------------------------------------------
     renderMonthHeatmap: function(daily, drill) {
+        window._mRenderCache.heatmap = {daily: daily, drill: drill};
+        var T = _mTheme();
         var container = document.getElementById("machines-month-heatmap-container");
         if (!container) return window.dash_clientside.no_update;
 
@@ -447,7 +518,7 @@ window.dash_clientside.machinesDowntime = {
         var totalH = monthH;
 
         function cellColor(mins) {
-            if (mins <= 0) return "#EBEDF0";
+            if (mins <= 0) return T.emptyCell;
             var t = Math.min(mins / maxMin, 1);
             if (t < 0.2) return "#FDBA74";   // light orange
             if (t < 0.45) return "#F97316";   // orange
@@ -465,14 +536,14 @@ window.dash_clientside.machinesDowntime = {
 
             // Month label (centered above grid)
             svg += '<text x="' + (ox + monthW / 2) + '" y="' + (oy + 11) +
-                   '" text-anchor="middle" font-size="11" fill="#374151" font-weight="600">' +
+                   '" text-anchor="middle" font-size="11" fill="' + T.headText + '" font-weight="600">' +
                    monthNames[mo] + '</text>';
 
             // Day-of-week column headers
             for (var dc = 0; dc < 5; dc++) {
                 var hx = ox + dc * (cell + cellGap) + cell / 2;
                 svg += '<text x="' + hx + '" y="' + (oy + labelH + 8) +
-                       '" text-anchor="middle" font-size="7" fill="#9CA3AF">' + dayLabels[dc] + '</text>';
+                       '" text-anchor="middle" font-size="7" fill="' + T.faintText + '">' + dayLabels[dc] + '</text>';
             }
 
             // Grid cells: rows = weeks, columns = M T W T F
@@ -533,7 +604,7 @@ window.dash_clientside.machinesDowntime = {
         var cells = container.querySelectorAll(".hm-cell");
         cells.forEach(function(el) {
             el.addEventListener("mouseenter", function(e) {
-                el.setAttribute("stroke", "#374151");
+                el.setAttribute("stroke", T.headText);
                 el.setAttribute("stroke-width", "1.5");
                 showHmTip(e, el.getAttribute("data-tip"));
             });
@@ -590,9 +661,11 @@ window.dash_clientside.machinesDowntime = {
     renderTimelineStrip: function(data, showUnmatched) {
         var container = document.getElementById("machines-timeline-svg-container");
         if (!container) return window.dash_clientside.no_update;
+        window._mRenderCache.timeline = {data: data, showUnmatched: showUnmatched};
+        var T = _mTheme();
 
         if (!data || !data.machines || data.machines.length === 0) {
-            container.innerHTML = '<div style="text-align:center;color:#9CA3AF;padding:40px;">No timeline data for this day</div>';
+            container.innerHTML = '<div style="text-align:center;color:' + T.faintText + ';padding:40px;">No timeline data for this day</div>';
             return window.dash_clientside.no_update;
         }
 
@@ -671,7 +744,7 @@ window.dash_clientside.machinesDowntime = {
 
         var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="' + height + '" ' +
                   'viewBox="0 0 ' + width + ' ' + height + '" preserveAspectRatio="none" ' +
-                  'style="font-family: Inter, sans-serif; background: #fafafa; border-radius: 8px; display: block;">';
+                  'style="font-family: Inter, sans-serif; background: ' + T.panelBg + '; border-radius: 8px; display: block;">';
 
         // Hour gridlines and labels — dynamic range
         var firstHour = Math.ceil(startMin / 60);
@@ -680,10 +753,10 @@ window.dash_clientside.machinesDowntime = {
             var x = timeToX(String(h).padStart(2, "0") + ":00:00");
             if (x !== null) {
                 svg += '<line x1="' + x + '" y1="' + margin.top + '" x2="' + x + '" y2="' + (height - margin.bottom) + '" ' +
-                       'stroke="#E5E7EB" stroke-width="1" stroke-dasharray="2,2"/>';
+                       'stroke="' + T.grid + '" stroke-width="1" stroke-dasharray="2,2"/>';
                 var label = h > 12 ? (h - 12) + " PM" : (h === 12 ? "12 PM" : h + " AM");
                 svg += '<text x="' + x + '" y="' + (margin.top - 8) + '" text-anchor="middle" ' +
-                       'font-size="10" fill="#9CA3AF">' + label + '</text>';
+                       'font-size="10" fill="' + T.faintText + '">' + label + '</text>';
             }
         }
 
@@ -692,10 +765,10 @@ window.dash_clientside.machinesDowntime = {
             var y = machineY(machines[i]);
             if (i % 2 === 0) {
                 svg += '<rect x="' + margin.left + '" y="' + y + '" width="' + chartW + '" height="' + rowHeight + '" ' +
-                       'fill="rgba(0,0,0,0.02)"/>';
+                       'fill="' + T.zebra + '"/>';
             }
             svg += '<text x="' + (margin.left - 8) + '" y="' + (y + rowHeight / 2 + 4) + '" ' +
-                   'text-anchor="end" font-size="11" fill="#374151" font-weight="500">' + machines[i] + '</text>';
+                   'text-anchor="end" font-size="11" fill="' + T.bodyText + '" font-weight="500">' + machines[i] + '</text>';
         }
 
         // Gap bands — with data attributes for hover
@@ -829,7 +902,7 @@ window.dash_clientside.machinesDowntime = {
             if (item.type === "gap") { legX += item.size; continue; }
             var sw = item.stroke ? ' stroke="#ccc" stroke-width="0.5"' : '';
             svg += '<rect x="' + legX + '" y="' + (legY - 9) + '" width="12" height="12" fill="' + item.color + '" rx="2"' + sw + '/>';
-            svg += '<text x="' + (legX + 17) + '" y="' + (legY + 1) + '" font-size="' + legFS + '" fill="#6B7280">' + item.label + '</text>';
+            svg += '<text x="' + (legX + 17) + '" y="' + (legY + 1) + '" font-size="' + legFS + '" fill="' + T.secText + '">' + item.label + '</text>';
             var tw = legCanvas.measureText(item.label).width;
             legX += 17 + tw + legPad;
         }
@@ -915,6 +988,7 @@ window.dash_clientside.machinesDowntime = {
     // Downtime trend chart — daily data with D/W/M aggregation
     // -----------------------------------------------------------------------
     renderTrend: function(data, smoothPct, chartType, agg, stackMode, metric, currentFig) {
+        var T = _mTheme();
         if (!data || !data.dates || data.dates.length === 0) {
             return {
                 data: [],
@@ -999,12 +1073,12 @@ window.dash_clientside.machinesDowntime = {
                 autosize: true,
                 margin: {l: 50, r: 20, t: 10, b: 40},
                 barmode: isStacked ? "stack" : "group",
-                xaxis: {gridcolor: "#F3F4F6", zeroline: false},
-                yaxis: {title: isEvents ? "Events" : "Downtime Hours", gridcolor: "#F3F4F6", zeroline: false, rangemode: "tozero"},
+                xaxis: {gridcolor: T.grid, linecolor: T.grid, zeroline: false, tickfont: {color: T.headText}},
+                yaxis: {title: {text: isEvents ? "Events" : "Downtime Hours", font: {color: T.headText}}, gridcolor: T.grid, linecolor: T.grid, zeroline: false, rangemode: "tozero", tickfont: {color: T.headText}},
                 plot_bgcolor: "rgba(0,0,0,0)",
                 paper_bgcolor: "rgba(0,0,0,0)",
-                legend: {orientation: "h", y: 1.12, x: 0.5, xanchor: "center"},
-                font: {family: "Inter, system-ui, sans-serif", size: 12, color: "#374151"},
+                legend: {orientation: "h", y: 1.12, x: 0.5, xanchor: "center", font: {color: T.headText}},
+                font: {family: "Inter, system-ui, sans-serif", size: 12, color: T.headText},
                 hoverlabel: {font: {family: "Inter, system-ui, sans-serif"}},
                 hovermode: "x unified",
             }
@@ -1015,6 +1089,7 @@ window.dash_clientside.machinesDowntime = {
     // Patient impact chart — daily data with D/W/M aggregation
     // -----------------------------------------------------------------------
     renderPatientImpact: function(data, smoothPct, chartType, agg, mode, stackMode, _currentFig) {
+        var T = _mTheme();
         if (!data || !data.dates || data.dates.length === 0) {
             return {
                 data: [],
@@ -1102,12 +1177,12 @@ window.dash_clientside.machinesDowntime = {
                 autosize: true,
                 margin: {l: 50, r: 20, t: 10, b: 40},
                 barmode: isStacked ? "stack" : "group",
-                xaxis: {gridcolor: "#F3F4F6", zeroline: false},
-                yaxis: {title: yTitle, gridcolor: "#F3F4F6", zeroline: false, rangemode: "tozero"},
+                xaxis: {gridcolor: T.grid, linecolor: T.grid, zeroline: false, tickfont: {color: T.headText}},
+                yaxis: {title: {text: yTitle, font: {color: T.headText}}, gridcolor: T.grid, linecolor: T.grid, zeroline: false, rangemode: "tozero", tickfont: {color: T.headText}},
                 plot_bgcolor: "rgba(0,0,0,0)",
                 paper_bgcolor: "rgba(0,0,0,0)",
-                legend: {orientation: "h", y: 1.12, x: 0.5, xanchor: "center"},
-                font: {family: "Inter, system-ui, sans-serif", size: 12, color: "#374151"},
+                legend: {orientation: "h", y: 1.12, x: 0.5, xanchor: "center", font: {color: T.headText}},
+                font: {family: "Inter, system-ui, sans-serif", size: 12, color: T.headText},
                 hoverlabel: {font: {family: "Inter, system-ui, sans-serif"}},
                 hovermode: "x unified",
             }
@@ -1125,6 +1200,8 @@ window.dash_clientside.machinesDowntime = {
     renderStrip: function(data) {
         var container = document.getElementById("machines-strip-svg-container");
         if (!container) return window.dash_clientside.no_update;
+        window._mRenderCache.strip = data;
+        var T = _mTheme();
 
         // null = initial load (show skeleton), object = loaded
         if (data === null || data === undefined) {
@@ -1210,11 +1287,11 @@ window.dash_clientside.machinesDowntime = {
 
             // Light background
             svg += '<rect x="' + margin.left + '" y="' + rTop + '" width="' + chartW +
-                   '" height="' + rowHeight + '" fill="#F3F4F6" rx="3"/>';
+                   '" height="' + rowHeight + '" fill="' + T.stripRowBg + '" rx="3"/>';
 
             // Machine label — positioned left of time labels
             svg += '<text x="' + (margin.left - 24) + '" y="' + (rTop + rowHeight / 2 + 4) +
-                   '" text-anchor="end" font-size="11" fill="#374151" font-weight="600">' +
+                   '" text-anchor="end" font-size="11" fill="' + T.bodyText + '" font-weight="600">' +
                    machine + '</text>';
 
             // Time labels (left axis — every 2 hours, dynamic per machine)
@@ -1228,10 +1305,10 @@ window.dash_clientside.machinesDowntime = {
                 var tickLabel = h === 0 ? "12a" : h < 12 ? h + "a" : h === 12 ? "12p" : (h - 12) + "p";
                 var tickY = tY(tickMin, rTop);
                 svg += '<text x="' + (margin.left - 3) + '" y="' + (tickY + 4) +
-                       '" text-anchor="end" font-size="10" fill="#9CA3AF">' + tickLabel + '</text>';
+                       '" text-anchor="end" font-size="10" fill="' + T.faintText + '">' + tickLabel + '</text>';
                 svg += '<line x1="' + margin.left + '" y1="' + tickY +
                        '" x2="' + (margin.left + chartW) + '" y2="' + tickY +
-                       '" stroke="#E5E7EB" stroke-width="0.5"/>';
+                       '" stroke="' + T.grid + '" stroke-width="0.5"/>';
             }
 
             // Helpers: earliest/latest activity on a day (treatment + gaps)
@@ -1395,10 +1472,10 @@ window.dash_clientside.machinesDowntime = {
                     ? monthNames[mo] + " \u2019" + String(yr).slice(-2)
                     : monthNames[mo];
                 lastLabelYear = yr;
-                svg += '<text x="' + lx + '" y="' + axisY + '" font-size="9" fill="#6B7280">' +
+                svg += '<text x="' + lx + '" y="' + axisY + '" font-size="9" fill="' + T.secText + '">' +
                        label + '</text>';
                 svg += '<line x1="' + lx + '" y1="' + margin.top + '" x2="' + lx +
-                       '" y2="' + (height - margin.bottom) + '" stroke="#D1D5DB" stroke-width="0.5" stroke-opacity="0.5"/>';
+                       '" y2="' + (height - margin.bottom) + '" stroke="' + T.monthSep + '" stroke-width="0.5" stroke-opacity="0.5"/>';
                 lastLabelX = lx;
             }
         }
@@ -1418,7 +1495,7 @@ window.dash_clientside.machinesDowntime = {
         for (var sli = 0; sli < sLegItems.length; sli++) {
             svg += '<rect x="' + sLegX + '" y="' + (sLegY - 9) + '" width="10" height="10" fill="' +
                    sLegItems[sli].c + '" rx="2"/>';
-            svg += '<text x="' + (sLegX + 15) + '" y="' + sLegY + '" font-size="11" fill="#6B7280">' +
+            svg += '<text x="' + (sLegX + 15) + '" y="' + sLegY + '" font-size="11" fill="' + T.secText + '">' +
                    sLegItems[sli].l + '</text>';
             sLegX += 15 + sLegCanvas.measureText(sLegItems[sli].l).width + 22;
         }

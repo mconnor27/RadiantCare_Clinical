@@ -31,18 +31,36 @@
     <string>cd /Users/Mike/RadiantCare_Clinical &amp;&amp; /Users/Mike/RadiantCare_Clinical/.venv/bin/python scripts/sanitize.py --upload</string>
   </array>
 
-  <!-- Run daily at 4:00 AM local time — after ARIA's overnight exports land. -->
+  <!-- Run daily at 4:00 AM (after ARIA's overnight exports land), plus
+       catch-up fires at noon and 6pm so a laptop that was closed at 4am
+       still gets a sanitized refresh later in the day. launchd coalesces
+       missed StartCalendarInterval events on wake, so the first wake
+       after 4am also triggers a run. -->
   <key>StartCalendarInterval</key>
-  <dict>
-    <key>Hour</key>
-    <integer>4</integer>
-    <key>Minute</key>
-    <integer>0</integer>
-  </dict>
+  <array>
+    <dict>
+      <key>Hour</key>
+      <integer>4</integer>
+      <key>Minute</key>
+      <integer>0</integer>
+    </dict>
+    <dict>
+      <key>Hour</key>
+      <integer>12</integer>
+      <key>Minute</key>
+      <integer>0</integer>
+    </dict>
+    <dict>
+      <key>Hour</key>
+      <integer>18</integer>
+      <key>Minute</key>
+      <integer>0</integer>
+    </dict>
+  </array>
 
-  <!-- If the laptop was asleep at 4am, run as soon as it wakes. -->
+  <!-- Also run once when the agent is (re)loaded, e.g., after login. -->
   <key>RunAtLoad</key>
-  <false/>
+  <true/>
 
   <!-- Logs — tail these to debug: tail -f /tmp/radiantcare_sanitize.log -->
   <key>StandardOutPath</key>

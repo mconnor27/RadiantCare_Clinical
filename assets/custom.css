@@ -222,6 +222,44 @@ body {
     z-index: 5 !important;
 }
 
+/* Dark-mode placeholder state for charts.
+   Before Plotly applies the transparent paper/plot_bgcolor from the figure,
+   the default empty render shows a white rectangle that flashes bright in
+   dark mode. Paint the wrapper and Plotly's internal bg layer dark so the
+   pre-render state matches the themed card it sits in. */
+[data-theme="dark"] .js-plotly-plot,
+[data-theme="dark"] .dash-graph,
+[data-theme="dark"] .js-plotly-plot .plot-container,
+[data-theme="dark"] .js-plotly-plot .svg-container {
+    background-color: var(--bg-card);
+}
+[data-theme="dark"] .js-plotly-plot .main-svg .bg,
+[data-theme="dark"] .js-plotly-plot .bglayer > rect,
+[data-theme="dark"] .js-plotly-plot rect.bg {
+    fill: transparent !important;
+}
+/* Force the main SVG's own backdrop transparent — Plotly sets an inline
+   `background` on the <svg> element based on paper_bgcolor; CSS overrides it. */
+[data-theme="dark"] .js-plotly-plot .main-svg {
+    background-color: transparent !important;
+}
+
+/* DMC LoadingOverlay is light by default regardless of our data-theme swap,
+   since Mantine's own color scheme isn't toggled. Darken it in dark mode
+   so the blur/overlay doesn't flash white over chart cards. */
+[data-theme="dark"] .mantine-LoadingOverlay-overlay {
+    background-color: rgba(31, 34, 42, 0.75) !important;
+}
+
+/* Dash's built-in dcc.Loading spinner wrapper also paints white. */
+[data-theme="dark"] ._dash-loading-callback,
+[data-theme="dark"] .dash-spinner,
+[data-theme="dark"] .dash-sk-circle,
+[data-theme="dark"] .dash-loading-parent,
+[data-theme="dark"] .dash-loading-children {
+    background-color: transparent !important;
+}
+
 /* AG Grid theme overrides */
 .ag-theme-alpine .ag-header-cell-label,
 .ag-theme-alpine-dark .ag-header-cell-label {

@@ -80,37 +80,67 @@
         if (typeof Plotly === 'undefined' || !Plotly.relayout) return;
         var p = paletteFor(currentTheme());
 
-        function buildUpdate(el) {
-            // Do NOT touch paper_bgcolor / plot_bgcolor — charts now use
-            // rgba(0,0,0,0) and inherit from the themed card via CSS.
-            var update = {
-                'font.color':            p.font,
-                'legend.font.color':     p.font,
-                'legend.bgcolor':        'rgba(0,0,0,0)',
-                'hoverlabel.bgcolor':    p.hoverBg,
-                'hoverlabel.bordercolor':p.hoverBord,
-                'hoverlabel.font.color': p.hoverFont,
-                'mapbox.style':          p.mapboxStyle,
-            };
-            var layout = (el && el.layout) || {};
-            Object.keys(layout).forEach(function(key) {
+        // Directly mutate the chart's live layout object and force a redraw.
+        // Using Plotly.relayout with nested dot-paths was unreliable here —
+        // some charts (e.g. flow_gantt distribution/trend) kept their old
+        // gridcolor/linecolor after toggle until a full page reload.
+        // Mutating the layout in place + Plotly.redraw guarantees the axis
+        // paths get repainted with the new theme colors.
+        function applyThemeToLayout(L) {
+            if (!L) return;
+            if (L.font) L.font.color = p.font;
+            else L.font = {color: p.font};
+            if (L.legend) {
+                if (L.legend.font) L.legend.font.color = p.font;
+                else L.legend.font = {color: p.font};
+                L.legend.bgcolor = 'rgba(0,0,0,0)';
+            }
+            if (L.hoverlabel) {
+                L.hoverlabel.bgcolor = p.hoverBg;
+                L.hoverlabel.bordercolor = p.hoverBord;
+                if (L.hoverlabel.font) L.hoverlabel.font.color = p.hoverFont;
+                else L.hoverlabel.font = {color: p.hoverFont};
+            }
+            if (L.mapbox) L.mapbox.style = p.mapboxStyle;
+
+            Object.keys(L).forEach(function(key) {
                 if (/^(x|y)axis\d*$/.test(key)) {
-                    update[key + '.gridcolor']        = p.grid;
-                    update[key + '.linecolor']        = p.axisLine;
-                    update[key + '.zerolinecolor']    = p.grid;
-                    update[key + '.tickfont.color']   = p.font;
-                    update[key + '.title.font.color'] = p.font;
+                    var ax = L[key];
+                    if (!ax || typeof ax !== 'object') return;
+                    ax.gridcolor = p.grid;
+                    ax.linecolor = p.axisLine;
+                    ax.zerolinecolor = p.grid;
+                    if (ax.tickfont) ax.tickfont.color = p.font;
+                    else ax.tickfont = {color: p.font};
+                    if (ax.title && typeof ax.title === 'object') {
+                        if (ax.title.font) ax.title.font.color = p.font;
+                        else ax.title.font = {color: p.font};
+                    }
                 }
             });
+
             // Remap any annotation font colors from our metric palette
             // (e.g. PRIMARY #7C2A83 stays dark on dark bg — use brighter #B866BE).
-            Object.assign(update, collectAnnotationUpdates(layout, currentTheme()));
-            return update;
+            var anns = L.annotations || [];
+            for (var i = 0; i < anns.length; i++) {
+                var ann = anns[i];
+                if (!ann || !ann.font || !ann.font.color) continue;
+                var remapped = remapAnnotationColor(ann.font.color, currentTheme());
+                if (remapped) ann.font.color = remapped;
+            }
         }
 
         var charts = document.querySelectorAll('.js-plotly-plot');
+        var theme = currentTheme();
         charts.forEach(function(el) {
-            try { Plotly.relayout(el, buildUpdate(el)); } catch(e) {}
+            try {
+                // Skip if this chart is already on the current theme (avoids
+                // redundant redraws from the 2s interval sweeper).
+                if (el._rcThemeApplied === theme) return;
+                applyThemeToLayout(el.layout);
+                Plotly.redraw(el);
+                el._rcThemeApplied = theme;
+            } catch(e) {}
         });
     }
 
@@ -201,39 +231,16 @@
                     var p = paletteFor(currentTheme());
                     var cur = el.layout || {};
                     var curFont = (cur.font && cur.font.color) || '';
-                    var fontOk = curFont === p.font;
-
-                    // Always check for metric-colored annotations that need
-                    // remapping; only skip if both font IS themed AND every
-                    // annotation already uses a theme-safe variant. (Clientside
-                    // re-renders often bake in PRIMARY purple that needs the
-                    // bright dark-mode variant.)
-                    var annoUpdates = collectAnnotationUpdates(cur, currentTheme());
-                    var hasAnno = Object.keys(annoUpdates).length > 0;
-                    if (fontOk && !hasAnno) return;
-
-                    var update = fontOk ? {} : {
-                        'font.color':            p.font,
-                        'legend.font.color':     p.font,
-                        'legend.bgcolor':        'rgba(0,0,0,0)',
-                        'hoverlabel.bgcolor':    p.hoverBg,
-                        'hoverlabel.bordercolor':p.hoverBord,
-                        'hoverlabel.font.color': p.hoverFont,
-                        'mapbox.style':          p.mapboxStyle,
-                    };
-                    if (!fontOk) {
-                        Object.keys(cur).forEach(function(key) {
-                            if (/^(x|y)axis\d*$/.test(key)) {
-                                update[key + '.gridcolor']        = p.grid;
-                                update[key + '.linecolor']        = p.axisLine;
-                                update[key + '.zerolinecolor']    = p.grid;
-                                update[key + '.tickfont.color']   = p.font;
-                                update[key + '.title.font.color'] = p.font;
-                            }
-                        });
+                    // If this redraw was produced by a clientside callback
+                    // that baked in the wrong theme colors, invalidate the
+                    // applied-theme marker so restyleCharts will pick it up
+                    // on the next sweep (or mutation-observer firing).
+                    if (curFont !== p.font) {
+                        el._rcThemeApplied = null;
+                        // Kick off an immediate restyle so the user doesn't
+                        // have to wait for the 2s sweep.
+                        restyleCharts();
                     }
-                    Object.assign(update, annoUpdates);
-                    Plotly.relayout(el, update);
                 } catch(e) {}
             });
             hookedCharts.add(el);

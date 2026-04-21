@@ -281,12 +281,13 @@ layout = dmc.Stack(
                                         # Filter dropdown panel
                                         html.Div(
                                             [
-                                                dmc.ActionIcon(
-                                                    DashIconify(icon="mdi:filter-variant", width=16),
+                                                dmc.Button(
+                                                    "Filter",
                                                     id=f"{PAGE_ID}-ah-filter-btn",
-                                                    variant="subtle",
-                                                    color="gray",
-                                                    size="sm",
+                                                    leftSection=DashIconify(icon="mdi:filter-variant", width=14),
+                                                    variant="filled",
+                                                    color="violet",
+                                                    size="xs",
                                                 ),
                                                 html.Div(
                                                     dmc.Paper(
@@ -974,7 +975,7 @@ def _kpi_vacation_days(df, df_prior):
             spark_data = {
                 "labels": [d.isoformat() for d in weekly.index],
                 "values": weekly.tolist(),
-                "color": NEUTRAL["text_muted"],
+                "color": "#9CA3AF",
             }
 
     return kpi_card(
