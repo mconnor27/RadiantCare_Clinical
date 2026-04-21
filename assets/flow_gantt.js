@@ -69,6 +69,9 @@ function _flowGanttTheme() {
         isDark: isDark,
         // Plotly gridlines on histogram/duration-trend panels
         grid: isDark ? "#262932" : "#F0F0F0",
+        // Default Plotly font color (axis ticks, titles) — matches the
+        // light/dark palette in assets/02_theme.js.
+        plotText: isDark ? "#E6E7EC" : "#1A1A2E",
         // Text colors for mid-gray labels (totals, sub-stats)
         mutedText: isDark ? "#D1D5DB" : "#4B5563",
         // Flow band (bezier connector between stages) — brighter in dark
@@ -1385,7 +1388,7 @@ window.dash_clientside.flowGantt = {
             return {
                 data: [],
                 layout: {
-                    font: {family: font, size: 12},
+                    font: {family: font, size: 12, color: _flowGanttTheme().plotText},
                     margin: {l: 48, r: 16, t: 16, b: 32},
                     plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
                     xaxis: {visible: false}, yaxis: {visible: false},
@@ -1569,7 +1572,7 @@ window.dash_clientside.flowGantt = {
                 }
             ];
             var tLay = {
-                font: {family: font, size: 12},
+                font: {family: font, size: 12, color: _flowGanttTheme().plotText},
                 margin: {l: 48, r: 16, t: 32, b: 42},
                 plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
                 xaxis: {showgrid: false, title: tu.axisTitle, autorange: true},
@@ -1652,7 +1655,7 @@ window.dash_clientside.flowGantt = {
         ];
 
         var baseLay = {
-            font: {family: font, size: 12},
+            font: {family: font, size: 12, color: _flowGanttTheme().plotText},
             margin: {l: 48, r: 16, t: 32, b: 42},
             plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
             xaxis: {showgrid: false, title: u.axisTitle, autorange: true},
@@ -1729,7 +1732,7 @@ window.dash_clientside.flowGantt = {
             return {
                 data: [],
                 layout: {
-                    font: {family: font, size: 12},
+                    font: {family: font, size: 12, color: _flowGanttTheme().plotText},
                     margin: {l: 48, r: 16, t: 16, b: 32},
                     plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
                     xaxis: {visible: false}, yaxis: {visible: false},
@@ -1871,7 +1874,7 @@ window.dash_clientside.flowGantt = {
         }
 
         var baseLay = {
-            font: {family: font, size: 12},
+            font: {family: font, size: 12, color: _flowGanttTheme().plotText},
             margin: {l: 48, r: 16, t: 32, b: 42},
             plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
             xaxis: {showgrid: false},
@@ -2011,7 +2014,7 @@ window.dash_clientside.flowGantt = {
             return {
                 data: [],
                 layout: {
-                    font: {family: font, size: 12},
+                    font: {family: font, size: 12, color: _flowGanttTheme().plotText},
                     margin: {l: 48, r: 16, t: 16, b: 42},
                     plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
                     xaxis: {visible: false}, yaxis: {visible: false},
@@ -2113,7 +2116,7 @@ window.dash_clientside.flowGantt = {
         else if (selectedFlow === 1) title = "Scheduled → Completed Rate (" + aggLabel + ")";
 
         var layout = {
-            font: {family: font, size: 12},
+            font: {family: font, size: 12, color: _flowGanttTheme().plotText},
             margin: {l: 48, r: 16, t: 32, b: 42},
             plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
             xaxis: {showgrid: false},
