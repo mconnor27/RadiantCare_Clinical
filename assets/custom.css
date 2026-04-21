@@ -1233,6 +1233,14 @@ html[data-mobile-view="true"] .hide-on-mobile {
     .hide-on-mobile { display: none !important; }
 }
 
+/* Counterpart: visible only on mobile. Default hidden; revealed at viewport
+   width ≤768px OR when html[data-mobile-view="true"]. */
+.show-only-mobile { display: none; }
+html[data-mobile-view="true"] .show-only-mobile { display: block; }
+@media (max-width: 768px) {
+    .show-only-mobile { display: block; }
+}
+
 /* Hover state for plain icon buttons (user chip) — matches
    dmc.ActionIcon variant="subtle" color="gray" hover visual. */
 .rc-icon-btn { transition: background-color 0.12s ease; }
