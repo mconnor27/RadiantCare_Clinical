@@ -5,6 +5,21 @@
 
 window.dash_clientside = window.dash_clientside || {};
 
+function _coursesTheme() {
+    var isDark = document.documentElement.getAttribute("data-theme") === "dark";
+    return {
+        isDark: isDark,
+        font: isDark ? "#E6E7EC" : "#374151",
+        grid: isDark ? "#262932" : "#E5E7EB",
+        areaFillOpacity: function(base) {
+            if (!isDark) return base;
+            if (base <= 0.20) return base + 0.15;
+            if (base <= 0.30) return base + 0.10;
+            return base;
+        },
+    };
+}
+
 window.dash_clientside.courses = {
 
     /**
@@ -49,7 +64,7 @@ window.dash_clientside.courses = {
                 marker: { color: color, opacity: 0.85 },
             });
         } else if (chartType === "area") {
-            var fillColor = hexToRgba(color, 0.2);
+            var fillColor = hexToRgba(color, _coursesTheme().areaFillOpacity(0.2));
             trace = Object.assign({}, traceBase, {
                 type: "scatter",
                 mode: "lines",
@@ -74,7 +89,7 @@ window.dash_clientside.courses = {
             margin: { l: 48, r: 16, t: 8, b: 48 },
             plot_bgcolor: "rgba(0,0,0,0)",
             paper_bgcolor: "rgba(0,0,0,0)",
-            font: { family: "Inter, system-ui, sans-serif", size: 12, color: "#374151" },
+            font: { family: "Inter, system-ui, sans-serif", size: 12, color: _coursesTheme().font },
             xaxis: {
                 showgrid: false,
                 zeroline: false,
@@ -83,7 +98,7 @@ window.dash_clientside.courses = {
             },
             yaxis: {
                 title: yTitle,
-                gridcolor: "#E5E7EB",
+                gridcolor: _coursesTheme().grid,
                 gridwidth: 1,
                 zeroline: false,
             },
@@ -128,7 +143,7 @@ window.dash_clientside.courses = {
 
             var vals = pd.values;
             var color = pd.color;
-            var fillColor = hexToRgba(color, 0.3);
+            var fillColor = hexToRgba(color, _coursesTheme().areaFillOpacity(0.3));
 
             // Bandwidth: slider maps 1-20 to fraction of range (0.5% to 10%)
             var bwFrac = Math.max(0.005, bwSlider * 0.005);
@@ -171,7 +186,7 @@ window.dash_clientside.courses = {
             margin: { l: 48, r: 16, t: 8, b: 48 },
             plot_bgcolor: "rgba(0,0,0,0)",
             paper_bgcolor: "rgba(0,0,0,0)",
-            font: { family: "Inter, system-ui, sans-serif", size: 12, color: "#374151" },
+            font: { family: "Inter, system-ui, sans-serif", size: 12, color: _coursesTheme().font },
             xaxis: {
                 title: "Fractions Prescribed",
                 showgrid: false,
@@ -180,7 +195,7 @@ window.dash_clientside.courses = {
             },
             yaxis: {
                 title: "Density",
-                gridcolor: "#E5E7EB",
+                gridcolor: _coursesTheme().grid,
                 gridwidth: 1,
                 zeroline: false,
             },

@@ -4041,9 +4041,10 @@ _COMPLEXITY_FACETS = [
     Input("courses-complexity-mode", "value"),
     Input("courses-complexity-settings-smooth", "value"),
     Input("courses-complexity-settings-type", "value"),
+    Input("global-theme-store", "data"),
     prevent_initial_call=False,
 )
-def _update_complexity_facets(data, agg, mode, smooth, chart_type):
+def _update_complexity_facets(data, agg, mode, smooth, chart_type, theme):
     from plotly.subplots import make_subplots
 
     if not data:
@@ -4091,13 +4092,14 @@ def _update_complexity_facets(data, agg, mode, smooth, chart_type):
             ), row=row, col=col)
         else:
             fill_mode = "tozeroy" if chart_type == "area" else "none"
+            _alpha = 0.25 if theme == "dark" else 0.1
             fig.add_trace(go.Scatter(
                 x=dates, y=values,
                 mode="lines+markers",
                 line=dict(color=cfg["color"], width=2),
                 marker=dict(size=3),
                 fill=fill_mode,
-                fillcolor=_hex_to_rgba(cfg["color"]),
+                fillcolor=_hex_to_rgba(cfg["color"], _alpha),
                 connectgaps=True,
                 hovertemplate=hover_tmpl,
                 showlegend=False,
