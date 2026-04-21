@@ -15,6 +15,10 @@ function buildSparkline(data, smoothPct, key) {
     var rawVals = spark.values;
     var yVals = frac > 0 && rawVals.length >= 4 ? loess(rawVals, frac) : rawVals;
     var color = spark.color || "#7C2A83";
+    // Dark-mode: fill at 0.2 over a dark bg disappears. Bump top-stop
+    // opacity so the area under the spark line stays readable.
+    var _isDark = document.documentElement.getAttribute("data-theme") === "dark";
+    var _fillTop = _isDark ? 0.38 : 0.2;
     // Use customdata for raw values so hover always shows actual numbers
     var hoverFmt = spark.hover_fmt
         ? spark.hover_fmt.replace(/%\{y/g, "%{customdata")
@@ -53,7 +57,7 @@ function buildSparkline(data, smoothPct, key) {
                 stop: yMax,
                 colorscale: [
                     [0, hexToRgba(color, 0)],
-                    [1, hexToRgba(color, 0.2)]
+                    [1, hexToRgba(color, _fillTop)]
                 ]
             },
             fillcolor: hexToRgba(color, 0),

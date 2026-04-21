@@ -199,16 +199,20 @@
             el.on('plotly_afterplot', function() {
                 try {
                     var p = paletteFor(currentTheme());
-                    // Infinite-loop guard: relayout triggers afterplot again.
-                    // Skip if font.color is already themed (cheap string check
-                    // that captures whether our handler has run post-render).
                     var cur = el.layout || {};
                     var curFont = (cur.font && cur.font.color) || '';
-                    if (curFont === p.font) return;
+                    var fontOk = curFont === p.font;
 
-                    // Do NOT touch bgs — chart is transparent and inherits
-                    // from the themed card via CSS.
-                    var update = {
+                    // Always check for metric-colored annotations that need
+                    // remapping; only skip if both font IS themed AND every
+                    // annotation already uses a theme-safe variant. (Clientside
+                    // re-renders often bake in PRIMARY purple that needs the
+                    // bright dark-mode variant.)
+                    var annoUpdates = collectAnnotationUpdates(cur, currentTheme());
+                    var hasAnno = Object.keys(annoUpdates).length > 0;
+                    if (fontOk && !hasAnno) return;
+
+                    var update = fontOk ? {} : {
                         'font.color':            p.font,
                         'legend.font.color':     p.font,
                         'legend.bgcolor':        'rgba(0,0,0,0)',
@@ -217,16 +221,18 @@
                         'hoverlabel.font.color': p.hoverFont,
                         'mapbox.style':          p.mapboxStyle,
                     };
-                    Object.keys(cur).forEach(function(key) {
-                        if (/^(x|y)axis\d*$/.test(key)) {
-                            update[key + '.gridcolor']        = p.grid;
-                            update[key + '.linecolor']        = p.axisLine;
-                            update[key + '.zerolinecolor']    = p.grid;
-                            update[key + '.tickfont.color']   = p.font;
-                            update[key + '.title.font.color'] = p.font;
-                        }
-                    });
-                    Object.assign(update, collectAnnotationUpdates(cur, currentTheme()));
+                    if (!fontOk) {
+                        Object.keys(cur).forEach(function(key) {
+                            if (/^(x|y)axis\d*$/.test(key)) {
+                                update[key + '.gridcolor']        = p.grid;
+                                update[key + '.linecolor']        = p.axisLine;
+                                update[key + '.zerolinecolor']    = p.grid;
+                                update[key + '.tickfont.color']   = p.font;
+                                update[key + '.title.font.color'] = p.font;
+                            }
+                        });
+                    }
+                    Object.assign(update, annoUpdates);
                     Plotly.relayout(el, update);
                 } catch(e) {}
             });

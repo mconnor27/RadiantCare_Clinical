@@ -1876,8 +1876,10 @@ def _prepare_technique_dist_data(dff, date_col, start=None, end=None, date_mode=
 _RIDGE_HEIGHT = 720
 
 
-def _build_ridgeline_figure(data, bw_factor=0.5, mode="density"):
+def _build_ridgeline_figure(data, bw_factor=0.5, mode="density", theme="light"):
     """Build the ridgeline Plotly figure from store data + bandwidth factor."""
+    _is_dark = (theme or "light") == "dark"
+    _ridge_border = "rgba(160,170,185,0.45)" if _is_dark else "rgba(255,255,255,0.45)"
     from scipy.stats import gaussian_kde
 
     if not data:
@@ -2030,7 +2032,7 @@ def _build_ridgeline_figure(data, bw_factor=0.5, mode="density"):
                 x=x_list,
                 y=y_list,
                 mode="lines",
-                line=dict(color="rgba(255,255,255,0.45)", width=1.5),
+                line=dict(color=_ridge_border, width=1.5),
                 name=str(yr),
                 showlegend=False,
                 customdata=np.full(len(x_list), r["median_fx"]).tolist(),
@@ -3458,9 +3460,10 @@ for _spark_id in _PLANS_SPARKLINE_IDS:
     Input("plans-store-ridgeline", "data"),
     Input("plans-ridge-bw", "value"),
     Input("plans-ridge-mode", "value"),
+    Input("global-theme-store", "data"),
 )
-def _update_ridgeline(data, bw, mode):
-    return _build_ridgeline_figure(data, bw_factor=bw or 0.5, mode=mode or "density")
+def _update_ridgeline(data, bw, mode, theme):
+    return _build_ridgeline_figure(data, bw_factor=bw or 0.5, mode=mode or "density", theme=theme)
 
 
 # Hide bandwidth slider in histogram mode
