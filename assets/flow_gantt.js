@@ -73,7 +73,7 @@ function _flowGanttTheme() {
         // light/dark palette in assets/02_theme.js.
         plotText: isDark ? "#E6E7EC" : "#1A1A2E",
         // Text colors for mid-gray labels (totals, sub-stats)
-        mutedText: isDark ? "#D1D5DB" : "#4B5563",
+        mutedText: isDark ? "#F3F4F6" : "#4B5563",
         // Flow band (bezier connector between stages) — brighter in dark
         bandFillOpacity:   isDark ? 0.40 : 0.20,
         bandStrokeOpacity: isDark ? 0.60 : 0.35,
@@ -1579,6 +1579,7 @@ window.dash_clientside.flowGantt = {
                 yaxis: {gridcolor: _flowGanttTheme().grid, gridwidth: 1},
                 autosize: true, showlegend: false, hovermode: "closest",
                 shapes: tShapes, annotations: tAnnots,
+                hoverlabel: {bgcolor: tot.color, bordercolor: tot.color, font: {color: "#FFFFFF", family: font, size: 12}, _preserve: true},
                 datarevision: (useKM ? "km" : "naive") + distType + (compareMode ? "cmp" : "") + Date.now(),
             };
             if (distType === "density") {
@@ -1662,6 +1663,7 @@ window.dash_clientside.flowGantt = {
             yaxis: {gridcolor: _flowGanttTheme().grid, gridwidth: 1},
             autosize: true, showlegend: false, hovermode: "closest",
             shapes: shapes, annotations: annots,
+            hoverlabel: {bgcolor: t.color, bordercolor: t.color, font: {color: "#FFFFFF", family: font, size: 12}, _preserve: true},
             datarevision: (useKM ? "km" : "naive") + distType + selectedFlow + (compareMode ? "cmp" : "") + Date.now(),
         };
 
@@ -1817,12 +1819,18 @@ window.dash_clientside.flowGantt = {
                         ? ((typeof hexToRgba === "function") ? hexToRgba(color, 0.7) : color)
                         : ((typeof hexToRgba === "function") ? hexToRgba(color, 0.25) : color));
                 }
+                var _ttB = _flowGanttTheme();
                 return [{
                     x: tData.dates, y: vals,
                     name: name, type: "bar",
                     marker: {color: barColors, line: {color: color, width: 1}},
                     customdata: customdata,
                     hovertemplate: hoverTpl,
+                    hoverlabel: {
+                        bgcolor: _ttB.isDark ? "#374151" : "#FFFFFF",
+                        bordercolor: _ttB.isDark ? "#4B5563" : "#D1D5DB",
+                        font: {color: _ttB.isDark ? "#FFFFFF" : "#1A1A2E", family: font, size: 12},
+                    },
                 }];
             }
 
@@ -1845,6 +1853,10 @@ window.dash_clientside.flowGantt = {
                 }
             }
             var mode = (chartType === "area") ? "lines+markers" : "lines+markers";
+            var _tt = _flowGanttTheme();
+            var _hoverBg = _tt.isDark ? "#374151" : "#FFFFFF";
+            var _hoverBord = _tt.isDark ? "#4B5563" : "#D1D5DB";
+            var _hoverFont = _tt.isDark ? "#FFFFFF" : "#1A1A2E";
             var trace = {
                 x: tData.dates, y: vals,
                 name: name, mode: mode,
@@ -1853,6 +1865,7 @@ window.dash_clientside.flowGantt = {
                          line: {color: color, width: markerLineW}},
                 customdata: customdata,
                 hovertemplate: hoverTpl,
+                hoverlabel: {bgcolor: _hoverBg, bordercolor: _hoverBord, font: {color: _hoverFont, family: font, size: 12}},
             };
             if (chartType === "area") {
                 trace.fill = "tozeroy";
@@ -1873,15 +1886,21 @@ window.dash_clientside.flowGantt = {
             return traces;
         }
 
+        var _trendTheme = _flowGanttTheme();
         var baseLay = {
-            font: {family: font, size: 12, color: _flowGanttTheme().plotText},
+            font: {family: font, size: 12, color: _trendTheme.plotText},
             margin: {l: 48, r: 16, t: 32, b: 42},
             plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
             xaxis: {showgrid: false},
-            yaxis: {gridcolor: _flowGanttTheme().grid, gridwidth: 1, title: statLabel + " Days"},
+            yaxis: {gridcolor: _trendTheme.grid, gridwidth: 1, title: statLabel + " Days"},
             autosize: true,
             showlegend: false,
             hovermode: "x unified",
+            hoverlabel: {
+                bgcolor: _trendTheme.isDark ? "#374151" : "#FFFFFF",
+                bordercolor: _trendTheme.isDark ? "#4B5563" : "#D1D5DB",
+                font: {color: _trendTheme.isDark ? "#FFFFFF" : "#1A1A2E", family: font, size: 12},
+            },
         };
         if (chartType === "bar") {
             baseLay.bargap = 0.15;
@@ -1980,7 +1999,7 @@ window.dash_clientside.flowGantt = {
             baseLay.yaxis.title = aggLabel + " " + statLabel.toLowerCase() + kmSuffix + " (days)";
             var tTraces = buildTraces(tTrend, "Total Pipeline", tot.color);
             var hasImm = !useKM && (tTrend.completionRates || []).some(function(r) { return r < 0.5; });
-            return addBTrend([{data: tTraces, layout: baseLay}, "Duration Trend", legendStyle(hasImm, _flowGanttTheme().remapColor(tot.color))], flowDetailsB, trendDataB);
+            return addBTrend([{data: tTraces, layout: baseLay}, "Duration Trend", legendStyle(hasImm, _flowGanttTheme().plotText)], flowDetailsB, trendDataB);
         }
 
         // Selected flow → single-transition trend
@@ -1999,7 +2018,7 @@ window.dash_clientside.flowGantt = {
         var title = "Duration Trend";
         var traces = buildTraces(selTrend, t.label, t.color);
         var hasImm2 = !useKM && (selTrend.completionRates || []).some(function(r) { return r < 0.5; });
-        return addBTrend([{data: traces, layout: baseLay}, title, legendStyle(hasImm2, _flowGanttTheme().remapColor(t.color))], flowDetailsB, trendDataB);
+        return addBTrend([{data: traces, layout: baseLay}, title, legendStyle(hasImm2, _flowGanttTheme().plotText)], flowDetailsB, trendDataB);
     },
 
     renderConversionTrend: function(flowDetails, selectedFlow, agg, chartType, smooth) {

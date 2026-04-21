@@ -28,9 +28,9 @@
         font:      '#E6E7EC',
         grid:      '#262932',
         axisLine:  '#2D3039',
-        hoverBg:   '#25282F',
-        hoverBord: '#2D3039',
-        hoverFont: '#E6E7EC',
+        hoverBg:   '#374151',
+        hoverBord: '#4B5563',
+        hoverFont: '#FFFFFF',
         mapboxStyle: 'dark',
     };
 
@@ -95,7 +95,7 @@
                 else L.legend.font = {color: p.font};
                 L.legend.bgcolor = 'rgba(0,0,0,0)';
             }
-            if (L.hoverlabel) {
+            if (L.hoverlabel && !L.hoverlabel._preserve) {
                 L.hoverlabel.bgcolor = p.hoverBg;
                 L.hoverlabel.bordercolor = p.hoverBord;
                 if (L.hoverlabel.font) L.hoverlabel.font.color = p.hoverFont;
