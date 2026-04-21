@@ -1053,11 +1053,12 @@ window.dash_clientside.flowGantt = {
                 var overdue = hasAllotted && mDays[i] > aDays[i];
                 var dtX = sx(midX), dtY = sy(bandMidY);
                 var gapPx = sx(bars[i + 1].l) - sx(bars[i].r);
-                // In dark mode, the pill bg is dark — use the stage color as-is
-                // (or a lightened variant) so text reads. In light mode, darken.
+                // In dark mode, the pill bg is dark — use the brightened metric
+                // color so text reads. In light mode, darken the stage color.
+                var _fgTp = _flowGanttTheme();
                 var fillColor = overdue
                     ? "#E53935"
-                    : (_flowGanttTheme().isDark ? colors[i] : darkenColor(colors[i], 0.65));
+                    : (_fgTp.isDark ? _fgTp.remapColor(colors[i]) : darkenColor(colors[i], 0.65));
 
                 // Two-line layout when gap is tight and we have allotted
                 var twoLine = hasAllotted && gapPx < 70;
