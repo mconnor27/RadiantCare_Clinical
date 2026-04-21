@@ -8,6 +8,18 @@
 
 window.dash_clientside = window.dash_clientside || {};
 
+// Theme-aware area fill helper. In dark mode, single-dimension area fills
+// need more opacity (dark color @ 15% over a dark bg is nearly invisible).
+function _censusAreaFillOpacity(baseOpacity) {
+    var isDark = document.documentElement.getAttribute("data-theme") === "dark";
+    if (!isDark) return baseOpacity;
+    // Bump low opacities more aggressively than high ones so subtle fills
+    // (0.15) pop without nuking opaque ones (0.5) into over-saturation.
+    if (baseOpacity <= 0.20) return baseOpacity + 0.15;
+    if (baseOpacity <= 0.30) return baseOpacity + 0.10;
+    return baseOpacity;
+}
+
 // ---------------------------------------------------------------------------
 // Census chart smoothing
 // ---------------------------------------------------------------------------
@@ -232,7 +244,7 @@ window.dash_clientside.census = {
                     name: s.name,
                     mode: traceDates.length <= 3 ? "lines+markers" : "lines",
                     line: {color: s.color, width: 2},
-                    fillcolor: hexToRgba(s.color, 0.15),
+                    fillcolor: hexToRgba(s.color, _censusAreaFillOpacity(0.15)),
                     fill: "tozeroy",
                     connectgaps: true,
                     hoverinfo: "skip"
@@ -314,7 +326,7 @@ window.dash_clientside.census = {
                         mode: "lines",
                         connectgaps: true,
                         line: {color: s.color, width: 1, dash: "dot"},
-                        fillcolor: chartType === "line" ? "transparent" : hexToRgba(s.color, 0.2),
+                        fillcolor: chartType === "line" ? "transparent" : hexToRgba(s.color, _censusAreaFillOpacity(0.2)),
                         showlegend: false,
                         hoverinfo: "skip"
                     };
@@ -1956,7 +1968,7 @@ window.dash_clientside.cumulative = {
             };
             if (chartType === "area") {
                 currentTrace.fill = "tozeroy";
-                currentTrace.fillcolor = hexToRgba(current.color || "#7C2A83", 0.15);
+                currentTrace.fillcolor = hexToRgba(current.color || "#7C2A83", _censusAreaFillOpacity(0.15));
             }
             if (visibilityMap.hasOwnProperty(current.label)) {
                 currentTrace.visible = visibilityMap[current.label];
@@ -2261,7 +2273,7 @@ window.dash_clientside.cumulative = {
                 };
                 if (chartType === "area") {
                     sTrace.fill = "tozeroy";
-                    sTrace.fillcolor = hexToRgba(ss.color, 0.15);
+                    sTrace.fillcolor = hexToRgba(ss.color, _censusAreaFillOpacity(0.15));
                 }
                 if (visibilityMap.hasOwnProperty(ss.name)) {
                     sTrace.visible = visibilityMap[ss.name];
