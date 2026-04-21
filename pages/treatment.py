@@ -2595,14 +2595,20 @@ clientside_callback(
             traces.push(traceObj);
         }
 
+        var _isDark = document.documentElement.getAttribute("data-theme") === "dark";
         var layout = Object.assign({}, window._defaultLayout || {}, {
             showlegend: false,
             margin: {l: 48, r: 16, t: isDensity ? 28 : 8, b: isDensity ? 36 : 24},
-            violinmode: "group"
+            violinmode: "group",
+            plot_bgcolor: "rgba(0,0,0,0)",
+            paper_bgcolor: "rgba(0,0,0,0)",
+            font: {color: _isDark ? "#E6E7EC" : "#1A1A2E"}
         });
 
+        var _gridColor = _isDark ? "#262932" : "#F0F0F0";
+        var _medianTextColor = _isDark ? "#D1D5DB" : "#374151";
         if (isDensity) {
-            layout.xaxis = {title: {text: "Minutes", font: {size: 11}}, range: [0, yUpper]};
+            layout.xaxis = {title: {text: "Minutes", font: {size: 11}}, range: [0, yUpper], gridcolor: _gridColor};
             layout.yaxis = {title: {text: "Density", font: {size: 11}}, showticklabels: false, showgrid: false};
             var med = storeData.median;
             if (med != null) {
@@ -2613,12 +2619,13 @@ clientside_callback(
                 layout.annotations = [{
                     x: med, yref: "paper", y: 1, yanchor: "bottom", xanchor: "center",
                     text: "Median " + med.toFixed(1) + " min",
-                    showarrow: false, font: {size: 11, color: "#374151"},
+                    showarrow: false, font: {size: 11, color: _medianTextColor},
                     yshift: 4
                 }];
             }
         } else {
-            layout.yaxis = {title: {text: "Minutes", font: {size: 11}}, range: [0, yUpper]};
+            layout.yaxis = {title: {text: "Minutes", font: {size: 11}}, range: [0, yUpper], gridcolor: _gridColor};
+            layout.xaxis = {gridcolor: _gridColor};
         }
 
         return {data: traces, layout: layout};
