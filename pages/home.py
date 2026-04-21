@@ -557,13 +557,14 @@ def _build_availability_calendar(departments, consults_only=True, view="both"):
                 _exam_sched_dept[dt][dept] = len(grp)
 
         def _build_z(pct_series):
-            """Build z-data grid only."""
+            """Build z-data grid. Empty cells use -1 sentinel so the extended
+            colorscale renders them transparent instead of Plotly's NaN hatch."""
             z = []
             for week_start in weeks:
                 row = []
                 for day_idx in range(5):
                     td = week_start + timedelta(days=day_idx)
-                    row.append(pct_series[td] if td in pct_series.index else None)
+                    row.append(pct_series[td] if td in pct_series.index else -1)
                 z.append(row)
             return z
 
@@ -642,12 +643,23 @@ def _build_availability_calendar(departments, consults_only=True, view="both"):
             horizontal_spacing=0.12,
         )
 
+        # Colorscale spans z=-1..100. The -1 sentinel maps to transparent so
+        # cells outside the data window render as blank (no cross-hatch pattern
+        # Plotly applies to NaN by default). Remapped stops:
+        #   -1  -> 0.0000   (transparent)
+        #    0  -> 0.0099   (green)
+        #   50  -> 0.5050   (light green)
+        #   75  -> 0.7525   (amber)
+        #   90  -> 0.9010   (orange)
+        #  100  -> 1.0000   (red)
         colorscale = [
-            [0, "#4CAF50"],       # Green - wide open
-            [0.50, "#8BC34A"],    # Light green - half full
-            [0.75, "#FFC107"],    # Amber - filling up
-            [0.90, "#FF9800"],    # Orange - almost full
-            [1, "#D32F2F"],       # Dark red - no availability
+            [0.0000, "rgba(0,0,0,0)"],
+            [0.0099, "rgba(0,0,0,0)"],
+            [0.0099, "#4CAF50"],
+            [0.5050, "#8BC34A"],
+            [0.7525, "#FFC107"],
+            [0.9010, "#FF9800"],
+            [1.0000, "#D32F2F"],
         ]
 
         def _cell_labels(pct_series, sched_series, total_series):
@@ -670,22 +682,53 @@ def _build_availability_calendar(departments, consults_only=True, view="both"):
                 labels.append(row)
             return labels
 
+        # Locate today's cell within the (week, weekday) grid so we can draw a
+        # highlight marker on top of the heatmap.
+        today_week_idx = None
+        today_day_idx = None
+        if today.weekday() < 5:
+            for _wi, _ws in enumerate(weeks):
+                for _di in range(5):
+                    if _ws + timedelta(days=_di) == today:
+                        today_week_idx, today_day_idx = _wi, _di
+                        break
+                if today_week_idx is not None:
+                    break
+
         # Build traces per panel
         panel_labels = []
         for col_i, (_, _, z, ylbls, hover, pct_s, sched_s, total_s, _lead) in enumerate(panels, start=1):
             fig.add_trace(go.Heatmap(
                 z=z, x=x_labels, y=ylbls,
-                colorscale=colorscale, zmin=0, zmax=100,
+                colorscale=colorscale, zmin=-1, zmax=100,
                 text=hover, hovertemplate="%{text}<extra></extra>",
+                hoverongaps=False,
                 showscale=False,
             ), row=1, col=col_i)
             panel_labels.append(_cell_labels(pct_s, sched_s, total_s))
+            # Overlay a hollow square marker on today's cell (per panel so the
+            # highlight appears on both Consults and Sims views).
+            if today_week_idx is not None:
+                fig.add_trace(go.Scatter(
+                    x=[x_labels[today_day_idx]],
+                    y=[ylbls[today_week_idx]],
+                    mode="markers",
+                    marker=dict(
+                        symbol="square-open",
+                        size=38,
+                        line=dict(color="#7C2A83", width=3),
+                    ),
+                    hoverinfo="skip",
+                    showlegend=False,
+                ), row=1, col=col_i)
 
         # Add lead time annotations at bottom
         annotations = list(fig.layout.annotations)  # Keep subplot titles
         for ann in annotations:
             ann.y = 1.08
-            ann.font = dict(size=12, color="#374151")
+            # No explicit color — inherit from layout.font.color so the
+            # theme-swap clientside callback can flip light/dark.
+            ann.font = dict(size=12)
 
         # Overlay cell labels as annotations
         for col_i, ((_, _, _, ylbls, _, _, _, _, _), labels_grid) in enumerate(zip(panels, panel_labels), start=1):
@@ -1625,6 +1668,169 @@ def _build_current_year_yoy_cumulative(metric_id, departments, n_prior=4):
     }
 
 
+def _rolling_ticks(start, n_days):
+    """Pick tick positions (day indices 0..n_days-1) + labels for a rolling window."""
+    if n_days <= 14:
+        step, fmt = 1, "%b %d"
+    elif n_days <= 45:
+        step, fmt = 7, "%b %d"
+    elif n_days <= 120:
+        step, fmt = 14, "%b %d"
+    elif n_days <= 400:
+        step, fmt = 30, "%b"
+    elif n_days <= 800:
+        step, fmt = 60, "%b '%y"
+    elif n_days <= 1825:
+        step, fmt = 180, "%b '%y"
+    else:
+        step, fmt = 365, "%Y"
+    positions, labels = [], []
+    i = 0
+    while i < n_days:
+        d = start + pd.Timedelta(days=i)
+        positions.append(i)
+        labels.append(d.strftime(fmt))
+        i += step
+    return positions, labels
+
+
+def _rolling_label(start, end, n_days):
+    if n_days <= 31:
+        return f"{start.strftime('%b %d')}–{end.strftime('%b %d, %Y')}"
+    if n_days <= 365:
+        return f"{start.strftime('%b %Y')}–{end.strftime('%b %Y')}"
+    return f"{start.year}–{end.year}"
+
+
+def _build_rolling_cumulative(metric_id, departments, date_preset, n_prior=3):
+    """Rolling-window prior-mode cumulative store.
+
+    Current window = selected preset's date range. Prior windows = preceding
+    same-length windows, aligned on a shared day axis. Output matches
+    `renderCumulative` "prior" mode so endpoint annotation + prior-period
+    lines render automatically for any preset (except current_year, which has
+    its own calendar-year-aligned builder).
+    """
+    spec = _METRIC_SPECS.get(metric_id)
+    if spec is None:
+        return None
+    date_col, unique_col, _dim_map, frame_fn = spec
+    try:
+        df = frame_fn(departments)
+    except Exception:
+        return None
+    if df is None or df.empty or date_col not in df.columns:
+        return None
+    df = df[df[date_col].notna()].copy()
+    if df.empty:
+        return None
+
+    last_date = df[date_col].dt.normalize().max()
+    start_ts, end_ts = _home_preset_range(last_date, date_preset)
+    if start_ts is pd.Timestamp.min:
+        # "all" — start from the earliest data point; no prior windows exist.
+        start = df[date_col].dt.normalize().min()
+    else:
+        start = start_ts.normalize()
+    end = min(last_date, end_ts.normalize())
+    n_days = (end - start).days + 1
+    if n_days <= 0:
+        return None
+
+    def _window_cum(win_start, win_end):
+        ws = pd.Timestamp(win_start).normalize()
+        we = pd.Timestamp(win_end).normalize()
+        sub = df[(df[date_col] >= ws) &
+                 (df[date_col] < we + pd.Timedelta(days=1))]
+        cal = pd.date_range(ws, we, freq="D")
+        if sub.empty:
+            return [0.0] * len(cal), 0.0
+        dn = sub[date_col].dt.normalize()
+        if unique_col and unique_col in sub.columns:
+            daily = sub.groupby(dn)[unique_col].nunique()
+        else:
+            daily = sub.groupby(dn).size()
+        daily = daily.reindex(cal, fill_value=0)
+        cum = daily.cumsum().astype(float).tolist()
+        return cum, (float(cum[-1]) if cum else 0.0)
+
+    current_vals, current_total = _window_cum(start, end)
+
+    prior = []
+    first_data = df[date_col].dt.normalize().min()
+    priors_start = start
+    priors_allowed = (start_ts is not pd.Timestamp.min)
+
+    # YTD: compare against the same calendar span (Jan 1 → same month/day) in
+    # prior years instead of rolling backward by n_days. Gives "Jan–Apr 2025
+    # vs Jan–Apr 2024" semantics users expect.
+    if priors_allowed and date_preset == "ytd":
+        cur_year = start.year
+        for offset in range(1, n_prior + 1):
+            y = cur_year - offset
+            try:
+                p_start = pd.Timestamp(y, start.month, start.day)
+                p_end = pd.Timestamp(y, end.month, end.day)
+            except ValueError:
+                # Feb 29 in a non-leap prior year — clip to Feb 28.
+                p_start = pd.Timestamp(y, 1, 1)
+                p_end = pd.Timestamp(y, end.month, min(end.day, 28))
+            if p_end < first_data:
+                break
+            clipped_start = max(p_start, first_data)
+            vals, _ = _window_cum(clipped_start, p_end)
+            # Length may differ by 1 on leap-year boundaries — align to n_days.
+            if len(vals) < n_days:
+                vals = vals + [vals[-1] if vals else None] * (n_days - len(vals))
+            elif len(vals) > n_days:
+                vals = vals[:n_days]
+            prior.append({
+                "label": str(y),
+                "values": vals,
+                "color": PRIOR_PERIOD_COLORS[min(offset - 1, len(PRIOR_PERIOD_COLORS) - 1)],
+            })
+    elif priors_allowed:
+        for offset in range(1, n_prior + 1):
+            p_end = priors_start - pd.Timedelta(days=1)
+            p_start = p_end - pd.Timedelta(days=n_days - 1)
+            if p_end < first_data:
+                break
+            # Clip prior window to available data; left-pad with nulls so
+            # day indices align with the current window.
+            clipped_start = max(p_start, first_data)
+            vals, _ = _window_cum(clipped_start, p_end)
+            if len(vals) < n_days:
+                vals = [None] * (n_days - len(vals)) + vals
+            prior.append({
+                "label": _rolling_label(p_start, p_end, n_days),
+                "values": vals,
+                "color": PRIOR_PERIOD_COLORS[min(offset - 1, len(PRIOR_PERIOD_COLORS) - 1)],
+            })
+            priors_start = p_start
+
+    tick_positions, tick_labels = _rolling_ticks(start, n_days)
+    return {
+        "mode": "prior",
+        "startDate": pd.Timestamp(start).isoformat(),
+        "dayIndices": list(range(n_days)),
+        "tickPositions": tick_positions,
+        "tickLabels": tick_labels,
+        "current": {
+            "label": _rolling_label(start, end, n_days),
+            "values": current_vals,
+            "color": PRIMARY,
+            "endpoint": current_total,
+        },
+        "prior": prior,
+        "periodDays": n_days,
+        "maxAvailablePriors": len(prior),
+        "hasPartialPrior": False,
+        "height": 300,
+        "yTitle": _METRIC_YTITLE.get(metric_id, "Total"),
+        "hidePriorEndpointLabels": True,
+    }
+
+
 def _register_metric_callbacks(metric_id, row, is_cumulative):
     """Wire one card's data callback + render + axis callbacks."""
     sid = f"home-{metric_id}-{row}"
@@ -1643,6 +1849,15 @@ def _register_metric_callbacks(metric_id, row, is_cumulative):
     def _update_store(_n, date_preset, departments, dim, agg):
         if is_cumulative and date_preset == "current_year":
             return _build_current_year_yoy_cumulative(metric_id, departments)
+        if is_cumulative:
+            # All other presets: rolling-window prior-mode store so the cum
+            # card renders a single purple total with endpoint annotation and
+            # N prior windows behind it. Falls back to a total slice-mode
+            # store if the rolling builder returns nothing (e.g. empty data).
+            store = _build_rolling_cumulative(metric_id, departments, date_preset)
+            if store is not None:
+                return store
+            return _build_metric_census_store(metric_id, departments, "total", "D", date_preset)
         return _build_metric_census_store(metric_id, departments, dim, agg, date_preset)
 
     _update_store.__name__ = f"update_{metric_id}_{row}_store"
@@ -1735,20 +1950,18 @@ for _m, _t, _d, _defaults in _HOME_METRICS:
         prevent_initial_call="initial_duplicate",
     )
 
-    # Cum cards: when Current Year preset is active, dim/agg toggles are
-    # overridden by the YoY overlay so hide them to avoid confusion.
+    # Cum cards are always total-only (single purple line) regardless of
+    # preset — hide the dim/agg toggles in every preset. They only apply to
+    # the paired trend card; the store builder forces dim="total", agg="D"
+    # on the cumulative side.
     _cum_sid = f"home-{_m}-cum"
     clientside_callback(
-        """function(preset) {
-            return preset === "current_year" ? {"display": "none"} : {};
-        }""",
+        """function(_preset) { return {"display": "none"}; }""",
         Output(f"{_cum_sid}-dim", "style"),
         Input("home-filter-date-preset", "value"),
     )
     clientside_callback(
-        """function(preset) {
-            return preset === "current_year" ? {"display": "none"} : {};
-        }""",
+        """function(_preset) { return {"display": "none"}; }""",
         Output(f"{_cum_sid}-agg", "style"),
         Input("home-filter-date-preset", "value"),
     )

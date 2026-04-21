@@ -1184,6 +1184,30 @@ html[data-mobile-view="true"] #mobilehome-filters-open { display: inline-flex !i
     color: #FFFFFF !important;
 }
 
+/* Mobile chart card titles — theme-aware so they stay legible in dark mode. */
+.mobile-chart-title { color: #1F2937; }
+[data-theme="dark"] .mobile-chart-title { color: #E5E7EB; }
+
+/* Operations page: no sticky filter bar to anchor the global controls strip.
+   Un-fix the strip so the icons scroll with the page and sit inline with the
+   Smoothing slider (both at top-right of the page header) instead of
+   floating over charts on scroll. */
+html[data-page="operations"] #global-controls-strip {
+    position: absolute !important;
+    top: 12px !important;
+    right: 24px !important;
+}
+
+/* Operating Hours "Today" nav button — subtle-gray variant fades into the
+   background in dark mode; force a brighter foreground. */
+[data-theme="dark"] [id$="-hours-week-today"] {
+    color: #D1D5DB !important;
+}
+[data-theme="dark"] [id$="-hours-week-today"]:hover {
+    color: #FFFFFF !important;
+    background-color: rgba(255,255,255,0.06) !important;
+}
+
 /* Mobile-only: give SegmentedControl tracks a visible gray background in
    light mode so the unselected segments don't vanish against the page bg. */
 html[data-mobile-view="true"]:not([data-theme="dark"]) .mantine-SegmentedControl-root {

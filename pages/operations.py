@@ -45,9 +45,12 @@ layout = dmc.Stack(
     gap=16,
     className="page-content",
     children=[
-        # Sticky header with centered title + smoothing slider pinned right
+        # Non-sticky header for operations — no filter bar to share the
+        # sticky zone. The page-level CSS on <html data-page="operations">
+        # (set by the route-watcher in assets/02_theme.js) also unfixes the
+        # global controls strip so the icons scroll up with the page and sit
+        # inline with the smoothing slider on first view.
         dmc.Box(
-            className="page-sticky-header",
             pos="relative",
             pb=0,
             style={"gap": 0},
@@ -55,7 +58,7 @@ layout = dmc.Stack(
                 dmc.Title("Operations", order=2, className="page-title"),
                 dmc.Group(
                     gap=8, align="center",
-                    style={"position": "absolute", "right": 100, "bottom": 6},
+                    style={"position": "absolute", "right": 300, "bottom": 6},
                     children=[
                         dmc.Text("Smoothing", size="xs", c="#9CA3AF", fw=500),
                         dmc.Slider(

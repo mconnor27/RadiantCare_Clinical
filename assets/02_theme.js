@@ -232,4 +232,28 @@
     // Expose for debugging
     window._rcApplyTheme = applyTheme;
     window._rcHookCharts = hookAllCharts;
+
+    // --- Page-route tagging -------------------------------------------------
+    // Tag <html data-page="..."> with the current top-level route so page-
+    // specific CSS can target it. Used today to un-fix the global controls
+    // strip on pages (e.g. /operations) that don't have a sticky filter bar
+    // to anchor the icons against.
+    function pageFromPath() {
+        var p = (location && location.pathname) || '/';
+        p = p.replace(/^\/+/, '').replace(/\/.*$/, '');
+        return p || 'home';
+    }
+    function syncPageAttr() {
+        document.documentElement.setAttribute('data-page', pageFromPath());
+    }
+    syncPageAttr();
+    window.addEventListener('popstate', syncPageAttr);
+    // Dash pages navigate via history.pushState rather than full reloads;
+    // wrap it so we catch SPA route changes.
+    var _origPush = history.pushState;
+    history.pushState = function() {
+        var r = _origPush.apply(this, arguments);
+        syncPageAttr();
+        return r;
+    };
 })();

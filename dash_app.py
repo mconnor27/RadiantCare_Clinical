@@ -484,19 +484,28 @@ def _build_auth_menu(btn_id, trigger="click-hover", icon_width=20, button_style=
         "padding": 0,
     }
     _btn_style = button_style if button_style is not None else _default_btn_style
-    # Clerk hosted user portal — "Manage account" opens password + MFA settings
-    # without us needing to re-mount Clerk's JS on every page.
+    # Clerk hosted Account Portal — "Manage account" opens password + MFA settings
+    # without us needing to re-mount Clerk's JS on every page. The portal lives
+    # at accounts.<domain>, NOT the Frontend API host (clerk.<domain>) which
+    # CLERK_FRONTEND_HOST points to. We derive accounts.<domain> from the
+    # frontend host by swapping the leading "clerk." label, or honor an explicit
+    # CLERK_ACCOUNT_PORTAL override for non-default setups.
     import os as _os
-    _frontend = _os.environ.get("CLERK_FRONTEND_HOST", "").strip()
-    if not _frontend:
-        # Derive from publishable key once.
-        from auth import _clerk_frontend_host
-        _pub = _os.environ.get("CLERK_PUBLISHABLE_KEY", "")
-        try:
-            _frontend = _clerk_frontend_host(_pub) if _pub else ""
-        except Exception:
-            _frontend = ""
-    _account_url = f"https://{_frontend}/user" if _frontend else "#"
+    _portal = _os.environ.get("CLERK_ACCOUNT_PORTAL", "").strip()
+    if not _portal:
+        _frontend = _os.environ.get("CLERK_FRONTEND_HOST", "").strip()
+        if not _frontend:
+            from auth import _clerk_frontend_host
+            _pub = _os.environ.get("CLERK_PUBLISHABLE_KEY", "")
+            try:
+                _frontend = _clerk_frontend_host(_pub) if _pub else ""
+            except Exception:
+                _frontend = ""
+        if _frontend.startswith("clerk."):
+            _portal = "accounts." + _frontend[len("clerk."):]
+        elif _frontend:
+            _portal = "accounts." + _frontend
+    _account_url = f"https://{_portal}/user" if _portal else "#"
 
     # Admin-only items (user management). Checked server-side at render time;
     # a regular user never sees the link at all.
@@ -544,7 +553,9 @@ def _build_auth_menu(btn_id, trigger="click-hover", icon_width=20, button_style=
                     ),
                     dmc.MenuItem(
                         "Reset password",
-                        href=_account_url + "#/security" if _account_url != "#" else "#",
+                        # Account Portal deep-links security settings under /user/security.
+                        href=(f"https://{_portal}/user/security"
+                              if _account_url != "#" else "#"),
                         target="_blank",
                         leftSection=DashIconify(icon="tabler:key", width=14),
                     ),

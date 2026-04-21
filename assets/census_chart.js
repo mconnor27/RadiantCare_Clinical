@@ -1118,11 +1118,46 @@ window.dash_clientside.census = {
             }
         }
         data.stacked = false;  // cumulative progression doesn't stack
-        return window.dash_clientside.census._homeCompactLegend(
+        var fig = window.dash_clientside.census._homeCompactLegend(
             window.dash_clientside.census.smoothChartWithTypeAndRange(
                 data, smoothPct, renderType, "0", "grouped", currentFig
             )
         );
+        // Smart x-axis tick spacing for the compact home cum card. The default
+        // nticks:12 produces collision-prone labels like "Jan 2025 Feb 2025 …"
+        // on a ~400px-wide chart. Pick dtick + tickformat from data span so
+        // labels always read cleanly regardless of preset (30d / 3mo / 6mo /
+        // 12mo / last_year / all).
+        try {
+            var nDays = (data.dates && data.dates.length) || 0;
+            var tickFormat, dtick;
+            if (nDays <= 21)       { dtick = 3 * 86400000; tickFormat = "%b %d"; }
+            else if (nDays <= 45)  { dtick = 7 * 86400000; tickFormat = "%b %d"; }
+            else if (nDays <= 120) { dtick = 14 * 86400000; tickFormat = "%b %d"; }
+            else if (nDays <= 400) { dtick = "M1"; tickFormat = "%b"; }
+            else if (nDays <= 800) { dtick = "M2"; tickFormat = "%b '%y"; }
+            else if (nDays <= 1825){ dtick = "M6"; tickFormat = "%b '%y"; }
+            else                   { dtick = "M12"; tickFormat = "%Y"; }
+            if (fig && fig.layout) {
+                fig.layout.xaxis = fig.layout.xaxis || {};
+                // Ensure a native date axis — stale type/tickvals/ticktext
+                // from a prior bar-mode render (category axis) will otherwise
+                // collide with dtick and produce overlapping labels.
+                fig.layout.xaxis.type = "date";
+                fig.layout.xaxis.tickmode = "auto";
+                fig.layout.xaxis.tickvals = null;
+                fig.layout.xaxis.ticktext = null;
+                fig.layout.xaxis.categoryorder = null;
+                fig.layout.xaxis.categoryarray = null;
+                fig.layout.xaxis.dtick = dtick;
+                fig.layout.xaxis.tickformat = tickFormat;
+                fig.layout.xaxis.tickangle = 0;
+                fig.layout.xaxis.automargin = true;
+                // Clear nticks so dtick wins.
+                fig.layout.xaxis.nticks = null;
+            }
+        } catch (e) { /* non-fatal — fall back to default layout */ }
+        return fig;
     },
 
     /**

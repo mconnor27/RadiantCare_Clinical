@@ -622,11 +622,14 @@ def layout():
             ),
 
             # Top header row: theme toggle — logo — user chip, flowing with scroll.
-            dmc.Group(
-                justify="space-between",
-                align="center",
-                mt=0,
-                mb="md",
+            html.Div(
+                style={
+                    "display": "flex",
+                    "justifyContent": "space-between",
+                    "alignItems": "flex-end",
+                    "marginBottom": "16px",
+                    "gap": "8px",
+                },
                 children=[
                     html.Button(
                         DashIconify(
@@ -637,13 +640,16 @@ def layout():
                         ),
                         id=f"{PAGE_ID}-theme-btn",
                         n_clicks=0,
-                        style=_HEADER_BTN_STYLE,
+                        style={**_HEADER_BTN_STYLE, "padding": "0", "display": "flex", "alignItems": "flex-end"},
                     ),
                     html.Img(
                         src="/assets/radiantcare.png",
-                        style={"height": "38px", "objectFit": "contain"},
+                        style={"height": "38px", "objectFit": "contain", "display": "block"},
                     ),
-                    html.Div(id="mobile-auth-user-chip"),
+                    html.Div(
+                        id="mobile-auth-user-chip",
+                        style={"display": "flex", "alignItems": "flex-end"},
+                    ),
                 ],
             ),
 
@@ -709,11 +715,11 @@ def layout():
                         children=[
                             html.Div(
                                 id=f"{PAGE_ID}-trend-title",
+                                className="mobile-chart-title",
                                 style={
                                     "fontFamily": FONT_FAMILY,
                                     "fontWeight": 600,
                                     "fontSize": "15px",
-                                    "color": "#1F2937",
                                 },
                             ),
                             html.Div(
@@ -777,11 +783,11 @@ def layout():
                         children=[
                             html.Div(
                                 id=f"{PAGE_ID}-cum-title",
+                                className="mobile-chart-title",
                                 style={
                                     "fontFamily": FONT_FAMILY,
                                     "fontWeight": 600,
                                     "fontSize": "15px",
-                                    "color": "#1F2937",
                                 },
                             ),
                             html.Div(
