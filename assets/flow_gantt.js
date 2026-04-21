@@ -55,6 +55,16 @@ function _updateBandSelection(svg, selectedIdx) {
 // after a theme toggle.
 function _flowGanttTheme() {
     var isDark = document.documentElement.getAttribute("data-theme") === "dark";
+    // Metric colors get swapped to brighter variants in dark mode so text
+    // annotations remain readable on dark backgrounds. Mirrors the map in
+    // assets/02_theme.js.
+    var METRIC_LIGHT_TO_DARK = {
+        "#7c2a83": "#E4A7EA",
+        "#2196f3": "#64B5F6",
+        "#f44336": "#EF9A9A",
+        "#4caf50": "#81C784",
+        "#ff9800": "#FFB74D",
+    };
     return {
         isDark: isDark,
         // Plotly gridlines on histogram/duration-trend panels
@@ -68,6 +78,12 @@ function _flowGanttTheme() {
         bandHoverStroke:   isDark ? 0.80 : 0.55,
         // Pill background behind duration label on flow bands
         pillBg: isDark ? "rgba(40,44,52,0.92)" : "rgba(255,255,255,0.88)",
+        // Swap a metric color to its dark-mode-safe variant (no-op in light).
+        remapColor: function(hex) {
+            if (!hex || !isDark) return hex;
+            var key = String(hex).toLowerCase();
+            return METRIC_LIGHT_TO_DARK[key] || hex;
+        },
     };
 }
 
@@ -1458,7 +1474,7 @@ window.dash_clientside.flowGantt = {
             fig.layout.annotations.push({
                 x: bLabelX, y: labelY, yref: "paper", xref: "x",
                 text: "B", xanchor: bAnchor,
-                showarrow: false, font: {size: 11, color: color, family: font, weight: 700},
+                showarrow: false, font: {size: 11, color: _flowGanttTheme().remapColor(color), family: font, weight: 700},
             });
 
             // B trace — dashed/lighter version of A
@@ -1543,7 +1559,7 @@ window.dash_clientside.flowGantt = {
                 {
                     x: tStatDisp, y: 1.06, yref: "paper", xref: "x",
                     text: tStatLbl + ": " + tStatDisp + tu.suffix,
-                    showarrow: false, font: {size: 11, color: tot.color, family: font},
+                    showarrow: false, font: {size: 11, color: _flowGanttTheme().remapColor(tot.color), family: font},
                 },
                 {
                     x: 0.5, y: -0.15, xref: "paper", yref: "paper",
@@ -1625,7 +1641,7 @@ window.dash_clientside.flowGantt = {
             {
                 x: sDisp, y: 1.06, yref: "paper", xref: "x",
                 text: sLbl + ": " + sDisp + u.suffix,
-                showarrow: false, font: {size: 11, color: t.color, family: font},
+                showarrow: false, font: {size: 11, color: _flowGanttTheme().remapColor(t.color), family: font},
             },
             {
                 x: 0.5, y: -0.17, xref: "paper", yref: "paper",
@@ -1960,7 +1976,7 @@ window.dash_clientside.flowGantt = {
             baseLay.yaxis.title = aggLabel + " " + statLabel.toLowerCase() + kmSuffix + " (days)";
             var tTraces = buildTraces(tTrend, "Total Pipeline", tot.color);
             var hasImm = !useKM && (tTrend.completionRates || []).some(function(r) { return r < 0.5; });
-            return addBTrend([{data: tTraces, layout: baseLay}, "Duration Trend", legendStyle(hasImm, tot.color)], flowDetailsB, trendDataB);
+            return addBTrend([{data: tTraces, layout: baseLay}, "Duration Trend", legendStyle(hasImm, _flowGanttTheme().remapColor(tot.color))], flowDetailsB, trendDataB);
         }
 
         // Selected flow → single-transition trend
@@ -1979,7 +1995,7 @@ window.dash_clientside.flowGantt = {
         var title = "Duration Trend";
         var traces = buildTraces(selTrend, t.label, t.color);
         var hasImm2 = !useKM && (selTrend.completionRates || []).some(function(r) { return r < 0.5; });
-        return addBTrend([{data: traces, layout: baseLay}, title, legendStyle(hasImm2, t.color)], flowDetailsB, trendDataB);
+        return addBTrend([{data: traces, layout: baseLay}, title, legendStyle(hasImm2, _flowGanttTheme().remapColor(t.color))], flowDetailsB, trendDataB);
     },
 
     renderConversionTrend: function(flowDetails, selectedFlow, agg, chartType, smooth) {
