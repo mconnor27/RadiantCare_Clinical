@@ -600,11 +600,11 @@ def _render_mobile_auth_chip_children(_pathname):
     _mobile_btn_style = {
         "background": "transparent",
         "border": "none",
-        "padding": "6px",
+        "padding": "0",
         "cursor": "pointer",
         "outline": "none",
         "display": "inline-flex",
-        "alignItems": "center",
+        "alignItems": "flex-end",
         "justifyContent": "center",
     }
     return _build_auth_menu(
