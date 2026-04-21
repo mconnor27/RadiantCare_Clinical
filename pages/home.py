@@ -258,7 +258,7 @@ def _prepare_hours_data(departments, days_back=30):
             dv_past = dv_past[dv_past["ScheduledDate"] >= start_date]
 
         # Limit future data to 2 weeks
-        today = pd.Timestamp.now().normalize()
+        today = pd.Timestamp.now(tz="America/Los_Angeles").normalize().tz_localize(None)
         two_weeks_ahead = today + timedelta(days=14)
         dv_future = dv_future[dv_future["ScheduledDate"] <= two_weeks_ahead]
 
@@ -402,7 +402,7 @@ def _build_availability_calendar(departments, consults_only=True, view="both"):
     from data.loader import load_availability, load_clinic_visits, load_simulations
 
     try:
-        today = pd.Timestamp.now().normalize()
+        today = pd.Timestamp.now(tz="America/Los_Angeles").normalize().tz_localize(None)
         four_weeks = today + timedelta(days=28)
 
         # Load open holds from Availability (only unfilled slots)
@@ -682,19 +682,6 @@ def _build_availability_calendar(departments, consults_only=True, view="both"):
                 labels.append(row)
             return labels
 
-        # Locate today's cell within the (week, weekday) grid so we can draw a
-        # highlight marker on top of the heatmap.
-        today_week_idx = None
-        today_day_idx = None
-        if today.weekday() < 5:
-            for _wi, _ws in enumerate(weeks):
-                for _di in range(5):
-                    if _ws + timedelta(days=_di) == today:
-                        today_week_idx, today_day_idx = _wi, _di
-                        break
-                if today_week_idx is not None:
-                    break
-
         # Build traces per panel
         panel_labels = []
         for col_i, (_, _, z, ylbls, hover, pct_s, sched_s, total_s, _lead) in enumerate(panels, start=1):
@@ -706,21 +693,6 @@ def _build_availability_calendar(departments, consults_only=True, view="both"):
                 showscale=False,
             ), row=1, col=col_i)
             panel_labels.append(_cell_labels(pct_s, sched_s, total_s))
-            # Overlay a hollow square marker on today's cell (per panel so the
-            # highlight appears on both Consults and Sims views).
-            if today_week_idx is not None:
-                fig.add_trace(go.Scatter(
-                    x=[x_labels[today_day_idx]],
-                    y=[ylbls[today_week_idx]],
-                    mode="markers",
-                    marker=dict(
-                        symbol="square-open",
-                        size=38,
-                        line=dict(color="#7C2A83", width=3),
-                    ),
-                    hoverinfo="skip",
-                    showlegend=False,
-                ), row=1, col=col_i)
 
         # Add lead time annotations at bottom
         annotations = list(fig.layout.annotations)  # Keep subplot titles
