@@ -1143,14 +1143,16 @@ def _update_otvs_cumulative(*args):
 @callback(
     Output(f"{PAGE_ID}-chart-coverage", "figure"),
     *_OTVS_FILTER_INPUTS,
+    Input("global-theme-store", "data"),
     running=[(Output(f"{PAGE_ID}-coverage-loading", "visible"), True, False)],
 )
 def _update_otvs_coverage(*args):
-    ctx = _unpack_otvs_filter_args(args)
+    theme = args[-1]
+    ctx = _unpack_otvs_filter_args(args[:-1])
     data = _load_and_filter_otvs(**ctx)
     if data is None:
         return empty_figure()
-    return _build_coverage_chart(data["df"])
+    return _build_coverage_chart(data["df"], theme=theme)
 
 
 # ---------------------------------------------------------------------------
@@ -1725,7 +1727,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
 # Coverage heatmap
 # ---------------------------------------------------------------------------
 
-def _build_coverage_chart(df):
+def _build_coverage_chart(df, theme="light"):
     """Heatmap of treating physician vs appointment physician."""
     if df.empty:
         return empty_figure("No weekly visit data")
@@ -1753,18 +1755,37 @@ def _build_coverage_chart(df):
     short_rows = [physician_short_name(r) for r in rows]
     short_cols = [physician_short_name(c) for c in cols]
 
-    fig = go.Figure(go.Heatmap(
+    # Dark mode: start from the card bg so zero cells blend in, ramp to a
+    # bright blue so high-count cells pop. Light mode: standard Blues.
+    is_dark = (theme or "light") == "dark"
+    if is_dark:
+        colorscale = [
+            [0.00, "#1F222A"],
+            [0.15, "#1E3A5F"],
+            [0.50, "#2563EB"],
+            [1.00, "#93C5FD"],
+        ]
+        textfont_color = "#E6E7EC"
+    else:
+        colorscale = "Blues"
+        textfont_color = None  # let Plotly auto-contrast
+
+    heatmap_kwargs = dict(
         x=short_cols,
         y=short_rows,
         z=coverage.values,
-        colorscale="Blues",
+        colorscale=colorscale,
         text=coverage.values,
         texttemplate="%{text}",
-        textfont={"size": 12},
         hovertemplate=(
             "Treating: %{y}<br>Appointment: %{x}<br>Count: %{z}<extra></extra>"
         ),
-    ))
+    )
+    textfont = {"size": 12}
+    if textfont_color:
+        textfont["color"] = textfont_color
+    heatmap_kwargs["textfont"] = textfont
+    fig = go.Figure(go.Heatmap(**heatmap_kwargs))
     apply_default_layout(fig, height=380)
     fig.update_layout(
         xaxis_title=dict(text="Appointment Physician", font=dict(size=12, color="#6B7280")),
