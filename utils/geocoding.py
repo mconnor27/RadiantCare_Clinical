@@ -637,6 +637,50 @@ def _prepare_patient_geo_data_zip3(df, has_dept: bool, empty_cols):
     return agg
 
 
+@lru_cache(maxsize=1)
+def build_zip3_geojson():
+    """Build a GeoJSON FeatureCollection of ZIP3 polygons from ZCTA centroids.
+
+    Each feature is the convex hull of all ZCTA5 centroids sharing the same
+    3-digit prefix. This is not a true ZCTA boundary (centroids don't tile),
+    but it gives a reasonable regional footprint for choropleth rendering in
+    PHI_MODE where only ZIP3 resolution is available. Safe Harbor restricted
+    prefixes are omitted.
+
+    Feature id is the ZIP3 string ("985"). Cached for the process lifetime.
+    """
+    from scipy.spatial import ConvexHull
+    from collections import defaultdict
+
+    table = _load_zcta_table()
+    if not table:
+        return {"type": "FeatureCollection", "features": []}
+
+    prefix_points = defaultdict(list)
+    for z, (lat, lon) in table.items():
+        prefix_points[z[:3]].append((lon, lat))  # GeoJSON order: lon, lat
+
+    features = []
+    for prefix, points in prefix_points.items():
+        if prefix in _RESTRICTED_ZIP3 or len(points) < 3:
+            continue
+        arr = np.asarray(points, dtype=float)
+        try:
+            hull = ConvexHull(arr)
+        except Exception:
+            continue
+        ring = arr[hull.vertices].tolist()
+        ring.append(ring[0])  # close the ring
+        features.append({
+            "type": "Feature",
+            "id": prefix,
+            "properties": {"zip3": prefix},
+            "geometry": {"type": "Polygon", "coordinates": [ring]},
+        })
+
+    return {"type": "FeatureCollection", "features": features}
+
+
 def bezier_arc(from_lat, from_lon, to_lat, to_lon, num_points=30, curvature=0.25):
     """Generate curved arc points between two coordinates using a quadratic Bezier.
 

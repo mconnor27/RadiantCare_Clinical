@@ -13,6 +13,7 @@ from config.settings import (
     DEPARTMENTS, DEPARTMENT_COLORS, CHART_COLORWAY, PRIMARY,
     DEFAULT_LAYOUT, FONT_FAMILY, SEMANTIC_COLORS, NEUTRAL,
     MAPBOX_TOKEN, MAPBOX_CENTER, MAPBOX_ZOOM, MAPBOX_STYLE,
+    PHI_MODE,
 )
 from components.filter_bar import department_chips
 from components.chart_card import chart_card, register_chart_callbacks
@@ -29,6 +30,7 @@ from utils.geocoding import (
     trigger_background_geocode,
     is_geocoding_complete,
     normalize_zip,
+    build_zip3_geojson,
     DEPT_COORDS,
 )
 
@@ -122,7 +124,10 @@ def _build_patients_filter_bar():
                         gap="xs",
                         align="center",
                         children=[
-                            dmc.Text("Age at", size="xs", c="#9CA3AF"),
+                            dmc.Text(
+                                "Age" if PHI_MODE else "Age at",
+                                size="xs", c="#9CA3AF",
+                            ),
                             dmc.SegmentedControl(
                                 id="patients-age-ref",
                                 data=[
@@ -131,6 +136,7 @@ def _build_patients_filter_bar():
                                 ],
                                 value="first",
                                 size="xs",
+                                style={"display": "none"} if PHI_MODE else None,
                             ),
                             dmc.RangeSlider(
                                 id="patients-filter-age",
@@ -186,6 +192,9 @@ def _load_and_prepare():
     for col in ["FirstAppointment", "LastAppointment", "DateOfBirth"]:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], format="%m/%d/%Y", errors="coerce")
+
+    if "AgeAtLoad" in df.columns:
+        df["AgeAtLoad"] = pd.to_numeric(df["AgeAtLoad"], errors="coerce")
 
     return df
 
@@ -470,8 +479,14 @@ def _compute_age(df, ref="last"):
 
     Args:
         ref: "last" (default) or "first" — which appointment date to use.
+
+    In PHI_MODE the DOB is dropped at build time and replaced by a single
+    pre-computed `AgeAtLoad` column (integer years, capped at 90). The ref
+    toggle has no effect in that case.
     """
     if "DateOfBirth" not in df.columns:
+        if "AgeAtLoad" in df.columns:
+            return pd.to_numeric(df["AgeAtLoad"], errors="coerce").astype("float64")
         return pd.Series(dtype="float64", index=df.index)
 
     if ref == "first" and "FirstAppointment" in df.columns:
@@ -490,7 +505,7 @@ def _apply_age_filter(df, age_range, age_ref="last"):
     """Filter by age range."""
     if not age_range or len(age_range) != 2:
         return df
-    if "DateOfBirth" not in df.columns:
+    if "DateOfBirth" not in df.columns and "AgeAtLoad" not in df.columns:
         return df
     age = _compute_age(df, ref=age_ref)
     return df[(age >= age_range[0]) & (age <= age_range[1])]
@@ -672,7 +687,9 @@ def _build_top_cities_bar(df, top_n=12):
 
 def _prepare_age_dist_data(df, age_ref="last"):
     """Prepare age distribution data for the store (KDE + raw values)."""
-    if "DateOfBirth" not in df.columns or df.empty:
+    if df.empty:
+        return None
+    if "DateOfBirth" not in df.columns and "AgeAtLoad" not in df.columns:
         return None
 
     ages = _compute_age(df, ref=age_ref).dropna()
@@ -762,8 +779,64 @@ def _build_patient_map(
     else:
         render_depts = []
 
+    # --- PHI-mode choropleth (ZIP3 polygons) --------------------------------
+    phi_choropleth = PHI_MODE and render_depts and not geo_df.empty and "zip5" in geo_df.columns
+    if phi_choropleth:
+        if "Department" in geo_df.columns:
+            cho = geo_df[geo_df["Department"].isin(render_depts)]
+        else:
+            cho = geo_df
+        cho = cho[cho["patient_count"] >= min_patients]
+        cho = cho[
+            (cho["lat"].between(*lat_bounds))
+            & (cho["lon"].between(*lon_bounds))
+        ]
+
+        if not cho.empty:
+            totals = (
+                cho.groupby("zip5", as_index=False)
+                .agg(patient_count=("patient_count", "sum"),
+                     primary_city=("primary_city", "first"))
+            )
+
+            single_dept = render_depts[0] if len(render_depts) == 1 else None
+            if single_dept:
+                base = DEPARTMENT_COLORS.get(single_dept, PRIMARY)
+                colorscale = [[0.0, "rgba(255,255,255,0.2)"], [1.0, base]]
+            else:
+                colorscale = "Viridis"
+
+            hover = [
+                f"ZIP3 {row.zip5}xx<br>{int(row.patient_count):,} patients"
+                for row in totals.itertuples()
+            ]
+            fig.add_trace(go.Choroplethmapbox(
+                geojson=build_zip3_geojson(),
+                locations=totals["zip5"].tolist(),
+                z=totals["patient_count"].tolist(),
+                customdata=[[z, c] for z, c in zip(totals["zip5"], totals["primary_city"])],
+                colorscale=colorscale,
+                marker=dict(line=dict(width=0.5, color="rgba(60,60,60,0.6)"), opacity=0.55),
+                showscale=True,
+                colorbar=dict(
+                    title=dict(text="Patients", side="right"),
+                    thickness=10, len=0.6, x=0.99, xanchor="right",
+                ),
+                text=hover,
+                hoverinfo="text",
+            ))
+            # Invisible scatter to seed autofit with ZIP3 centroids
+            fig.add_trace(go.Scattermapbox(
+                lat=cho["lat"].tolist(),
+                lon=cho["lon"].tolist(),
+                mode="markers",
+                marker=dict(size=1, opacity=0),
+                hoverinfo="skip",
+                showlegend=False,
+            ))
+
     # --- Patient bubbles (one trace per department) --------------------------
-    if render_depts and not geo_df.empty and "lat" in geo_df.columns:
+    if not phi_choropleth and render_depts and not geo_df.empty and "lat" in geo_df.columns:
         for dept in render_depts:
             dept_data = (
                 geo_df[geo_df["Department"] == dept]
@@ -1143,9 +1216,15 @@ def _update_age_dist(data, mode, group, bandwidth_pct):
     )
 
     apply_default_layout(fig)
+    xaxis_title = (
+        f"Age (years)  (n={data['n']:,}  Mean: {data['mean']:.0f}  "
+        f"IQR: {data['p25']:.0f}\u2013{data['p75']:.0f})"
+    )
+    if PHI_MODE:
+        xaxis_title += "   \u2014 ages 90+ reported as 90"
     fig.update_layout(
         height=380,
-        xaxis_title=f"Age (years)  (n={data['n']:,}  Mean: {data['mean']:.0f}  IQR: {data['p25']:.0f}\u2013{data['p75']:.0f})",
+        xaxis_title=xaxis_title,
         yaxis_title=y_title,
         margin=dict(l=48, r=16, t=36, b=12),
         showlegend=per_site,
