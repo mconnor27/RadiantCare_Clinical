@@ -870,6 +870,7 @@ layout = dmc.Stack(
                         settings_id="home-avail",
                         chart_types=None,
                         show_smooth=False,
+                        show_grouping=False,
                         paper_height="466px",
                         extra_controls_left=[
                             dmc.SegmentedControl(
