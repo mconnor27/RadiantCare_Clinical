@@ -39,7 +39,8 @@ app.index_string = """<!DOCTYPE html>
     <head>
         {%metas%}
         <title>{%title%}</title>
-        {%favicon%}
+        <link rel="icon" type="image/png" href="/assets/RadiantCare-icon.png">
+        <link rel="apple-touch-icon" href="/assets/RadiantCare-icon.png">
         {%css%}
         <script>
             (function() {
