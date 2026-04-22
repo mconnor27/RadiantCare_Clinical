@@ -371,8 +371,7 @@ layout = dmc.Stack(
                             ),
                         ],
                         extra_controls=[
-                            # Wrapped so the Histogram/Density toggle can be
-                            # hidden when the Gender metric is selected.
+                            # Histogram/Density — shown in Age mode only.
                             html.Div(
                                 id="patients-age-dist-mode-wrap",
                                 children=dmc.SegmentedControl(
@@ -382,6 +381,20 @@ layout = dmc.Stack(
                                         {"value": "density", "label": "Density"},
                                     ],
                                     value="density",
+                                    size="xs",
+                                ),
+                            ),
+                            # Count/Percent — shown in Gender mode only.
+                            html.Div(
+                                id="patients-gender-scale-wrap",
+                                style={"display": "none"},
+                                children=dmc.SegmentedControl(
+                                    id="patients-gender-scale",
+                                    data=[
+                                        {"value": "count", "label": "Count"},
+                                        {"value": "pct",   "label": "Percent"},
+                                    ],
+                                    value="count",
                                     size="xs",
                                 ),
                             ),
@@ -415,11 +428,15 @@ clientside_callback(
     function(metric) {
         const hidden = {display: "none"};
         const shown = {};
-        return metric === "gender" ? [hidden, hidden] : [shown, shown];
+        if (metric === "gender") {
+            return [hidden, hidden, shown];
+        }
+        return [shown, shown, hidden];
     }
     """,
     Output("patients-age-dist-mode-wrap", "style"),
     Output("patients-age-settings-smooth-wrap", "style", allow_duplicate=True),
+    Output("patients-gender-scale-wrap", "style"),
     Input("patients-demog-metric", "value"),
     prevent_initial_call=True,
 )
@@ -717,7 +734,7 @@ def _build_top_cities_bar(df, top_n=12):
 
     fig = apply_default_layout(fig, height=380)
     fig.update_layout(
-        margin=dict(l=100, r=32, t=8, b=12),
+        margin=dict(l=100, r=32, t=8, b=6),
         xaxis_title="Patient Count",
         yaxis=dict(autorange=True, showgrid=False),
     )
@@ -1222,11 +1239,14 @@ _GENDER_COLORS = {
 }
 
 
-def _build_gender_fig(data, group="all"):
+def _build_gender_fig(data, group="all", scale="count"):
     """Build the gender distribution figure.
 
-    "all" -> horizontal bar of totals.
+    "all"  -> horizontal bar of totals.
     "site" -> grouped bars per department, one series per gender.
+
+    scale="count" shows raw counts; "pct" shows percent-of-group (percent of
+    the whole in "all" mode, percent of that site's total in "site" mode).
     """
     gender = (data or {}).get("gender") if data else None
     if not gender or not gender.get("total"):
@@ -1235,48 +1255,94 @@ def _build_gender_fig(data, group="all"):
         return fig
 
     fig = go.Figure()
+    as_pct = (scale == "pct")
 
     if group == "site" and gender.get("by_dept"):
         by_dept = gender["by_dept"]
         dept_order = [d for d in DEPARTMENTS if d in by_dept]
+        site_totals = {d: sum(by_dept.get(d, {}).values()) or 1 for d in dept_order}
+
         for g in _GENDER_ORDER:
-            vals = [by_dept.get(d, {}).get(g, 0) for d in dept_order]
-            if not any(vals):
+            counts = [by_dept.get(d, {}).get(g, 0) for d in dept_order]
+            if not any(counts):
                 continue
-            fig.add_trace(go.Bar(
-                x=dept_order, y=vals, name=g,
-                marker_color=_GENDER_COLORS[g],
-                hovertemplate=f"{g}<br>%{{x}}: %{{y:,}} patients<extra></extra>",
-                text=[f"{v:,}" if v else "" for v in vals],
-                textposition="outside",
-            ))
+            if as_pct:
+                vals = [c / site_totals[d] * 100 for c, d in zip(counts, dept_order)]
+                text = [f"{v:.0f}%" if v else "" for v in vals]
+                hover = (
+                    f"{g}<br>%{{x}}: %{{y:.1f}}%  "
+                    f"(%{{customdata:,}} patients)<extra></extra>"
+                )
+                fig.add_trace(go.Bar(
+                    x=dept_order, y=vals, name=g,
+                    customdata=counts,
+                    marker_color=_GENDER_COLORS[g],
+                    hovertemplate=hover,
+                    text=text, textposition="outside",
+                    textfont=dict(size=11, color="#6B7280"),
+                ))
+            else:
+                fig.add_trace(go.Bar(
+                    x=dept_order, y=counts, name=g,
+                    marker_color=_GENDER_COLORS[g],
+                    hovertemplate=f"{g}<br>%{{x}}: %{{y:,}} patients<extra></extra>",
+                    text=[f"{v:,}" if v else "" for v in counts],
+                    textposition="outside",
+                    textfont=dict(size=11, color="#6B7280"),
+                ))
         fig.update_layout(barmode="group")
         xaxis_title = "Department"
+        yaxis_title = "Share of site" if as_pct else "Patients"
     else:
         total = gender["total"]
         cats = [g for g in _GENDER_ORDER if total.get(g, 0) > 0]
-        vals = [total[g] for g in cats]
-        grand = sum(vals) or 1
-        fig.add_trace(go.Bar(
-            y=cats, x=vals,
-            orientation="h",
-            marker_color=[_GENDER_COLORS[g] for g in cats],
-            text=[f"{v:,} ({v/grand:.0%})" for v in vals],
-            textposition="outside",
-            hovertemplate="%{y}<br>%{x:,} patients<extra></extra>",
-        ))
-        xaxis_title = "Patient Count"
+        counts = [total[g] for g in cats]
+        grand = sum(counts) or 1
+        if as_pct:
+            pcts = [c / grand * 100 for c in counts]
+            fig.add_trace(go.Bar(
+                y=cats, x=pcts,
+                orientation="h",
+                marker_color=[_GENDER_COLORS[g] for g in cats],
+                customdata=counts,
+                text=[f"{p:.1f}%" for p in pcts],
+                textposition="outside",
+                textfont=dict(size=11, color="#6B7280"),
+                hovertemplate=(
+                    "%{y}<br>%{x:.1f}%  (%{customdata:,} patients)<extra></extra>"
+                ),
+            ))
+            xaxis_title = "Share of patients (%)"
+        else:
+            fig.add_trace(go.Bar(
+                y=cats, x=counts,
+                orientation="h",
+                marker_color=[_GENDER_COLORS[g] for g in cats],
+                text=[f"{v:,} ({v/grand:.0%})" for v in counts],
+                textposition="outside",
+                textfont=dict(size=11, color="#6B7280"),
+                hovertemplate="%{y}<br>%{x:,} patients<extra></extra>",
+            ))
+            xaxis_title = "Patient Count"
+        yaxis_title = None
 
     apply_default_layout(fig)
     n_total = sum(gender["total"].values())
+    # Matches the top-cities chart margins so the x-axis baselines align.
     fig.update_layout(
         height=380,
         xaxis_title=f"{xaxis_title}  (n={n_total:,})",
-        margin=dict(l=80, r=32, t=36, b=12),
+        yaxis_title=yaxis_title,
+        # r=100 leaves room for outside-bar annotations like "1,241 (49%)".
+        margin=dict(l=80, r=100, t=8, b=6),
         showlegend=(group == "site"),
         legend=dict(orientation="h", yanchor="bottom", y=1.02,
                     xanchor="left", x=0),
     )
+    # In percent mode the outside-text still needs a little headroom on the
+    # right so the "49%" label isn't clipped at x=100%.
+    if as_pct and group != "site":
+        fig.update_xaxes(range=[0, 110])
     return fig
 
 
@@ -1291,15 +1357,18 @@ def _build_gender_fig(data, group="all"):
     Input("patients-age-dist-mode", "value"),
     Input("patients-age-dist-group", "value"),
     Input("patients-age-settings-smooth", "value"),
+    Input("patients-gender-scale", "value"),
     running=[
         (Output("patients-chart-age-dist-loading", "visible"), True, False),
     ],
 )
-def _update_age_dist(data, metric, mode, group, bandwidth_pct):
+def _update_age_dist(data, metric, mode, group, bandwidth_pct, gender_scale):
     metric = metric or "age"
 
     if metric == "gender":
-        return _build_gender_fig(data, group=group or "all")
+        return _build_gender_fig(
+            data, group=group or "all", scale=gender_scale or "count",
+        )
 
     if not data or "values" not in data:
         fig = empty_figure("No age data available")
@@ -1385,14 +1454,16 @@ def _update_age_dist(data, metric, mode, group, bandwidth_pct):
             ))
         y_title = "Patients"
 
-    # Median vertical line
+    # Median vertical line. Annotation sits INSIDE the plot area (just below
+    # the top) so the chart can use the same tight top margin as top-cities /
+    # gender and their x-axis baselines stay aligned across the row.
     med = data["median"]
     fig.add_vline(x=med, line_dash="dash", line_color="#6B7280")
     fig.add_annotation(
-        x=med, y=1.03, yref="paper", yshift=0,
+        x=med, y=0.98, yref="paper",
         text=f"Median: {med:.0f}", showarrow=False,
         font=dict(size=11, color="#6B7280"),
-        yanchor="bottom", xanchor="center",
+        yanchor="top", xanchor="center",
     )
 
     apply_default_layout(fig)
@@ -1406,7 +1477,9 @@ def _update_age_dist(data, metric, mode, group, bandwidth_pct):
         height=380,
         xaxis_title=xaxis_title,
         yaxis_title=y_title,
-        margin=dict(l=48, r=16, t=36, b=12),
+        # Matches top-cities + gender margins so all three x-axis baselines
+        # align along the row.
+        margin=dict(l=48, r=16, t=8, b=6),
         showlegend=per_site,
         legend=dict(
             orientation="h", yanchor="bottom", y=1.02,
