@@ -1608,6 +1608,22 @@ def _build_filter_bar():
                             gap="md",
                         ),
                     ]),
+                    # A/R lag toggle — shifts every row's DateOfService forward
+                    # by the saved lag so dollar metrics/charts on the page
+                    # read as cash-arriving rather than billing-date.
+                    dmc.Tooltip(
+                        label=("Shift every DateOfService forward by the saved "
+                               "A/R lag so dollar metrics reflect cash-arriving "
+                               "timing. Totals that aren't date-filtered are "
+                               "unchanged."),
+                        multiline=True, w=260, position="bottom-end", withArrow=True,
+                        children=dmc.Switch(
+                            id=f"{PAGE_ID}-filter-ar-lag-apply",
+                            label=html.Span(id=f"{PAGE_ID}-filter-ar-lag-label",
+                                            children="A/R lag"),
+                            size="sm", color="violet", checked=False,
+                        ),
+                    ),
                     dmc.Group(
                         children=[
                             dmc.Text("Smoothing", size="xs", c="#6B7280", fw=500),
@@ -1680,22 +1696,6 @@ def _build_filter_bar():
                             ),
                         ],
                         style={"flex": "1", "minWidth": "280px"},
-                    ),
-                    # A/R lag toggle — shifts all DateOfService values forward by
-                    # the saved lag so the page's dollar metrics/charts read as
-                    # cash-arriving rather than billing-date.
-                    dmc.Tooltip(
-                        label=("Shift every DateOfService forward by the saved "
-                               "A/R lag so dollar metrics reflect cash-arriving "
-                               "timing. Totals that aren't date-filtered are "
-                               "unchanged."),
-                        multiline=True, w=260, position="bottom-end", withArrow=True,
-                        children=dmc.Switch(
-                            id=f"{PAGE_ID}-filter-ar-lag-apply",
-                            label=html.Span(id=f"{PAGE_ID}-filter-ar-lag-label",
-                                            children="A/R lag"),
-                            size="sm", color="violet", checked=False,
-                        ),
                     ),
                 ],
                 gap="md", align="center", mt="xs",
