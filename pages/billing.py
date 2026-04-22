@@ -717,6 +717,7 @@ def _rev_adj_slider(category, color):
                     {"value": 200, "label": "200%"},
                 ],
                 color="violet",
+                updatemode="mouseup",
                 style={"flex": 1},
             ),
             dmc.Text(
@@ -1680,6 +1681,22 @@ def _build_filter_bar():
                         ],
                         style={"flex": "1", "minWidth": "280px"},
                     ),
+                    # A/R lag toggle — shifts all DateOfService values forward by
+                    # the saved lag so the page's dollar metrics/charts read as
+                    # cash-arriving rather than billing-date.
+                    dmc.Tooltip(
+                        label=("Shift every DateOfService forward by the saved "
+                               "A/R lag so dollar metrics reflect cash-arriving "
+                               "timing. Totals that aren't date-filtered are "
+                               "unchanged."),
+                        multiline=True, w=260, position="bottom-end", withArrow=True,
+                        children=dmc.Switch(
+                            id=f"{PAGE_ID}-filter-ar-lag-apply",
+                            label=html.Span(id=f"{PAGE_ID}-filter-ar-lag-label",
+                                            children="A/R lag"),
+                            size="sm", color="violet", checked=False,
+                        ),
+                    ),
                 ],
                 gap="md", align="center", mt="xs",
             ),
@@ -2159,9 +2176,40 @@ layout = dmc.Stack(
         # ---------------------------------------------------------------
         # Insurance Rate Manager Modal
         # ---------------------------------------------------------------
+        # Plain-HTML overlay (always in the DOM, no React portal). A
+        # clientside className toggle lets it appear instantly on click,
+        # giving the user feedback while the heavy DMC Modal behind it
+        # does its first layout pass.
+        html.Div(
+            id=f"{PAGE_ID}-irm-overlay",
+            className="heavy-modal-overlay hidden",
+            children=[
+                html.Div(
+                    className="heavy-modal-overlay-card",
+                    children=[
+                        html.Div(className="heavy-modal-spinner"),
+                        html.Div("Loading Payor Manager…",
+                                 className="heavy-modal-overlay-text"),
+                    ],
+                ),
+            ],
+        ),
+
+        # Hidden interval: armed by the click, fires once to open the
+        # heavy modal after the overlay has painted.
+        dcc.Interval(
+            id=f"{PAGE_ID}-irm-delay",
+            interval=60,
+            disabled=True,
+            max_intervals=1,
+            n_intervals=0,
+        ),
+
         dmc.Modal(
             id=f"{PAGE_ID}-irm-modal",
             opened=False,
+            keepMounted=True,
+            transitionProps={"transition": "fade", "duration": 120},
             title=dmc.Group(
                 children=[
                     DashIconify(icon="tabler:building-bank", width=22, color=PRIMARY),
@@ -2668,115 +2716,439 @@ layout = dmc.Stack(
                             style={"display": "flex", "flexDirection": "column",
                                    "overflow": "auto", "padding": "4px 0"},
                             children=[
-                                dmc.Text(
-                                    "The realization factor is always applied. The toggle below "
-                                    "controls whether per-category payer-mix multipliers are "
-                                    "also applied to revenue estimates.",
-                                    size="xs", c="dimmed", mb="sm",
-                                ),
-
-                                # Enable/disable toggle
-                                dmc.Switch(
-                                    id=f"{PAGE_ID}-rev-adj-enabled",
-                                    label="Enable per-category payer-mix multipliers",
-                                    size="md",
-                                    checked=False,
-                                    color="violet",
-                                    mb="md",
-                                ),
-
-                                # Category multiplier sliders
-                                dmc.Paper(
-                                    p="md", radius="md", withBorder=True, mb="md",
-                                    style={"maxWidth": "50%"},
-                                    id=f"{PAGE_ID}-rev-adj-cat-paper",
+                                # Two-column layout: controls on left (~33%), plot on right (~67%)
+                                html.Div(
+                                    style={
+                                        "display": "flex",
+                                        "gap": "16px",
+                                        "alignItems": "stretch",
+                                        "flex": 1,
+                                        "minHeight": 0,
+                                    },
                                     children=[
-                                        dmc.Group(
-                                            gap="xs", mb="sm",
+                                        # LEFT: controls column
+                                        html.Div(
+                                            style={
+                                                "flex": "0 0 34%",
+                                                "display": "flex",
+                                                "flexDirection": "column",
+                                                "gap": "12px",
+                                                "minWidth": 0,
+                                            },
                                             children=[
-                                                DashIconify(icon="tabler:percentage", width=18, color=PRIMARY),
-                                                dmc.Text("Category Multipliers (% of Medicare)", fw=600, size="sm"),
-                                            ],
-                                        ),
-                                        dmc.Text(
-                                            "Estimate how each broad payer category reimburses "
-                                            "relative to Medicare allowed amounts.",
-                                            size="xs", c="dimmed", mb="md",
-                                        ),
-                                        dmc.SimpleGrid(
-                                            cols=1,
-                                            spacing="sm",
-                                            children=[
-                                                _rev_adj_slider("Medicare", "#2196F3"),
-                                                _rev_adj_slider("Medicaid", "#4CAF50"),
-                                                _rev_adj_slider("Private", "#FF9800"),
-                                                _rev_adj_slider("Military/VA", "#7C2A83"),
-                                                _rev_adj_slider("Workers Comp", "#00BCD4"),
-                                                _rev_adj_slider("Tribal/IHS", "#795548"),
-                                                _rev_adj_slider("Self Pay", "#F44336"),
-                                                _rev_adj_slider("Other/Unknown", "#9CA3AF"),
-                                            ],
-                                        ),
-                                    ],
-                                ),
-
-                                # Realization factor
-                                dmc.Paper(
-                                    p="md", radius="md", withBorder=True, mb="md",
-                                    style={"maxWidth": "50%"},
-                                    children=[
-                                        dmc.Group(
-                                            gap="xs", mb="sm",
-                                            children=[
-                                                DashIconify(icon="tabler:receipt-off", width=18, color=PRIMARY),
-                                                dmc.Text("Realization Factor", fw=600, size="sm"),
-                                            ],
-                                        ),
-                                        dmc.Text(
-                                            "Discount applied to all revenue estimates to account for "
-                                            "denials, adjustments, underpayments, and write-offs.",
-                                            size="xs", c="dimmed", mb="md",
-                                        ),
-                                        dmc.Group(
-                                            gap="md", align="center",
-                                            children=[
-                                                dmc.Slider(
-                                                    id=f"{PAGE_ID}-rev-adj-realization",
-                                                    min=0, max=100, step=1, value=90,
-                                                    marks=[
-                                                        {"value": 0, "label": "0%"},
-                                                        {"value": 25, "label": "25%"},
-                                                        {"value": 50, "label": "50%"},
-                                                        {"value": 75, "label": "75%"},
-                                                        {"value": 100, "label": "100%"},
+                                                # Top blurb + enable toggle
+                                                dmc.Paper(
+                                                    p="sm", radius="md", withBorder=True,
+                                                    children=[
+                                                        dmc.Text(
+                                                            "The realization factor is always applied. "
+                                                            "The toggle below controls whether per-category "
+                                                            "payer-mix multipliers are also applied.",
+                                                            size="xs", c="dimmed", mb="xs",
+                                                        ),
+                                                        dmc.Switch(
+                                                            id=f"{PAGE_ID}-rev-adj-enabled",
+                                                            label="Enable per-category payer-mix multipliers",
+                                                            size="sm",
+                                                            checked=False,
+                                                            color="violet",
+                                                        ),
                                                     ],
-                                                    color="violet",
-                                                    style={"flex": 1},
                                                 ),
-                                                dmc.Text(
-                                                    id=f"{PAGE_ID}-rev-adj-realization-val",
-                                                    size="lg", fw=700, c=PRIMARY,
-                                                    style={"minWidth": "55px", "textAlign": "right"},
+
+                                                # Category multipliers
+                                                dmc.Paper(
+                                                    p="md", pb=28, radius="md", withBorder=True,
+                                                    id=f"{PAGE_ID}-rev-adj-cat-paper",
+                                                    children=[
+                                                        dmc.Group(
+                                                            gap="xs", mb="xs", justify="space-between", wrap="nowrap",
+                                                            children=[
+                                                                dmc.Group(
+                                                                    gap="xs",
+                                                                    children=[
+                                                                        DashIconify(icon="tabler:percentage", width=18, color=PRIMARY),
+                                                                        dmc.Text("Category Multipliers (% of Medicare)", fw=600, size="sm"),
+                                                                    ],
+                                                                ),
+                                                                dmc.Button(
+                                                                    "Reset",
+                                                                    id=f"{PAGE_ID}-rev-adj-reset-mults",
+                                                                    variant="subtle", color="gray", size="compact-xs",
+                                                                    leftSection=DashIconify(icon="tabler:refresh", width=12),
+                                                                ),
+                                                            ],
+                                                        ),
+                                                        dmc.Text(
+                                                            "Estimate how each broad payer category reimburses "
+                                                            "relative to Medicare allowed amounts.",
+                                                            size="xs", c="dimmed", mb="sm",
+                                                        ),
+                                                        dmc.Stack(
+                                                            gap=22,
+                                                            children=[
+                                                                _rev_adj_slider("Medicare", "#2196F3"),
+                                                                _rev_adj_slider("Medicaid", "#4CAF50"),
+                                                                _rev_adj_slider("Private", "#FF9800"),
+                                                                _rev_adj_slider("Military/VA", "#7C2A83"),
+                                                                _rev_adj_slider("Workers Comp", "#00BCD4"),
+                                                                _rev_adj_slider("Tribal/IHS", "#795548"),
+                                                                _rev_adj_slider("Self Pay", "#F44336"),
+                                                                _rev_adj_slider("Other/Unknown", "#9CA3AF"),
+                                                            ],
+                                                        ),
+                                                    ],
+                                                ),
+
+                                                # Realization factor
+                                                dmc.Paper(
+                                                    p="md", pb=28, radius="md", withBorder=True,
+                                                    children=[
+                                                        dmc.Group(
+                                                            gap="xs", mb="xs",
+                                                            children=[
+                                                                DashIconify(icon="tabler:receipt-off", width=18, color=PRIMARY),
+                                                                dmc.Text("Realization Factor", fw=600, size="sm"),
+                                                            ],
+                                                        ),
+                                                        dmc.Text(
+                                                            "Discount applied to all revenue estimates to account for "
+                                                            "denials, adjustments, underpayments, and write-offs.",
+                                                            size="xs", c="dimmed", mb="sm",
+                                                        ),
+                                                        dmc.Group(
+                                                            gap="md", align="center",
+                                                            children=[
+                                                                dmc.Slider(
+                                                                    id=f"{PAGE_ID}-rev-adj-realization",
+                                                                    min=0, max=100, step=1, value=90,
+                                                                    marks=[
+                                                                        {"value": 0, "label": "0%"},
+                                                                        {"value": 25, "label": "25%"},
+                                                                        {"value": 50, "label": "50%"},
+                                                                        {"value": 75, "label": "75%"},
+                                                                        {"value": 100, "label": "100%"},
+                                                                    ],
+                                                                    color="violet",
+                                                                    updatemode="mouseup",  # native rAF loop handles live drag
+                                                                    style={"flex": 1},
+                                                                ),
+                                                                dmc.Text(
+                                                                    id=f"{PAGE_ID}-rev-adj-realization-val",
+                                                                    size="lg", fw=700, c=PRIMARY,
+                                                                    style={"minWidth": "55px", "textAlign": "right"},
+                                                                ),
+                                                            ],
+                                                        ),
+                                                    ],
+                                                ),
+
+                                                # Save button
+                                                dmc.Group(
+                                                    justify="flex-end",
+                                                    children=[
+                                                        dmc.Text(
+                                                            id=f"{PAGE_ID}-rev-adj-status",
+                                                            size="xs", c="dimmed",
+                                                        ),
+                                                        dmc.Button(
+                                                            "Save Settings",
+                                                            id=f"{PAGE_ID}-rev-adj-save",
+                                                            leftSection=DashIconify(icon="tabler:device-floppy", width=16),
+                                                            variant="filled", color="violet", size="compact-sm",
+                                                        ),
+                                                    ],
                                                 ),
                                             ],
                                         ),
-                                    ],
-                                ),
 
-                                # Save button
-                                dmc.Group(
-                                    justify="flex-end",
-                                    style={"maxWidth": "50%"},
-                                    children=[
-                                        dmc.Text(
-                                            id=f"{PAGE_ID}-rev-adj-status",
-                                            size="xs", c="dimmed",
-                                        ),
-                                        dmc.Button(
-                                            "Save Settings",
-                                            id=f"{PAGE_ID}-rev-adj-save",
-                                            leftSection=DashIconify(icon="tabler:device-floppy", width=16),
-                                            variant="filled", color="violet", size="compact-sm",
+                                        # RIGHT: plot column
+                                        html.Div(
+                                            style={
+                                                "flex": 1,
+                                                "display": "flex",
+                                                "flexDirection": "column",
+                                                "gap": "10px",
+                                                "minWidth": 0,
+                                            },
+                                            children=[
+                                                # Date presets + date range picker
+                                                dmc.Paper(
+                                                    p="sm", radius="md", withBorder=True,
+                                                    children=[
+                                                        dmc.Group(
+                                                            gap="sm", align="center", wrap="wrap",
+                                                            children=[
+                                                                dmc.SegmentedControl(
+                                                                    id=f"{PAGE_ID}-rev-adj-date-preset",
+                                                                    data=[
+                                                                        {"value": "ytd", "label": "YTD"},
+                                                                        {"value": "last_year", "label": "Last Yr"},
+                                                                        {"value": "12mo", "label": "12 mo"},
+                                                                        {"value": "24mo", "label": "24 mo"},
+                                                                        {"value": "5yr", "label": "5 yr"},
+                                                                        {"value": "all", "label": "All"},
+                                                                        {"value": "custom", "label": "Custom"},
+                                                                    ],
+                                                                    value="ytd",
+                                                                    size="xs",
+                                                                ),
+                                                                dcc.DatePickerRange(
+                                                                    id=f"{PAGE_ID}-rev-adj-daterange",
+                                                                    display_format="YYYY-MM-DD",
+                                                                    minimum_nights=0,
+                                                                    clearable=False,
+                                                                    className="rev-adj-daterange-compact",
+                                                                ),
+                                                                dmc.Menu(
+                                                                    position="bottom-end",
+                                                                    withinPortal=True,
+                                                                    zIndex=1100,
+                                                                    children=[
+                                                                        dmc.MenuTarget(
+                                                                            dmc.Button(
+                                                                                "Auto-fit",
+                                                                                id=f"{PAGE_ID}-rev-adj-auto-realization",
+                                                                                variant="light", color="violet",
+                                                                                size="compact-xs",
+                                                                                leftSection=DashIconify(icon="tabler:wand", width=12),
+                                                                                rightSection=DashIconify(icon="tabler:chevron-down", width=12),
+                                                                            ),
+                                                                        ),
+                                                                        dmc.MenuDropdown([
+                                                                            dmc.MenuLabel("Least-squares fit over selected range"),
+                                                                            dmc.MenuItem(
+                                                                                "Realization only",
+                                                                                id=f"{PAGE_ID}-rev-adj-auto-r-only",
+                                                                                leftSection=DashIconify(icon="tabler:percentage", width=14),
+                                                                            ),
+                                                                            dmc.MenuItem(
+                                                                                "A/R Lag only",
+                                                                                id=f"{PAGE_ID}-rev-adj-auto-lag-only",
+                                                                                leftSection=DashIconify(icon="tabler:clock-hour-4", width=14),
+                                                                            ),
+                                                                            dmc.MenuItem(
+                                                                                "Realization + A/R Lag",
+                                                                                id=f"{PAGE_ID}-rev-adj-auto-both",
+                                                                                leftSection=DashIconify(icon="tabler:wand", width=14),
+                                                                            ),
+                                                                            dmc.MenuDivider(),
+                                                                            dmc.MenuItem(
+                                                                                "Detect drift (segments)",
+                                                                                id=f"{PAGE_ID}-rev-adj-auto-segments",
+                                                                                leftSection=DashIconify(icon="tabler:chart-dots", width=14),
+                                                                            ),
+                                                                            dmc.MenuItem(
+                                                                                "Clear drift markers",
+                                                                                id=f"{PAGE_ID}-rev-adj-auto-clear",
+                                                                                leftSection=DashIconify(icon="tabler:eraser", width=14),
+                                                                            ),
+                                                                        ]),
+                                                                    ],
+                                                                ),
+                                                                # Drift thresholds — in a portaled popover so it
+                                                                # never affects the plot's layout container.
+                                                                dmc.Popover(
+                                                                    position="bottom-end",
+                                                                    withArrow=True,
+                                                                    withinPortal=True,
+                                                                    zIndex=1400,
+                                                                    shadow="md",
+                                                                    children=[
+                                                                        dmc.PopoverTarget(
+                                                                            dmc.ActionIcon(
+                                                                                DashIconify(icon="tabler:adjustments-horizontal", width=14),
+                                                                                variant="subtle", color="gray", size="sm",
+                                                                            ),
+                                                                        ),
+                                                                        dmc.PopoverDropdown(
+                                                                            style={"width": 280, "padding": 12},
+                                                                            children=[
+                                                                                dmc.Text("Drift detection",
+                                                                                         fw=600, size="xs", mb=8),
+                                                                                dmc.Group(
+                                                                                    gap="xs", align="center", wrap="nowrap", mb=14,
+                                                                                    children=[
+                                                                                        dmc.Text("Sensitivity", size="xs",
+                                                                                                 style={"minWidth": 74}),
+                                                                                        dmc.Slider(
+                                                                                            id=f"{PAGE_ID}-rev-adj-drift-sens",
+                                                                                            min=5, max=40, step=1, value=15,
+                                                                                            marks=[
+                                                                                                {"value": 5, "label": "5"},
+                                                                                                {"value": 20, "label": "20"},
+                                                                                                {"value": 40, "label": "40"},
+                                                                                            ],
+                                                                                            color="orange", size="xs",
+                                                                                            updatemode="mouseup",
+                                                                                            style={"flex": 1},
+                                                                                        ),
+                                                                                        dmc.Text(
+                                                                                            id=f"{PAGE_ID}-rev-adj-drift-sens-val",
+                                                                                            size="xs", fw=600, c="#F97316",
+                                                                                            style={"minWidth": 28, "textAlign": "right"},
+                                                                                        ),
+                                                                                    ],
+                                                                                ),
+                                                                                dmc.Text(
+                                                                                    "Min SSR improvement (%) to place a split. "
+                                                                                    "Higher = fewer segments.",
+                                                                                    size="xs", c="dimmed", mb=12,
+                                                                                ),
+                                                                                dmc.Group(
+                                                                                    gap="xs", align="center", wrap="nowrap",
+                                                                                    children=[
+                                                                                        dmc.Text("Flag ≥", size="xs",
+                                                                                                 style={"minWidth": 74}),
+                                                                                        dmc.Slider(
+                                                                                            id=f"{PAGE_ID}-rev-adj-drift-hl",
+                                                                                            min=1, max=15, step=1, value=3,
+                                                                                            marks=[
+                                                                                                {"value": 1, "label": "1"},
+                                                                                                {"value": 5, "label": "5"},
+                                                                                                {"value": 15, "label": "15"},
+                                                                                            ],
+                                                                                            color="orange", size="xs",
+                                                                                            updatemode="mouseup",
+                                                                                            style={"flex": 1},
+                                                                                        ),
+                                                                                        dmc.Text(
+                                                                                            id=f"{PAGE_ID}-rev-adj-drift-hl-val",
+                                                                                            size="xs", fw=600, c="#F97316",
+                                                                                            style={"minWidth": 28, "textAlign": "right"},
+                                                                                        ),
+                                                                                    ],
+                                                                                ),
+                                                                                dmc.Text(
+                                                                                    "Drift magnitude (pp) that flags a "
+                                                                                    "segment orange.",
+                                                                                    size="xs", c="dimmed",
+                                                                                ),
+                                                                            ],
+                                                                        ),
+                                                                    ],
+                                                                ),
+                                                            ],
+                                                        ),
+                                                        dmc.Group(
+                                                            gap="lg", align="center", wrap="nowrap", mt=16,
+                                                            children=[
+                                                                # A/R Lag (compact)
+                                                                dmc.Group(
+                                                                    gap="xs", align="center", wrap="nowrap",
+                                                                    style={"flex": 1, "minWidth": 0},
+                                                                    children=[
+                                                                        dmc.Text("A/R Lag", size="xs", fw=600,
+                                                                                 style={"flexShrink": 0}),
+                                                                        dmc.Slider(
+                                                                            id=f"{PAGE_ID}-rev-adj-ar-lag",
+                                                                            min=0, max=90, step=1, value=30,
+                                                                            marks=[
+                                                                                {"value": 0, "label": "0"},
+                                                                                {"value": 30, "label": "30"},
+                                                                                {"value": 60, "label": "60"},
+                                                                                {"value": 90, "label": "90"},
+                                                                            ],
+                                                                            color="violet",
+                                                                            size="xs",
+                                                                            updatemode="mouseup",
+                                                                            style={"flex": 1, "minWidth": 120},
+                                                                        ),
+                                                                        dmc.Text(
+                                                                            id=f"{PAGE_ID}-rev-adj-ar-lag-val",
+                                                                            size="xs", fw=600, c=PRIMARY,
+                                                                            style={"minWidth": 34, "textAlign": "right"},
+                                                                        ),
+                                                                    ],
+                                                                ),
+                                                                # Smoothing (compact)
+                                                                dmc.Group(
+                                                                    gap="xs", align="center", wrap="nowrap",
+                                                                    style={"flex": 1, "minWidth": 0},
+                                                                    children=[
+                                                                        dmc.Text("Smoothing", size="xs", fw=600,
+                                                                                 style={"flexShrink": 0}),
+                                                                        dmc.Slider(
+                                                                            id=f"{PAGE_ID}-rev-adj-smooth",
+                                                                            min=0, max=30, step=1, value=7,
+                                                                            marks=[
+                                                                                {"value": 0, "label": "0"},
+                                                                                {"value": 7, "label": "7"},
+                                                                                {"value": 14, "label": "14"},
+                                                                                {"value": 30, "label": "30"},
+                                                                            ],
+                                                                            color="violet",
+                                                                            size="xs",
+                                                                            updatemode="mouseup",
+                                                                            style={"flex": 1, "minWidth": 120},
+                                                                        ),
+                                                                        dmc.Text(
+                                                                            id=f"{PAGE_ID}-rev-adj-smooth-val",
+                                                                            size="xs", fw=600, c=PRIMARY,
+                                                                            style={"minWidth": 34, "textAlign": "right"},
+                                                                        ),
+                                                                    ],
+                                                                ),
+                                                            ],
+                                                        ),
+                                                        dmc.Text(
+                                                            "A/R lag rebuilds the estimated curve from billings "
+                                                            "that occurred this many days earlier, to account "
+                                                            "for claims processing delay. Smoothing applies a "
+                                                            "centered moving average (days).",
+                                                            size="xs", c="dimmed", mt=22,
+                                                        ),
+                                                    ],
+                                                ),
+
+                                                # Dummy output for the fast-path restyle callback
+                                                dcc.Store(id=f"{PAGE_ID}-rev-adj-restyle-sink"),
+                                                # Store remembering which (start,end) were set by a preset
+                                                dcc.Store(id=f"{PAGE_ID}-store-rev-adj-preset-dates"),
+
+                                                # Plot
+                                                dmc.Paper(
+                                                    id=f"{PAGE_ID}-rev-adj-plot-paper",
+                                                    p="sm", radius="md", withBorder=True,
+                                                    style={"flex": 1, "minHeight": 360, "display": "flex", "flexDirection": "column",
+                                                           "position": "relative"},
+                                                    children=[
+                                                        dcc.Loading(
+                                                            type="circle",
+                                                            color=PRIMARY,
+                                                            delay_show=120,  # avoid flicker for fast callbacks
+                                                            # Wrap BOTH the data store and the Graph so the store
+                                                            # callback activity also shows the spinner.
+                                                            children=[
+                                                                dcc.Store(id=f"{PAGE_ID}-store-rev-adj-plot"),
+                                                                dcc.Graph(
+                                                                    id=f"{PAGE_ID}-rev-adj-plot",
+                                                                    config={"displayModeBar": False, "responsive": False},
+                                                                    style={"height": "100%", "flex": 1},
+                                                                    figure={
+                                                                        "data": [],
+                                                                        "layout": {
+                                                                            "xaxis": {"visible": False},
+                                                                            "yaxis": {"visible": False},
+                                                                            "margin": {"l": 0, "r": 0, "t": 0, "b": 0},
+                                                                            "plot_bgcolor": "rgba(0,0,0,0)",
+                                                                            "paper_bgcolor": "rgba(0,0,0,0)",
+                                                                            "annotations": [{
+                                                                                "text": "Loading revenue data…",
+                                                                                "xref": "paper", "yref": "paper",
+                                                                                "x": 0.5, "y": 0.5,
+                                                                                "showarrow": False,
+                                                                                "font": {"size": 13, "color": "#9CA3AF"},
+                                                                            }],
+                                                                        },
+                                                                    },
+                                                                ),
+                                                            ],
+                                                            parent_style={"flex": 1, "display": "flex", "flexDirection": "column"},
+                                                        ),
+                                                    ],
+                                                ),
+                                            ],
                                         ),
                                     ],
                                 ),
@@ -2821,6 +3193,35 @@ layout = dmc.Stack(
         dcc.Interval(id=f"{PAGE_ID}-interval", interval=300_000, n_intervals=0),
     ],
 )
+
+
+# ---------------------------------------------------------------------------
+# A/R lag apply-switch: initialize from saved settings + persist on change
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output(f"{PAGE_ID}-filter-ar-lag-apply", "checked"),
+    Output(f"{PAGE_ID}-filter-ar-lag-label", "children"),
+    Input(f"{PAGE_ID}-filter-ar-lag-apply", "id"),  # fire-once on mount
+    Input(f"{PAGE_ID}-store-rev-adj", "data"),      # refresh when modal saves
+)
+def _init_ar_lag_switch(_id, store):
+    s = store or get_revenue_adj_settings()
+    lag = int(s.get("ar_lag", 30) or 0)
+    return bool(s.get("ar_lag_enabled", 0)), f"A/R lag ({lag}d)"
+
+
+@callback(
+    Output(f"{PAGE_ID}-store-rev-adj", "data", allow_duplicate=True),
+    Input(f"{PAGE_ID}-filter-ar-lag-apply", "checked"),
+    State(f"{PAGE_ID}-store-rev-adj", "data"),
+    prevent_initial_call=True,
+)
+def _toggle_ar_lag(checked, current):
+    prior = dict(current or get_revenue_adj_settings())
+    prior["ar_lag_enabled"] = 1.0 if checked else 0.0
+    save_revenue_adj_settings(prior)
+    return prior
 
 
 # ---------------------------------------------------------------------------
@@ -2899,12 +3300,20 @@ _BILLING_FILTER_INPUTS = [
 
 
 def _unpack_billing_filter_args(args):
-    """Unpack the 19 common filter args into kwargs for _load_and_filter_billing."""
+    """Unpack the 19 common filter args into kwargs for _load_and_filter_billing.
+
+    Also reads rev_adj (args[19] if present) to derive `ar_lag_days`: the
+    saved A/R lag value if the filter-bar toggle is on, otherwise 0.
+    """
     (_n, start_date, end_date, departments, physician,
      physician_role, codetype, charge_status, categories, cpt_codes,
      pro_reviewed, pro_exported, excl_credited, excl_waived,
      hosp_reviewed, hosp_exported, hosp_excl_credited, hosp_excl_waived,
      date_preset) = args[:19]
+    rev_adj = args[19] if len(args) > 19 else None
+    ar_lag_days = 0
+    if rev_adj and rev_adj.get("ar_lag_enabled"):
+        ar_lag_days = int(rev_adj.get("ar_lag", 0) or 0)
     return dict(
         start_date=start_date, end_date=end_date, departments=departments,
         physician=physician, physician_role=physician_role, codetype=codetype,
@@ -2913,7 +3322,7 @@ def _unpack_billing_filter_args(args):
         excl_credited=excl_credited, excl_waived=excl_waived,
         hosp_reviewed=hosp_reviewed, hosp_exported=hosp_exported,
         hosp_excl_credited=hosp_excl_credited, hosp_excl_waived=hosp_excl_waived,
-        date_preset=date_preset,
+        date_preset=date_preset, ar_lag_days=ar_lag_days,
     )
 
 
@@ -2967,8 +3376,13 @@ def _load_and_filter_billing(start_date=None, end_date=None, departments=None,
                              excl_credited=True, excl_waived=True,
                              hosp_reviewed=None, hosp_exported=None,
                              hosp_excl_credited=True, hosp_excl_waived=True,
-                             date_preset=None):
+                             date_preset=None, ar_lag_days=0):
     """Load enriched billing, apply date range + dimension filters.
+
+    `ar_lag_days` shifts every row's DateOfService forward by that many days
+    before any date-based filtering or grouping — effectively re-interprets
+    the data as cash-arriving (DOS + lag) rather than billed-on (DOS).
+    Pass 0 (default) to disable.
 
     Returns dict with keys: df, bf, bf_prior, start, end, date_preset, df_all,
     physician_role. Returns None if data is empty.
@@ -2979,6 +3393,12 @@ def _load_and_filter_billing(start_date=None, end_date=None, departments=None,
         return None
     if df.empty or "DateOfService" not in df.columns:
         return None
+
+    # Apply A/R lag by shifting DateOfService forward before any filtering.
+    # Work on a copy so the underlying cached frame is untouched.
+    if ar_lag_days and ar_lag_days > 0:
+        df = df.copy()
+        df["DateOfService"] = df["DateOfService"] + pd.Timedelta(days=int(ar_lag_days))
 
     # Date range
     last_date = df["DateOfService"].dt.normalize().max()
@@ -4271,24 +4691,85 @@ clientside_callback(
 seed_insurance_rates()
 
 
-@callback(
+# On click: reveal the overlay (CSS class swap) and arm the delay interval.
+clientside_callback(
+    """function(n) {
+        if (!n) return [window.dash_clientside.no_update,
+                         window.dash_clientside.no_update,
+                         window.dash_clientside.no_update];
+        console.log('[IRM] overlay shown @', performance.now().toFixed(0), 'ms');
+        return ['heavy-modal-overlay', 0, false];
+    }""",
+    Output(f"{PAGE_ID}-irm-overlay", "className"),
+    Output(f"{PAGE_ID}-irm-delay", "n_intervals"),
+    Output(f"{PAGE_ID}-irm-delay", "disabled"),
+    Input(f"{PAGE_ID}-irm-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+# Interval fires ~60ms later (after the browser has painted the overlay).
+# Open the real DMC Modal. Its React render will block the main thread for a
+# few seconds; the overlay stays visible throughout because the hide-overlay
+# callback below only runs after the modal paint commits.
+clientside_callback(
+    """function(n) {
+        if (!n) return [window.dash_clientside.no_update,
+                         window.dash_clientside.no_update];
+        console.log('[IRM] real modal open @', performance.now().toFixed(0), 'ms');
+        return [true, true];
+    }""",
     Output(f"{PAGE_ID}-irm-modal", "opened"),
+    Output(f"{PAGE_ID}-irm-delay", "disabled", allow_duplicate=True),
+    Input(f"{PAGE_ID}-irm-delay", "n_intervals"),
+    prevent_initial_call=True,
+)
+
+
+# Hide the overlay after the real modal has finished rendering. We defer
+# via rAF + a small timeout so the overlay paints over the modal's layout
+# work instead of disappearing the instant state flips.
+clientside_callback(
+    """function(opened) {
+        if (!opened) return window.dash_clientside.no_update;
+        requestAnimationFrame(function() {
+            setTimeout(function() {
+                var el = document.getElementById('billing-irm-overlay');
+                if (el) el.className = 'heavy-modal-overlay hidden';
+                console.log('[IRM] overlay hidden @', performance.now().toFixed(0), 'ms');
+            }, 50);
+        });
+        return window.dash_clientside.no_update;
+    }""",
+    Output(f"{PAGE_ID}-irm-overlay", "className", allow_duplicate=True),
+    Input(f"{PAGE_ID}-irm-modal", "opened"),
+    prevent_initial_call=True,
+)
+
+
+# Populate modal contents.  Listens on the button n_clicks directly (NOT on
+# modal.opened) so the clientside open-callback has no server dependency
+# downstream — Dash applies the clientside "opened=True" instantly without
+# waiting for this server work to complete.
+@callback(
     Output(f"{PAGE_ID}-irm-grid", "rowData"),
     Output(f"{PAGE_ID}-irm-count", "children"),
     Input(f"{PAGE_ID}-irm-btn", "n_clicks"),
     prevent_initial_call=True,
 )
 def _irm_open(n):
+    import time as _t
+    _t0 = _t.time()
+    print(f"[IRM] _irm_open START n={n}", flush=True)
     if not n:
-        return (dash.no_update,) * 3
-    # Defense-in-depth: the button is hidden in the UI for non-admins, but
-    # a determined user could fire this callback directly. Refuse non-admins.
+        return (dash.no_update,) * 2
     if not can_see_manager_modals():
-        return (dash.no_update,) * 3
+        return (dash.no_update,) * 2
     rows = get_all_insurance_rates()
     for r in rows:
-        r["_delete"] = "\u2716"  # ✖ symbol for delete
-    return True, rows, f"{len(rows)} payors"
+        r["_delete"] = "\u2716"
+    print(f"[IRM] _irm_open DONE in {(_t.time()-_t0)*1000:.0f}ms", flush=True)
+    return rows, f"{len(rows)} payors"
 
 
 # ---------------------------------------------------------------------------
@@ -4614,14 +5095,14 @@ def _seed_payor_mappings_if_needed():
     Output(f"{PAGE_ID}-pm-count", "children"),
     Output(f"{PAGE_ID}-pm-full-store", "data"),
     Input(f"{PAGE_ID}-irm-tabs", "value"),
-    Input(f"{PAGE_ID}-irm-modal", "opened"),
+    Input(f"{PAGE_ID}-irm-btn", "n_clicks"),
     prevent_initial_call=True,
 )
-def _pm_load(tab, modal_opened):
-    """Load payor mapping grid when tab is selected or modal opens."""
-    if tab != "mapping" and not modal_opened:
-        return (dash.no_update,) * 4
-    # Only load when on the mapping tab
+def _pm_load(tab, n_clicks):
+    """Load payor mapping grid when tab is selected or button clicked."""
+    import time as _t
+    _t0 = _t.time()
+    print(f"[IRM] _pm_load START tab={tab} n={n_clicks}", flush=True)
     if tab != "mapping":
         return (dash.no_update,) * 4
 
@@ -4707,6 +5188,7 @@ def _pm_load(tab, modal_opened):
 
     mapped = sum(1 for r in rows if r["standardized_payor"])
     count_text = f"{mapped} mapped / {len(rows)} total"
+    print(f"[IRM] _pm_load DONE in {(_t.time()-_t0)*1000:.0f}ms", flush=True)
     return rows, col_defs, count_text, rows
 
 
@@ -4794,10 +5276,10 @@ def _build_pe_grid_data():
     Output(f"{PAGE_ID}-pe-grid", "rowData"),
     Output(f"{PAGE_ID}-pe-count", "children"),
     Input(f"{PAGE_ID}-irm-tabs", "value"),
-    Input(f"{PAGE_ID}-irm-modal", "opened"),
+    Input(f"{PAGE_ID}-irm-btn", "n_clicks"),
     prevent_initial_call=True,
 )
-def _pe_load(tab, modal_opened):
+def _pe_load(tab, n_clicks):
     """Load payor entities grid when tab is selected."""
     if tab != "entities":
         return (dash.no_update,) * 2
@@ -4907,19 +5389,21 @@ def _pe_add(n, new_name):
 @callback(
     Output(f"{PAGE_ID}-rev-adj-enabled", "checked"),
     Output(f"{PAGE_ID}-rev-adj-realization", "value"),
+    Output(f"{PAGE_ID}-rev-adj-ar-lag", "value", allow_duplicate=True),
     *[Output(f"{PAGE_ID}-rev-adj-mult-{cat}", "value") for cat in _BROAD_CATEGORIES],
     Input(f"{PAGE_ID}-irm-tabs", "value"),
-    Input(f"{PAGE_ID}-irm-modal", "opened"),
+    Input(f"{PAGE_ID}-irm-btn", "n_clicks"),
     prevent_initial_call=True,
 )
-def _rev_adj_load(tab, modal_opened):
+def _rev_adj_load(tab, n_clicks):
     """Load saved revenue adjustment settings when tab is selected."""
-    if tab != "rev_adj" and not modal_opened:
+    if tab != "rev_adj" and not n_clicks:
         raise dash.exceptions.PreventUpdate
     s = get_revenue_adj_settings()
     return (
         bool(s.get("enabled", 0)),
         s.get("realization", 90),
+        s.get("ar_lag", 30),
         *[s.get(f"mult_{cat}", 100) for cat in _BROAD_CATEGORIES],
     )
 
@@ -4930,16 +5414,24 @@ def _rev_adj_load(tab, modal_opened):
     Input(f"{PAGE_ID}-rev-adj-save", "n_clicks"),
     State(f"{PAGE_ID}-rev-adj-enabled", "checked"),
     State(f"{PAGE_ID}-rev-adj-realization", "value"),
+    State(f"{PAGE_ID}-rev-adj-ar-lag", "value"),
     *[State(f"{PAGE_ID}-rev-adj-mult-{cat}", "value") for cat in _BROAD_CATEGORIES],
     prevent_initial_call=True,
 )
-def _rev_adj_save(n, enabled, realization, *mult_values):
-    """Save revenue adjustment settings to DB and push to store."""
+def _rev_adj_save(n, enabled, realization, ar_lag, *mult_values):
+    """Save revenue adjustment settings to DB and push to store.
+
+    Note: `ar_lag_enabled` is toggled from the page filter bar (not here),
+    so we preserve whatever's currently saved for that flag.
+    """
     if not n:
         raise dash.exceptions.PreventUpdate
+    prior = get_revenue_adj_settings()
     settings = {
         "enabled": 1.0 if enabled else 0.0,
         "realization": float(realization or 90),
+        "ar_lag": float(ar_lag if ar_lag is not None else 30),
+        "ar_lag_enabled": float(prior.get("ar_lag_enabled", 0)),
     }
     for cat, val in zip(_BROAD_CATEGORIES, mult_values):
         settings[f"mult_{cat}"] = float(val if val is not None else 100)
@@ -4959,6 +5451,665 @@ clientside_callback(
     "function(v) { return (v != null ? v : 90) + '%'; }",
     Output(f"{PAGE_ID}-rev-adj-realization-val", "children"),
     Input(f"{PAGE_ID}-rev-adj-realization", "value"),
+)
+
+clientside_callback(
+    "function(v) { return (v != null ? v : 0) + 'd'; }",
+    Output(f"{PAGE_ID}-rev-adj-ar-lag-val", "children"),
+    Input(f"{PAGE_ID}-rev-adj-ar-lag", "value"),
+)
+
+
+# ---------------------------------------------------------------------------
+# Revenue Adjustments — estimated vs actual plot
+# ---------------------------------------------------------------------------
+
+def _rev_adj_data_bounds():
+    """Return (min_date, max_date) intersection of billing and QBO data."""
+    from data.qbo_revenue import get_actual_data_bounds
+    try:
+        df = _get_enriched_billing()
+        if df.empty or "DateOfService" not in df.columns:
+            return None
+        b_min = df["DateOfService"].dt.normalize().min()
+        b_max = df["DateOfService"].dt.normalize().max()
+    except Exception:
+        return None
+    qbo_bounds = get_actual_data_bounds()
+    if qbo_bounds is None:
+        return b_min, b_max
+    q_min, q_max = qbo_bounds
+    lo = max(pd.Timestamp(b_min), pd.Timestamp(q_min))
+    hi = min(pd.Timestamp(b_max), pd.Timestamp(q_max))
+    if lo > hi:
+        return None
+    return lo, hi
+
+
+@callback(
+    Output(f"{PAGE_ID}-rev-adj-daterange", "min_date_allowed"),
+    Output(f"{PAGE_ID}-rev-adj-daterange", "max_date_allowed"),
+    Output(f"{PAGE_ID}-rev-adj-daterange", "start_date"),
+    Output(f"{PAGE_ID}-rev-adj-daterange", "end_date"),
+    Output(f"{PAGE_ID}-store-rev-adj-preset-dates", "data"),
+    Input(f"{PAGE_ID}-irm-tabs", "value"),
+    Input(f"{PAGE_ID}-rev-adj-date-preset", "value"),
+    State(f"{PAGE_ID}-rev-adj-daterange", "start_date"),
+    State(f"{PAGE_ID}-rev-adj-daterange", "end_date"),
+    prevent_initial_call=False,
+)
+def _rev_adj_daterange_from_preset(tab, preset, cur_start, cur_end):
+    if tab != "rev_adj":
+        raise dash.exceptions.PreventUpdate
+    bounds = _rev_adj_data_bounds()
+    if bounds is None:
+        today = pd.Timestamp.today().normalize()
+        bounds = (today - pd.Timedelta(days=365), today)
+    lo, hi = bounds
+    lo_s = lo.date().isoformat()
+    hi_s = hi.date().isoformat()
+
+    if preset == "custom":
+        start_s = cur_start or lo_s
+        end_s = cur_end or hi_s
+        return lo_s, hi_s, start_s, end_s, {"start": start_s, "end": end_s}
+
+    if preset == "ytd":
+        start = pd.Timestamp(hi.year, 1, 1)
+        end = hi
+    elif preset == "last_year":
+        last_yr = hi.year - 1
+        start = pd.Timestamp(last_yr, 1, 1)
+        end = pd.Timestamp(last_yr, 12, 31)
+    elif preset == "12mo":
+        start = hi - pd.DateOffset(months=12)
+        end = hi
+    elif preset == "24mo":
+        start = hi - pd.DateOffset(months=24)
+        end = hi
+    elif preset == "5yr":
+        start = hi - pd.DateOffset(years=5)
+        end = hi
+    else:  # "all"
+        start = lo
+        end = hi
+    start = max(start, lo)
+    end = min(end, hi)
+    start_s = start.date().isoformat()
+    end_s = end.date().isoformat()
+    return lo_s, hi_s, start_s, end_s, {"start": start_s, "end": end_s}
+
+
+# When the user manually edits the picker (values diverge from the last
+# preset-applied pair), flip the preset selector to "custom".
+clientside_callback(
+    """
+    function(start, end, applied, preset) {
+        if (preset === 'custom') return window.dash_clientside.no_update;
+        if (!applied) return window.dash_clientside.no_update;
+        if (start === applied.start && end === applied.end) {
+            return window.dash_clientside.no_update;
+        }
+        return 'custom';
+    }
+    """,
+    Output(f"{PAGE_ID}-rev-adj-date-preset", "value", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rev-adj-daterange", "start_date"),
+    Input(f"{PAGE_ID}-rev-adj-daterange", "end_date"),
+    State(f"{PAGE_ID}-store-rev-adj-preset-dates", "data"),
+    State(f"{PAGE_ID}-rev-adj-date-preset", "value"),
+    prevent_initial_call=True,
+)
+
+
+# Maximum A/R lag supported. Server pulls this many days of billings
+# to the left of start_date so clientside can apply any lag 0..MAX.
+_REV_ADJ_MAX_LAG = 90
+
+
+@callback(
+    Output(f"{PAGE_ID}-store-rev-adj-plot", "data"),
+    Input(f"{PAGE_ID}-rev-adj-daterange", "start_date"),
+    Input(f"{PAGE_ID}-rev-adj-daterange", "end_date"),
+    Input(f"{PAGE_ID}-irm-tabs", "value"),
+)
+def _rev_adj_build_plot_data(start_date, end_date, tab):
+    """Build daily billing data split by broad payer category, with a 90-day
+    left buffer so clientside can apply any A/R lag.
+
+    This callback only re-runs when the date range or tab changes.
+    Realization, smoothing, A/R lag, the enable toggle, and category
+    multipliers are all applied clientside for instant dragging.
+    """
+    if tab != "rev_adj":
+        raise dash.exceptions.PreventUpdate
+    if not start_date or not end_date:
+        return {"est": None, "act": None, "error": "no_range"}
+
+    start = pd.Timestamp(start_date).normalize()
+    end = pd.Timestamp(end_date).normalize()
+    if end < start:
+        return {"est": None, "act": None, "error": "invalid_range"}
+
+    src_start = start - pd.Timedelta(days=_REV_ADJ_MAX_LAG)
+    src_end = end  # lag=0 needs DOS up through `end`
+
+    # ---- Estimated: daily Pro_Revenue split by broad_category ----
+    try:
+        bdf = _get_enriched_billing()
+    except Exception:
+        bdf = pd.DataFrame()
+
+    est_payload = None
+    if not bdf.empty and "DateOfService" in bdf.columns and "Pro_Revenue" in bdf.columns:
+        bdf = bdf[(bdf["DateOfService"] >= src_start) & (bdf["DateOfService"] <= src_end)].copy()
+        if not bdf.empty:
+            try:
+                mapping = get_payor_mapping_dict()
+            except Exception:
+                mapping = {}
+
+            def _resolve(name):
+                if name in mapping and mapping[name].get("broad_category"):
+                    return mapping[name]["broad_category"]
+                return _broad_payor(name)
+
+            if "PrimaryInsurance" in bdf.columns:
+                bdf["_bcat"] = bdf["PrimaryInsurance"].apply(_resolve).fillna("Other/Unknown")
+            else:
+                bdf["_bcat"] = "Other/Unknown"
+
+            bdf["_d"] = bdf["DateOfService"].dt.normalize()
+            pivot = bdf.pivot_table(
+                index="_d", columns="_bcat", values="Pro_Revenue",
+                aggfunc="sum", fill_value=0.0,
+            )
+            full_idx = pd.date_range(src_start, src_end, freq="D")
+            pivot = pivot.reindex(full_idx, fill_value=0.0)
+
+            by_cat = {}
+            for cat in _BROAD_CATEGORIES:
+                if cat in pivot.columns:
+                    by_cat[cat] = [round(v, 2) for v in pivot[cat].tolist()]
+                else:
+                    by_cat[cat] = [0.0] * len(full_idx)
+
+            est_payload = {
+                "dates": [d.strftime("%Y-%m-%d") for d in full_idx],
+                "by_category": by_cat,
+                "start": start.date().isoformat(),
+                "end": end.date().isoformat(),
+                "max_lag": _REV_ADJ_MAX_LAG,
+            }
+
+    # ---- Actual trace (QBO, independent of billing settings) ----
+    from data.qbo_revenue import get_actual_revenue_range
+    try:
+        act_daily = get_actual_revenue_range(start, end)
+    except Exception:
+        act_daily = pd.DataFrame(columns=["date", "daily_income"])
+
+    act_payload = None
+    if not act_daily.empty:
+        act_daily = act_daily.sort_values("date").reset_index(drop=True)
+        act_payload = {
+            "dates": act_daily["date"].dt.strftime("%Y-%m-%d").tolist(),
+            "daily": [round(v, 2) for v in act_daily["daily_income"].tolist()],
+        }
+
+    return {"est": est_payload, "act": act_payload}
+
+
+# Shared compute helper is registered as window._revAdjCompute by
+# assets/rev_adj_compute.js (auto-loaded by Dash on page render).
+
+
+# Store-driven full rebuild: fires when date range / tab changes.
+# Slider drags use a separate debounced path (see next callback) so they
+# stay buttery-smooth.
+clientside_callback(
+    r"""
+    function(store, realization, smooth, ar_lag, enabled,
+             m_medicare, m_medicaid, m_private, m_military,
+             m_workers, m_tribal, m_self, m_other) {
+        if (!store) return window.dash_clientside.no_update;
+        var emptyLayout = function(msg) {
+            return {data: [], layout: {
+                xaxis: {visible: false}, yaxis: {visible: false},
+                margin: {l:0, r:0, t:0, b:0},
+                annotations: [{
+                    text: msg, xref:"paper", yref:"paper",
+                    x:0.5, y:0.5, showarrow:false,
+                    font:{size:14, color:"#9CA3AF"}
+                }]
+            }};
+        };
+        if (store.error) {
+            return emptyLayout(store.error === "no_range"
+                ? "Select a date range" : "Invalid date range");
+        }
+        if (!window._revAdjCompute) return window.dash_clientside.no_update;
+        var mults = {
+            "Medicare": m_medicare, "Medicaid": m_medicaid,
+            "Private": m_private, "Military/VA": m_military,
+            "Workers Comp": m_workers, "Tribal/IHS": m_tribal,
+            "Self Pay": m_self, "Other/Unknown": m_other,
+        };
+        var c = window._revAdjCompute(store, realization, smooth, ar_lag, enabled, mults);
+        if (!c) return emptyLayout("No revenue data for selected range");
+        var traces = [];
+        if (c.est_x.length) traces.push({
+            x: c.est_x, y: c.est_y, mode:"lines", name:"Estimated (Pro)",
+            line:{color:"#7C2A83", width:2.5}, type:"scattergl",
+            hovertemplate:"%{x|%b %d, %Y}<br>Est: $%{y:,.0f}<extra></extra>",
+        });
+        if (c.act_x.length) traces.push({
+            x: c.act_x, y: c.act_y, mode:"lines", name:"Actual (QBO)",
+            line:{color:"#4CAF50", width:2.5}, type:"scattergl",
+            hovertemplate:"%{x|%b %d, %Y}<br>Actual: $%{y:,.0f}<extra></extra>",
+        });
+        if (!traces.length) return emptyLayout("No revenue data for selected range");
+        return {
+            data: traces,
+            layout: {
+                margin: {l:60, r:10, t:30, b:40},
+                hovermode: "x unified",
+                legend: {orientation:"h", yanchor:"bottom", y:1.02, xanchor:"left", x:0},
+                xaxis: {showgrid:false},
+                yaxis: {title:"Cumulative $", tickformat:"$,.0f",
+                        gridcolor:"rgba(0,0,0,0.08)"},
+                plot_bgcolor:"rgba(0,0,0,0)", paper_bgcolor:"rgba(0,0,0,0)",
+                font: {family:"Inter, system-ui, sans-serif"},
+                uirevision: "rev-adj",
+                transition: {duration: 0, easing: "linear"},
+            }
+        };
+    }
+    """,
+    Output(f"{PAGE_ID}-rev-adj-plot", "figure"),
+    Input(f"{PAGE_ID}-store-rev-adj-plot", "data"),
+    State(f"{PAGE_ID}-rev-adj-realization", "value"),
+    State(f"{PAGE_ID}-rev-adj-smooth", "value"),
+    State(f"{PAGE_ID}-rev-adj-ar-lag", "value"),
+    State(f"{PAGE_ID}-rev-adj-enabled", "checked"),
+    *[State(f"{PAGE_ID}-rev-adj-mult-{cat}", "value") for cat in _BROAD_CATEGORIES],
+)
+
+
+# Debounced slider path: returns no_update (never touches the figure
+# prop) but schedules a Plotly.react on the plot DOM element ~140 ms
+# after the last slider change. Lets users drag freely without the plot
+# redrawing on every tick.
+clientside_callback(
+    r"""
+    function(realization, smooth, ar_lag, enabled,
+             m_medicare, m_medicaid, m_private, m_military,
+             m_workers, m_tribal, m_self, m_other, store) {
+        if (!store || store.error) return window.dash_clientside.no_update;
+        if (!window._revAdjCompute || !window.Plotly) {
+            return window.dash_clientside.no_update;
+        }
+        var args = {
+            store: store, realization: realization, smooth: smooth,
+            ar_lag: ar_lag, enabled: enabled,
+            mults: {
+                "Medicare": m_medicare, "Medicaid": m_medicaid,
+                "Private": m_private, "Military/VA": m_military,
+                "Workers Comp": m_workers, "Tribal/IHS": m_tribal,
+                "Self Pay": m_self, "Other/Unknown": m_other,
+            }
+        };
+        if (window._revAdjUpdateTimer) clearTimeout(window._revAdjUpdateTimer);
+        window._revAdjUpdateTimer = setTimeout(function() {
+            var a = args;
+            var c = window._revAdjCompute(
+                a.store, a.realization, a.smooth, a.ar_lag, a.enabled, a.mults
+            );
+            if (!c) return;
+            var wrap = document.getElementById('billing-rev-adj-plot');
+            if (!wrap) return;
+            var el = wrap.classList && wrap.classList.contains('js-plotly-plot')
+                ? wrap
+                : wrap.querySelector('.js-plotly-plot');
+            if (!el || !el.data) return;
+            var newData = el.data.map(function(tr) {
+                var nm = tr.name || '';
+                if (nm.indexOf('Estimated') === 0) {
+                    return Object.assign({}, tr, {x: c.est_x, y: c.est_y});
+                }
+                if (nm.indexOf('Actual') === 0) {
+                    return Object.assign({}, tr, {x: c.act_x, y: c.act_y});
+                }
+                return tr;
+            });
+            try {
+                window.Plotly.react(el, newData, el.layout || {}, el.config || {});
+            } catch (e) { console.warn('[rev-adj] Plotly.react failed', e); }
+        }, 140);
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output(f"{PAGE_ID}-rev-adj-restyle-sink", "data"),
+    Input(f"{PAGE_ID}-rev-adj-realization", "value"),
+    Input(f"{PAGE_ID}-rev-adj-smooth", "value"),
+    Input(f"{PAGE_ID}-rev-adj-ar-lag", "value"),
+    Input(f"{PAGE_ID}-rev-adj-enabled", "checked"),
+    *[Input(f"{PAGE_ID}-rev-adj-mult-{cat}", "value") for cat in _BROAD_CATEGORIES],
+    State(f"{PAGE_ID}-store-rev-adj-plot", "data"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    "function(v) { return (v != null ? v : 0) + 'd'; }",
+    Output(f"{PAGE_ID}-rev-adj-smooth-val", "children"),
+    Input(f"{PAGE_ID}-rev-adj-smooth", "value"),
+)
+
+
+# Mirror relevant state to window._revAdjCache so the native rAF loop in
+# assets/rev_adj_live.js can read them during a drag without going
+# through Dash. Fires on any of its inputs changing.
+clientside_callback(
+    r"""
+    function(store, realization, smooth, ar_lag, enabled,
+             m_medicare, m_medicaid, m_private, m_military,
+             m_workers, m_tribal, m_self, m_other) {
+        window._revAdjCache = {
+            store: store,
+            realization: realization,
+            smooth: smooth,
+            ar_lag: ar_lag,
+            enabled: enabled,
+            mults: {
+                "Medicare": m_medicare, "Medicaid": m_medicaid,
+                "Private": m_private, "Military/VA": m_military,
+                "Workers Comp": m_workers, "Tribal/IHS": m_tribal,
+                "Self Pay": m_self, "Other/Unknown": m_other,
+            }
+        };
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output(f"{PAGE_ID}-rev-adj-restyle-sink", "data", allow_duplicate=True),
+    Input(f"{PAGE_ID}-store-rev-adj-plot", "data"),
+    Input(f"{PAGE_ID}-rev-adj-realization", "value"),
+    Input(f"{PAGE_ID}-rev-adj-smooth", "value"),
+    Input(f"{PAGE_ID}-rev-adj-ar-lag", "value"),
+    Input(f"{PAGE_ID}-rev-adj-enabled", "checked"),
+    *[Input(f"{PAGE_ID}-rev-adj-mult-{cat}", "value") for cat in _BROAD_CATEGORIES],
+    prevent_initial_call="initial_duplicate",
+)
+
+
+# Reset category multipliers to their saved defaults (preserves the
+# enable toggle — user asked to leave that alone).
+clientside_callback(
+    f"""
+    function(n) {{
+        if (!n) return Array(8).fill(window.dash_clientside.no_update);
+        return [
+            {_REVENUE_ADJ_DEFAULTS.get("mult_Medicare", 100)},
+            {_REVENUE_ADJ_DEFAULTS.get("mult_Medicaid", 90)},
+            {_REVENUE_ADJ_DEFAULTS.get("mult_Private", 130)},
+            {_REVENUE_ADJ_DEFAULTS.get("mult_Military/VA", 100)},
+            {_REVENUE_ADJ_DEFAULTS.get("mult_Workers Comp", 125)},
+            {_REVENUE_ADJ_DEFAULTS.get("mult_Tribal/IHS", 100)},
+            {_REVENUE_ADJ_DEFAULTS.get("mult_Self Pay", 50)},
+            {_REVENUE_ADJ_DEFAULTS.get("mult_Other/Unknown", 100)}
+        ];
+    }}
+    """,
+    *[Output(f"{PAGE_ID}-rev-adj-mult-{cat}", "value", allow_duplicate=True)
+      for cat in _BROAD_CATEGORIES],
+    Input(f"{PAGE_ID}-rev-adj-reset-mults", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+# Auto-fit helpers (_revAdjFitBestR, _revAdjSsrAtR, _revAdjClampPct,
+# _revAdjFlashAuto) are defined in assets/rev_adj_compute.js.
+
+
+# --- Fit Realization only (lag held at current) ---
+clientside_callback(
+    r"""
+    function(n, store, smooth, ar_lag, enabled,
+             m_medicare, m_medicaid, m_private, m_military,
+             m_workers, m_tribal, m_self, m_other) {
+        if (!n || !store || store.error) {
+            return window.dash_clientside.no_update;
+        }
+        var mults = {
+            "Medicare": m_medicare, "Medicaid": m_medicaid,
+            "Private": m_private, "Military/VA": m_military,
+            "Workers Comp": m_workers, "Tribal/IHS": m_tribal,
+            "Self Pay": m_self, "Other/Unknown": m_other,
+        };
+        var c = window._revAdjCompute(store, 100, smooth, ar_lag, enabled, mults);
+        if (!c || !c.est_x.length || !c.act_x.length) {
+            return window.dash_clientside.no_update;
+        }
+        var fit = window._revAdjFitBestR(c.est_x, c.est_y, c.act_x, c.act_y);
+        if (!fit) return window.dash_clientside.no_update;
+        var r_pct = window._revAdjClampPct(fit.r);
+        window._revAdjFlashAuto('Fit: ' + r_pct + '%');
+        return r_pct;
+    }
+    """,
+    Output(f"{PAGE_ID}-rev-adj-realization", "value", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rev-adj-auto-r-only", "n_clicks"),
+    State(f"{PAGE_ID}-store-rev-adj-plot", "data"),
+    State(f"{PAGE_ID}-rev-adj-smooth", "value"),
+    State(f"{PAGE_ID}-rev-adj-ar-lag", "value"),
+    State(f"{PAGE_ID}-rev-adj-enabled", "checked"),
+    *[State(f"{PAGE_ID}-rev-adj-mult-{cat}", "value") for cat in _BROAD_CATEGORIES],
+    prevent_initial_call=True,
+)
+
+
+# --- Fit A/R Lag only (realization held at current) ---
+clientside_callback(
+    r"""
+    function(n, store, realization, smooth, enabled,
+             m_medicare, m_medicaid, m_private, m_military,
+             m_workers, m_tribal, m_self, m_other) {
+        if (!n || !store || store.error) {
+            return window.dash_clientside.no_update;
+        }
+        var mults = {
+            "Medicare": m_medicare, "Medicaid": m_medicaid,
+            "Private": m_private, "Military/VA": m_military,
+            "Workers Comp": m_workers, "Tribal/IHS": m_tribal,
+            "Self Pay": m_self, "Other/Unknown": m_other,
+        };
+        var r = (realization == null ? 90 : realization) / 100;
+        var MAX_LAG = 90;
+        var bestSSR = Infinity, bestLag = 0;
+        for (var lag = 0; lag <= MAX_LAG; lag++) {
+            var c = window._revAdjCompute(store, 100, smooth, lag, enabled, mults);
+            if (!c || !c.est_x.length || !c.act_x.length) continue;
+            var ssr = window._revAdjSsrAtR(c.est_x, c.est_y, c.act_x, c.act_y, r);
+            if (ssr != null && ssr < bestSSR) {
+                bestSSR = ssr;
+                bestLag = lag;
+            }
+        }
+        if (!isFinite(bestSSR)) return window.dash_clientside.no_update;
+        window._revAdjFlashAuto('Fit: ' + bestLag + 'd');
+        return bestLag;
+    }
+    """,
+    Output(f"{PAGE_ID}-rev-adj-ar-lag", "value", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rev-adj-auto-lag-only", "n_clicks"),
+    State(f"{PAGE_ID}-store-rev-adj-plot", "data"),
+    State(f"{PAGE_ID}-rev-adj-realization", "value"),
+    State(f"{PAGE_ID}-rev-adj-smooth", "value"),
+    State(f"{PAGE_ID}-rev-adj-enabled", "checked"),
+    *[State(f"{PAGE_ID}-rev-adj-mult-{cat}", "value") for cat in _BROAD_CATEGORIES],
+    prevent_initial_call=True,
+)
+
+
+# --- Fit Both (joint) ---
+clientside_callback(
+    r"""
+    function(n, store, smooth, enabled,
+             m_medicare, m_medicaid, m_private, m_military,
+             m_workers, m_tribal, m_self, m_other) {
+        if (!n || !store || store.error) {
+            return [window.dash_clientside.no_update, window.dash_clientside.no_update];
+        }
+        var mults = {
+            "Medicare": m_medicare, "Medicaid": m_medicaid,
+            "Private": m_private, "Military/VA": m_military,
+            "Workers Comp": m_workers, "Tribal/IHS": m_tribal,
+            "Self Pay": m_self, "Other/Unknown": m_other,
+        };
+        var MAX_LAG = 90;
+        var bestSSR = Infinity, bestLag = 0, bestR = 0.9;
+        for (var lag = 0; lag <= MAX_LAG; lag++) {
+            var c = window._revAdjCompute(store, 100, smooth, lag, enabled, mults);
+            if (!c || !c.est_x.length || !c.act_x.length) continue;
+            var fit = window._revAdjFitBestR(c.est_x, c.est_y, c.act_x, c.act_y);
+            if (fit && fit.ssr < bestSSR) {
+                bestSSR = fit.ssr;
+                bestLag = lag;
+                bestR = fit.r;
+            }
+        }
+        if (!isFinite(bestSSR)) {
+            return [window.dash_clientside.no_update, window.dash_clientside.no_update];
+        }
+        var r_pct = window._revAdjClampPct(bestR);
+        window._revAdjFlashAuto('Fit: ' + r_pct + '% @ ' + bestLag + 'd');
+        return [r_pct, bestLag];
+    }
+    """,
+    Output(f"{PAGE_ID}-rev-adj-realization", "value", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rev-adj-ar-lag", "value", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rev-adj-auto-both", "n_clicks"),
+    State(f"{PAGE_ID}-store-rev-adj-plot", "data"),
+    State(f"{PAGE_ID}-rev-adj-smooth", "value"),
+    State(f"{PAGE_ID}-rev-adj-enabled", "checked"),
+    *[State(f"{PAGE_ID}-rev-adj-mult-{cat}", "value") for cat in _BROAD_CATEGORIES],
+    prevent_initial_call=True,
+)
+
+
+# --- Segment drift detection: splits the range into N segments, fits each,
+# and overlays drift markers on the plot when any segment deviates from the
+# global realization by more than the threshold. Does NOT update any slider.
+clientside_callback(
+    r"""
+    function(n, store, smooth, ar_lag, enabled,
+             m_medicare, m_medicaid, m_private, m_military,
+             m_workers, m_tribal, m_self, m_other) {
+        if (!n || !store || store.error) return window.dash_clientside.no_update;
+        var mults = {
+            "Medicare": m_medicare, "Medicaid": m_medicaid,
+            "Private": m_private, "Military/VA": m_military,
+            "Workers Comp": m_workers, "Tribal/IHS": m_tribal,
+            "Self Pay": m_self, "Other/Unknown": m_other,
+        };
+        var sens = window._revAdjDriftSens != null ? window._revAdjDriftSens : 15;
+        var hl   = window._revAdjDriftHl   != null ? window._revAdjDriftHl   : 3;
+        var analysis = window._revAdjSegmentFit(
+            store, smooth, ar_lag, enabled, mults, sens, hl
+        );
+        window._revAdjDriftActive = true;
+        if (!analysis) {
+            window._revAdjFlashAuto('Drift: no data');
+            return window.dash_clientside.no_update;
+        }
+        var nSplits = (analysis.split_dates || []).length;
+        if (nSplits === 0) {
+            window._revAdjOverlaySegments(null);
+            window._revAdjFlashAuto('Stable: no drift');
+        } else {
+            window._revAdjOverlaySegments(analysis);
+            window._revAdjFlashAuto(nSplits + ' shift' + (nSplits > 1 ? 's' : '') + ' detected');
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output(f"{PAGE_ID}-rev-adj-restyle-sink", "data", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rev-adj-auto-segments", "n_clicks"),
+    State(f"{PAGE_ID}-store-rev-adj-plot", "data"),
+    State(f"{PAGE_ID}-rev-adj-smooth", "value"),
+    State(f"{PAGE_ID}-rev-adj-ar-lag", "value"),
+    State(f"{PAGE_ID}-rev-adj-enabled", "checked"),
+    *[State(f"{PAGE_ID}-rev-adj-mult-{cat}", "value") for cat in _BROAD_CATEGORIES],
+    prevent_initial_call=True,
+)
+
+
+# --- Clear drift markers from the plot (menu "Clear" only; no bar to hide) ---
+clientside_callback(
+    r"""
+    function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        window._revAdjDriftActive = false;
+        if (window._revAdjOverlaySegments) {
+            window._revAdjOverlaySegments(null);
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output(f"{PAGE_ID}-rev-adj-restyle-sink", "data", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rev-adj-auto-clear", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+# --- Drift threshold slider value displays ---
+clientside_callback(
+    "function(v) { return (v != null ? v : 15) + '%'; }",
+    Output(f"{PAGE_ID}-rev-adj-drift-sens-val", "children"),
+    Input(f"{PAGE_ID}-rev-adj-drift-sens", "value"),
+)
+clientside_callback(
+    "function(v) { return (v != null ? v : 3) + 'pp'; }",
+    Output(f"{PAGE_ID}-rev-adj-drift-hl-val", "children"),
+    Input(f"{PAGE_ID}-rev-adj-drift-hl", "value"),
+)
+
+
+# --- Mirror threshold sliders onto window + re-run drift detection if active ---
+clientside_callback(
+    r"""
+    function(sens, hl, store, smooth, ar_lag, enabled,
+             m_medicare, m_medicaid, m_private, m_military,
+             m_workers, m_tribal, m_self, m_other) {
+        window._revAdjDriftSens = sens;
+        window._revAdjDriftHl = hl;
+        if (!window._revAdjDriftActive) return window.dash_clientside.no_update;
+        if (!store || store.error) return window.dash_clientside.no_update;
+        var mults = {
+            "Medicare": m_medicare, "Medicaid": m_medicaid,
+            "Private": m_private, "Military/VA": m_military,
+            "Workers Comp": m_workers, "Tribal/IHS": m_tribal,
+            "Self Pay": m_self, "Other/Unknown": m_other,
+        };
+        var analysis = window._revAdjSegmentFit(
+            store, smooth, ar_lag, enabled, mults, sens, hl
+        );
+        if (!analysis) return window.dash_clientside.no_update;
+        var nSplits = (analysis.split_dates || []).length;
+        if (nSplits === 0) window._revAdjOverlaySegments(null);
+        else window._revAdjOverlaySegments(analysis);
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output(f"{PAGE_ID}-rev-adj-restyle-sink", "data", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rev-adj-drift-sens", "value"),
+    Input(f"{PAGE_ID}-rev-adj-drift-hl", "value"),
+    State(f"{PAGE_ID}-store-rev-adj-plot", "data"),
+    State(f"{PAGE_ID}-rev-adj-smooth", "value"),
+    State(f"{PAGE_ID}-rev-adj-ar-lag", "value"),
+    State(f"{PAGE_ID}-rev-adj-enabled", "checked"),
+    *[State(f"{PAGE_ID}-rev-adj-mult-{cat}", "value") for cat in _BROAD_CATEGORIES],
+    prevent_initial_call=True,
 )
 
 

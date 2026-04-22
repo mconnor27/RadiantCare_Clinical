@@ -1419,7 +1419,7 @@ def _build_department_chart(df, mode="count"):
     apply_default_layout(fig, barmode="stack")
     y_title = "%" if mode == "pct" else "Courses"
     extra = dict(yaxis_range=[0, 105]) if mode == "pct" else {}
-    fig.update_layout(yaxis_title=y_title, margin=dict(l=48, r=16, t=12, b=20), **extra)
+    fig.update_layout(yaxis_title=y_title, margin=dict(l=48, r=16, t=12, b=20), hovermode="x unified", **extra)
     return fig
 
 
@@ -1478,6 +1478,7 @@ def _build_trend_chart(df, date_col, chart_type="line", agg="M", smooth=0):
         yaxis_title="Compliance %",
         yaxis_range=[0, 105],
         margin=dict(l=48, r=16, t=12, b=20),
+        hovermode="x unified",
     )
     return fig
 

@@ -1068,6 +1068,8 @@ def get_standardized_payor_counts() -> list[dict]:
 _REVENUE_ADJ_DEFAULTS = {
     "enabled": 0,
     "realization": 90,
+    "ar_lag": 30,
+    "ar_lag_enabled": 0,
     "mult_Medicare": 100,
     "mult_Medicaid": 90,
     "mult_Private": 130,

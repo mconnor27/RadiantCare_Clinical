@@ -727,6 +727,7 @@ def build_trend_chart(table_data, reviews, course_reviews, agg, mode):
         yaxis_title="Pass Rate %",
         yaxis_range=[max(0, y.min() - 5) if len(y) else 0, 100],
         margin=dict(l=48, r=16, t=12, b=16),
+        hovermode="x unified",
     )
     if mode == "bar":
         layout_kw["xaxis_type"] = "category"

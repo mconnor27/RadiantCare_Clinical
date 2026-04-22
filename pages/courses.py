@@ -4123,7 +4123,7 @@ def _update_complexity_facets(data, agg, mode, smooth, chart_type, theme):
         height=560,
         showlegend=False,
         margin=dict(l=48, r=16, t=32, b=40),
-        hovermode="x",
+        hovermode="x unified",
     )
     return fig
 

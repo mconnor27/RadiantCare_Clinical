@@ -937,9 +937,34 @@ layout = dmc.Stack(
         # ---------------------------------------------------------------
         # Referring Physician Manager Modal
         # ---------------------------------------------------------------
+        # Instant-feedback overlay while the heavy DMC Modal renders.
+        html.Div(
+            id=f"{PAGE_ID}-rpm-overlay",
+            className="heavy-modal-overlay hidden",
+            children=[
+                html.Div(
+                    className="heavy-modal-overlay-card",
+                    children=[
+                        html.Div(className="heavy-modal-spinner"),
+                        html.Div("Loading Referring Physician Manager…",
+                                 className="heavy-modal-overlay-text"),
+                    ],
+                ),
+            ],
+        ),
+        dcc.Interval(
+            id=f"{PAGE_ID}-rpm-delay",
+            interval=60,
+            disabled=True,
+            max_intervals=1,
+            n_intervals=0,
+        ),
+
         dmc.Modal(
             id=f"{PAGE_ID}-rpm-modal",
             opened=False,
+            keepMounted=True,
+            transitionProps={"transition": "fade", "duration": 120},
             title=dmc.Group(
                 children=[
                     DashIconify(icon="tabler:address-book", width=22, color=PRIMARY),
@@ -4255,8 +4280,50 @@ def _build_inst_grid_data(phys_rows: list[dict]) -> tuple[list[dict], str]:
     return inst_rows, str(len(inst_rows))
 
 
-@callback(
+clientside_callback(
+    """function(n) {
+        if (!n) return [window.dash_clientside.no_update,
+                         window.dash_clientside.no_update,
+                         window.dash_clientside.no_update];
+        return ['heavy-modal-overlay', 0, false];
+    }""",
+    Output(f"{PAGE_ID}-rpm-overlay", "className"),
+    Output(f"{PAGE_ID}-rpm-delay", "n_intervals"),
+    Output(f"{PAGE_ID}-rpm-delay", "disabled"),
+    Input(f"{PAGE_ID}-rpm-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """function(n) {
+        if (!n) return [window.dash_clientside.no_update,
+                         window.dash_clientside.no_update];
+        return [true, true];
+    }""",
     Output(f"{PAGE_ID}-rpm-modal", "opened"),
+    Output(f"{PAGE_ID}-rpm-delay", "disabled", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rpm-delay", "n_intervals"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """function(opened) {
+        if (!opened) return window.dash_clientside.no_update;
+        requestAnimationFrame(function() {
+            setTimeout(function() {
+                var el = document.getElementById('referrals-rpm-overlay');
+                if (el) el.className = 'heavy-modal-overlay hidden';
+            }, 50);
+        });
+        return window.dash_clientside.no_update;
+    }""",
+    Output(f"{PAGE_ID}-rpm-overlay", "className", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rpm-modal", "opened"),
+    prevent_initial_call=True,
+)
+
+
+@callback(
     Output(f"{PAGE_ID}-rpm-grid", "rowData"),
     Output(f"{PAGE_ID}-rpm-grid-full-store", "data"),
     Output(f"{PAGE_ID}-rpm-stats", "children"),
@@ -4269,14 +4336,12 @@ def _build_inst_grid_data(phys_rows: list[dict]) -> tuple[list[dict], str]:
 )
 def _rpm_open(n):
     if not n:
-        return (dash.no_update,) * 8
-    # Defensive admin gate: button is hidden in UI for non-admins; still
-    # refuse the callback even if someone fires it manually.
+        return (dash.no_update,) * 7
     if not can_see_manager_modals():
-        return (dash.no_update,) * 8
+        return (dash.no_update,) * 7
     rows, stats = _build_rpm_grid_data()
     inst_rows, inst_count = _build_inst_grid_data(rows)
-    return True, rows, rows, stats, inst_rows, inst_count, str(len(rows)), False
+    return rows, rows, stats, inst_rows, inst_count, str(len(rows)), False
 
 
 # ---------------------------------------------------------------------------

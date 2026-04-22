@@ -1022,9 +1022,36 @@ layout = dmc.Stack(
         # ---------------------------------------------------------------
         # Diagnosis Classification Manager Modal
         # ---------------------------------------------------------------
+        # Instant-feedback overlay (plain HTML + CSS). Shows the moment the
+        # manager button is clicked so the user doesn't stare at an empty
+        # screen while the heavy DMC Modal renders.
+        html.Div(
+            id="diag-mgr-overlay",
+            className="heavy-modal-overlay hidden",
+            children=[
+                html.Div(
+                    className="heavy-modal-overlay-card",
+                    children=[
+                        html.Div(className="heavy-modal-spinner"),
+                        html.Div("Loading Diagnosis Classification Manager…",
+                                 className="heavy-modal-overlay-text"),
+                    ],
+                ),
+            ],
+        ),
+        dcc.Interval(
+            id="diag-mgr-delay",
+            interval=60,
+            disabled=True,
+            max_intervals=1,
+            n_intervals=0,
+        ),
+
         dmc.Modal(
             id="diag-mgr-modal",
             opened=False,
+            keepMounted=True,
+            transitionProps={"transition": "fade", "duration": 120},
             title=dmc.Group(
                 children=[
                     DashIconify(icon="tabler:dna", width=22, color=PRIMARY),
@@ -1804,8 +1831,53 @@ def _build_diag_mgr_data():
     return rows, stats
 
 
-@callback(
+# Click: reveal overlay + arm the delay interval.
+clientside_callback(
+    """function(n) {
+        if (!n) return [window.dash_clientside.no_update,
+                         window.dash_clientside.no_update,
+                         window.dash_clientside.no_update];
+        return ['heavy-modal-overlay', 0, false];
+    }""",
+    Output("diag-mgr-overlay", "className"),
+    Output("diag-mgr-delay", "n_intervals"),
+    Output("diag-mgr-delay", "disabled"),
+    Input("diag-mgr-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+# After ~60ms (overlay has painted), open the heavy modal.
+clientside_callback(
+    """function(n) {
+        if (!n) return [window.dash_clientside.no_update,
+                         window.dash_clientside.no_update];
+        return [true, true];
+    }""",
     Output("diag-mgr-modal", "opened"),
+    Output("diag-mgr-delay", "disabled", allow_duplicate=True),
+    Input("diag-mgr-delay", "n_intervals"),
+    prevent_initial_call=True,
+)
+
+# Hide overlay after the modal commits its first paint.
+clientside_callback(
+    """function(opened) {
+        if (!opened) return window.dash_clientside.no_update;
+        requestAnimationFrame(function() {
+            setTimeout(function() {
+                var el = document.getElementById('diag-mgr-overlay');
+                if (el) el.className = 'heavy-modal-overlay hidden';
+            }, 50);
+        });
+        return window.dash_clientside.no_update;
+    }""",
+    Output("diag-mgr-overlay", "className", allow_duplicate=True),
+    Input("diag-mgr-modal", "opened"),
+    prevent_initial_call=True,
+)
+
+
+@callback(
     Output("diag-mgr-grid", "rowData"),
     Output("diag-mgr-full-store", "data"),
     Output("diag-mgr-stats", "children"),
@@ -1815,12 +1887,11 @@ def _build_diag_mgr_data():
 )
 def _diag_mgr_open(n):
     if not n:
-        return (dash.no_update,) * 5
-    # Defensive admin gate: button is hidden in UI for non-admins.
+        return (dash.no_update,) * 4
     if not can_see_manager_modals():
-        return (dash.no_update,) * 5
+        return (dash.no_update,) * 4
     rows, stats = _build_diag_mgr_data()
-    return True, rows, rows, stats, False
+    return rows, rows, stats, False
 
 
 # Role gate: hide the Diagnosis Classification Manager trigger for non-admins.

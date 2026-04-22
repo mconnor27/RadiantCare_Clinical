@@ -344,13 +344,22 @@ layout = dmc.Stack(
                     span={"base": 12, "md": 6},
                     children=chart_card(
                         "patients-chart-age-dist",
-                        "Age Distribution",
+                        "Demographics",
                         chart_types=None,
                         show_smooth=True,
                         smooth_max=100,
                         smooth_default=50,
                         settings_id="patients-age",
                         extra_controls_left=[
+                            dmc.SegmentedControl(
+                                id="patients-demog-metric",
+                                data=[
+                                    {"value": "age", "label": "Age"},
+                                    {"value": "gender", "label": "Gender"},
+                                ],
+                                value="age",
+                                size="xs",
+                            ),
                             dmc.SegmentedControl(
                                 id="patients-age-dist-group",
                                 data=[
@@ -362,14 +371,19 @@ layout = dmc.Stack(
                             ),
                         ],
                         extra_controls=[
-                            dmc.SegmentedControl(
-                                id="patients-age-dist-mode",
-                                data=[
-                                    {"value": "histogram", "label": "Histogram"},
-                                    {"value": "density", "label": "Density"},
-                                ],
-                                value="density",
-                                size="xs",
+                            # Wrapped so the Histogram/Density toggle can be
+                            # hidden when the Gender metric is selected.
+                            html.Div(
+                                id="patients-age-dist-mode-wrap",
+                                children=dmc.SegmentedControl(
+                                    id="patients-age-dist-mode",
+                                    data=[
+                                        {"value": "histogram", "label": "Histogram"},
+                                        {"value": "density", "label": "Density"},
+                                    ],
+                                    value="density",
+                                    size="xs",
+                                ),
                             ),
                         ],
                     ),
@@ -392,6 +406,23 @@ layout = dmc.Stack(
 )
 
 register_chart_callbacks([("patients-age", "patients-chart-age-dist")])
+
+
+# Hide Histogram/Density + smoothing when the user switches to Gender.
+# Inline (not namespaced) because the logic is trivial and only applies here.
+clientside_callback(
+    """
+    function(metric) {
+        const hidden = {display: "none"};
+        const shown = {};
+        return metric === "gender" ? [hidden, hidden] : [shown, shown];
+    }
+    """,
+    Output("patients-age-dist-mode-wrap", "style"),
+    Output("patients-age-settings-smooth-wrap", "style", allow_duplicate=True),
+    Input("patients-demog-metric", "value"),
+    prevent_initial_call=True,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -697,53 +728,93 @@ def _build_top_cities_bar(df, top_n=12):
 # Age distribution data prep
 # ---------------------------------------------------------------------------
 
-def _prepare_age_dist_data(df, age_ref="last"):
-    """Prepare age distribution data for the store (KDE + raw values)."""
+def _prepare_demog_data(df, age_ref="last"):
+    """Prepare demographics (age + gender) data for the chart store.
+
+    Returns a single payload covering both metrics; the chart callback
+    picks the relevant section based on the user's Age/Gender toggle.
+    """
     if df.empty:
         return None
-    if "DateOfBirth" not in df.columns and "AgeAtLoad" not in df.columns:
-        return None
 
-    ages = _compute_age(df, ref=age_ref).dropna()
-    ages = ages[(ages >= 0) & (ages <= 120)]
-    if ages.empty:
-        return None
+    result: dict = {}
 
-    arr = ages.values
-    try:
-        from scipy.stats import gaussian_kde
-        kde = gaussian_kde(arr, bw_method="silverman")
-        x_min = max(0, float(arr.min()) - 2)
-        x_max = float(arr.max()) + 2
-        x_grid = np.linspace(x_min, x_max, 200)
-        kde_y_raw = kde(x_grid)
-        kde_x = [round(float(v), 2) for v in x_grid]
-        kde_y = [round(float(v), 6) for v in kde_y_raw]
-    except Exception:
-        kde_x, kde_y = [], []
+    # --- Age ----------------------------------------------------------------
+    if "DateOfBirth" in df.columns or "AgeAtLoad" in df.columns:
+        ages = _compute_age(df, ref=age_ref).dropna()
+        ages = ages[(ages >= 0) & (ages <= 120)]
+        if not ages.empty:
+            arr = ages.values
+            try:
+                from scipy.stats import gaussian_kde
+                kde = gaussian_kde(arr, bw_method="silverman")
+                x_min = max(0, float(arr.min()) - 2)
+                x_max = float(arr.max()) + 2
+                x_grid = np.linspace(x_min, x_max, 200)
+                kde_y_raw = kde(x_grid)
+                kde_x = [round(float(v), 2) for v in x_grid]
+                kde_y = [round(float(v), 6) for v in kde_y_raw]
+            except Exception:
+                kde_x, kde_y = [], []
 
-    result = {
-        "values": [round(float(v), 1) for v in arr],
-        "median": round(float(np.median(arr)), 1),
-        "mean": round(float(np.mean(arr)), 1),
-        "p25": round(float(np.percentile(arr, 25)), 1),
-        "p75": round(float(np.percentile(arr, 75)), 1),
-        "n": int(len(arr)),
-        "kde_x": kde_x,
-        "kde_y": kde_y,
-    }
+            result.update({
+                "values": [round(float(v), 1) for v in arr],
+                "median": round(float(np.median(arr)), 1),
+                "mean": round(float(np.mean(arr)), 1),
+                "p25": round(float(np.percentile(arr, 25)), 1),
+                "p75": round(float(np.percentile(arr, 75)), 1),
+                "n": int(len(arr)),
+                "kde_x": kde_x,
+                "kde_y": kde_y,
+            })
 
-    # Per-department breakdown
-    if "Department" in df.columns:
-        by_dept = {}
-        for dept in DEPARTMENTS:
-            dept_ages = ages[df.loc[ages.index, "Department"] == dept]
-            if dept_ages.empty:
-                continue
-            by_dept[dept] = [round(float(v), 1) for v in dept_ages.values]
-        result["by_dept"] = by_dept
+            if "Department" in df.columns:
+                by_dept = {}
+                for dept in DEPARTMENTS:
+                    dept_ages = ages[df.loc[ages.index, "Department"] == dept]
+                    if dept_ages.empty:
+                        continue
+                    by_dept[dept] = [round(float(v), 1) for v in dept_ages.values]
+                result["by_dept"] = by_dept
 
-    return result
+    # --- Gender -------------------------------------------------------------
+    if "Gender" in df.columns and "PatientId" in df.columns:
+        gdf = df[["PatientId", "Gender"]].copy()
+        gdf["Gender"] = (
+            gdf["Gender"].astype("object").where(gdf["Gender"].notna(), "Unknown")
+        )
+        gdf["Gender"] = gdf["Gender"].replace({"": "Unknown"}).fillna("Unknown")
+        # Dedup to one row per patient so gender counts match Total Patients.
+        gdf = gdf.drop_duplicates("PatientId")
+
+        total = gdf["Gender"].value_counts().to_dict()
+        gender_payload: dict = {"total": {k: int(v) for k, v in total.items()}}
+
+        if "Department" in df.columns:
+            ddf = df[["PatientId", "Gender", "Department"]].copy()
+            ddf["Gender"] = (
+                ddf["Gender"].astype("object").where(ddf["Gender"].notna(), "Unknown")
+            )
+            ddf["Gender"] = ddf["Gender"].replace({"": "Unknown"}).fillna("Unknown")
+            ddf = ddf.drop_duplicates(["PatientId", "Department"])
+            by_dept_gender: dict = {}
+            for dept in DEPARTMENTS:
+                sub = ddf[ddf["Department"] == dept]
+                if sub.empty:
+                    continue
+                by_dept_gender[dept] = {
+                    k: int(v) for k, v in sub["Gender"].value_counts().to_dict().items()
+                }
+            gender_payload["by_dept"] = by_dept_gender
+
+        result["gender"] = gender_payload
+
+    return result or None
+
+
+# Back-compat alias — callers elsewhere in the module still reference the old
+# name. Remove once no references remain.
+_prepare_age_dist_data = _prepare_demog_data
 
 
 # ---------------------------------------------------------------------------
@@ -1139,12 +1210,84 @@ def _poll_geocode_status(_n):
 
 
 # ---------------------------------------------------------------------------
+# Gender distribution helper (used when metric toggle is set to Gender)
+# ---------------------------------------------------------------------------
+
+# Ordering used by both the overall bar and the per-site stacks.
+_GENDER_ORDER = ["Female", "Male", "Unknown"]
+_GENDER_COLORS = {
+    "Female": "#A88FFF",   # lavender — complements brand purple
+    "Male": "#4C8DFF",     # steel blue
+    "Unknown": "#9CA3AF",  # neutral gray
+}
+
+
+def _build_gender_fig(data, group="all"):
+    """Build the gender distribution figure.
+
+    "all" -> horizontal bar of totals.
+    "site" -> grouped bars per department, one series per gender.
+    """
+    gender = (data or {}).get("gender") if data else None
+    if not gender or not gender.get("total"):
+        fig = empty_figure("No gender data available")
+        fig.update_layout(height=380)
+        return fig
+
+    fig = go.Figure()
+
+    if group == "site" and gender.get("by_dept"):
+        by_dept = gender["by_dept"]
+        dept_order = [d for d in DEPARTMENTS if d in by_dept]
+        for g in _GENDER_ORDER:
+            vals = [by_dept.get(d, {}).get(g, 0) for d in dept_order]
+            if not any(vals):
+                continue
+            fig.add_trace(go.Bar(
+                x=dept_order, y=vals, name=g,
+                marker_color=_GENDER_COLORS[g],
+                hovertemplate=f"{g}<br>%{{x}}: %{{y:,}} patients<extra></extra>",
+                text=[f"{v:,}" if v else "" for v in vals],
+                textposition="outside",
+            ))
+        fig.update_layout(barmode="group")
+        xaxis_title = "Department"
+    else:
+        total = gender["total"]
+        cats = [g for g in _GENDER_ORDER if total.get(g, 0) > 0]
+        vals = [total[g] for g in cats]
+        grand = sum(vals) or 1
+        fig.add_trace(go.Bar(
+            y=cats, x=vals,
+            orientation="h",
+            marker_color=[_GENDER_COLORS[g] for g in cats],
+            text=[f"{v:,} ({v/grand:.0%})" for v in vals],
+            textposition="outside",
+            hovertemplate="%{y}<br>%{x:,} patients<extra></extra>",
+        ))
+        xaxis_title = "Patient Count"
+
+    apply_default_layout(fig)
+    n_total = sum(gender["total"].values())
+    fig.update_layout(
+        height=380,
+        xaxis_title=f"{xaxis_title}  (n={n_total:,})",
+        margin=dict(l=80, r=32, t=36, b=12),
+        showlegend=(group == "site"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                    xanchor="left", x=0),
+    )
+    return fig
+
+
+# ---------------------------------------------------------------------------
 # Callback: age distribution chart (reads from store + toggle)
 # ---------------------------------------------------------------------------
 
 @callback(
     Output("patients-chart-age-dist", "figure"),
     Input("patients-store-age-dist", "data"),
+    Input("patients-demog-metric", "value"),
     Input("patients-age-dist-mode", "value"),
     Input("patients-age-dist-group", "value"),
     Input("patients-age-settings-smooth", "value"),
@@ -1152,8 +1295,13 @@ def _poll_geocode_status(_n):
         (Output("patients-chart-age-dist-loading", "visible"), True, False),
     ],
 )
-def _update_age_dist(data, mode, group, bandwidth_pct):
-    if not data:
+def _update_age_dist(data, metric, mode, group, bandwidth_pct):
+    metric = metric or "age"
+
+    if metric == "gender":
+        return _build_gender_fig(data, group=group or "all")
+
+    if not data or "values" not in data:
         fig = empty_figure("No age data available")
         fig.update_layout(height=380)
         return fig

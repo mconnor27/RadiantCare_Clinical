@@ -1,4 +1,4 @@
-/* v2 */
+/* v3 — hoverlabel bg fix */
 /**
  * Flow-Gantt SVG renderer for Workflow page.
  * Renders a time-proportional Sankey-style pipeline directly as SVG
@@ -1579,7 +1579,6 @@ window.dash_clientside.flowGantt = {
                 yaxis: {gridcolor: _flowGanttTheme().grid, gridwidth: 1},
                 autosize: true, showlegend: false, hovermode: "closest",
                 shapes: tShapes, annotations: tAnnots,
-                hoverlabel: {bgcolor: tot.color, bordercolor: tot.color, font: {color: "#FFFFFF", family: font, size: 12}, _preserve: true},
                 datarevision: (useKM ? "km" : "naive") + distType + (compareMode ? "cmp" : "") + Date.now(),
             };
             if (distType === "density") {
@@ -1599,6 +1598,7 @@ window.dash_clientside.flowGantt = {
                         line: {color: tot.color, width: 2},
                         fillcolor: tRgba,
                         hovertemplate: tu.axisTitle + ": %{x:.1f}<br>Density: %{y:.4f}<extra></extra>",
+                        hoverlabel: {bgcolor: tot.color, bordercolor: tot.color, font: {color: "#FFFFFF", family: font, size: 12}},
                     }],
                     layout: tLay
                 }, tTitle], flowDetailsB);
@@ -1616,6 +1616,7 @@ window.dash_clientside.flowGantt = {
                     marker: {color: tRgbaH, line: {color: tot.color, width: 1}},
                     xbins: {size: 1},
                     hovertemplate: tu.axisTitle + ": %{x}<br>Count: %{y}<extra></extra>",
+                    hoverlabel: {bgcolor: tot.color, bordercolor: tot.color, font: {color: "#FFFFFF", family: font, size: 12}},
                 }],
                 layout: tLay
             }, tTitle], flowDetailsB);
@@ -1663,7 +1664,6 @@ window.dash_clientside.flowGantt = {
             yaxis: {gridcolor: _flowGanttTheme().grid, gridwidth: 1},
             autosize: true, showlegend: false, hovermode: "closest",
             shapes: shapes, annotations: annots,
-            hoverlabel: {bgcolor: t.color, bordercolor: t.color, font: {color: "#FFFFFF", family: font, size: 12}, _preserve: true},
             datarevision: (useKM ? "km" : "naive") + distType + selectedFlow + (compareMode ? "cmp" : "") + Date.now(),
         };
 
@@ -1684,6 +1684,7 @@ window.dash_clientside.flowGantt = {
                     line: {color: t.color, width: 2},
                     fillcolor: rgba,
                     hovertemplate: u.axisTitle + ": %{x:.1f}<br>Density: %{y:.4f}<extra></extra>",
+                    hoverlabel: {bgcolor: t.color, bordercolor: t.color, font: {color: "#FFFFFF", family: font, size: 12}},
                 }],
                 layout: baseLay
             }, title], flowDetailsB);
@@ -1703,6 +1704,7 @@ window.dash_clientside.flowGantt = {
                 marker: {color: rgbaH, line: {color: t.color, width: 1}},
                 xbins: {size: 1},
                 hovertemplate: u.axisTitle + ": %{x}<br>Count: %{y}<extra></extra>",
+                hoverlabel: {bgcolor: t.color, bordercolor: t.color, font: {color: "#FFFFFF", family: font, size: 12}},
             }],
             layout: baseLay
         }, title], flowDetailsB);
@@ -2134,18 +2136,24 @@ window.dash_clientside.flowGantt = {
         if (selectedFlow === 0) title = "Created → Scheduled Rate (" + aggLabel + ")";
         else if (selectedFlow === 1) title = "Scheduled → Completed Rate (" + aggLabel + ")";
 
+        var _convTheme = _flowGanttTheme();
         var layout = {
-            font: {family: font, size: 12, color: _flowGanttTheme().plotText},
+            font: {family: font, size: 12, color: _convTheme.plotText},
             margin: {l: 48, r: 16, t: 32, b: 42},
             plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
             xaxis: {showgrid: false},
-            yaxis: {gridcolor: _flowGanttTheme().grid, gridwidth: 1, title: "%",
+            yaxis: {gridcolor: _convTheme.grid, gridwidth: 1, title: "%",
                     rangemode: "tozero"},
             autosize: true,
             showlegend: series.length > 1,
             legend: {orientation: "h", y: 1.02, x: 0, xanchor: "left", yanchor: "bottom",
                      font: {size: 11}},
             hovermode: "x unified",
+            hoverlabel: {
+                bgcolor: _convTheme.isDark ? "#374151" : "#FFFFFF",
+                bordercolor: _convTheme.isDark ? "#4B5563" : "#D1D5DB",
+                font: {color: _convTheme.isDark ? "#FFFFFF" : "#1A1A2E", family: font, size: 12},
+            },
             barmode: "group",
         };
 

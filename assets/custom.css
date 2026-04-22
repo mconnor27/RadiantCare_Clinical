@@ -233,9 +233,14 @@ body {
 [data-theme="dark"] .js-plotly-plot .svg-container {
     background-color: var(--bg-card);
 }
-[data-theme="dark"] .js-plotly-plot .main-svg .bg,
-[data-theme="dark"] .js-plotly-plot .bglayer > rect,
-[data-theme="dark"] .js-plotly-plot rect.bg {
+[data-theme="dark"] .kpi-sparkline,
+[data-theme="dark"] .kpi-sparkline .js-plotly-plot,
+[data-theme="dark"] .kpi-sparkline .plot-container,
+[data-theme="dark"] .kpi-sparkline .svg-container {
+    background-color: transparent !important;
+}
+[data-theme="dark"] .js-plotly-plot .main-svg > .bg,
+[data-theme="dark"] .js-plotly-plot .bglayer > rect {
     fill: transparent !important;
 }
 /* Force the main SVG's own backdrop transparent — Plotly sets an inline
@@ -1296,6 +1301,18 @@ html[data-theme="dark"] #global-refresh-btn svg,
 html[data-theme="dark"] #auth-user-btn svg,
 html[data-theme="dark"] #mobile-auth-user-btn svg { color: #D1D5DB !important; }
 
+/* Mobile header auth chip: flatten the dmc.Menu/Popover wrapper so the icon's
+   visual bottom lines up with the theme-toggle icon on the left. Without this,
+   Mantine's inline-block wrapper + SVG baseline push the chip up ~4-6px. */
+#mobile-auth-user-chip,
+#mobile-auth-user-chip > * {
+  display: flex !important;
+  align-items: flex-end !important;
+  line-height: 0 !important;
+}
+#mobile-auth-user-btn { display: flex !important; padding: 0 !important; }
+#mobile-auth-user-btn svg { display: block !important; }
+
 /* Ensure user menu (and other Mantine popovers) render above header bar */
 .mantine-Menu-dropdown,
 .mantine-Popover-dropdown {
@@ -1319,4 +1336,105 @@ html[data-theme="dark"] #mobile-auth-user-btn svg { color: #D1D5DB !important; }
   transform: translateX(-50%) !important;
   margin: 24px auto 0 !important;
   z-index: 10 !important;
+}
+
+/* Compact date range picker for billing revenue-adjustments modal */
+.rev-adj-daterange-compact .DateInput {
+    width: 90px;
+}
+.rev-adj-daterange-compact .DateInput_input {
+    font-size: 11px;
+    padding: 3px 6px;
+    line-height: 1.3;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+.rev-adj-daterange-compact .DateRangePickerInput {
+    display: flex;
+    align-items: center;
+    height: 30px;
+}
+.rev-adj-daterange-compact .DateRangePickerInput_arrow_svg {
+    width: 12px;
+    height: 12px;
+}
+
+/* Heavy modal overlay — instant-feedback backdrop shown while a big
+   DMC Modal is doing its first layout pass. Always in the DOM; toggled
+   via clientside className swap. */
+.heavy-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 1500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 1;
+    transition: opacity 120ms ease;
+    pointer-events: auto;
+}
+.heavy-modal-overlay.hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+.heavy-modal-overlay-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    background: #1f1f24;
+    padding: 24px 36px;
+    border-radius: 10px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+}
+.heavy-modal-overlay-text {
+    color: #fff;
+    font-size: 14px;
+    font-weight: 500;
+    letter-spacing: 0.2px;
+}
+.heavy-modal-spinner {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 3px solid rgba(255, 255, 255, 0.18);
+    border-top-color: #ffffff;
+    animation: heavy-modal-spin 0.75s linear infinite;
+}
+@keyframes heavy-modal-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Auto-fit realization button flash — confirms the fit computation landed */
+.auto-fit-flash {
+    background-color: rgba(124, 42, 131, 0.22) !important;
+    transition: background-color 0.25s ease !important;
+}
+
+/* Compact slider mark labels inside the drift-mode bar — smaller
+   font and pulled closer to the slider track. */
+#billing-rev-adj-drift-bar .mantine-Slider-markLabel {
+    font-size: 9px;
+    margin-top: 0px;
+    top: 12px;
+}
+
+/* Drift-mode slider thumb-label tooltip must sit above the nearby Papers
+   and the plot, otherwise it gets clipped. */
+#billing-rev-adj-drift-bar .mantine-Slider-label,
+#billing-rev-adj-drift-bar [class*="mantine-Slider-label"] {
+    z-index: 1200 !important;
+}
+
+/* Nuclear-option override on the revenue-adjustments plot region — kill
+   every transition/animation so no CSS elsewhere can cause the plot
+   container to resize gradually. */
+#billing-rev-adj-plot-paper,
+#billing-rev-adj-plot-paper *,
+#billing-rev-adj-plot,
+#billing-rev-adj-plot * {
+    transition: none !important;
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
 }

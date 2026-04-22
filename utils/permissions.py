@@ -16,6 +16,7 @@ helpers return False so defaults are conservative.
 
 from __future__ import annotations
 
+import os
 from typing import Optional
 
 from flask import has_request_context, session
@@ -23,8 +24,18 @@ from flask import has_request_context, session
 from data.profiles_db import role_allows
 
 
+def _auth_enabled() -> bool:
+    return os.environ.get("AUTH_ENABLED", "").lower() in ("1", "true", "yes", "on")
+
+
 def current_role() -> Optional[str]:
-    """Role of the current authenticated user, or None when unauthenticated."""
+    """Role of the current authenticated user, or None when unauthenticated.
+
+    When AUTH_ENABLED is off (local dev), impersonate admin so every gated
+    feature renders — matches production admin view for solo development.
+    """
+    if not _auth_enabled():
+        return "admin"
     if not has_request_context():
         return None
     return session.get("role")
