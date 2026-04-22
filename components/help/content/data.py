@@ -484,24 +484,113 @@ def _stat_tile(label: str, value: str, sublabel: str | None = None) -> dmc.Paper
 # ---------------------------------------------------------------------------
 
 SQLITE_PATH = PROJECT_ROOT / "reviews.db"
-RVU_DIR = PROJECT_ROOT / "data" / "rvu_files" / "extracted"
-OPPS_DIR = PROJECT_ROOT / "data" / "opps_files" / "extracted"
 DATA_LOCAL = PROJECT_ROOT / "data"
+
+# Consolidated CMS lookup CSVs the app actually reads at runtime. The raw
+# extracted/ yearly files under data/{rvu,opps}_files/extracted/ are only used
+# offline to regenerate these lookups, so we report on the lookups instead.
+CMS_LOOKUP_FILES = [
+    (DATA_LOCAL / "rvu_files" / "rvu_lookup.csv",
+     "Physician Fee Schedule (PPRRVU, all years)"),
+    (DATA_LOCAL / "rvu_files" / "gpci_rest_of_wa.csv",
+     "GPCI — Rest of WA locality"),
+    (DATA_LOCAL / "opps_files" / "opps_lookup.csv",
+     "OPPS Addendum B APC rates (all years)"),
+    (DATA_LOCAL / "opps_files" / "opps_params.csv",
+     "OPPS conversion factors / parameters"),
+]
 
 
 # Tables tied to features not currently used — hidden from the Data page.
-_HIDDEN_SQLITE_TABLES = {
+_HIDDEN_REVIEWS_TABLES = {
     "insurance_rates",        # per-payor rates feature deprecated
     "insurance_rate_history", # audit trail for the above
 }
 
 
-def _scan_sqlite() -> list[dict]:
-    """Return per-table stats for reviews.db (row count, reviewed %)."""
+def _scan_reviews_db() -> dict:
+    """Return a dialect-aware summary of the reviews database.
+
+    In production the backend is Postgres (Supabase); locally it is SQLite.
+    Shape:
+        {
+          "backend":    "SQLite" | "Postgres",
+          "identifier": "reviews.db" | "<schema> schema",
+          "sublabel":   short descriptor for the DB File tile,
+          "rows":       [{name, rows, reviewed, latest}, ...],
+          "size_bytes": int | None,   # SQLite file size; None for Postgres
+          "available":  bool,
+        }
+    """
+    from data.reviews_db import _USE_POSTGRES, _PG_SCHEMA, _connect
+
+    if _USE_POSTGRES:
+        try:
+            with _connect() as conn:
+                tables = [r["table_name"] for r in conn.execute(
+                    "SELECT table_name FROM information_schema.tables "
+                    "WHERE table_schema = ? AND table_type = 'BASE TABLE' "
+                    "ORDER BY table_name",
+                    (_PG_SCHEMA,),
+                ).fetchall()]
+                tables = [t for t in tables if t not in _HIDDEN_REVIEWS_TABLES]
+                rows: list[dict] = []
+                for t in tables:
+                    n = conn.execute(f'SELECT COUNT(*) AS c FROM "{t}"').fetchone()["c"]
+                    col_rows = conn.execute(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_schema = ? AND table_name = ?",
+                        (_PG_SCHEMA, t),
+                    ).fetchall()
+                    cols = {r["column_name"] for r in col_rows}
+                    reviewed_txt = "—"
+                    if "reviewed" in cols and n > 0:
+                        rc = conn.execute(
+                            f'SELECT COUNT(*) AS c FROM "{t}" WHERE reviewed=1'
+                        ).fetchone()["c"]
+                        pct = (rc / n) if n else 0
+                        reviewed_txt = f"{rc:,} / {n:,} ({pct:.0%})"
+                    latest = None
+                    if "updated_at" in cols and n > 0:
+                        m = conn.execute(
+                            f'SELECT MAX(updated_at) AS m FROM "{t}"'
+                        ).fetchone()["m"]
+                        if m:
+                            latest = str(m)[:10]
+                    rows.append({
+                        "name": t, "rows": n,
+                        "reviewed": reviewed_txt, "latest": latest or "—",
+                    })
+            return {
+                "backend": "Postgres",
+                "identifier": f"{_PG_SCHEMA} schema",
+                "sublabel": "Postgres (Supabase)",
+                "rows": rows,
+                "size_bytes": None,
+                "available": True,
+            }
+        except Exception:
+            return {
+                "backend": "Postgres",
+                "identifier": f"{_PG_SCHEMA} schema",
+                "sublabel": "unreachable",
+                "rows": [],
+                "size_bytes": None,
+                "available": False,
+            }
+
+    # SQLite (local dev)
     import sqlite3
 
     if not SQLITE_PATH.is_file():
-        return []
+        return {
+            "backend": "SQLite",
+            "identifier": SQLITE_PATH.name,
+            "sublabel": "not found",
+            "rows": [],
+            "size_bytes": 0,
+            "available": False,
+        }
     rows: list[dict] = []
     try:
         con = sqlite3.connect(SQLITE_PATH)
@@ -510,7 +599,7 @@ def _scan_sqlite() -> list[dict]:
             "SELECT name FROM sqlite_master WHERE type='table' "
             "AND name NOT LIKE 'sqlite_%' ORDER BY name"
         )]
-        tables = [t for t in tables if t not in _HIDDEN_SQLITE_TABLES]
+        tables = [t for t in tables if t not in _HIDDEN_REVIEWS_TABLES]
         for t in tables:
             n = cur.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]
             cols = [c[1] for c in cur.execute(f'PRAGMA table_info("{t}")').fetchall()]
@@ -523,23 +612,23 @@ def _scan_sqlite() -> list[dict]:
             if "updated_at" in cols and n > 0:
                 latest = cur.execute(f'SELECT MAX(updated_at) FROM "{t}"').fetchone()[0]
                 if latest:
-                    latest = latest[:10]  # YYYY-MM-DD prefix
+                    latest = latest[:10]
             rows.append({
                 "name": t, "rows": n, "reviewed": reviewed_txt, "latest": latest or "—",
             })
         con.close()
     except Exception:
         pass
-    return rows
-
-
-def _dir_stats(path: Path, pattern: str = "**/*.csv") -> tuple[int, int]:
-    """Return (file_count, total_bytes) for files under `path` matching pattern."""
-    if not path.is_dir():
-        return 0, 0
-    files = list(path.glob(pattern))
-    files = [p for p in files if p.is_file()]
-    return len(files), sum(p.stat().st_size for p in files)
+    stat = SQLITE_PATH.stat()
+    mtime = _dt.datetime.fromtimestamp(stat.st_mtime).date()
+    return {
+        "backend": "SQLite",
+        "identifier": SQLITE_PATH.name,
+        "sublabel": f"updated {mtime}",
+        "rows": rows,
+        "size_bytes": stat.st_size,
+        "available": True,
+    }
 
 
 def _csv_row_count(path: Path) -> int | None:
@@ -549,12 +638,12 @@ def _csv_row_count(path: Path) -> int | None:
 
 
 def _build_persisted_section():
-    # --- SQLite ----------------------------------------------------------
-    sqlite_rows = _scan_sqlite()
-    total_sqlite_rows = sum(r["rows"] for r in sqlite_rows)
-    sqlite_size = SQLITE_PATH.stat().st_size if SQLITE_PATH.is_file() else 0
+    # --- Reviews database (SQLite locally, Postgres in production) -------
+    db = _scan_reviews_db()
+    db_rows = db["rows"]
+    total_db_rows = sum(r["rows"] for r in db_rows)
 
-    sqlite_table = dmc.Table(
+    db_table = dmc.Table(
         striped=True, highlightOnHover=True,
         withTableBorder=True, withColumnBorders=True,
         fz="xs", mt="sm",
@@ -572,20 +661,69 @@ def _build_persisted_section():
                     dmc.TableTd(dmc.Text(r["reviewed"], size="xs", c="dimmed")),
                     dmc.TableTd(dmc.Text(r["latest"], size="xs", c="dimmed")),
                 ])
-                for r in sqlite_rows
+                for r in db_rows
             ]),
         ],
     )
 
-    # --- CMS rate files --------------------------------------------------
-    rvu_count, rvu_bytes = _dir_stats(RVU_DIR)
-    opps_count, opps_bytes = _dir_stats(OPPS_DIR)
-    cms_years = set()
-    if RVU_DIR.is_dir():
-        cms_years.update(p.name for p in RVU_DIR.iterdir()
-                         if p.is_dir() and p.name.isdigit())
-    cms_year_span = (f"{min(cms_years)}–{max(cms_years)}"
-                     if cms_years else "—")
+    # --- CMS consolidated lookups (what the app actually reads) ----------
+    cms_rows = []
+    for path, desc in CMS_LOOKUP_FILES:
+        if not path.is_file():
+            cms_rows.append({
+                "path": path, "desc": desc,
+                "rows": None, "size": 0, "mtime": None, "present": False,
+            })
+            continue
+        stat = path.stat()
+        cms_rows.append({
+            "path": path, "desc": desc,
+            "rows": _csv_row_count(path),
+            "size": stat.st_size,
+            "mtime": _dt.datetime.fromtimestamp(stat.st_mtime).date(),
+            "present": True,
+        })
+    cms_present = [r for r in cms_rows if r["present"]]
+    cms_total_rows = sum((r["rows"] or 0) for r in cms_present)
+    cms_total_bytes = sum(r["size"] for r in cms_present)
+
+    cms_table = dmc.Table(
+        striped=True, highlightOnHover=True,
+        withTableBorder=True, withColumnBorders=True,
+        fz="xs", mt="sm",
+        children=[
+            dmc.TableThead(dmc.TableTr([
+                dmc.TableTh("File"),
+                dmc.TableTh("Purpose"),
+                dmc.TableTh("Rows"),
+                dmc.TableTh("Size"),
+                dmc.TableTh("Last Update"),
+            ])),
+            dmc.TableTbody([
+                dmc.TableTr([
+                    dmc.TableTd(dmc.Text(
+                        str(r["path"].relative_to(PROJECT_ROOT)),
+                        size="xs", fw=500,
+                    )),
+                    dmc.TableTd(dmc.Text(r["desc"], size="xs", c="dimmed")),
+                    dmc.TableTd(dmc.Text(
+                        f"{r['rows']:,}" if r["rows"] is not None else "—",
+                        size="xs", ta="right",
+                    )),
+                    dmc.TableTd(dmc.Text(
+                        _format_size(r["size"]) if r["present"] else "—",
+                        size="xs", c="dimmed",
+                    )),
+                    dmc.TableTd(dmc.Text(
+                        _format_date(r["mtime"]) if r["present"] else "missing",
+                        size="xs",
+                        c="red" if not r["present"] else "dimmed",
+                    )),
+                ])
+                for r in cms_rows
+            ]),
+        ],
+    )
 
     # --- Lookup CSVs -----------------------------------------------------
     lookup_files = [
@@ -635,25 +773,28 @@ def _build_persisted_section():
     )
 
     # Summary stats row for persisted data -------------------------------
+    db_sublabel_parts = [f"{len(db_rows)} tables"]
+    if db["size_bytes"] is not None:
+        db_sublabel_parts.append(_format_size(db["size_bytes"]))
+    db_sublabel = " · ".join(db_sublabel_parts)
+
     summary = dmc.Grid(
         gutter="md", mb="sm",
         children=[
             dmc.GridCol(_stat_tile(
-                "SQLite Rows", f"{total_sqlite_rows:,}",
-                f"{len(sqlite_rows)} tables · {_format_size(sqlite_size)}",
+                f"{db['backend']} Rows", f"{total_db_rows:,}",
+                db_sublabel,
             ), span=3),
             dmc.GridCol(_stat_tile(
-                "CMS Rate Files", f"{rvu_count + opps_count:,}",
-                f"{cms_year_span} · {_format_size(rvu_bytes + opps_bytes)}",
+                "CMS Lookup CSVs", f"{len(cms_present)} / {len(cms_rows)}",
+                f"{cms_total_rows:,} rows · {_format_size(cms_total_bytes)}",
             ), span=3),
             dmc.GridCol(_stat_tile(
-                "Lookup CSVs", f"{len(lookup_rows)}",
+                "Reference CSVs", f"{len(lookup_rows)}",
                 f"{sum((r['rows'] or 0) for r in lookup_rows):,} rows total",
             ), span=3),
             dmc.GridCol(_stat_tile(
-                "DB File", SQLITE_PATH.name,
-                (f"updated {_dt.datetime.fromtimestamp(SQLITE_PATH.stat().st_mtime).date()}"
-                 if SQLITE_PATH.is_file() else "not found"),
+                "Reviews DB", db["identifier"], db["sublabel"],
             ), span=3),
         ],
     )
@@ -663,47 +804,40 @@ def _build_persisted_section():
         "tabler:database-heart",
         body(
             "Editable state and reference data that live outside the ARIA "
-            "warehouse — kept locally in the repo.",
+            "warehouse — reviews are stored in Postgres (Supabase) in "
+            "production and SQLite locally; lookup CSVs live in the repo.",
         ),
         summary,
 
-        dmc.Text("SQLite — reviews.db", fw=600, size="xs", mt="md", mb=2),
+        dmc.Text(f"{db['backend']} — {db['identifier']}",
+                 fw=600, size="xs", mt="md", mb=2),
         dmc.Text(
-            "WAL-mode embedded database; written by the Payor Manager, "
-            "Referring Physician Manager, Diagnosis Classification Manager, "
-            "and the CPT / OTV audit UIs. Reviewed column shows how much of "
-            "each table has been human-validated.",
+            "Written by the Payor Manager, Referring Physician Manager, "
+            "Diagnosis Classification Manager, and the CPT / OTV audit UIs. "
+            "Reviewed column shows how much of each table has been "
+            "human-validated.",
             size="xs", c="dimmed", mb=2,
         ),
-        sqlite_table,
+        db_table,
+
+        dmc.Text("CMS fee-schedule lookups", fw=600, size="xs", mt="md", mb=2),
+        dmc.Text(
+            "Consolidated, all-years CSVs read at runtime by the Billing and "
+            "OTV Audit pages. Raw yearly files under data/{rvu,opps}_files/"
+            "extracted/ are only used offline to regenerate these lookups — "
+            "the app never touches them directly.",
+            size="xs", c="dimmed", mb=2,
+        ),
+        cms_table,
 
         dmc.Text("Reference CSVs", fw=600, size="xs", mt="md", mb=2),
         dmc.Text(
             "Static or slowly-changing lookup files under data/. Geocode "
             "caches grow on-demand as new patient / referrer addresses are "
-            "resolved; CMS rate tables are committed once per fee-schedule "
-            "update.",
+            "resolved.",
             size="xs", c="dimmed", mb=2,
         ),
         lookup_table,
-
-        dmc.Text("CMS fee schedules", fw=600, size="xs", mt="md", mb=2),
-        dmc.List(
-            size="xs", spacing=4,
-            children=[
-                dmc.ListItem(
-                    f"data/rvu_files/extracted/ — {rvu_count:,} CSVs "
-                    f"({_format_size(rvu_bytes)}), years {cms_year_span}. "
-                    "Physician Fee Schedule: PPRRVU tables, GPCI, wage index, "
-                    "conversion factors."
-                ),
-                dmc.ListItem(
-                    f"data/opps_files/extracted/ — {opps_count:,} CSVs "
-                    f"({_format_size(opps_bytes)}). OPPS Addendum B APC rates "
-                    "for hospital-billed services (Lacey / Centralia)."
-                ),
-            ],
-        ),
     )
 
 
