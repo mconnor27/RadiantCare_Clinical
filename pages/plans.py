@@ -3411,6 +3411,7 @@ clientside_callback(
     Input("plans-volume-settings-smooth", "value"),
     Input("plans-volume-settings-type", "value"),
     State("plans-chart-volume", "figure"),
+    prevent_initial_call=True,
 )
 
 # Cumulative: prior-periods slider moved from server to clientside input
@@ -3425,6 +3426,7 @@ clientside_callback(
 
     Input("plans-cumulative-project", "checked"),
     State("plans-chart-cumulative", "figure"),
+    prevent_initial_call=True,
 )
 
 
@@ -3448,6 +3450,7 @@ for _spark_id in _PLANS_SPARKLINE_IDS:
         Input("plans-store-kpi-sparklines", "data"),
         Input(_spark_id, "id"),
         Input("plans-smooth-slider", "value"),
+        prevent_initial_call=True,
     )
 
 
@@ -3524,6 +3527,7 @@ clientside_callback(
     Input("plans-session-trend-agg", "value"),
     Input("plans-session-trend-slice", "value"),
     State("plans-chart-session-trend", "figure"),
+    prevent_initial_call=True,
 )
 
 
@@ -3566,6 +3570,7 @@ clientside_callback(
     Input("plans-quit-trend-agg", "value"),
     Input("plans-quit-trend-slice", "value"),
     State("plans-chart-quit-trend", "figure"),
+    prevent_initial_call=True,
 )
 
 

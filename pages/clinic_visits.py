@@ -2074,6 +2074,7 @@ clientside_callback(
     Input("cv-volume-settings-type", "value"),
     Input("cv-volume-settings-stack", "value"),
     State("cv-chart-volume", "figure"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -2084,6 +2085,7 @@ clientside_callback(
     Input("cv-lead-settings-type", "value"),
     Input("cv-lead-settings-stack", "value"),
     State("cv-chart-lead-time", "figure"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -2094,6 +2096,7 @@ clientside_callback(
     Input("cv-conversion-settings-type", "value"),
     Input("cv-conversion-settings-stack", "value"),
     State("cv-chart-conversion", "figure"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -2106,6 +2109,7 @@ clientside_callback(
     Input("cv-cumulative-settings-prior-periods", "value"),
     Input("cv-cumulative-project", "checked"),
     State("cv-chart-cumulative", "figure"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -2116,6 +2120,7 @@ clientside_callback(
     Input("cv-cancel-settings-type", "value"),
     Input("cv-cancel-settings-stack", "value"),
     State("cv-chart-cancel-rate", "figure"),
+    prevent_initial_call=True,
 )
 
 
@@ -2128,6 +2133,7 @@ clientside_callback(
     Output("cv-spark-total", "figure"),
     Input("cv-store-kpi-sparklines", "data"),
     Input("cv-smooth-slider", "value"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -2135,6 +2141,7 @@ clientside_callback(
     Output("cv-spark-consults", "figure"),
     Input("cv-store-kpi-sparklines", "data"),
     Input("cv-smooth-slider", "value"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -2142,6 +2149,7 @@ clientside_callback(
     Output("cv-spark-followups", "figure"),
     Input("cv-store-kpi-sparklines", "data"),
     Input("cv-smooth-slider", "value"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -2149,6 +2157,7 @@ clientside_callback(
     Output("cv-spark-lead", "figure"),
     Input("cv-store-kpi-sparklines", "data"),
     Input("cv-smooth-slider", "value"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -2156,6 +2165,7 @@ clientside_callback(
     Output("cv-spark-sim-conv", "figure"),
     Input("cv-store-kpi-sparklines", "data"),
     Input("cv-smooth-slider", "value"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -2163,6 +2173,7 @@ clientside_callback(
     Output("cv-spark-days-sim", "figure"),
     Input("cv-store-kpi-sparklines", "data"),
     Input("cv-smooth-slider", "value"),
+    prevent_initial_call=True,
 )
 
 

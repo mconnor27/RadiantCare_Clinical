@@ -1885,6 +1885,7 @@ clientside_callback(
     Input("sim-volume-settings-smooth", "value"),
     Input("sim-volume-settings-type", "value"),
     State("sim-chart-volume", "figure"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -1894,6 +1895,7 @@ clientside_callback(
     Input("sim-timing-settings-smooth", "value"),
     Input("sim-timing-settings-type", "value"),
     State("sim-chart-timing", "figure"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -1902,6 +1904,7 @@ clientside_callback(
     Input("sim-store-ribbon", "data"),
     Input("sim-ribbon-settings-smooth", "value"),
     Input("sim-ribbon-settings-type", "value"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -1915,6 +1918,7 @@ clientside_callback(
 
     Input("sim-cumulative-project", "checked"),
     State("sim-chart-cumulative", "figure"),
+    prevent_initial_call=True,
 )
 
 # Show/hide cumulative sub-controls based on mode:
@@ -1983,6 +1987,7 @@ clientside_callback(
     Input("sim-cancel-settings-smooth", "value"),
     Input("sim-cancel-settings-type", "value"),
     State("sim-chart-cancel-rate", "figure"),
+    prevent_initial_call=True,
 )
 
 # Register chart_card settings callbacks
@@ -2063,6 +2068,7 @@ for _func, _out_id in [
         Output(_out_id, "figure"),
         Input("sim-store-kpi-sparklines", "data"),
         Input("sim-smooth-slider", "value"),
+        prevent_initial_call=True,
     )
 
 

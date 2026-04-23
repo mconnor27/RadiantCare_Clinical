@@ -65,14 +65,26 @@
         }
     }
 
-    // Poll + observer combo: the observer catches most changes instantly;
-    // the 200ms poll is a safety net for missed mutations or timing races
-    // when assets load after DOMContentLoaded.
-    var observer = new MutationObserver(rewriteLabels);
+    // Coalesce bursts of DOM mutations (Dash renders fire thousands during
+    // initial load) into a single rewrite per animation frame. Without this
+    // coalesce, each mutation triggers a full-document querySelectorAll.
+    var pending = false;
+    function scheduleRewrite() {
+        if (pending) return;
+        pending = true;
+        requestAnimationFrame(function() {
+            pending = false;
+            rewriteLabels();
+        });
+    }
+
+    var observer = new MutationObserver(scheduleRewrite);
 
     function startObserver() {
-        observer.observe(document.body,
-            {childList: true, subtree: true, characterData: true});
+        // childList only — characterData fires on our own textContent writes
+        // and isn't needed (new labels arrive as new nodes, not as text edits
+        // to existing ones).
+        observer.observe(document.body, {childList: true, subtree: true});
         rewriteLabels();
     }
     if (document.readyState === "loading") {
@@ -80,7 +92,9 @@
     } else {
         startObserver();
     }
-    setInterval(rewriteLabels, 200);
+    // Safety-net poll for timing races when assets load after
+    // DOMContentLoaded. 1s is plenty — the observer catches real changes.
+    setInterval(scheduleRewrite, 1000);
 
     function registerSlider(namespaceName, baseYear, sliderIds) {
         var fmtIdx = makeIdxFormatter(baseYear);

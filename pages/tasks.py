@@ -2700,6 +2700,7 @@ clientside_callback(
     Input("tasks-volume-settings-smooth", "value"),
     Input("tasks-volume-settings-type", "value"),
     State("tasks-chart-volume", "figure"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -2713,6 +2714,7 @@ clientside_callback(
 
     Input("tasks-cumulative-project", "checked"),
     State("tasks-chart-cumulative", "figure"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -2722,6 +2724,7 @@ clientside_callback(
     Input("tasks-time-trend-settings-smooth", "value"),
     Input("tasks-time-trend-settings-type", "value"),
     State("tasks-chart-time-trend", "figure"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -2731,6 +2734,7 @@ clientside_callback(
     Input("tasks-sla-settings-smooth", "value"),
     Input("tasks-sla-settings-type", "value"),
     State("tasks-chart-sla", "figure"),
+    prevent_initial_call=True,
 )
 
 # Show/hide cumulative sub-controls based on mode
@@ -2804,6 +2808,7 @@ for _kg in _KPI_GROUPS:
             Input("tasks-store-kpi-sparklines", "data"),
             Input(_spark_id, "id"),
             Input("tasks-smooth-slider", "value"),
+            prevent_initial_call=True,
         )
 
 # ---------------------------------------------------------------------------
@@ -2840,6 +2845,7 @@ clientside_callback(
     Input("tasks-histogram-settings-type", "value"),
     Input("tasks-hist-bw", "value"),
     State("tasks-chart-histogram", "figure"),
+    prevent_initial_call=True,
 )
 
 # Time comparison: clientside rendering from store
@@ -2848,6 +2854,7 @@ clientside_callback(
     Output("tasks-chart-time-compare", "figure"),
     Input("tasks-store-time-compare", "data"),
     State("tasks-chart-time-compare", "figure"),
+    prevent_initial_call=True,
 )
 
 # Show kernel bandwidth slider only in density mode

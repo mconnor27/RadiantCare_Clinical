@@ -429,9 +429,11 @@ def _count_spark_raw(df, date_col, start, end, value_col=None):
     daily = grp[value_col].sum() if value_col and value_col in sub.columns else grp.size()
     idx = pd.date_range(start, end, freq="D")
     daily = daily.reindex(idx, fill_value=0)
+    # Round floats to 2 decimals before JSON serialization — saves 30-50%
+    # of payload size and JSON.parse time on the client.
     return {
         "labels": [d.strftime("%Y-%m-%d") for d in daily.index],
-        "values": daily.tolist(),
+        "values": np.round(daily.to_numpy(), 2).tolist(),
     }
 
 
@@ -463,7 +465,9 @@ def _build_census_data(df, date_col, start, end, group_col, group_names, group_c
         grouped = grouped.reindex(periods, fill_value=0)
         series.append({
             "name": name,
-            "values": grouped.tolist(),
+            # Round to 2 decimals — cuts JSON payload size 30-50% with no
+            # user-visible change (chart axes already format to 0-1 decimals).
+            "values": np.round(grouped.to_numpy(), 2).tolist(),
             "color": group_colors.get(name, CHART_COLORWAY[len(series) % len(CHART_COLORWAY)]),
         })
 
@@ -514,7 +518,9 @@ def _build_cumulative(df, date_col, start, end, date_preset,
         sub = df[(df[date_col] >= w_start) & (df[date_col] <= w_end)]
         daily = _daily(sub)
         idx = pd.date_range(w_start.normalize(), w_end.normalize(), freq="D")
-        return daily.reindex(idx, fill_value=0).cumsum().tolist()
+        # Round to 2 decimals before JSON serialize — big payload savings.
+        cum = daily.reindex(idx, fill_value=0).cumsum()
+        return np.round(cum.to_numpy(), 2).tolist()
 
     current_vals = _cum_window(start, end_norm)
 
@@ -2208,7 +2214,11 @@ layout = dmc.Stack(
         dmc.Modal(
             id=f"{PAGE_ID}-irm-modal",
             opened=False,
-            keepMounted=True,
+            # keepMounted=False so the modal's heavy internals (AG Grid, Rev-Adj
+            # plot, multi-slider trees) don't live in the DOM on page load.
+            # Trade-off: first open remounts from scratch (already masked by the
+            # heavy-modal-overlay shown via irm-btn click).
+            keepMounted=False,
             transitionProps={"transition": "fade", "duration": 120},
             title=dmc.Group(
                 children=[
@@ -3181,12 +3191,11 @@ layout = dmc.Stack(
 
         # Stores
         dcc.Store(id=f"{PAGE_ID}-store-kpi-sparklines"),
-        dcc.Store(id=f"{PAGE_ID}-store-volume"),
-        dcc.Store(id=f"{PAGE_ID}-store-volume-cum"),
-        dcc.Store(id=f"{PAGE_ID}-store-rvu"),
-        dcc.Store(id=f"{PAGE_ID}-store-rvu-cum"),
-        dcc.Store(id=f"{PAGE_ID}-store-dollar"),
-        dcc.Store(id=f"{PAGE_ID}-store-dollar-cum"),
+        # Unified metrics stores: {"volume": {...}, "rvu": {...}|null, "dollar": {...}}
+        # One store per family cuts the number of selector passes Dash fires
+        # per filter change from 6 to 2.
+        dcc.Store(id=f"{PAGE_ID}-store-metrics"),
+        dcc.Store(id=f"{PAGE_ID}-store-metrics-cum"),
         dcc.Store(id=f"{PAGE_ID}-store-rev-adj", data=get_revenue_adj_settings()),
         dcc.Store(id=f"{PAGE_ID}-table-filter-rows"),
 
@@ -3628,16 +3637,47 @@ clientside_callback(
 
 
 # ---------------------------------------------------------------------------
-# Callback 1: KPIs + Sparklines + Dollar Row + Detail Table
+# Callback 1 (FAST): KPIs + Sparklines + Dollar Row
+#
+# Split out from the old monolithic callback so the KPI row paints 1-2s
+# before the detail grid / chart stores finish. `_load_and_filter_billing_cached`
+# is memoized, so callback 2 hits the cache for the same filter args.
 # ---------------------------------------------------------------------------
 
 @callback(
     Output(f"{PAGE_ID}-kpi-row", "children"),
     Output(f"{PAGE_ID}-dollar-row", "children"),
     Output(f"{PAGE_ID}-store-kpi-sparklines", "data"),
-    Output(f"{PAGE_ID}-store-volume", "data"),
-    Output(f"{PAGE_ID}-store-rvu", "data"),
-    Output(f"{PAGE_ID}-store-dollar", "data"),
+    *_BILLING_FILTER_INPUTS,
+    Input(f"{PAGE_ID}-store-rev-adj", "data"),
+    Input(f"{PAGE_ID}-table-filter-rows", "data"),
+)
+def _update_billing_kpis(*args):
+    """Fast path: KPIs + dollar row + sparklines only. Paints first."""
+    filt = _unpack_billing_filter_args(args)
+    rev_adj = args[19]
+    grid_rows = args[20]
+    data = _load_and_filter_billing_cached(**filt)
+    if data is None:
+        return [], [], {}
+
+    bf_raw = _apply_revenue_adjustments(data["bf"], rev_adj)
+    bf = _apply_grid_row_filter(bf_raw, grid_rows) if grid_rows else bf_raw
+    bf_prior = _apply_revenue_adjustments(data["bf_prior"], rev_adj)
+    start, end = data["start"], data["end"]
+    component = data["component"]
+    kpi_children, dollar_children, sparkline_data = _build_billing_kpis(
+        bf, bf_prior, start, end, component,
+    )
+    return kpi_children, dollar_children, sparkline_data
+
+
+# ---------------------------------------------------------------------------
+# Callback 2 (SLOW): store-metrics + detail grid
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output(f"{PAGE_ID}-store-metrics", "data"),
     Output(f"{PAGE_ID}-detail-grid", "rowData"),
     Output(f"{PAGE_ID}-detail-grid", "columnDefs"),
     *_BILLING_FILTER_INPUTS,
@@ -3649,14 +3689,14 @@ clientside_callback(
         (Output(f"{PAGE_ID}-chart-dollar-trend-loading", "visible"), True, False),
     ],
 )
-def _update_billing_main(*args):
-    """Single consolidated callback — loads and filters data once for all stores."""
+def _update_billing_charts_and_table(*args):
+    """Slow path: chart data store + detail grid rows. Paints second."""
     filt = _unpack_billing_filter_args(args)
-    rev_adj = args[19]  # store-rev-adj data (after 19 filter inputs)
-    grid_rows = args[20]  # table-filter-rows data
+    rev_adj = args[19]
+    grid_rows = args[20]
     data = _load_and_filter_billing_cached(**filt)
     if data is None:
-        return [], [], {}, None, None, None, [], []
+        return None, [], []
 
     # Table: built from full bf before grid filter
     triggered_by_grid = (
@@ -3673,98 +3713,12 @@ def _update_billing_main(*args):
     else:
         table_rows, table_cols = _build_billing_table(bf_raw)
 
-    # Apply grid row filter for KPIs/charts
+    # Apply grid row filter for charts
     bf = _apply_grid_row_filter(bf_raw, grid_rows) if grid_rows else bf_raw
-    bf_prior = _apply_revenue_adjustments(data["bf_prior"], rev_adj)
     start, end = data["start"], data["end"]
     physician_role = data["physician_role"]
     categories = data["categories"]
     component = data["component"]
-
-    # KPIs + sparklines
-    sparkline_data = {}
-    kpi_children = []
-
-    for cat in CATEGORY_NAMES:
-        slug = CATEGORY_SLUGS[cat]
-        color = CATEGORY_COLORS[cat]
-        curr_count = int(bf.loc[bf["Category"] == cat, "Quantity"].sum())
-        if curr_count == 0:
-            continue
-        prior_count = int(bf_prior.loc[bf_prior["Category"] == cat, "Quantity"].sum())
-        trend, direction = _trend_text(curr_count, prior_count)
-        card = kpi_card(
-            cat,
-            f"{curr_count:,}",
-            trend_text=trend,
-            trend_direction=direction,
-            accent_color=color,
-            sparkline_id=f"{PAGE_ID}-spark-{slug}",
-        )
-        kpi_children.append(card)
-
-        # Sparkline raw data
-        cat_df = bf[bf["Category"] == cat]
-        spark = _count_spark_raw(cat_df, "DateOfService", start, end, value_col="Quantity")
-        spark["color"] = color
-        sparkline_data[slug] = spark
-
-    # Wrap cards as flex items — equal width, max 20% each
-    if kpi_children:
-        wrapped = []
-        for card in kpi_children:
-            card.style = {**(card.style or {}), "width": "100%", "minHeight": 0}
-            wrapped.append(
-                html.Div(
-                    card,
-                    style={
-                        "flex": "1 1 0",
-                        "minWidth": "120px",
-                        "maxWidth": "20%",
-                        "display": "flex",
-                    },
-                )
-            )
-        kpi_children = wrapped
-
-    # Dollar estimate row
-    def _dollar_card(label, amount, color=NEUTRAL["text_primary"]):
-        return dmc.Paper(
-            dmc.Group(
-                gap="xs", align="center",
-                children=[
-                    dmc.Text(label, size="xs", c=NEUTRAL["text_secondary"], fw=500),
-                    dmc.Text(
-                        f"${amount:,.0f}",
-                        size="sm", fw=700, c=color,
-                    ),
-                ],
-            ),
-            px="md", py=6, radius="md", shadow="xs", withBorder=True,
-            style={"flex": "1 1 0", "minWidth": "140px"},
-        )
-
-    # Use pre-computed per-row revenue (from _get_enriched_billing)
-    group_dollars = bf["Pro_Revenue"].sum() if not bf.empty else 0
-    hosp_dollars = bf["Hosp_Revenue"].sum() if not bf.empty else 0
-    total_dollars = group_dollars + hosp_dollars
-
-    # Role-gated dollar KPI row. Non-partners never see Professional or
-    # All-In Total; Hospital revenue stays visible for everyone.
-    _money_ok = can_see_money()
-    if component == "pro":
-        dollar_children = [_dollar_card("Est. Professional Revenue", group_dollars, PRIMARY)] if _money_ok else []
-    elif component == "hospital":
-        dollar_children = [_dollar_card("Est. Hospital Revenue", hosp_dollars, PRIMARY)]
-    else:
-        if _money_ok:
-            dollar_children = [
-                _dollar_card("Est. Professional Revenue", group_dollars, PRIMARY),
-                _dollar_card("Est. Hospital Revenue", hosp_dollars),
-                _dollar_card("Est. All-In Total", total_dollars, SEMANTIC_COLORS["success"]),
-            ]
-        else:
-            dollar_children = [_dollar_card("Est. Hospital Revenue", hosp_dollars, PRIMARY)]
 
     # ---- Shared dimension setup (computed once for all stores) ----
     dept_names = [d for d in DEPARTMENTS if d in bf["Department"].unique()] if "Department" in bf.columns else []
@@ -3832,9 +3786,100 @@ def _update_billing_main(*args):
         dollar_col, dollar_label = "Total_Revenue", "Total Revenue ($)"
     dollar_store = _build_store(dollar_col, dollar_label)
 
-    return (kpi_children, dollar_children, sparkline_data,
-            volume_store, rvu_store, dollar_store,
-            table_rows, table_cols)
+    metrics_store = {
+        "volume": volume_store,
+        "rvu": rvu_store,
+        "dollar": dollar_store,
+    }
+    return metrics_store, table_rows, table_cols
+
+
+# ---------------------------------------------------------------------------
+# Helper: build KPI cards + dollar row + sparkline data
+# ---------------------------------------------------------------------------
+
+def _build_billing_kpis(bf, bf_prior, start, end, component):
+    """Extracted from the old monolithic callback so the KPI row can paint
+    before the slow store-metrics / detail-table callback finishes."""
+    sparkline_data = {}
+    kpi_children = []
+
+    for cat in CATEGORY_NAMES:
+        slug = CATEGORY_SLUGS[cat]
+        color = CATEGORY_COLORS[cat]
+        curr_count = int(bf.loc[bf["Category"] == cat, "Quantity"].sum())
+        if curr_count == 0:
+            continue
+        prior_count = int(bf_prior.loc[bf_prior["Category"] == cat, "Quantity"].sum())
+        trend, direction = _trend_text(curr_count, prior_count)
+        card = kpi_card(
+            cat,
+            f"{curr_count:,}",
+            trend_text=trend,
+            trend_direction=direction,
+            accent_color=color,
+            sparkline_id=f"{PAGE_ID}-spark-{slug}",
+        )
+        kpi_children.append(card)
+
+        cat_df = bf[bf["Category"] == cat]
+        spark = _count_spark_raw(cat_df, "DateOfService", start, end, value_col="Quantity")
+        spark["color"] = color
+        sparkline_data[slug] = spark
+
+    if kpi_children:
+        wrapped = []
+        for card in kpi_children:
+            card.style = {**(card.style or {}), "width": "100%", "minHeight": 0}
+            wrapped.append(
+                html.Div(
+                    card,
+                    style={
+                        "flex": "1 1 0",
+                        "minWidth": "120px",
+                        "maxWidth": "20%",
+                        "display": "flex",
+                    },
+                )
+            )
+        kpi_children = wrapped
+
+    def _dollar_card(label, amount, color=NEUTRAL["text_primary"]):
+        return dmc.Paper(
+            dmc.Group(
+                gap="xs", align="center",
+                children=[
+                    dmc.Text(label, size="xs", c=NEUTRAL["text_secondary"], fw=500),
+                    dmc.Text(
+                        f"${amount:,.0f}",
+                        size="sm", fw=700, c=color,
+                    ),
+                ],
+            ),
+            px="md", py=6, radius="md", shadow="xs", withBorder=True,
+            style={"flex": "1 1 0", "minWidth": "140px"},
+        )
+
+    group_dollars = bf["Pro_Revenue"].sum() if not bf.empty else 0
+    hosp_dollars = bf["Hosp_Revenue"].sum() if not bf.empty else 0
+    total_dollars = group_dollars + hosp_dollars
+
+    _money_ok = can_see_money()
+    if component == "pro":
+        dollar_children = [_dollar_card("Est. Professional Revenue", group_dollars, PRIMARY)] if _money_ok else []
+    elif component == "hospital":
+        dollar_children = [_dollar_card("Est. Hospital Revenue", hosp_dollars, PRIMARY)]
+    else:
+        if _money_ok:
+            dollar_children = [
+                _dollar_card("Est. Professional Revenue", group_dollars, PRIMARY),
+                _dollar_card("Est. Hospital Revenue", hosp_dollars),
+                _dollar_card("Est. All-In Total", total_dollars, SEMANTIC_COLORS["success"]),
+            ]
+        else:
+            dollar_children = [_dollar_card("Est. Hospital Revenue", hosp_dollars, PRIMARY)]
+
+    return kpi_children, dollar_children, sparkline_data
 
 
 # ---------------------------------------------------------------------------
@@ -3842,9 +3887,7 @@ def _update_billing_main(*args):
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output(f"{PAGE_ID}-store-volume-cum", "data"),
-    Output(f"{PAGE_ID}-store-rvu-cum", "data"),
-    Output(f"{PAGE_ID}-store-dollar-cum", "data"),
+    Output(f"{PAGE_ID}-store-metrics-cum", "data"),
     *_BILLING_FILTER_INPUTS,
     Input(f"{PAGE_ID}-store-rev-adj", "data"),
     Input(f"{PAGE_ID}-volcum-mode", "value"),
@@ -3873,7 +3916,7 @@ def update_cumulative(*args):
 
     data = _load_and_filter_billing_cached(**filt)
     if data is None:
-        return None, None, None
+        return None
 
     df_all = _apply_revenue_adjustments(data["df_all"], rev_adj)
     start, end = data["start"], data["end"]
@@ -3948,7 +3991,7 @@ def update_cumulative(*args):
         slice_configs=_slice_cfgs,
         max_prior=10,
     )
-    return vol_cum, rvu_cum, dollar_cum
+    return {"volume": vol_cum, "rvu": rvu_cum, "dollar": dollar_cum}
 
 
 # ---------------------------------------------------------------------------
@@ -4160,18 +4203,20 @@ def _update_payor_charts(*args):
 # instead of returning figures directly. This prevents 8 simultaneous
 # Plotly.react calls from blocking the main thread on page load.
 
-def _trend_js(chart_id):
+def _trend_js(chart_id, metric_key):
     return f"""
-function(storeData, sliceMode, agg, smoothPct, chartType, stackVal) {{
+function(allMetrics, sliceMode, agg, smoothPct, chartType, stackVal) {{
+    var storeData = allMetrics ? allMetrics['{metric_key}'] : null;
     return window.dash_clientside.billingDeferred.renderTrend(
         '{chart_id}', storeData, sliceMode, agg, smoothPct, chartType, stackVal
     );
 }}
 """
 
-def _cum_js(chart_id):
+def _cum_js(chart_id, metric_key):
     return f"""
-function(rawData, smoothPct, chartType, stackVal, maxPrior, projectOn) {{
+function(allMetrics, smoothPct, chartType, stackVal, maxPrior, projectOn) {{
+    var rawData = allMetrics ? allMetrics['{metric_key}'] : null;
     return window.dash_clientside.billingDeferred.renderCum(
         '{chart_id}', rawData, smoothPct, chartType, stackVal, maxPrior, projectOn
     );
@@ -4180,74 +4225,80 @@ function(rawData, smoothPct, chartType, stackVal, maxPrior, projectOn) {{
 
 # Volume trend
 clientside_callback(
-    _trend_js(f"{PAGE_ID}-chart-vol-trend"),
+    _trend_js(f"{PAGE_ID}-chart-vol-trend", "volume"),
     Output(f"{PAGE_ID}-chart-vol-trend", "figure"),
-    Input(f"{PAGE_ID}-store-volume", "data"),
+    Input(f"{PAGE_ID}-store-metrics", "data"),
     Input(f"{PAGE_ID}-vol-slice", "value"),
     Input(f"{PAGE_ID}-vol-agg", "value"),
     Input(f"{PAGE_ID}-vol-settings-smooth", "value"),
     Input(f"{PAGE_ID}-vol-settings-type", "value"),
     Input(f"{PAGE_ID}-vol-settings-stack", "value"),
+    prevent_initial_call=True,
 )
 
 # RVU trend
 clientside_callback(
-    _trend_js(f"{PAGE_ID}-chart-rvu-trend"),
+    _trend_js(f"{PAGE_ID}-chart-rvu-trend", "rvu"),
     Output(f"{PAGE_ID}-chart-rvu-trend", "figure"),
-    Input(f"{PAGE_ID}-store-rvu", "data"),
+    Input(f"{PAGE_ID}-store-metrics", "data"),
     Input(f"{PAGE_ID}-rvu-slice", "value"),
     Input(f"{PAGE_ID}-rvu-agg", "value"),
     Input(f"{PAGE_ID}-rvu-settings-smooth", "value"),
     Input(f"{PAGE_ID}-rvu-settings-type", "value"),
     Input(f"{PAGE_ID}-rvu-settings-stack", "value"),
+    prevent_initial_call=True,
 )
 
 # Volume cumulative
 clientside_callback(
-    _cum_js(f"{PAGE_ID}-chart-vol-cum"),
+    _cum_js(f"{PAGE_ID}-chart-vol-cum", "volume"),
     Output(f"{PAGE_ID}-chart-vol-cum", "figure"),
-    Input(f"{PAGE_ID}-store-volume-cum", "data"),
+    Input(f"{PAGE_ID}-store-metrics-cum", "data"),
     Input(f"{PAGE_ID}-volcum-settings-smooth", "value"),
     Input(f"{PAGE_ID}-volcum-settings-type", "value"),
     Input(f"{PAGE_ID}-volcum-settings-stack", "value"),
     Input(f"{PAGE_ID}-volcum-settings-prior-periods", "value"),
     Input(f"{PAGE_ID}-volcum-project", "checked"),
+    prevent_initial_call=True,
 )
 
 # RVU cumulative
 clientside_callback(
-    _cum_js(f"{PAGE_ID}-chart-rvu-cum"),
+    _cum_js(f"{PAGE_ID}-chart-rvu-cum", "rvu"),
     Output(f"{PAGE_ID}-chart-rvu-cum", "figure"),
-    Input(f"{PAGE_ID}-store-rvu-cum", "data"),
+    Input(f"{PAGE_ID}-store-metrics-cum", "data"),
     Input(f"{PAGE_ID}-rvucum-settings-smooth", "value"),
     Input(f"{PAGE_ID}-rvucum-settings-type", "value"),
     Input(f"{PAGE_ID}-rvucum-settings-stack", "value"),
     Input(f"{PAGE_ID}-rvucum-settings-prior-periods", "value"),
     Input(f"{PAGE_ID}-rvucum-project", "checked"),
+    prevent_initial_call=True,
 )
 
 # Dollar trend
 clientside_callback(
-    _trend_js(f"{PAGE_ID}-chart-dollar-trend"),
+    _trend_js(f"{PAGE_ID}-chart-dollar-trend", "dollar"),
     Output(f"{PAGE_ID}-chart-dollar-trend", "figure"),
-    Input(f"{PAGE_ID}-store-dollar", "data"),
+    Input(f"{PAGE_ID}-store-metrics", "data"),
     Input(f"{PAGE_ID}-dollar-slice", "value"),
     Input(f"{PAGE_ID}-dollar-agg", "value"),
     Input(f"{PAGE_ID}-dollar-settings-smooth", "value"),
     Input(f"{PAGE_ID}-dollar-settings-type", "value"),
     Input(f"{PAGE_ID}-dollar-settings-stack", "value"),
+    prevent_initial_call=True,
 )
 
 # Dollar cumulative
 clientside_callback(
-    _cum_js(f"{PAGE_ID}-chart-dollar-cum"),
+    _cum_js(f"{PAGE_ID}-chart-dollar-cum", "dollar"),
     Output(f"{PAGE_ID}-chart-dollar-cum", "figure"),
-    Input(f"{PAGE_ID}-store-dollar-cum", "data"),
+    Input(f"{PAGE_ID}-store-metrics-cum", "data"),
     Input(f"{PAGE_ID}-dollarcum-settings-smooth", "value"),
     Input(f"{PAGE_ID}-dollarcum-settings-type", "value"),
     Input(f"{PAGE_ID}-dollarcum-settings-stack", "value"),
     Input(f"{PAGE_ID}-dollarcum-settings-prior-periods", "value"),
     Input(f"{PAGE_ID}-dollarcum-project", "checked"),
+    prevent_initial_call=True,
 )
 
 # Payor trend ridgeline (reuse diagRidge JS renderer)
@@ -4258,6 +4309,7 @@ clientside_callback(
     Input(f"{PAGE_ID}-chart-payor-trend-settings-smooth", "value"),
     Input(f"{PAGE_ID}-chart-payor-trend-settings-type", "value"),
     Input(f"{PAGE_ID}-payor-trend-agg", "value"),
+    prevent_initial_call=True,
 )
 
 # Sync sort controls between trend and comparison
@@ -4275,58 +4327,83 @@ clientside_callback(
 
 
 # ---------------------------------------------------------------------------
-# Slice toggle dimming
+# Slice toggle dimming + stack-wrap visibility (consolidated)
 # ---------------------------------------------------------------------------
-_SLICE_CLASS_JS = """function(val) {
-    return (val && val !== "total") ? "slice-group-active" : "slice-total-active";
-}"""
 
-for _sid in [f"{PAGE_ID}-vol-slice", f"{PAGE_ID}-volcum-slice",
-              f"{PAGE_ID}-rvu-slice", f"{PAGE_ID}-rvucum-slice"]:
-    clientside_callback(
-        _SLICE_CLASS_JS,
-        Output(_sid, "className"),
-        Input(_sid, "value"),
-    )
+# Single callback replaces 4 per-slider class callbacks: all 4 slice chips
+# classed in one pass whenever any of them changes.
+clientside_callback(
+    """function(vol, volcum, rvu, rvucum) {
+        function cls(v) {
+            return (v && v !== "total") ? "slice-group-active" : "slice-total-active";
+        }
+        return [cls(vol), cls(volcum), cls(rvu), cls(rvucum)];
+    }""",
+    Output(f"{PAGE_ID}-vol-slice", "className"),
+    Output(f"{PAGE_ID}-volcum-slice", "className"),
+    Output(f"{PAGE_ID}-rvu-slice", "className"),
+    Output(f"{PAGE_ID}-rvucum-slice", "className"),
+    Input(f"{PAGE_ID}-vol-slice", "value"),
+    Input(f"{PAGE_ID}-volcum-slice", "value"),
+    Input(f"{PAGE_ID}-rvu-slice", "value"),
+    Input(f"{PAGE_ID}-rvucum-slice", "value"),
+)
 
-_HIDE_STACK_JS = """function(sliceVal, chartType) {
-    var single = !sliceVal || sliceVal === "total" || sliceVal === "";
-    var noStack = chartType === "line";
-    return (single || noStack) ? {"display": "none"} : {};
-}"""
+# Single callback replaces 3 non-cumulative stack-wrap visibility callbacks.
+clientside_callback(
+    """function(volSlice, volType, rvuSlice, rvuType, dollarSlice, dollarType) {
+        function hide(sliceVal, chartType) {
+            var single = !sliceVal || sliceVal === "total" || sliceVal === "";
+            var noStack = chartType === "line";
+            return (single || noStack) ? {"display": "none"} : {};
+        }
+        return [
+            hide(volSlice, volType),
+            hide(rvuSlice, rvuType),
+            hide(dollarSlice, dollarType),
+        ];
+    }""",
+    Output(f"{PAGE_ID}-vol-settings-stack-wrap", "style", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rvu-settings-stack-wrap", "style", allow_duplicate=True),
+    Output(f"{PAGE_ID}-dollar-settings-stack-wrap", "style", allow_duplicate=True),
+    Input(f"{PAGE_ID}-vol-slice", "value"),
+    Input(f"{PAGE_ID}-vol-settings-type", "value"),
+    Input(f"{PAGE_ID}-rvu-slice", "value"),
+    Input(f"{PAGE_ID}-rvu-settings-type", "value"),
+    Input(f"{PAGE_ID}-dollar-slice", "value"),
+    Input(f"{PAGE_ID}-dollar-settings-type", "value"),
+    prevent_initial_call="initial_duplicate",
+)
 
-for _slice_id, _settings_id in [
-    (f"{PAGE_ID}-vol-slice", f"{PAGE_ID}-vol"),
-    (f"{PAGE_ID}-rvu-slice", f"{PAGE_ID}-rvu"),
-    (f"{PAGE_ID}-dollar-slice", f"{PAGE_ID}-dollar"),
-]:
-    clientside_callback(
-        _HIDE_STACK_JS,
-        Output(f"{_settings_id}-settings-stack-wrap", "style", allow_duplicate=True),
-        Input(_slice_id, "value"),
-        Input(f"{_settings_id}-settings-type", "value"),
-        prevent_initial_call="initial_duplicate",
-    )
-
-# Cumulative charts: hide stacked/grouped when Total or Prior Periods mode
-for _cum_mode, _cum_slice, _cum_settings in [
-    (f"{PAGE_ID}-volcum-mode", f"{PAGE_ID}-volcum-slice", f"{PAGE_ID}-volcum"),
-    (f"{PAGE_ID}-rvucum-mode", f"{PAGE_ID}-rvucum-slice", f"{PAGE_ID}-rvucum"),
-    (f"{PAGE_ID}-dollarcum-mode", f"{PAGE_ID}-dollarcum-slice", f"{PAGE_ID}-dollarcum"),
-]:
-    clientside_callback(
-        """function(mode, sliceVal, chartType) {
+# Single callback replaces 3 cumulative stack-wrap visibility callbacks.
+clientside_callback(
+    """function(volMode, volSlice, volType, rvuMode, rvuSlice, rvuType, dollarMode, dollarSlice, dollarType) {
+        function hide(mode, sliceVal, chartType) {
             var single = !sliceVal || sliceVal === "total" || sliceVal === "";
             if (single) return {"display": "none"};
             var isPrior = mode === "prior";
             var noStack = chartType === "line";
             return (isPrior || noStack) ? {"display": "none"} : {};
-        }""",
-        Output(f"{_cum_settings}-settings-stack-wrap", "style"),
-        Input(_cum_mode, "value"),
-        Input(_cum_slice, "value"),
-        Input(f"{_cum_settings}-settings-type", "value"),
-    )
+        }
+        return [
+            hide(volMode, volSlice, volType),
+            hide(rvuMode, rvuSlice, rvuType),
+            hide(dollarMode, dollarSlice, dollarType),
+        ];
+    }""",
+    Output(f"{PAGE_ID}-volcum-settings-stack-wrap", "style"),
+    Output(f"{PAGE_ID}-rvucum-settings-stack-wrap", "style"),
+    Output(f"{PAGE_ID}-dollarcum-settings-stack-wrap", "style"),
+    Input(f"{PAGE_ID}-volcum-mode", "value"),
+    Input(f"{PAGE_ID}-volcum-slice", "value"),
+    Input(f"{PAGE_ID}-volcum-settings-type", "value"),
+    Input(f"{PAGE_ID}-rvucum-mode", "value"),
+    Input(f"{PAGE_ID}-rvucum-slice", "value"),
+    Input(f"{PAGE_ID}-rvucum-settings-type", "value"),
+    Input(f"{PAGE_ID}-dollarcum-mode", "value"),
+    Input(f"{PAGE_ID}-dollarcum-slice", "value"),
+    Input(f"{PAGE_ID}-dollarcum-settings-type", "value"),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -4335,6 +4412,10 @@ for _cum_mode, _cum_slice, _cum_settings in [
 
 _SPARKLINE_IDS = [f"{PAGE_ID}-spark-{slug}" for slug in CATEGORY_SLUGS.values()]
 
+# One callback per sparkline — multi-output batch fails when Dash tries to
+# fire against sparkline targets that weren't rendered (empty categories).
+# The per-target form tolerates missing targets under
+# suppress_callback_exceptions=True.
 for _spark_id in _SPARKLINE_IDS:
     clientside_callback(
         ClientsideFunction(namespace="sparklines", function_name="updateFromStore"),
@@ -4342,6 +4423,7 @@ for _spark_id in _SPARKLINE_IDS:
         Input(f"{PAGE_ID}-store-kpi-sparklines", "data"),
         Input(_spark_id, "id"),
         Input(f"{PAGE_ID}-smooth-slider", "value"),
+        prevent_initial_call=True,
     )
 
 
@@ -4362,82 +4444,77 @@ register_chart_callbacks([
 
 # Cumulative control visibility: hide slice toggle when "prior", show when "slice".
 # When switching to slice mode, auto-select "category" if currently on "total".
-_CUM_VIS_JS = """function(mode, sliceVal) {
-    if (mode === "prior") {
-        return [{}, {"display": "none"}, "total"];
-    }
-    var newSlice = (!sliceVal || sliceVal === "total") ? "category" : window.dash_clientside.no_update;
-    return [{"display": "none"}, {}, newSlice];
-}"""
-
+# Single callback replaces 3 per-chart cum-vis callbacks.
 clientside_callback(
-    _CUM_VIS_JS,
+    """function(volMode, rvuMode, dollarMode, volSlice, rvuSlice, dollarSlice) {
+        function vis(mode, sliceVal) {
+            if (mode === "prior") {
+                return [{}, {"display": "none"}, "total"];
+            }
+            var newSlice = (!sliceVal || sliceVal === "total") ? "category" : window.dash_clientside.no_update;
+            return [{"display": "none"}, {}, newSlice];
+        }
+        var v = vis(volMode, volSlice);
+        var r = vis(rvuMode, rvuSlice);
+        var d = vis(dollarMode, dollarSlice);
+        return [v[0], v[1], v[2], r[0], r[1], r[2], d[0], d[1], d[2]];
+    }""",
     Output(f"{PAGE_ID}-volcum-period-type", "style"),
     Output(f"{PAGE_ID}-volcum-slice", "style"),
     Output(f"{PAGE_ID}-volcum-slice", "value", allow_duplicate=True),
-    Input(f"{PAGE_ID}-volcum-mode", "value"),
-    State(f"{PAGE_ID}-volcum-slice", "value"),
-    prevent_initial_call="initial_duplicate",
-)
-clientside_callback(
-    _CUM_VIS_JS,
     Output(f"{PAGE_ID}-rvucum-period-type", "style"),
     Output(f"{PAGE_ID}-rvucum-slice", "style"),
     Output(f"{PAGE_ID}-rvucum-slice", "value", allow_duplicate=True),
+    Output(f"{PAGE_ID}-dollarcum-period-type", "style"),
+    Output(f"{PAGE_ID}-dollarcum-slice", "style"),
+    Output(f"{PAGE_ID}-dollarcum-slice", "value", allow_duplicate=True),
+    Input(f"{PAGE_ID}-volcum-mode", "value"),
     Input(f"{PAGE_ID}-rvucum-mode", "value"),
+    Input(f"{PAGE_ID}-dollarcum-mode", "value"),
+    State(f"{PAGE_ID}-volcum-slice", "value"),
     State(f"{PAGE_ID}-rvucum-slice", "value"),
+    State(f"{PAGE_ID}-dollarcum-slice", "value"),
     prevent_initial_call="initial_duplicate",
 )
 
-# Disable Calendar when period > 1 year; cap prior-periods slider to available data (Volume)
+# Disable Calendar when period > 1 year; cap prior-periods slider to
+# available data. Single callback replaces 3 per-chart prior-controls
+# callbacks and now reads from the unified cum store. The three metric
+# blocks are always refreshed together because the unified store writes
+# them together — preserving prior behavior where each chart's max/marks
+# updated alongside its own store change.
 clientside_callback(
-    """function(storeData, currentPtValue) {
-        return window.dash_clientside.cumulative.updatePriorControls(storeData, currentPtValue);
+    """function(cumStore, volPt, rvuPt, dollarPt) {
+        var upd = window.dash_clientside.cumulative.updatePriorControls;
+        var nu = window.dash_clientside.no_update;
+        function pack(metric, pt) {
+            if (!metric) return [nu, nu, nu, nu];
+            return upd(metric, pt);
+        }
+        var v = pack(cumStore && cumStore.volume, volPt);
+        var r = pack(cumStore && cumStore.rvu, rvuPt);
+        var d = pack(cumStore && cumStore.dollar, dollarPt);
+        return [
+            v[0], v[1], v[2], v[3],
+            r[0], r[1], r[2], r[3],
+            d[0], d[1], d[2], d[3],
+        ];
     }""",
     Output(f"{PAGE_ID}-volcum-period-type", "data"),
     Output(f"{PAGE_ID}-volcum-period-type", "value", allow_duplicate=True),
     Output(f"{PAGE_ID}-volcum-settings-prior-periods", "max"),
     Output(f"{PAGE_ID}-volcum-settings-prior-periods", "marks"),
-    Input(f"{PAGE_ID}-store-volume-cum", "data"),
-    State(f"{PAGE_ID}-volcum-period-type", "value"),
-    prevent_initial_call=True,
-)
-
-# Disable Calendar when period > 1 year; cap prior-periods slider to available data (RVU)
-clientside_callback(
-    """function(storeData, currentPtValue) {
-        return window.dash_clientside.cumulative.updatePriorControls(storeData, currentPtValue);
-    }""",
     Output(f"{PAGE_ID}-rvucum-period-type", "data"),
     Output(f"{PAGE_ID}-rvucum-period-type", "value", allow_duplicate=True),
     Output(f"{PAGE_ID}-rvucum-settings-prior-periods", "max"),
     Output(f"{PAGE_ID}-rvucum-settings-prior-periods", "marks"),
-    Input(f"{PAGE_ID}-store-rvu-cum", "data"),
-    State(f"{PAGE_ID}-rvucum-period-type", "value"),
-    prevent_initial_call=True,
-)
-
-# Dollar cumulative control visibility
-clientside_callback(
-    _CUM_VIS_JS,
-    Output(f"{PAGE_ID}-dollarcum-period-type", "style"),
-    Output(f"{PAGE_ID}-dollarcum-slice", "style"),
-    Output(f"{PAGE_ID}-dollarcum-slice", "value", allow_duplicate=True),
-    Input(f"{PAGE_ID}-dollarcum-mode", "value"),
-    State(f"{PAGE_ID}-dollarcum-slice", "value"),
-    prevent_initial_call="initial_duplicate",
-)
-
-# Dollar cumulative prior controls
-clientside_callback(
-    """function(storeData, currentPtValue) {
-        return window.dash_clientside.cumulative.updatePriorControls(storeData, currentPtValue);
-    }""",
     Output(f"{PAGE_ID}-dollarcum-period-type", "data"),
     Output(f"{PAGE_ID}-dollarcum-period-type", "value", allow_duplicate=True),
     Output(f"{PAGE_ID}-dollarcum-settings-prior-periods", "max"),
     Output(f"{PAGE_ID}-dollarcum-settings-prior-periods", "marks"),
-    Input(f"{PAGE_ID}-store-dollar-cum", "data"),
+    Input(f"{PAGE_ID}-store-metrics-cum", "data"),
+    State(f"{PAGE_ID}-volcum-period-type", "value"),
+    State(f"{PAGE_ID}-rvucum-period-type", "value"),
     State(f"{PAGE_ID}-dollarcum-period-type", "value"),
     prevent_initial_call=True,
 )
@@ -4475,52 +4552,45 @@ function(categories, currentVal) {{
 _CPT_SLICE_VIS_JS = _make_slice_vis_js(include_total=False)
 _CPT_SLICE_VIS_CUM_JS = _make_slice_vis_js(include_total=True)
 
+_CPT_SLICE_BATCH_JS = f"""
+function(cats, volCur, rvuCur, dollarCur, volcumCur, rvucumCur, dollarcumCur) {{
+    var nc = {_CPT_SLICE_VIS_JS};
+    var cm = {_CPT_SLICE_VIS_CUM_JS};
+    var r1 = nc(cats, volCur);
+    var r2 = nc(cats, rvuCur);
+    var r3 = nc(cats, dollarCur);
+    var r4 = cm(cats, volcumCur);
+    var r5 = cm(cats, rvucumCur);
+    var r6 = cm(cats, dollarcumCur);
+    return [
+        r1[0], r1[1], r2[0], r2[1], r3[0], r3[1],
+        r4[0], r4[1], r5[0], r5[1], r6[0], r6[1],
+    ];
+}}
+"""
+
 clientside_callback(
-    _CPT_SLICE_VIS_JS,
+    _CPT_SLICE_BATCH_JS,
     Output(f"{PAGE_ID}-vol-slice", "data"),
     Output(f"{PAGE_ID}-vol-slice", "value"),
-    Input(f"{PAGE_ID}-cpt-store", "data"),
-    State(f"{PAGE_ID}-vol-slice", "value"),
-)
-
-clientside_callback(
-    _CPT_SLICE_VIS_JS,
     Output(f"{PAGE_ID}-rvu-slice", "data"),
     Output(f"{PAGE_ID}-rvu-slice", "value"),
-    Input(f"{PAGE_ID}-cpt-store", "data"),
-    State(f"{PAGE_ID}-rvu-slice", "value"),
-)
-
-clientside_callback(
-    _CPT_SLICE_VIS_CUM_JS,
-    Output(f"{PAGE_ID}-volcum-slice", "data"),
-    Output(f"{PAGE_ID}-volcum-slice", "value"),
-    Input(f"{PAGE_ID}-cpt-store", "data"),
-    State(f"{PAGE_ID}-volcum-slice", "value"),
-)
-
-clientside_callback(
-    _CPT_SLICE_VIS_CUM_JS,
-    Output(f"{PAGE_ID}-rvucum-slice", "data"),
-    Output(f"{PAGE_ID}-rvucum-slice", "value"),
-    Input(f"{PAGE_ID}-cpt-store", "data"),
-    State(f"{PAGE_ID}-rvucum-slice", "value"),
-)
-
-clientside_callback(
-    _CPT_SLICE_VIS_JS,
     Output(f"{PAGE_ID}-dollar-slice", "data"),
     Output(f"{PAGE_ID}-dollar-slice", "value"),
-    Input(f"{PAGE_ID}-cpt-store", "data"),
-    State(f"{PAGE_ID}-dollar-slice", "value"),
-)
-
-clientside_callback(
-    _CPT_SLICE_VIS_CUM_JS,
+    Output(f"{PAGE_ID}-volcum-slice", "data"),
+    Output(f"{PAGE_ID}-volcum-slice", "value", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rvucum-slice", "data"),
+    Output(f"{PAGE_ID}-rvucum-slice", "value", allow_duplicate=True),
     Output(f"{PAGE_ID}-dollarcum-slice", "data"),
-    Output(f"{PAGE_ID}-dollarcum-slice", "value"),
+    Output(f"{PAGE_ID}-dollarcum-slice", "value", allow_duplicate=True),
     Input(f"{PAGE_ID}-cpt-store", "data"),
+    State(f"{PAGE_ID}-vol-slice", "value"),
+    State(f"{PAGE_ID}-rvu-slice", "value"),
+    State(f"{PAGE_ID}-dollar-slice", "value"),
+    State(f"{PAGE_ID}-volcum-slice", "value"),
+    State(f"{PAGE_ID}-rvucum-slice", "value"),
     State(f"{PAGE_ID}-dollarcum-slice", "value"),
+    prevent_initial_call="initial_duplicate",
 )
 
 
@@ -4529,18 +4599,14 @@ clientside_callback(
 # ---------------------------------------------------------------------------
 
 # Trigger label
+# Trigger label + clear-button visibility in one pass (shared input).
 clientside_callback(
     """function(val) {
-        if (!val) return "Physician";
-        return val.split(", ")[0];
+        var lbl = !val ? "Physician" : val.split(", ")[0];
+        var sty = val ? {"display": "inline-flex"} : {"display": "none"};
+        return [lbl, sty];
     }""",
     Output(f"{PAGE_ID}-physician-trigger", "children"),
-    Input(f"{PAGE_ID}-filter-physician", "value"),
-)
-
-# Clear button visibility
-clientside_callback(
-    """function(val) { return val ? {"display": "inline-flex"} : {"display": "none"}; }""",
     Output(f"{PAGE_ID}-physician-clear", "style"),
     Input(f"{PAGE_ID}-filter-physician", "value"),
 )
@@ -4624,7 +4690,7 @@ clientside_callback(
 # Chip Dropdown: Status (trigger label, clear)
 # ---------------------------------------------------------------------------
 
-# Trigger label — show "Status" normally, count non-default filters
+# Trigger label + clear-button visibility in one pass (shared 8 inputs).
 clientside_callback(
     """function(pr, pe, ec, ew, hr, he, hec, hew) {
         var active = 0;
@@ -4636,26 +4702,11 @@ clientside_callback(
         if (he && he !== "yes") active++;
         if (!hec) active++;
         if (!hew) active++;
-        return active > 0 ? "Status (" + active + ")" : "Status";
+        var lbl = active > 0 ? "Status (" + active + ")" : "Status";
+        var sty = active > 0 ? {"display": "inline-flex"} : {"display": "none"};
+        return [lbl, sty];
     }""",
     Output(f"{PAGE_ID}-status-trigger", "children"),
-    Input(f"{PAGE_ID}-filter-pro-reviewed", "value"),
-    Input(f"{PAGE_ID}-filter-pro-exported", "value"),
-    Input(f"{PAGE_ID}-filter-excl-credited", "checked"),
-    Input(f"{PAGE_ID}-filter-excl-waived", "checked"),
-    Input(f"{PAGE_ID}-filter-hosp-reviewed", "value"),
-    Input(f"{PAGE_ID}-filter-hosp-exported", "value"),
-    Input(f"{PAGE_ID}-filter-hosp-excl-credited", "checked"),
-    Input(f"{PAGE_ID}-filter-hosp-excl-waived", "checked"),
-)
-
-# Clear button visibility
-clientside_callback(
-    """function(pr, pe, ec, ew, hr, he, hec, hew) {
-        var active = (pr !== "yes") || (pe !== "all") || !ec || !ew ||
-                     (hr !== "yes") || (he !== "yes") || !hec || !hew;
-        return active ? {"display": "inline-flex"} : {"display": "none"};
-    }""",
     Output(f"{PAGE_ID}-status-clear", "style"),
     Input(f"{PAGE_ID}-filter-pro-reviewed", "value"),
     Input(f"{PAGE_ID}-filter-pro-exported", "value"),
@@ -5445,18 +5496,21 @@ for _cat in _BROAD_CATEGORIES:
         "function(v) { return (v != null ? v : 100) + '%'; }",
         Output(f"{PAGE_ID}-rev-adj-mult-{_cat}-val", "children"),
         Input(f"{PAGE_ID}-rev-adj-mult-{_cat}", "value"),
+        prevent_initial_call=True,
     )
 
 clientside_callback(
     "function(v) { return (v != null ? v : 90) + '%'; }",
     Output(f"{PAGE_ID}-rev-adj-realization-val", "children"),
     Input(f"{PAGE_ID}-rev-adj-realization", "value"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
     "function(v) { return (v != null ? v : 0) + 'd'; }",
     Output(f"{PAGE_ID}-rev-adj-ar-lag-val", "children"),
     Input(f"{PAGE_ID}-rev-adj-ar-lag", "value"),
+    prevent_initial_call=True,
 )
 
 
@@ -5733,6 +5787,7 @@ clientside_callback(
     State(f"{PAGE_ID}-rev-adj-ar-lag", "value"),
     State(f"{PAGE_ID}-rev-adj-enabled", "checked"),
     *[State(f"{PAGE_ID}-rev-adj-mult-{cat}", "value") for cat in _BROAD_CATEGORIES],
+    prevent_initial_call=True,
 )
 
 
@@ -5804,6 +5859,7 @@ clientside_callback(
     "function(v) { return (v != null ? v : 0) + 'd'; }",
     Output(f"{PAGE_ID}-rev-adj-smooth-val", "children"),
     Input(f"{PAGE_ID}-rev-adj-smooth", "value"),
+    prevent_initial_call=True,
 )
 
 
@@ -6067,11 +6123,13 @@ clientside_callback(
     "function(v) { return (v != null ? v : 15) + '%'; }",
     Output(f"{PAGE_ID}-rev-adj-drift-sens-val", "children"),
     Input(f"{PAGE_ID}-rev-adj-drift-sens", "value"),
+    prevent_initial_call=True,
 )
 clientside_callback(
     "function(v) { return (v != null ? v : 3) + 'pp'; }",
     Output(f"{PAGE_ID}-rev-adj-drift-hl-val", "children"),
     Input(f"{PAGE_ID}-rev-adj-drift-hl", "value"),
+    prevent_initial_call=True,
 )
 
 
@@ -6113,28 +6171,16 @@ clientside_callback(
 )
 
 
-# Project-to-year-end toggle visibility (shown only for current_year preset)
+# Project-to-year-end toggle visibility across all 3 cumulative charts
+# (shown only for current_year preset).
 clientside_callback(
     """function(preset) {
-        return preset === "current_year" ? {} : {"display": "none"};
+        var sty = preset === "current_year" ? {} : {"display": "none"};
+        return [sty, sty, sty];
     }""",
-    Output(f"{PAGE_ID}-volcum" + "-project-wrap", "style"),
-    Input(f"{PAGE_ID}-filter-date-preset", "value"),
-)
-
-clientside_callback(
-    """function(preset) {
-        return preset === "current_year" ? {} : {"display": "none"};
-    }""",
-    Output(f"{PAGE_ID}-rvucum" + "-project-wrap", "style"),
-    Input(f"{PAGE_ID}-filter-date-preset", "value"),
-)
-
-clientside_callback(
-    """function(preset) {
-        return preset === "current_year" ? {} : {"display": "none"};
-    }""",
-    Output(f"{PAGE_ID}-dollarcum" + "-project-wrap", "style"),
+    Output(f"{PAGE_ID}-volcum-project-wrap", "style"),
+    Output(f"{PAGE_ID}-rvucum-project-wrap", "style"),
+    Output(f"{PAGE_ID}-dollarcum-project-wrap", "style"),
     Input(f"{PAGE_ID}-filter-date-preset", "value"),
 )
 

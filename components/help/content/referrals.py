@@ -220,8 +220,9 @@ UI_CONTENT = dmc.Stack(
                 "\"Referred by Department\" is cleaned: \"DO NOT USE - \" "
                 "prefix is stripped, known renames are remapped (e.g. "
                 "\"PMG SW WA CENTRALIA UROLOGY\" → \"PMG SW WA OLYMPIA "
-                "UROLOGY\"), and an InternalReferral flag is set when the "
-                "source is one of our own RadiantCare departments.",
+                "UROLOGY\"), and self-referrals (rows sourced from our own "
+                "RadiantCare departments, i.e. \"PRCS ... RADIANTCARE\") are "
+                "dropped entirely.",
                 "Referring provider credentials (MD, DO, ARNP, PA-C, PhD, "
                 "etc.) and suffixes (Jr, III, PT, RN, etc.) are stripped "
                 "before matching against the Referring lookup so "

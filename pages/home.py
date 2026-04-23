@@ -1245,6 +1245,7 @@ clientside_callback(
     Output("home-spark-consults", "figure"),
     Input("home-store-kpi-sparklines", "data"),
     Input("home-filter-smoothing", "value"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -1252,6 +1253,7 @@ clientside_callback(
     Output("home-spark-sims", "figure"),
     Input("home-store-kpi-sparklines", "data"),
     Input("home-filter-smoothing", "value"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -1259,6 +1261,7 @@ clientside_callback(
     Output("home-spark-treatments", "figure"),
     Input("home-store-kpi-sparklines", "data"),
     Input("home-filter-smoothing", "value"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -1266,6 +1269,7 @@ clientside_callback(
     Output("home-spark-consult-lead", "figure"),
     Input("home-store-kpi-sparklines", "data"),
     Input("home-filter-smoothing", "value"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -1273,6 +1277,7 @@ clientside_callback(
     Output("home-spark-sim-lead", "figure"),
     Input("home-store-kpi-sparklines", "data"),
     Input("home-filter-smoothing", "value"),
+    prevent_initial_call=True,
 )
 
 
@@ -1851,6 +1856,7 @@ def _register_metric_callbacks(metric_id, row, is_cumulative):
             Input("home-cum-prior-store", "data"),
             Input(f"{sid}-project", "checked"),
             State(cid, "figure"),
+            prevent_initial_call=True,
         )
         # Projection toggle is only relevant in current_year preset.
         clientside_callback(
@@ -1884,6 +1890,7 @@ def _register_metric_callbacks(metric_id, row, is_cumulative):
             Input(f"{sid}-settings-type", "value"),
             Input(f"{sid}-settings-stack", "value"),
             State(cid, "figure"),
+            prevent_initial_call=True,
         )
         clientside_callback(
             ClientsideFunction(namespace="censusYAxis", function_name="updateOnPan"),
@@ -2050,6 +2057,14 @@ if not _already_registered:
     _home_chart_registry = []
     for _m, _t, _d, _defaults in _HOME_METRICS:
         _home_chart_registry.append((f"home-{_m}-trend", f"home-chart-{_m}-trend", f"home-{_m}-trend-store"))
-        _home_chart_registry.append((f"home-{_m}-cum",   f"home-chart-{_m}-cum",   f"home-{_m}-cum-store"))
+        # Cum cards have show_grouping=False (see chart_card call above) — no
+        # stack-wrap element in DOM, so tell register_chart_callbacks to skip
+        # that Output (batched callbacks can't tolerate missing outputs).
+        _home_chart_registry.append({
+            "sid": f"home-{_m}-cum",
+            "gid": f"home-chart-{_m}-cum",
+            "store_id": f"home-{_m}-cum-store",
+            "show_grouping": False,
+        })
     _home_chart_registry.append(("home-avail", "home-chart-availability"))
     register_chart_callbacks(_home_chart_registry)

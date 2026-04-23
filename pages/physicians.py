@@ -1418,6 +1418,7 @@ clientside_callback(
     Input(f"{PAGE_ID}-manpower-settings-smooth", "value"),
     Input(f"{PAGE_ID}-manpower-settings-type", "value"),
     State(f"{PAGE_ID}-chart-manpower", "figure"),
+    prevent_initial_call=True,
 )
 
 
@@ -1483,6 +1484,7 @@ for _key in _SPARK_KEYS:
         Input(f"{PAGE_ID}-store-kpi-sparklines", "data"),
         Input(f"{PAGE_ID}-filter-smoothing", "value"),
         State(f"{PAGE_ID}-spark-{_key}", "id"),
+        prevent_initial_call=True,
     )
 
 # Table export CSV

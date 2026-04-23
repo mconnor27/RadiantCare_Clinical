@@ -1050,7 +1050,9 @@ layout = dmc.Stack(
         dmc.Modal(
             id="diag-mgr-modal",
             opened=False,
-            keepMounted=True,
+            # keepMounted=False: modal internals are heavy; don't keep them in
+            # the DOM on initial page load. First open re-mounts from scratch.
+            keepMounted=False,
             transitionProps={"transition": "fade", "duration": 120},
             title=dmc.Group(
                 children=[
@@ -1625,6 +1627,7 @@ clientside_callback(
     Input("diag-chart-trend-settings-smooth", "value"),
     Input("diag-chart-trend-settings-type", "value"),
     Input("diag-trend-agg", "value"),
+    prevent_initial_call=True,
 )
 
 

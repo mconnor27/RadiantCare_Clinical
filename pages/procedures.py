@@ -1823,6 +1823,7 @@ clientside_callback(
     Input(f"{PAGE_ID}-trend-settings-smooth", "value"),
     Input(f"{PAGE_ID}-trend-settings-type", "value"),
     State(f"{PAGE_ID}-chart-trend", "figure"),
+    prevent_initial_call=True,
 )
 
 # Cumulative chart: store + smoothing + chart type + stack + prior periods → figure
@@ -1837,6 +1838,7 @@ clientside_callback(
 
     Input(f"{PAGE_ID}-cumul-project", "checked"),
     State(f"{PAGE_ID}-chart-cumul", "figure"),
+    prevent_initial_call=True,
 )
 
 # Disable Calendar when period > 1 year; cap prior-periods slider to available data
@@ -1873,6 +1875,7 @@ for _spark_id in _PROC_SPARKLINE_IDS:
         Input(f"{PAGE_ID}-store-kpi-sparklines", "data"),
         Input(_spark_id, "id"),
         Input(f"{PAGE_ID}-smooth-slider", "value"),
+        prevent_initial_call=True,
     )
 
 

@@ -1265,6 +1265,7 @@ clientside_callback(
     Output("ops-spark-today", "figure"),
     Input("ops-store-kpi-sparklines", "data"),
     Input("ops-filter-smoothing", "value"),
+    prevent_initial_call=True,
 )
 
 # Site hours sparklines (duration in hours)
@@ -1273,6 +1274,7 @@ clientside_callback(
     Output("ops-spark-hours-lacey", "figure"),
     Input("ops-store-kpi-sparklines", "data"),
     Input("ops-filter-smoothing", "value"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -1280,6 +1282,7 @@ clientside_callback(
     Output("ops-spark-hours-centralia", "figure"),
     Input("ops-store-kpi-sparklines", "data"),
     Input("ops-filter-smoothing", "value"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -1287,6 +1290,7 @@ clientside_callback(
     Output("ops-spark-hours-aberdeen", "figure"),
     Input("ops-store-kpi-sparklines", "data"),
     Input("ops-filter-smoothing", "value"),
+    prevent_initial_call=True,
 )
 
 # Consult Lead sparkline
@@ -1295,6 +1299,7 @@ clientside_callback(
     Output("ops-spark-consult-lead", "figure"),
     Input("ops-store-kpi-sparklines", "data"),
     Input("ops-filter-smoothing", "value"),
+    prevent_initial_call=True,
 )
 
 # Sim Lead sparkline
@@ -1303,6 +1308,7 @@ clientside_callback(
     Output("ops-spark-sim-lead", "figure"),
     Input("ops-store-kpi-sparklines", "data"),
     Input("ops-filter-smoothing", "value"),
+    prevent_initial_call=True,
 )
 
 # New Starts sparkline (daily)
@@ -1311,6 +1317,7 @@ clientside_callback(
     Output("ops-spark-newstarts", "figure"),
     Input("ops-store-kpi-sparklines", "data"),
     Input("ops-filter-smoothing", "value"),
+    prevent_initial_call=True,
 )
 
 
@@ -1353,6 +1360,7 @@ clientside_callback(
     Input("ops-volume-range", "value"),
     Input("ops-volume-settings-stack", "value"),
     State("ops-chart-volume", "figure"),
+    prevent_initial_call=True,
 )
 
 # Dynamic y-axis rescaling on pan for volume chart
@@ -1800,6 +1808,7 @@ clientside_callback(
     Input("ops-efficiency-machines", "value"),
     Input("ops-efficiency-metric", "value"),
     State("ops-chart-efficiency", "figure"),
+    prevent_initial_call=True,
 )
 
 # Dynamic y-axis rescaling on pan for efficiency chart

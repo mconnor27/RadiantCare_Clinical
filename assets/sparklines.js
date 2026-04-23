@@ -183,6 +183,36 @@ window.dash_clientside.sparklines = {
      * @param {string} componentId - Graph component ID (e.g., "tasks-spark-open")
      * @param {number} [smoothPct] - Smoothing value (0-1), default 0.3. Optional.
      */
+    // Batch updater: single callback drives multiple sparklines from one store.
+    // Accepts component IDs array as JSON-encoded string (since Dash doesn't
+    // allow arrays of component IDs in one Input). Each ID must be a
+    // graph whose suffix maps to a key in the store.
+    // Returns array of figures in the same order as componentIds.
+    updateFromStoreBatch: function(data, componentIds, smoothPct) {
+        if (!data || !componentIds || !componentIds.length) {
+            return componentIds ? componentIds.map(function() {
+                return window.dash_clientside.no_update;
+            }) : window.dash_clientside.no_update;
+        }
+        var s = smoothPct != null ? smoothPct : 0.3;
+        return componentIds.map(function(cid) {
+            var parts = cid.split("-");
+            var key = parts[parts.length - 1];
+            var spark = data[key];
+            if (!spark) return window.dash_clientside.no_update;
+            var normalized = {};
+            normalized[key] = {
+                values: spark.values || spark.y,
+                labels: spark.labels || spark.x,
+                color: spark.color || "#7C2A83",
+                hover_fmt: spark.hover_fmt
+            };
+            if (!normalized[key].values || !normalized[key].values.length) {
+                return window.dash_clientside.no_update;
+            }
+            return buildSparkline(normalized, s, key);
+        });
+    },
     updateFromStore: function(data, componentId, smoothPct) {
         if (!data || !componentId) return window.dash_clientside.no_update;
 

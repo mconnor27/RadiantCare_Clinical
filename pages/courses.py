@@ -3672,6 +3672,7 @@ clientside_callback(
     Input("courses-volume-settings-type", "value"),
     Input("courses-volume-settings-stack", "value"),
     State("courses-chart-volume", "figure"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -3685,6 +3686,7 @@ clientside_callback(
 
     Input("courses-cumulative-project", "checked"),
     State("courses-chart-cumulative", "figure"),
+    prevent_initial_call=True,
 )
 
 
@@ -3709,6 +3711,7 @@ for _spark_id in _COURSES_SPARKLINE_IDS:
         Input("courses-store-kpi-sparklines", "data"),
         Input(_spark_id, "id"),
         Input("courses-smooth-slider", "value"),
+        prevent_initial_call=True,
     )
 
 
@@ -3883,6 +3886,7 @@ clientside_callback(
     Input("courses-frac-trend-agg", "value"),
     Input("courses-frac-trend-slice", "value"),
     State("courses-chart-frac-trend", "figure"),
+    prevent_initial_call=True,
 )
 
 
@@ -3926,6 +3930,7 @@ clientside_callback(
     Input("courses-quit-trend-slice", "value"),
     Input("courses-quit-metric", "value"),
     State("courses-chart-quit-trend", "figure"),
+    prevent_initial_call=True,
 )
 
 

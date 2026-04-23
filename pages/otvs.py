@@ -1189,6 +1189,7 @@ clientside_callback(
     Input(f"{PAGE_ID}-volume-settings-type", "value"),
     Input(f"{PAGE_ID}-volume-settings-stack", "value"),
     State(f"{PAGE_ID}-chart-volume", "figure"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -1202,6 +1203,7 @@ clientside_callback(
 
     Input(f"{PAGE_ID}-cumulative-project", "checked"),
     State(f"{PAGE_ID}-chart-cumulative", "figure"),
+    prevent_initial_call=True,
 )
 
 # Show/hide cumulative sub-controls based on mode
@@ -1330,6 +1332,7 @@ for _out_id in [
         Input(f"{PAGE_ID}-store-kpi-sparklines", "data"),
         Input(_out_id, "id"),
         Input(f"{PAGE_ID}-smooth-slider", "value"),
+        prevent_initial_call=True,
     )
 
 

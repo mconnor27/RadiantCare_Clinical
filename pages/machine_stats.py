@@ -704,6 +704,7 @@ for _cid in [f"{PAGE_ID}-chart-sessions", f"{PAGE_ID}-chart-patients"]:
         Input(f"{_cid}-settings-type", "value"),
         Input(f"{_cid}-settings-stack", "value"),
         State(_cid, "figure"),
+        prevent_initial_call=True,
     )
 
 # Bottom row — per-fraction ratios (always grouped, no stack toggle)
@@ -715,4 +716,5 @@ for _cid in [f"{PAGE_ID}-chart-dose-per-fx", f"{PAGE_ID}-chart-fields-per-fx"]:
         Input(f"{_cid}-settings-smooth", "value"),
         Input(f"{_cid}-settings-type", "value"),
         State(_cid, "figure"),
+        prevent_initial_call=True,
     )

@@ -2514,6 +2514,7 @@ clientside_callback(
     Output("tx-spark-volume", "figure"),
     Input("tx-store-kpi-sparklines", "data"),
     Input("tx-smooth-slider", "value"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -2521,6 +2522,7 @@ clientside_callback(
     Output("tx-spark-newstarts", "figure"),
     Input("tx-store-kpi-sparklines", "data"),
     Input("tx-smooth-slider", "value"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -2528,6 +2530,7 @@ clientside_callback(
     Output("tx-spark-patients", "figure"),
     Input("tx-store-kpi-sparklines", "data"),
     Input("tx-smooth-slider", "value"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -2535,6 +2538,7 @@ clientside_callback(
     Output("tx-spark-elapsed", "figure"),
     Input("tx-store-kpi-sparklines", "data"),
     Input("tx-smooth-slider", "value"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -2542,6 +2546,7 @@ clientside_callback(
     Output("tx-spark-fields", "figure"),
     Input("tx-store-kpi-sparklines", "data"),
     Input("tx-smooth-slider", "value"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -2549,6 +2554,7 @@ clientside_callback(
     Output("tx-spark-gating", "figure"),
     Input("tx-store-kpi-sparklines", "data"),
     Input("tx-smooth-slider", "value"),
+    prevent_initial_call=True,
 )
 
 
@@ -2633,6 +2639,7 @@ clientside_callback(
     Output("tx-chart-elapsed", "figure"),
     Input("tx-store-elapsed", "data"),
     Input("tx-elapsed-bw", "value"),
+    prevent_initial_call=True,
 )
 
 
@@ -2721,6 +2728,7 @@ clientside_callback(
     Input("tx-volume-settings-type", "value"),
     Input("tx-volume-settings-stack", "value"),
     State("tx-chart-volume", "figure"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -2731,6 +2739,7 @@ clientside_callback(
     Input("tx-technique-settings-type", "value"),
     Input("tx-technique-settings-stack", "value"),
     State("tx-chart-technique", "figure"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -2741,6 +2750,7 @@ clientside_callback(
     Input("tx-fieldtype-settings-type", "value"),
     Input("tx-fieldtype-settings-stack", "value"),
     State("tx-chart-fieldtype", "figure"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -2754,6 +2764,7 @@ clientside_callback(
 
     Input("tx-cumulative-project", "checked"),
     State("tx-chart-cumulative", "figure"),
+    prevent_initial_call=True,
 )
 
 # Cumulative: show/hide slice selector vs period-type based on mode
@@ -2835,6 +2846,7 @@ clientside_callback(
     Input("tx-igrt-settings-type", "value"),
     Input("tx-igrt-settings-stack", "value"),
     State("tx-chart-igrt", "figure"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -2845,6 +2857,7 @@ clientside_callback(
     Input("tx-newstarts-settings-type", "value"),
     Input("tx-newstarts-settings-stack", "value"),
     State("tx-chart-newstarts", "figure"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -2855,6 +2868,7 @@ clientside_callback(
     Input("tx-gating-settings-type", "value"),
     Input("tx-gating-settings-stack", "value"),
     State("tx-chart-gating", "figure"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -2865,6 +2879,7 @@ clientside_callback(
     Input("tx-multiiso-settings-type", "value"),
     Input("tx-multiiso-settings-stack", "value"),
     State("tx-chart-multiiso", "figure"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -2875,6 +2890,7 @@ clientside_callback(
     Input("tx-avgfields-settings-type", "value"),
     Input("tx-avgfields-settings-stack", "value"),
     State("tx-chart-avgfields", "figure"),
+    prevent_initial_call=True,
 )
 
 

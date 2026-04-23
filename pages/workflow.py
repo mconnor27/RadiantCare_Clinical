@@ -2335,6 +2335,7 @@ clientside_callback(
     Input("wf-agg-toggle", "value"),
     Input(_id("wf-b", "agg-toggle"), "value"),
     Input("wf-dist-settings-smooth", "value"),
+    prevent_initial_call=True,
 )
 
 # Trend chart — compare-aware
@@ -2355,6 +2356,7 @@ clientside_callback(
     Input("wf-compare-mode", "data"),
     Input("wf-agg-toggle", "value"),
     Input(_id("wf-b", "agg-toggle"), "value"),
+    prevent_initial_call=True,
 )
 
 

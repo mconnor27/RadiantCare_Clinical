@@ -178,8 +178,10 @@ def chart_card(
 def register_chart_callbacks(chart_ids):
     """Register settings-toggle and PNG-export clientside callbacks for chart IDs.
 
-    Call this once per page at module level with a list of IDs that were passed
-    to chart_settings_popover (or as settings_id to chart_card).
+    Each per-behavior concern is consolidated into ONE batched callback per
+    page (4 total: panel toggle, export click, stack-wrap visibility, smooth-
+    wrap visibility) instead of 4 callbacks PER CHART. This dramatically
+    reduces Dash's per-store selector-walk cost on pages with many charts.
 
     Each entry can be:
     - A string: used as both the settings prefix AND the graph ID for export.
@@ -187,12 +189,9 @@ def register_chart_callbacks(chart_ids):
     - A 3-tuple (settings_id, graph_id, store_id): also wire the Stacked/Grouped
       toggle and smooth-hide-on-bar to the chart's settings type selector.
     - A dict with keys: sid, gid, store_id, show_smooth (for fine-grained control).
-
-    Examples:
-        register_chart_callbacks(["ops-chart-volume", "ops-chart-efficiency"])
-        register_chart_callbacks([("home-md", "home-chart-physician"), ("home-site", "home-chart-site")])
-        register_chart_callbacks([("home-md", "home-chart-physician", "home-store-md-census")])
     """
+    # Normalize entries
+    norm = []
     for entry in chart_ids:
         show_smooth = True
         show_grouping = True
@@ -210,9 +209,20 @@ def register_chart_callbacks(chart_ids):
         else:
             sid = gid = entry
             store_id = None
+        norm.append((sid, gid, store_id, show_grouping, show_smooth))
 
+    # ----- Settings-panel toggle: one callback for all charts -----
+    # Takes N btn.n_clicks + N panel.style states; finds the triggered btn
+    # via callback_context and flips only that panel.
+    # Single-output case returns a scalar; multi-output returns an array.
+    if len(norm) == 1:
+        sid, _, _, _, _ = norm[0]
         clientside_callback(
-            ClientsideFunction("chartSettings", "toggle"),
+            """function(n_clicks, curStyle) {
+                curStyle = curStyle || {};
+                var hidden = (curStyle && curStyle.display === 'none');
+                return Object.assign({}, curStyle, {display: hidden ? 'block' : 'none'});
+            }""",
             Output(f"{sid}-settings-panel", "style"),
             Input(f"{sid}-settings-btn", "n_clicks"),
             State(f"{sid}-settings-panel", "style"),
@@ -222,33 +232,91 @@ def register_chart_callbacks(chart_ids):
             ClientsideFunction("chartExport", "exportPng"),
             Output(f"{sid}-settings-export", "n_clicks"),
             Input(f"{sid}-settings-export", "n_clicks"),
-            State(gid, "id"),
+            State(norm[0][1], "id"),
+            prevent_initial_call=True,
+        )
+    else:
+        toggle_inputs = [Input(f"{sid}-settings-btn", "n_clicks") for sid, _, _, _, _ in norm]
+        toggle_states = [State(f"{sid}-settings-panel", "style") for sid, _, _, _, _ in norm]
+        toggle_outputs = [Output(f"{sid}-settings-panel", "style") for sid, _, _, _, _ in norm]
+        sid_list_js = "[" + ",".join(f'"{sid}"' for sid, _, _, _, _ in norm) + "]"
+        clientside_callback(
+            f"""function() {{
+                var args = arguments;
+                var n = {len(norm)};
+                var sids = {sid_list_js};
+                var nu = window.dash_clientside.no_update;
+                var ctx = window.dash_clientside.callback_context;
+                var trig = (ctx.triggered && ctx.triggered[0]) ? ctx.triggered[0].prop_id : "";
+                var out = [];
+                for (var i = 0; i < n; i++) {{
+                    if (trig.indexOf(sids[i] + '-settings-btn') === 0) {{
+                        var curStyle = args[n + i] || {{}};
+                        var hidden = (curStyle && curStyle.display === 'none');
+                        out.push(Object.assign({{}}, curStyle, {{display: hidden ? 'block' : 'none'}}));
+                    }} else {{
+                        out.push(nu);
+                    }}
+                }}
+                return out;
+            }}""",
+            *toggle_outputs,
+            *toggle_inputs,
+            *toggle_states,
             prevent_initial_call=True,
         )
 
-        # Stacked/Grouped toggle — show/hide based on chart type.
-        # The actual stacking logic is handled by passing the stack toggle
-        # value directly as an Input to the chart render callback (per-page).
-        if store_id:
-            if show_grouping:
-                clientside_callback(
-                    """function(chartType) {
-                        return chartType === "line"
-                            ? {"display": "none"}
-                            : {"display": ""};
-                    }""",
-                    Output(f"{sid}-settings-stack-wrap", "style"),
-                    Input(f"{sid}-settings-type", "value"),
-                )
-            # Smoothing slider — hide on bar charts (smoothing only applies to line/area).
-            # Only register if the smooth-wrap element exists (show_smooth=True).
-            if show_smooth:
-                clientside_callback(
-                    """function(chartType) {
-                        return chartType === "bar"
-                            ? {"display": "none"}
-                            : {"display": ""};
-                    }""",
-                    Output(f"{sid}-settings-smooth-wrap", "style"),
-                    Input(f"{sid}-settings-type", "value"),
-                )
+        # ----- PNG export: one callback for all charts -----
+        export_inputs = [Input(f"{sid}-settings-export", "n_clicks") for sid, _, _, _, _ in norm]
+        export_states = [State(gid, "id") for _, gid, _, _, _ in norm]
+        export_outputs = [Output(f"{sid}-settings-export", "n_clicks") for sid, _, _, _, _ in norm]
+        clientside_callback(
+            f"""function() {{
+                var args = arguments;
+                var n = {len(norm)};
+                var sids = {sid_list_js};
+                var nu = window.dash_clientside.no_update;
+                var ctx = window.dash_clientside.callback_context;
+                var trig = (ctx.triggered && ctx.triggered[0]) ? ctx.triggered[0].prop_id : "";
+                var out = new Array(n).fill(nu);
+                for (var i = 0; i < n; i++) {{
+                    if (trig.indexOf(sids[i] + '-settings-export') === 0) {{
+                        var gid = args[n + i];
+                        if (gid && window.dash_clientside.chartExport) {{
+                            window.dash_clientside.chartExport.exportPng(args[i], gid);
+                        }}
+                        return out;
+                    }}
+                }}
+                return out;
+            }}""",
+            *export_outputs,
+            *export_inputs,
+            *export_states,
+            prevent_initial_call=True,
+        )
+
+    # ----- Stack-wrap + smooth-wrap visibility -----
+    # Kept as PER-CHART callbacks (not batched) because stack-wrap / smooth-wrap
+    # DOM elements only exist when chart_card was built with show_grouping=True
+    # or show_smooth=True. Multi-output batched callbacks can't tolerate
+    # missing targets, but single-output ones can via suppress_callback_exceptions.
+    for sid, _gid, store_id, show_grouping, show_smooth in norm:
+        if not store_id:
+            continue
+        if show_grouping:
+            clientside_callback(
+                """function(chartType) {
+                    return chartType === "line" ? {"display": "none"} : {"display": ""};
+                }""",
+                Output(f"{sid}-settings-stack-wrap", "style"),
+                Input(f"{sid}-settings-type", "value"),
+            )
+        if show_smooth:
+            clientside_callback(
+                """function(chartType) {
+                    return chartType === "bar" ? {"display": "none"} : {"display": ""};
+                }""",
+                Output(f"{sid}-settings-smooth-wrap", "style"),
+                Input(f"{sid}-settings-type", "value"),
+            )

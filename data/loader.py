@@ -657,12 +657,15 @@ _FIELDS_USECOLS = [
 ]
 
 
+@lru_cache(maxsize=256)
 def load_downtime_fields_for_date(target_date):
     """Load Machine Downtime - Fields, filtered to a single date.
 
     Scans ALL incremental files (not just the latest) since each file
     is a date-range snapshot and older dates only exist in older files.
     Only loads essential columns via usecols for reduced memory.
+
+    Cached by date so repeated drill-downs to the same day are instant.
 
     Parameters
     ----------
@@ -937,12 +940,12 @@ def load_referrals():
             "PMG SW WA SOUTH SOUND INT MED": "PMG SW WA CENTRALIA INT MED RHC",
         }
         dept = dept.replace(_DEPT_RENAMES)
-        # Flag internal referrals (from our own RadiantCare departments)
         df["Referred by Department"] = dept
-        df["InternalReferral"] = dept.str.contains(
-            r"WCH PRCS.*RADIANTCARE|WCH PRCS.*INFUSION",
-            case=False, na=False,
-        )
+        # Drop self-referrals (RadiantCare → RadiantCare). These are internal
+        # handoffs, not true referrals, and distort all funnel/source metrics.
+        self_ref_mask = dept.str.contains(r"PRCS.*RADIANTCARE", case=False, na=False)
+        if self_ref_mask.any():
+            df = df.loc[~self_ref_mask].reset_index(drop=True)
 
     # --- Enrich with specialty from Referring Lookup ---
     if "Referred by Provider" in df.columns:

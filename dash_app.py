@@ -26,6 +26,14 @@ app = Dash(
 )
 server = app.server  # for gunicorn
 
+# Gzip compression for all responses (JSON callbacks, JS, CSS, HTML).
+# Cuts the ~1.4 MB billing callback payloads ~10x on the wire.
+try:
+    from flask_compress import Compress
+    Compress(server)
+except ImportError:
+    pass  # optional — behaves as before if not installed
+
 # Optional Supabase-Auth gating. Set AUTH_ENABLED=true in production
 # (and provide FLASK_SECRET, SUPABASE_URL, SUPABASE_ANON_KEY).
 if os.environ.get("AUTH_ENABLED", "").lower() in ("1", "true", "yes", "on"):
@@ -364,18 +372,21 @@ def _get_all_loaders():
 # Preload state: tracks loaded datasets, current activity, and priority queue
 _preload_state = {
     "loaded": set(),
-    "total": 12,  # heavy datasets count
+    "total": 18,  # heavy datasets count (matches len of _PRELOAD_ORDER)
     "current": None,
     "done": False,
 }
 _preload_lock = threading.Lock()
 _priority_queue = []  # datasets to load next (set by page navigation)
 
-# Heavy datasets to preload (ordered by load time, heaviest first)
+# Heavy datasets to preload (ordered by load time, heaviest first).
+# `machines` was missing — that's why /machines was slow on first visit.
 _PRELOAD_ORDER = [
     "treatment_detail", "billing", "referrals", "workflow",
     "daily_volume", "clinic_visits", "simulations", "tasks",
     "courses", "plans", "weekly_visits", "rvu_lookup",
+    "machines", "availability", "procedures", "patients",
+    "diagnosis", "otvs",
 ]
 
 

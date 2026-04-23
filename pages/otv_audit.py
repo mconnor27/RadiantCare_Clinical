@@ -1311,6 +1311,7 @@ for _spark_id in _OTV_SPARKLINE_IDS:
         Output(_spark_id, "figure"),
         Input("otv-store-kpi-sparklines", "data"),
         Input(_spark_id, "id"),
+        prevent_initial_call=True,
     )
 
 

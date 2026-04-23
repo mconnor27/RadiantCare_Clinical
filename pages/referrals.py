@@ -963,7 +963,9 @@ layout = dmc.Stack(
         dmc.Modal(
             id=f"{PAGE_ID}-rpm-modal",
             opened=False,
-            keepMounted=True,
+            # keepMounted=False: modal internals are heavy; don't keep them in
+            # the DOM on initial page load. First open re-mounts from scratch.
+            keepMounted=False,
             transitionProps={"transition": "fade", "duration": 120},
             title=dmc.Group(
                 children=[
@@ -1801,6 +1803,7 @@ clientside_callback(
     Input(f"{PAGE_ID}-agg-toggle", "data"),
     Input(f"{PAGE_ID}-agg-toggle-b", "data"),
     Input(f"{PAGE_ID}-dist-settings-smooth", "value"),
+    prevent_initial_call=True,
 )
 
 # Trend chart — reuses flowGantt.renderFlowTrend
@@ -1821,6 +1824,7 @@ clientside_callback(
     Input(f"{PAGE_ID}-compare-mode", "data"),
     Input(f"{PAGE_ID}-agg-toggle", "data"),
     Input(f"{PAGE_ID}-agg-toggle-b", "data"),
+    prevent_initial_call=True,
 )
 
 # Conversion rate trend — clientside from flow details store
@@ -1833,6 +1837,7 @@ clientside_callback(
     Input(f"{PAGE_ID}-conv-agg", "value"),
     Input(f"{PAGE_ID}-conv-settings-type", "value"),
     Input(f"{PAGE_ID}-conv-settings-smooth", "value"),
+    prevent_initial_call=True,
 )
 
 
@@ -1879,6 +1884,7 @@ for _spark_id in _KPI_SPARK_IDS:
         Input(f"{PAGE_ID}-store-kpi-sparklines", "data"),
         Input(_spark_id, "id"),
         Input(f"{PAGE_ID}-smooth-slider", "value"),
+        prevent_initial_call=True,
     )
 
 # Clientside callback — renders dimension trend ridgeline from store + settings
@@ -1889,6 +1895,7 @@ clientside_callback(
     Input(f"{PAGE_ID}-chart-dim-trend-settings-smooth", "value"),
     Input(f"{PAGE_ID}-chart-dim-trend-settings-type", "value"),
     Input(f"{PAGE_ID}-dim-trend-agg", "value"),
+    prevent_initial_call=True,
 )
 
 # Clientside callback — pick comparison figure by prior periods slider (no server trip)
@@ -1904,6 +1911,7 @@ clientside_callback(
     Output(f"{PAGE_ID}-compare-title", "children"),
     Input(f"{PAGE_ID}-store-dim-compare-figs", "data"),
     Input(f"{PAGE_ID}-dim-compare-settings-prior-periods", "value"),
+    prevent_initial_call=True,
 )
 
 
@@ -3985,6 +3993,7 @@ clientside_callback(
     Input(f"{PAGE_ID}-vol-settings-type", "value"),
     Input(f"{PAGE_ID}-vol-settings-stack", "value"),
     State(f"{PAGE_ID}-chart-vol", "figure"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -3997,6 +4006,7 @@ clientside_callback(
     Input(f"{PAGE_ID}-cumulative-settings-prior-periods", "value"),
     Input(f"{PAGE_ID}-cumulative-project", "checked"),
     State(f"{PAGE_ID}-chart-cumulative", "figure"),
+    prevent_initial_call=True,
 )
 
 # Toggle cumulative slice selector and stack visibility based on mode

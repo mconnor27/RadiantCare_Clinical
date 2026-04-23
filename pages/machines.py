@@ -418,7 +418,7 @@ layout = dmc.Stack(
                         {"value": "bar", "label": "Bar"},
                     ],
                     chart_type_default="area",
-                    smooth_max=40, smooth_default=10, store_data=True,
+                    smooth_max=40, smooth_default=10, store_data=False,
                     extra_controls_left=[
                         dmc.SegmentedControl(
                             id=f"{PAGE_ID}-trend-metric",
@@ -452,7 +452,7 @@ layout = dmc.Stack(
                         {"value": "bar", "label": "Bar"},
                     ],
                     chart_type_default="area",
-                    smooth_max=30, smooth_default=4, store_data=True,
+                    smooth_max=30, smooth_default=4, store_data=False,
                     extra_controls_left=[
                         dmc.SegmentedControl(
                             id=f"{PAGE_ID}-patient-impact-mode",
@@ -501,7 +501,9 @@ layout = dmc.Stack(
         # --- Stores ---
         dcc.Store(id=f"{PAGE_ID}-store-drill", data={"level": 1, "year": None, "month": None, "day": None}),
         dcc.Store(id=f"{PAGE_ID}-store-filter-rules", data=DEFAULT_FILTER_RULES),
-        dcc.Store(id=f"{PAGE_ID}-store-gaps-agg", data=None),
+        # Unified metrics store: {"gaps_agg": ..., "trend": ..., "patient_impact": ...}
+        # Replaces 3 separate stores to cut selector passes per filter change.
+        dcc.Store(id=f"{PAGE_ID}-store-metrics", data=None),
         dcc.Store(id=f"{PAGE_ID}-store-gaps-daily", data=None),
         dcc.Store(id=f"{PAGE_ID}-store-timeline", data={}),
         dcc.Store(id=f"{PAGE_ID}-store-strip", data=None),
@@ -2057,9 +2059,7 @@ def _build_strip_data(gaps_df, machines, start_date, end_date):
 @callback(
     Output(f"{PAGE_ID}-kpi-row", "children"),
     Output(f"{PAGE_ID}-narrative", "children"),
-    Output(f"{PAGE_ID}-store-gaps-agg", "data"),
-    Output(f"{PAGE_ID}-chart-trend-store", "data"),
-    Output(f"{PAGE_ID}-chart-patient-impact-store", "data"),
+    Output(f"{PAGE_ID}-store-metrics", "data"),
     Output(f"{PAGE_ID}-detail-table", "columnDefs"),
     Output(f"{PAGE_ID}-detail-table", "rowData"),
     Output(f"{PAGE_ID}-store-kpi-sparklines", "data"),
@@ -2474,9 +2474,11 @@ def update_main_data(_n, machines, filter_rules, slider_val, date_preset, grid_f
     return (
         kpi_children,
         narrative,
-        gaps_agg,
-        trend_data,
-        patient_impact_data,
+        {
+            "gaps_agg": gaps_agg,
+            "trend": trend_data,
+            "patient_impact": patient_impact_data,
+        },
         detail_col_defs if not triggered_by_grid else no_update,
         detail_records,
         sparkline_data,
@@ -2559,10 +2561,11 @@ def maybe_clear_preset(slider_val, current_preset):
     Input(f"{PAGE_ID}-timeline-prev", "n_clicks"),
     Input(f"{PAGE_ID}-timeline-next", "n_clicks"),
     State(f"{PAGE_ID}-store-drill", "data"),
-    State(f"{PAGE_ID}-store-gaps-agg", "data"),
+    State(f"{PAGE_ID}-store-metrics", "data"),
     prevent_initial_call=True,
 )
-def handle_drill_clicks(year_click, day_click, prev_click, next_click, drill, agg):
+def handle_drill_clicks(year_click, day_click, prev_click, next_click, drill, metrics):
+    agg = (metrics or {}).get("gaps_agg") if metrics else None
     ctx = dash.callback_context
     if not ctx.triggered:
         return no_update
@@ -2617,9 +2620,13 @@ clientside_callback(
 # ---------------------------------------------------------------------------
 
 clientside_callback(
-    ClientsideFunction("machinesDowntime", "renderYearCards"),
+    f"""function(metrics) {{
+        if (!metrics) return window.dash_clientside.no_update;
+        return window.dash_clientside.machinesDowntime.renderYearCards(metrics.gaps_agg);
+    }}""",
     Output(f"{PAGE_ID}-year-cards-container", "children"),
-    Input(f"{PAGE_ID}-store-gaps-agg", "data"),
+    Input(f"{PAGE_ID}-store-metrics", "data"),
+    prevent_initial_call=True,
 )
 
 
@@ -2632,6 +2639,7 @@ clientside_callback(
     Output(f"{PAGE_ID}-month-heatmap-container", "children"),
     Input(f"{PAGE_ID}-store-gaps-daily", "data"),
     Input(f"{PAGE_ID}-store-drill", "data"),
+    prevent_initial_call=True,
 )
 
 
@@ -2689,8 +2697,9 @@ def load_timeline_data(drill, machines, filter_rules):
 
     # Load ALL gaps for this day — we show all gaps in the timeline,
     # with matched (filtered) gaps in red and unmatched in faded gray.
+    # _apply_lifespan_filter doesn't mutate, so no copy needed.
     from data.loader import load_downtime_fields_for_date
-    gaps = _apply_lifespan_filter(_get_transformed_gaps().copy())
+    gaps = _apply_lifespan_filter(_get_transformed_gaps())
     day_gaps_all = gaps[gaps["DowntimeDate"].dt.normalize() == target_date]
     if machines:
         day_gaps_all = day_gaps_all[day_gaps_all["Machine"].isin(machines)]
@@ -2803,15 +2812,21 @@ clientside_callback(
 # ---------------------------------------------------------------------------
 
 clientside_callback(
-    ClientsideFunction("machinesDowntime", "renderTrend"),
+    """function(metrics, smoothPct, chartType, agg, stackMode, metric, currentFig) {
+        var data = metrics ? metrics.trend : null;
+        return window.dash_clientside.machinesDowntime.renderTrend(
+            data, smoothPct, chartType, agg, stackMode, metric, currentFig
+        );
+    }""",
     Output(f"{PAGE_ID}-chart-trend", "figure"),
-    Input(f"{PAGE_ID}-chart-trend-store", "data"),
+    Input(f"{PAGE_ID}-store-metrics", "data"),
     Input(f"{PAGE_ID}-chart-trend-settings-smooth", "value"),
     Input(f"{PAGE_ID}-chart-trend-settings-type", "value"),
     Input(f"{PAGE_ID}-trend-agg", "value"),
     Input(f"{PAGE_ID}-chart-trend-settings-stack", "value"),
     Input(f"{PAGE_ID}-trend-metric", "value"),
     State(f"{PAGE_ID}-chart-trend", "figure"),
+    prevent_initial_call=True,
 )
 
 
@@ -2820,15 +2835,21 @@ clientside_callback(
 # ---------------------------------------------------------------------------
 
 clientside_callback(
-    ClientsideFunction("machinesDowntime", "renderPatientImpact"),
+    """function(metrics, smoothPct, chartType, agg, mode, stackMode, currentFig) {
+        var data = metrics ? metrics.patient_impact : null;
+        return window.dash_clientside.machinesDowntime.renderPatientImpact(
+            data, smoothPct, chartType, agg, mode, stackMode, currentFig
+        );
+    }""",
     Output(f"{PAGE_ID}-chart-patient-impact", "figure"),
-    Input(f"{PAGE_ID}-chart-patient-impact-store", "data"),
+    Input(f"{PAGE_ID}-store-metrics", "data"),
     Input(f"{PAGE_ID}-chart-patient-impact-settings-smooth", "value"),
     Input(f"{PAGE_ID}-chart-patient-impact-settings-type", "value"),
     Input(f"{PAGE_ID}-patient-impact-agg", "value"),
     Input(f"{PAGE_ID}-patient-impact-mode", "value"),
     Input(f"{PAGE_ID}-chart-patient-impact-settings-stack", "value"),
     State(f"{PAGE_ID}-chart-patient-impact", "figure"),
+    prevent_initial_call=True,
 )
 
 # Hide stacked/grouped toggle when single-series (Course mode)
@@ -2855,14 +2876,19 @@ _MACHINES_SPARKLINE_IDS = [
     f"{PAGE_ID}-spark-rerouted",
     f"{PAGE_ID}-spark-courses",
 ]
+_MACHINES_SPARK_IDS_JS = "[" + ",".join(f'"{s}"' for s in _MACHINES_SPARKLINE_IDS) + "]"
 
-for _spark_id in _MACHINES_SPARKLINE_IDS:
-    clientside_callback(
-        ClientsideFunction(namespace="sparklines", function_name="updateFromStore"),
-        Output(_spark_id, "figure"),
-        Input(f"{PAGE_ID}-store-kpi-sparklines", "data"),
-        Input(_spark_id, "id"),
-    )
+# One batch callback replaces 6 per-sparkline callbacks.
+clientside_callback(
+    f"""function(data) {{
+        return window.dash_clientside.sparklines.updateFromStoreBatch(
+            data, {_MACHINES_SPARK_IDS_JS}, null
+        );
+    }}""",
+    *[Output(sid, "figure") for sid in _MACHINES_SPARKLINE_IDS],
+    Input(f"{PAGE_ID}-store-kpi-sparklines", "data"),
+    prevent_initial_call=True,
+)
 
 
 # ---------------------------------------------------------------------------

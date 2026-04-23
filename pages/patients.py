@@ -1333,16 +1333,18 @@ def _build_gender_fig(data, group="all", scale="count"):
         height=380,
         xaxis_title=f"{xaxis_title}  (n={n_total:,})",
         yaxis_title=yaxis_title,
-        # r=100 leaves room for outside-bar annotations like "1,241 (49%)".
-        margin=dict(l=80, r=100, t=8, b=6),
+        margin=dict(l=80, r=32, t=8, b=6),
         showlegend=(group == "site"),
         legend=dict(orientation="h", yanchor="bottom", y=1.02,
                     xanchor="left", x=0),
     )
-    # In percent mode the outside-text still needs a little headroom on the
-    # right so the "49%" label isn't clipped at x=100%.
-    if as_pct and group != "site":
-        fig.update_xaxes(range=[0, 110])
+    # Outside-bar labels need headroom on the right so they aren't clipped.
+    if group != "site":
+        if as_pct:
+            fig.update_xaxes(range=[0, 110])
+        else:
+            grand = sum(gender["total"].values()) or 1
+            fig.update_xaxes(range=[0, grand * 1.18])
     return fig
 
 
@@ -1460,7 +1462,7 @@ def _update_age_dist(data, metric, mode, group, bandwidth_pct, gender_scale):
     med = data["median"]
     fig.add_vline(x=med, line_dash="dash", line_color="#6B7280")
     fig.add_annotation(
-        x=med, y=0.98, yref="paper",
+        x=med, y=1.06, yref="paper",
         text=f"Median: {med:.0f}", showarrow=False,
         font=dict(size=11, color="#6B7280"),
         yanchor="top", xanchor="center",
@@ -1478,8 +1480,8 @@ def _update_age_dist(data, metric, mode, group, bandwidth_pct, gender_scale):
         xaxis_title=xaxis_title,
         yaxis_title=y_title,
         # Matches top-cities + gender margins so all three x-axis baselines
-        # align along the row.
-        margin=dict(l=48, r=16, t=8, b=6),
+        # align along the row. Extra top room for the "Median: N" annotation.
+        margin=dict(l=48, r=16, t=22, b=6),
         showlegend=per_site,
         legend=dict(
             orientation="h", yanchor="bottom", y=1.02,
