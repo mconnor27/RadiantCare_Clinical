@@ -831,7 +831,6 @@ layout = dmc.Stack(
 
         # KPI row — 5 cards with sparklines
         dmc.Grid(
-            id="home-kpi-row",
             gutter=16,
             children=[
                 dmc.GridCol(kpi_placeholder(), id="home-kpi-consults-week", span={"base": 12, "sm": 6, "md": 2.4}),
@@ -1240,40 +1239,50 @@ def update_kpis(_n, date_preset, departments, sims_scope,
 # Clientside callbacks for KPI sparklines
 # ---------------------------------------------------------------------------
 
-clientside_callback(
-    ClientsideFunction(namespace="sparklines", function_name="smoothConsults"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.sparklines.smoothConsults.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("home-spark-consults", fig);
+    }""",
     Output("home-spark-consults", "figure"),
     Input("home-store-kpi-sparklines", "data"),
     Input("home-filter-smoothing", "value"),
     prevent_initial_call=True,
 )
 
-clientside_callback(
-    ClientsideFunction(namespace="sparklines", function_name="smoothSims"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.sparklines.smoothSims.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("home-spark-sims", fig);
+    }""",
     Output("home-spark-sims", "figure"),
     Input("home-store-kpi-sparklines", "data"),
     Input("home-filter-smoothing", "value"),
     prevent_initial_call=True,
 )
 
-clientside_callback(
-    ClientsideFunction(namespace="sparklines", function_name="smoothTreatments"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.sparklines.smoothTreatments.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("home-spark-treatments", fig);
+    }""",
     Output("home-spark-treatments", "figure"),
     Input("home-store-kpi-sparklines", "data"),
     Input("home-filter-smoothing", "value"),
     prevent_initial_call=True,
 )
 
-clientside_callback(
-    ClientsideFunction(namespace="sparklines", function_name="smoothConsultLead"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.sparklines.smoothConsultLead.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("home-spark-consult-lead", fig);
+    }""",
     Output("home-spark-consult-lead", "figure"),
     Input("home-store-kpi-sparklines", "data"),
     Input("home-filter-smoothing", "value"),
     prevent_initial_call=True,
 )
 
-clientside_callback(
-    ClientsideFunction(namespace="sparklines", function_name="smoothSimLead"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.sparklines.smoothSimLead.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("home-spark-sim-lead", fig);
+    }""",
     Output("home-spark-sim-lead", "figure"),
     Input("home-store-kpi-sparklines", "data"),
     Input("home-filter-smoothing", "value"),
@@ -1847,8 +1856,10 @@ def _register_metric_callbacks(metric_id, row, is_cumulative):
     _update_store.__name__ = f"update_{metric_id}_{row}_store"
 
     if is_cumulative:
-        clientside_callback(
-            ClientsideFunction(namespace="census", function_name="homeCumulative"),
+        clientside_callback(f"""function() {{
+        var fig = window.dash_clientside.census.homeCumulative.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("{cid}", fig);
+    }}""",
             Output(cid, "figure"),
             Input(store_id, "data"),
             Input(f"{sid}-settings-smooth", "value"),
@@ -1882,8 +1893,10 @@ def _register_metric_callbacks(metric_id, row, is_cumulative):
             prevent_initial_call=True,
         )
     else:
-        clientside_callback(
-            ClientsideFunction(namespace="census", function_name="homeTrend"),
+        clientside_callback(f"""function() {{
+        var fig = window.dash_clientside.census.homeTrend.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("{cid}", fig);
+    }}""",
             Output(cid, "figure"),
             Input(store_id, "data"),
             Input(f"{sid}-settings-smooth", "value"),

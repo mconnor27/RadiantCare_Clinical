@@ -1816,8 +1816,10 @@ _register_export_callbacks()
 # ---------------------------------------------------------------------------
 
 # Trend chart: store + smoothing + chart type → figure
-clientside_callback(
-    ClientsideFunction(namespace="census", function_name="smoothChartWithType"),
+clientside_callback(f"""function() {{
+        var fig = window.dash_clientside.census.smoothChartWithType.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("{PAGE_ID}-chart-trend", fig);
+    }}""",
     Output(f"{PAGE_ID}-chart-trend", "figure"),
     Input(f"{PAGE_ID}-store-trend", "data"),
     Input(f"{PAGE_ID}-trend-settings-smooth", "value"),
@@ -1827,8 +1829,10 @@ clientside_callback(
 )
 
 # Cumulative chart: store + smoothing + chart type + stack + prior periods → figure
-clientside_callback(
-    ClientsideFunction(namespace="cumulative", function_name="renderWithProjectToggle"),
+clientside_callback(f"""function() {{
+        var fig = window.dash_clientside.cumulative.renderWithProjectToggle.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("{PAGE_ID}-chart-cumul", fig);
+    }}""",
     Output(f"{PAGE_ID}-chart-cumul", "figure"),
     Input(f"{PAGE_ID}-store-cumul", "data"),
     Input(f"{PAGE_ID}-cumul-settings-smooth", "value"),
@@ -1869,8 +1873,10 @@ _PROC_SPARKLINE_IDS = [
 ]
 
 for _spark_id in _PROC_SPARKLINE_IDS:
-    clientside_callback(
-        ClientsideFunction(namespace="sparklines", function_name="updateFromStore"),
+    clientside_callback(f"""function() {{
+        var fig = window.dash_clientside.sparklines.updateFromStore.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("{_spark_id}", fig);
+    }}""",
         Output(_spark_id, "figure"),
         Input(f"{PAGE_ID}-store-kpi-sparklines", "data"),
         Input(_spark_id, "id"),

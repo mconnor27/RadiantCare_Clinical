@@ -84,6 +84,10 @@ window.dash_clientside.diagRidge = {
                 hoverDates.push(p.valid ? monthNames[p.month] + " " + p.year : dates[j]);
             }
 
+            // Hover tooltip always shows the actual raw count, even when
+            // smoothing is applied to the drawn line/bars. User preference:
+            // visual smoothing OK for trend-spotting, but numbers in tooltips
+            // must be actuals.
             var customdata = [];
             for (var j = 0; j < nDates; j++) {
                 customdata.push([Math.round(rawVals[j]), s.name]);

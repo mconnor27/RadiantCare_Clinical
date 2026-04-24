@@ -1411,8 +1411,10 @@ def _build_schedule_table(df):
 # ---------------------------------------------------------------------------
 # Clientside callback — manpower chart smoothing / chart type
 # ---------------------------------------------------------------------------
-clientside_callback(
-    ClientsideFunction(namespace="census", function_name="smoothChartWithType"),
+clientside_callback(f"""function() {{
+        var fig = window.dash_clientside.census.smoothChartWithType.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("{PAGE_ID}-chart-manpower", fig);
+    }}""",
     Output(f"{PAGE_ID}-chart-manpower", "figure"),
     Input(f"{PAGE_ID}-store-manpower", "data"),
     Input(f"{PAGE_ID}-manpower-settings-smooth", "value"),

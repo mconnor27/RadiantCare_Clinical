@@ -620,7 +620,6 @@ def _build_filter_bar():
                                 style={"position": "relative", "display": "inline-block"},
                             ),
                             dmc.Paper(
-                                id="diag-physician-panel",
                                 children=[
                                     dmc.ChipGroup(
                                         children=[],
@@ -700,7 +699,6 @@ def _build_filter_bar():
                                         chevronPosition="right",
                                     ),
                                 ],
-                                id="diag-diag-panel",
                                 p="xs",
                                 shadow="md",
                                 withBorder=True,
@@ -1620,8 +1618,10 @@ clientside_callback(
 # ---------------------------------------------------------------------------
 # Clientside callback — renders trend ridgeline from store + settings
 # ---------------------------------------------------------------------------
-clientside_callback(
-    ClientsideFunction(namespace="diagRidge", function_name="renderTrend"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.diagRidge.renderTrend.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("diag-chart-trend", fig);
+    }""",
     Output("diag-chart-trend", "figure"),
     Input("diag-chart-trend-store", "data"),
     Input("diag-chart-trend-settings-smooth", "value"),

@@ -74,9 +74,6 @@ layout = dmc.Stack(
         ),
 
         # Hidden inputs for filter IDs required by callbacks (no visible filter bar)
-        dcc.Store(id="operations-filter-daterange", data=None),
-        dcc.Store(id="operations-filter-physician", data=None),
-        dcc.Store(id="operations-filter-date-preset", data=None),
         dcc.Store(id="operations-filter-department", data=None),
         dcc.Store(id="operations-filter-machine", data=None),
 
@@ -1260,8 +1257,10 @@ def update_kpis(*args):
 # ---------------------------------------------------------------------------
 
 # Today's Treatments sparkline
-clientside_callback(
-    ClientsideFunction(namespace="sparklines", function_name="smoothOpsToday"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.sparklines.smoothOpsToday.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("ops-spark-today", fig);
+    }""",
     Output("ops-spark-today", "figure"),
     Input("ops-store-kpi-sparklines", "data"),
     Input("ops-filter-smoothing", "value"),
@@ -1269,24 +1268,30 @@ clientside_callback(
 )
 
 # Site hours sparklines (duration in hours)
-clientside_callback(
-    ClientsideFunction(namespace="sparklines", function_name="smoothOpsHoursLacey"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.sparklines.smoothOpsHoursLacey.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("ops-spark-hours-lacey", fig);
+    }""",
     Output("ops-spark-hours-lacey", "figure"),
     Input("ops-store-kpi-sparklines", "data"),
     Input("ops-filter-smoothing", "value"),
     prevent_initial_call=True,
 )
 
-clientside_callback(
-    ClientsideFunction(namespace="sparklines", function_name="smoothOpsHoursCentralia"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.sparklines.smoothOpsHoursCentralia.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("ops-spark-hours-centralia", fig);
+    }""",
     Output("ops-spark-hours-centralia", "figure"),
     Input("ops-store-kpi-sparklines", "data"),
     Input("ops-filter-smoothing", "value"),
     prevent_initial_call=True,
 )
 
-clientside_callback(
-    ClientsideFunction(namespace="sparklines", function_name="smoothOpsHoursAberdeen"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.sparklines.smoothOpsHoursAberdeen.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("ops-spark-hours-aberdeen", fig);
+    }""",
     Output("ops-spark-hours-aberdeen", "figure"),
     Input("ops-store-kpi-sparklines", "data"),
     Input("ops-filter-smoothing", "value"),
@@ -1294,8 +1299,10 @@ clientside_callback(
 )
 
 # Consult Lead sparkline
-clientside_callback(
-    ClientsideFunction(namespace="sparklines", function_name="smoothOpsConsultLead"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.sparklines.smoothOpsConsultLead.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("ops-spark-consult-lead", fig);
+    }""",
     Output("ops-spark-consult-lead", "figure"),
     Input("ops-store-kpi-sparklines", "data"),
     Input("ops-filter-smoothing", "value"),
@@ -1303,8 +1310,10 @@ clientside_callback(
 )
 
 # Sim Lead sparkline
-clientside_callback(
-    ClientsideFunction(namespace="sparklines", function_name="smoothOpsSimLead"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.sparklines.smoothOpsSimLead.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("ops-spark-sim-lead", fig);
+    }""",
     Output("ops-spark-sim-lead", "figure"),
     Input("ops-store-kpi-sparklines", "data"),
     Input("ops-filter-smoothing", "value"),
@@ -1312,8 +1321,10 @@ clientside_callback(
 )
 
 # New Starts sparkline (daily)
-clientside_callback(
-    ClientsideFunction(namespace="sparklines", function_name="smoothOpsNewStarts"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.sparklines.smoothOpsNewStarts.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("ops-spark-newstarts", fig);
+    }""",
     Output("ops-spark-newstarts", "figure"),
     Input("ops-store-kpi-sparklines", "data"),
     Input("ops-filter-smoothing", "value"),
@@ -1351,8 +1362,10 @@ def update_volume_data(*args):
 
 
 # Clientside callback for volume chart smoothing with chart type and time window
-clientside_callback(
-    ClientsideFunction(namespace="census", function_name="smoothChartWithTypeAndRange"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.census.smoothChartWithTypeAndRange.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("ops-chart-volume", fig);
+    }""",
     Output("ops-chart-volume", "figure"),
     Input("ops-store-volume", "data"),
     Input("ops-volume-settings-smooth", "value"),
@@ -1798,8 +1811,10 @@ def update_efficiency_data(*args):
 
 
 # Clientside callback for efficiency chart with machine filter + metric toggle
-clientside_callback(
-    ClientsideFunction(namespace="efficiency", function_name="renderWithFilters"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.efficiency.renderWithFilters.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("ops-chart-efficiency", fig);
+    }""",
     Output("ops-chart-efficiency", "figure"),
     Input("ops-store-efficiency", "data"),
     Input("ops-efficiency-settings-smooth", "value"),

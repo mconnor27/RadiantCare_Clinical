@@ -219,7 +219,6 @@ def _build_cv_filter_bar():
                             ),
                             dcc.Store(id="cv-physician-role", data="appointment"),
                             dmc.Paper(
-                                id="cv-physician-panel",
                                 children=[
                                     dmc.SegmentedControl(
                                         id="cv-physician-role-ctrl",
@@ -277,7 +276,6 @@ def _build_cv_filter_bar():
                                     multiple=False,
                                     value="All",
                                 ),
-                                id="cv-visit-type-panel",
                                 p="xs",
                                 shadow="md",
                                 withBorder=True,
@@ -314,7 +312,6 @@ def _build_cv_filter_bar():
                                     multiple=False,
                                     value="All",
                                 ),
-                                id="cv-classified-type-panel",
                                 p="xs",
                                 shadow="md",
                                 withBorder=True,
@@ -487,7 +484,7 @@ layout = dmc.Stack(
         ),
 
         # KPI row — 6 cards with sparklines
-        dmc.Grid(id="cv-kpi-row", gutter="md", children=[
+        dmc.Grid(gutter="md", children=[
             dmc.GridCol(kpi_placeholder(), id="cv-kpi-total", span={"base": 12, "sm": 6, "md": 2}),
             dmc.GridCol(kpi_placeholder(), id="cv-kpi-consults", span={"base": 12, "sm": 6, "md": 2}),
             dmc.GridCol(kpi_placeholder(), id="cv-kpi-followups", span={"base": 12, "sm": 6, "md": 2}),
@@ -905,7 +902,7 @@ layout = dmc.Stack(
         dcc.Store(id="cv-store-kpi-sparklines"),
         dcc.Store(id="cv-filter-options"),
         dcc.Store(id="cv-table-filter-rows"),  # filtered row indices from grid
-        html.Div(id="cv-filter-options-applier", style={"display": "none"}),
+        html.Div(style={"display": "none"}),
     ],
 )
 
@@ -2099,8 +2096,10 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
-clientside_callback(
-    ClientsideFunction(namespace="cumulative", function_name="renderWithProjectToggle"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.cumulative.renderWithProjectToggle.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("cv-chart-cumulative", fig);
+    }""",
     Output("cv-chart-cumulative", "figure"),
     Input("cv-store-cumulative", "data"),
     Input("cv-cumulative-settings-smooth", "value"),
@@ -2128,48 +2127,60 @@ clientside_callback(
 # Clientside callbacks for KPI sparklines
 # ---------------------------------------------------------------------------
 
-clientside_callback(
-    ClientsideFunction(namespace="sparklines", function_name="smoothCvTotal"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.sparklines.smoothCvTotal.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("cv-spark-total", fig);
+    }""",
     Output("cv-spark-total", "figure"),
     Input("cv-store-kpi-sparklines", "data"),
     Input("cv-smooth-slider", "value"),
     prevent_initial_call=True,
 )
 
-clientside_callback(
-    ClientsideFunction(namespace="sparklines", function_name="smoothCvConsults"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.sparklines.smoothCvConsults.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("cv-spark-consults", fig);
+    }""",
     Output("cv-spark-consults", "figure"),
     Input("cv-store-kpi-sparklines", "data"),
     Input("cv-smooth-slider", "value"),
     prevent_initial_call=True,
 )
 
-clientside_callback(
-    ClientsideFunction(namespace="sparklines", function_name="smoothCvFollowups"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.sparklines.smoothCvFollowups.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("cv-spark-followups", fig);
+    }""",
     Output("cv-spark-followups", "figure"),
     Input("cv-store-kpi-sparklines", "data"),
     Input("cv-smooth-slider", "value"),
     prevent_initial_call=True,
 )
 
-clientside_callback(
-    ClientsideFunction(namespace="sparklines", function_name="smoothCvLead"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.sparklines.smoothCvLead.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("cv-spark-lead", fig);
+    }""",
     Output("cv-spark-lead", "figure"),
     Input("cv-store-kpi-sparklines", "data"),
     Input("cv-smooth-slider", "value"),
     prevent_initial_call=True,
 )
 
-clientside_callback(
-    ClientsideFunction(namespace="sparklines", function_name="smoothCvSimConv"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.sparklines.smoothCvSimConv.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("cv-spark-sim-conv", fig);
+    }""",
     Output("cv-spark-sim-conv", "figure"),
     Input("cv-store-kpi-sparklines", "data"),
     Input("cv-smooth-slider", "value"),
     prevent_initial_call=True,
 )
 
-clientside_callback(
-    ClientsideFunction(namespace="sparklines", function_name="smoothCvDaysToSim"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.sparklines.smoothCvDaysToSim.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("cv-spark-days-sim", fig);
+    }""",
     Output("cv-spark-days-sim", "figure"),
     Input("cv-store-kpi-sparklines", "data"),
     Input("cv-smooth-slider", "value"),

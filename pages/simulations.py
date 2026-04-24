@@ -199,7 +199,6 @@ def _build_sim_filter_bar():
                             ),
                             dcc.Store(id="sim-physician-role", data="consult"),
                             dmc.Paper(
-                                id="sim-physician-panel",
                                 children=[
                                     dmc.SegmentedControl(
                                         id="sim-physician-role-ctrl",
@@ -262,7 +261,6 @@ def _build_sim_filter_bar():
                                     multiple=True,
                                     value=[],
                                 ),
-                                id="sim-simtype-panel",
                                 p="xs",
                                 shadow="md",
                                 withBorder=True,
@@ -311,7 +309,6 @@ def _build_sim_filter_bar():
                                     multiple=True,
                                     value=[],
                                 ),
-                                id="sim-machine-panel",
                                 p="xs",
                                 shadow="md",
                                 withBorder=True,
@@ -490,7 +487,7 @@ layout = dmc.Stack(
         ),
 
         # KPI row — 6 cards with sparklines
-        dmc.Grid(id="sim-kpi-row", gutter="md", children=[
+        dmc.Grid(gutter="md", children=[
             dmc.GridCol(kpi_placeholder(), id="sim-kpi-total", span={"base": 6, "md": 2}),
             dmc.GridCol(kpi_placeholder(), id="sim-kpi-initial", span={"base": 6, "md": 2}),
             dmc.GridCol(kpi_placeholder(), id="sim-kpi-lead", span={"base": 6, "md": 2}),
@@ -1878,8 +1875,10 @@ def _update_sim_diag_billing(*args):
 # Clientside callbacks for charts
 # ---------------------------------------------------------------------------
 
-clientside_callback(
-    ClientsideFunction(namespace="census", function_name="smoothChartWithType"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.census.smoothChartWithType.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("sim-chart-volume", fig);
+    }""",
     Output("sim-chart-volume", "figure"),
     Input("sim-store-volume", "data"),
     Input("sim-volume-settings-smooth", "value"),
@@ -1888,8 +1887,10 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
-clientside_callback(
-    ClientsideFunction(namespace="census", function_name="smoothChartWithType"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.census.smoothChartWithType.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("sim-chart-timing", fig);
+    }""",
     Output("sim-chart-timing", "figure"),
     Input("sim-store-timing", "data"),
     Input("sim-timing-settings-smooth", "value"),
@@ -1898,8 +1899,10 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
-clientside_callback(
-    ClientsideFunction(namespace="hoursRibbon", function_name="smoothChartWithType"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.hoursRibbon.smoothChartWithType.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("sim-chart-ribbon", fig);
+    }""",
     Output("sim-chart-ribbon", "figure"),
     Input("sim-store-ribbon", "data"),
     Input("sim-ribbon-settings-smooth", "value"),
@@ -1907,8 +1910,10 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
-clientside_callback(
-    ClientsideFunction(namespace="cumulative", function_name="renderWithProjectToggle"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.cumulative.renderWithProjectToggle.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("sim-chart-cumulative", fig);
+    }""",
     Output("sim-chart-cumulative", "figure"),
     Input("sim-store-cumulative", "data"),
     Input("sim-cumulative-settings-smooth", "value"),
@@ -1980,8 +1985,10 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
-clientside_callback(
-    ClientsideFunction(namespace="census", function_name="smoothChartWithType"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.census.smoothChartWithType.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("sim-chart-cancel-rate", fig);
+    }""",
     Output("sim-chart-cancel-rate", "figure"),
     Input("sim-store-cancel", "data"),
     Input("sim-cancel-settings-smooth", "value"),

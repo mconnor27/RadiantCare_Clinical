@@ -61,157 +61,34 @@ _DIM_RIDGE_HEIGHT = 720
 # ---------------------------------------------------------------------------
 # Diagnosis Categorisation
 # ---------------------------------------------------------------------------
-# Priority cascade:
-#   1. ICD-10/ICD-9 code extracted from "Diagnoses" → diagnosis_categories lookup
+# Delegated to utils.diagnosis_categories.categorise_referral, which is
+# shared with the Med-Onc Cross-Referrals page. Cascade:
+#   1. ICD-10/ICD-9 code from "Diagnoses" → taxonomy lookup
 #   2. Free-text regex on "Rfl Prim Dx"
 #   3. Free-text regex on "Diagnoses"
-#
-# Free-text patterns use the same category names as diagnosis_categories.py
-# so that ICD-resolved and text-resolved rows appear in the same buckets.
+#   4. Free-text regex on "Onc Dx"  (patient-level fallback)
+#   5. "Other"
+# Both pages stay symmetric — a given referral type lands in the same bucket
+# whether it's to med-onc or rad-onc.
 
+# ICD regexes (still used below for a separate analytic codepath that pulls
+# every ICD code out of a row, not just the first one).
 _ICD10_RE = re.compile(r"([A-Z]\d[0-9A-Z](?:\.[0-9A-Z]+)?)\s*\(ICD-10")
 _ICD9_RE = re.compile(r"(\d{3}(?:\.\d+)?)\s*\(ICD-9")
 
-# Free-text patterns → category names matching diagnosis_categories.py
-# Order matters — first match wins, so specific patterns precede broad ones.
-# Sarcomas early so "osteoblastoma" doesn't fall through to Mets via "bone".
-_DIAG_TEXT_PATTERNS = [
-    # --- Sarcomas (before Mets — osteoblastoma/fibromatosis are NOT mets) ---
-    ("Sarcomas",               re.compile(
-        r"sarcoma|soft.?tissue|lipomatous.?tumor|spindle.?cell"
-        r"|giant.?cell.?tumor|osteoblas|fibrous.?tumor|fibromatosis", re.I)),
-    # --- Mets / palliative (before organ-specific: "spine mets" ≠ CNS) ---
-    ("Metastases & Palliative", re.compile(
-        r"bone\s*met|brain\s*met|secondary.*bone|secondary.*brain|C79\.[35]"
-        r"|metasta|\bmet\b|\bmets\b|spine\s*met|cord.?compress|spinal.?cord"
-        r"|sternal\s*met|rib\s*met|hip\s*met|sacr\w*\s*met|pelvic\s*met"
-        r"|lytic.?lesion|lystic|bone.?lesion|pathologic\w*\s*fracture"
-        r"|\bbone\b|\bspine\b|lspine|\bfemur\b|femurs|\bhumerus\b|\brib\b|\bpelvi"
-        r"|pevic|skull.?lesion|sternum|SVC.?syndrom|\bPCI\b"
-        r"|T\d+\b|L\s*\d+\b|C\d+\s*spin|sacrum|clavicle|lumbar"
-        r"|\bhip\b|shoulder|scapula|chest.?wall|chest\b|axilla"
-        r"|flank|leg.?mass|thigh.?mass|arm\b|elbow|forearm|T-\d+"
-        r"|calf\b|knee\b|dorsal.?hand|finger|ankle|wrist"
-        r"|face.?mass|back.?pain", re.I)),
-    # --- Specific organ sites ---
-    ("GU – Prostate",          re.compile(r"prostat", re.I)),
-    ("Breast",                 re.compile(
-        r"breast|breat|bresst|breaast|mammary|left brest", re.I)),
-    ("Thoracic",               re.compile(
-        r"\blung\b|pulmon|bronch|\bSCLC\b|\bNSCL\b|mesothelioma"
-        r"|mediastin|thymom|thymus|thymic|paratracheal", re.I)),
-    ("Central Nervous System", re.compile(
-        r"\bbrain\b|\bGBM\b|gliob|glioma|oligodendro|astrocyt|mening"
-        r"|ependymoma|pituitary|schwannoma|acoustic.?neuroma|cerebell"
-        r"|cranial|\borbit\b|orbital|choroid|chorodial|vestibul\w+\s*schwann"
-        r"|frontal.?lobe.?lesion|parietal.?lobe|\bcns\b|optic.?nerve"
-        r"|cauda.?equina|brachial.?plex|neuropath", re.I)),
-    ("Head and Neck",          re.compile(
-        r"tongue|tounge|tonsil|tonge|laryn|pharyn|pharny|hypo.?pharyn|hypoharyn"
-        r"|oral|oropharyn|orophayn|nasopharyn|salivary|thyroid|palat"
-        r"|sinus|nasal|\bBOT\b|base of tongue|parotid|vocal.?cord"
-        r"|epiglott|glotti|mandib|submandib|buccal|retromolar"
-        r"|adenoid.?cystic|lingual|\bH&N\b|\bSCCA\b|mouth|throat"
-        r"|arytenoid|supraclav|neck.?mass|head.?neck|\bneck\b"
-        r"|midface|zygoma|auditory|adenoid\b|otalgia|perianal", re.I)),
-    ("Gastrointestinal",       re.compile(
-        r"pancrea|hepato|esophag|esphag|esopah|esopheal|rectal|rectum"
-        r"|recral|retum|rectosigmoid|colon|gastri|gastic|bile|biliary"
-        r"|cholang|\banal\b|\banus\b|stomach|small.?bowel|pyloric|cecum"
-        r"|splenic.?flexure|\bGI\b|\bliver\b|peritoneum|peritoneal"
-        r"|stomal.?tumor", re.I)),
-    ("Gynecologic",            re.compile(
-        r"cervi|cerivx|uter|endomet|edometr|endrometr|ovar|vulv|vagin|vlava", re.I)),
-    ("Hematologic",            re.compile(
-        r"lymph|lymhoma|hodgkin|leukemi|\bAML\b|myelom|meyloma|myelona"
-        r"|myelofibro|polycythem|plasmacytom|plasma.?cyt|plasma.?cell"
-        r"|mycosis.?fungoid|mycosis.?fungod|spleen|spleno|\bSPLEN\b"
-        r"|pancytopen|\bMGUS\b|amyloid", re.I)),
-    ("Skin",                   re.compile(
-        r"melan|squamous.{0,10}skin|basal.?cell|basil.?cell|\bBCC\b|\bSCC\b"
-        r"|\bskin\b|cutane|merkel|\bMCC\b|keloid|scalp|ear\b|forehead"
-        r"|cheek|temple|lip\b|nose\b|eyelid|sebaceous.?carcinom"
-        r"|\bAFX\b|hidradenitis|squamous.?cell.?carcinom", re.I)),
-    ("GU – Non-Prostate",      re.compile(
-        r"bladder|bkadder|renal|kidney|ureter|ureth|urothel"
-        r"|transitional.?cell|testic|testis|penile|penis|adrenocort|adrenal"
-        r"|seminoma", re.I)),
-    ("Benign Diseases",        re.compile(
-        r"benign|keloid|dupuytren|\bAVM\b|arteriovenous|hemangioma"
-        r"|heterotopic.?oss|het\s*erotrophic|hypertrophic.?scar"
-        r"|osteopor|osteopeni|neurofibroma|Graves|psoriasis"
-        r"|\bHHT\b|Osler.?Weber|trigeminal.?neuralgia|neuralgia"
-        r"|arthritis|bursitis", re.I)),
-]
-
-# Build ICD→category lookup once at import time
-from data.loader import load_diagnosis as _load_diag, load_clinic_visits as _load_cv
-from utils.diagnosis_categories import primary_category as _primary_category
+from data.loader import load_diagnosis as _load_diag
+from utils.diagnosis_categories import categorise_referral as _categorise_referral
 _DIAG_C2C: dict[str, str] = build_code_to_category(_load_diag())
 
-# Build MRN→category map from clinic visit DiagnosisCodes (tier 3 fallback)
-def _build_cv_mrn_map() -> dict[int, str]:
-    cv = _load_cv()
-    if cv.empty or "DiagnosisCodes" not in cv.columns:
-        return {}
-    cv_diag = cv[cv["DiagnosisCodes"].notna()][["PatientId", "DiagnosisCodes"]]
-    cv_diag = cv_diag.drop_duplicates("PatientId")
-    cv_diag["_cat"] = cv_diag["DiagnosisCodes"].apply(
-        lambda v: _primary_category(v, _DIAG_C2C)
+
+def _categorise_diagnosis(diagnoses_text, prim_dx_text=None, onc_dx_text=None):
+    """Thin wrapper — delegates to the shared cascade helper."""
+    return _categorise_referral(
+        diagnoses=diagnoses_text,
+        rfl_prim_dx=prim_dx_text,
+        onc_dx=onc_dx_text,
+        c2c=_DIAG_C2C,
     )
-    return cv_diag[cv_diag["_cat"] != "Unknown"].set_index("PatientId")["_cat"].to_dict()
-
-_CV_MRN_MAP: dict[int, str] = _build_cv_mrn_map()
-
-
-def _extract_icd_code(text):
-    """Extract the first ICD-10 (preferred) or ICD-9 code from Diagnoses text."""
-    if pd.isna(text):
-        return None
-    s = str(text)
-    m = _ICD10_RE.search(s)
-    if m:
-        return m.group(1)
-    m = _ICD9_RE.search(s)
-    if m:
-        return m.group(1)
-    return None
-
-
-def _categorise_text(text):
-    """Map free-text diagnosis to a category via regex."""
-    if pd.isna(text) or not str(text).strip():
-        return None
-    s = str(text)
-    for name, pat in _DIAG_TEXT_PATTERNS:
-        if pat.search(s):
-            return name
-    return None
-
-
-def _categorise_diagnosis(diagnoses_text, prim_dx_text=None, mrn=None):
-    """Cascade: ICD code → Rfl Prim Dx text → Diagnoses text → CV dx → 'Other'."""
-    # 1. Try ICD code from Diagnoses column
-    code = _extract_icd_code(diagnoses_text)
-    if code:
-        cat = _DIAG_C2C.get(code)
-        if cat:
-            return cat
-    # 2. Try free-text on Rfl Prim Dx
-    if prim_dx_text is not None:
-        cat = _categorise_text(prim_dx_text)
-        if cat:
-            return cat
-    # 3. Try free-text on Diagnoses column
-    cat = _categorise_text(diagnoses_text)
-    if cat:
-        return cat
-    # 4. Try clinic visit diagnosis for this patient
-    if mrn is not None and pd.notna(mrn):
-        cat = _CV_MRN_MAP.get(int(mrn))
-        if cat:
-            return cat
-    return "Other"
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +166,17 @@ def _build_filter_bar():
                         searchable=True,
                         size="sm",
                         w=220,
+                        maxDropdownHeight=800,
+                        comboboxProps={"zIndex": 500},
+                    ),
+                    dmc.Select(
+                        id=f"{PAGE_ID}-filter-institution",
+                        data=[],  # populated by callback
+                        placeholder="All Institutions",
+                        clearable=True,
+                        searchable=True,
+                        size="sm",
+                        w=240,
                         maxDropdownHeight=800,
                         comboboxProps={"zIndex": 500},
                     ),
@@ -1790,8 +1678,10 @@ clientside_callback(
 )
 
 # Distribution chart — reuses flowGantt.renderFlowDistribution
-clientside_callback(
-    ClientsideFunction(namespace="flowGantt", function_name="renderFlowDistribution"),
+clientside_callback(f"""function() {{
+        var fig = window.dash_clientside.flowGantt.renderFlowDistribution.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("{PAGE_ID}-flow-dist", fig);
+    }}""",
     Output(f"{PAGE_ID}-flow-dist", "figure"),
     Output(f"{PAGE_ID}-dist-title", "children"),
     Input(f"{PAGE_ID}-store-flow-details", "data"),
@@ -1807,8 +1697,10 @@ clientside_callback(
 )
 
 # Trend chart — reuses flowGantt.renderFlowTrend
-clientside_callback(
-    ClientsideFunction(namespace="flowGantt", function_name="renderFlowTrend"),
+clientside_callback(f"""function() {{
+        var fig = window.dash_clientside.flowGantt.renderFlowTrend.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("{PAGE_ID}-flow-trend", fig);
+    }}""",
     Output(f"{PAGE_ID}-flow-trend", "figure"),
     Output(f"{PAGE_ID}-trend-title", "children"),
     Output(f"{PAGE_ID}-trend-maturity", "style"),
@@ -1828,8 +1720,10 @@ clientside_callback(
 )
 
 # Conversion rate trend — clientside from flow details store
-clientside_callback(
-    ClientsideFunction(namespace="flowGantt", function_name="renderConversionTrend"),
+clientside_callback(f"""function() {{
+        var fig = window.dash_clientside.flowGantt.renderConversionTrend.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("{PAGE_ID}-flow-conv", fig);
+    }}""",
     Output(f"{PAGE_ID}-flow-conv", "figure"),
     Output(f"{PAGE_ID}-conv-title", "children"),
     Input(f"{PAGE_ID}-store-flow-details", "data"),
@@ -1878,8 +1772,10 @@ _KPI_SPARK_IDS = [
 ]
 
 for _spark_id in _KPI_SPARK_IDS:
-    clientside_callback(
-        ClientsideFunction(namespace="sparklines", function_name="updateFromStore"),
+    clientside_callback(f"""function() {{
+        var fig = window.dash_clientside.sparklines.updateFromStore.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("{_spark_id}", fig);
+    }}""",
         Output(_spark_id, "figure"),
         Input(f"{PAGE_ID}-store-kpi-sparklines", "data"),
         Input(_spark_id, "id"),
@@ -1888,8 +1784,10 @@ for _spark_id in _KPI_SPARK_IDS:
     )
 
 # Clientside callback — renders dimension trend ridgeline from store + settings
-clientside_callback(
-    ClientsideFunction(namespace="referralRidge", function_name="renderTrend"),
+clientside_callback(f"""function() {{
+        var fig = window.dash_clientside.referralRidge.renderTrend.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("{PAGE_ID}-chart-dim-trend", fig);
+    }}""",
     Output(f"{PAGE_ID}-chart-dim-trend", "figure"),
     Input(f"{PAGE_ID}-chart-dim-trend-store", "data"),
     Input(f"{PAGE_ID}-chart-dim-trend-settings-smooth", "value"),
@@ -2307,7 +2205,7 @@ def _prepare_ref_volume_data(df, agg, slice_by=""):
     elif slice_by == "diagnosis":
         df["_dx"] = df.apply(
             lambda r: _categorise_diagnosis(
-                r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("MRN")
+                r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("Onc Dx")
             ), axis=1,
         )
         df_dx = df[~df["_dx"].isin(["Other", "Unknown"])]
@@ -2476,7 +2374,7 @@ def _prepare_ref_cumulative_data(df_all, start, end, mode="prior",
             sub = sub.copy()
             sub["_dx"] = sub.apply(
                 lambda r: _categorise_diagnosis(
-                    r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("MRN")
+                    r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("Onc Dx")
                 ), axis=1,
             )
             sub = sub[~sub["_dx"].isin(["Other", "Unknown"])]
@@ -2599,7 +2497,7 @@ def _prepare_ref_cumulative_data(df_all, start, end, mode="prior",
             dff_p = dff_period.copy()
             dff_p["_dx"] = dff_p.apply(
                 lambda r: _categorise_diagnosis(
-                    r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("MRN")
+                    r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("Onc Dx")
                 ), axis=1,
             )
             dff_dx = dff_p[~dff_p["_dx"].isin(["Other", "Unknown"])]
@@ -2695,7 +2593,7 @@ def _assign_dimension_group(df, dimension):
     elif dimension == "diagnosis":
         df["_dim_group"] = df.apply(
             lambda r: _categorise_diagnosis(
-                r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("MRN")
+                r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("Onc Dx")
             ),
             axis=1,
         )
@@ -2931,7 +2829,7 @@ def _build_detail_table(df):
     # Mapped diagnosis category
     df["Dx Category"] = df.apply(
         lambda r: _categorise_diagnosis(
-            r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("MRN")
+            r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("Onc Dx")
         ),
         axis=1,
     )
@@ -3493,6 +3391,7 @@ def _prior_range(start, end):
     Output(f"{PAGE_ID}-chart-dim-trend-store", "data"),
     Output(f"{PAGE_ID}-store-dim-compare-figs", "data"),
     Output(f"{PAGE_ID}-filter-specialty", "data"),
+    Output(f"{PAGE_ID}-filter-institution", "data"),
     Output(f"{PAGE_ID}-dim-compare-period", "data"),
     Output(f"{PAGE_ID}-dim-compare-period", "value"),
     Output(f"{PAGE_ID}-dim-compare-settings-prior-periods", "max"),
@@ -3505,6 +3404,7 @@ def _prior_range(start, end):
     Input(f"{PAGE_ID}-filter-daterange", "end_date"),
     Input(f"{PAGE_ID}-filter-department", "value"),
     Input(f"{PAGE_ID}-filter-specialty", "value"),
+    Input(f"{PAGE_ID}-filter-institution", "value"),
     Input(f"{PAGE_ID}-diag-store", "data"),
     Input(f"{PAGE_ID}-diag-mode", "data"),
     Input(f"{PAGE_ID}-diag-subcategory", "value"),
@@ -3520,7 +3420,8 @@ def _prior_range(start, end):
     ],
 )
 def update_referrals(_n, start_date, end_date, departments, specialty_filter,
-                     diag_cats, diag_mode, diag_subs, outlier_enabled, cap_0, cap_1,
+                     institution_filter, diag_cats, diag_mode, diag_subs,
+                     outlier_enabled, cap_0, cap_1,
                      pipeline_window, dim_toggle, dim_compare_period, grid_rows):
     """Master callback: KPIs + all charts."""
     from data.loader import load_referrals, load_referring
@@ -3538,9 +3439,10 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
     empty_dim = empty_figure("No data for selected filters")
     empty_dim.update_layout(height=_DIM_RIDGE_HEIGHT)
     no_spec = []
+    no_inst = []
     no_ctrl = (dash.no_update, dash.no_update, dash.no_update, dash.no_update)
     empty_out = (empty_kpis, None, None,
-                 [], [], None, {}, no_spec) + no_ctrl + ({}, None)
+                 [], [], None, {}, no_spec, no_inst) + no_ctrl + ({}, None)
 
     try:
         df = load_referrals()
@@ -3575,11 +3477,21 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
     if specialty_filter and "DeptSpecialty" in df.columns:
         df = df[df["DeptSpecialty"] == specialty_filter]
 
+    # --- Build institution options (after dept+specialty, before inst filter) ---
+    inst_options = []
+    if "DoctorInstitution" in df.columns:
+        inst_options = sorted(df["DoctorInstitution"].dropna().astype(str).str.strip()
+                              .loc[lambda s: s != ""].unique().tolist())
+
+    # --- Institution filter ---
+    if institution_filter and "DoctorInstitution" in df.columns:
+        df = df[df["DoctorInstitution"] == institution_filter]
+
     # --- Diagnosis filter (accordion: categories + optional subcategories) ---
     if diag_cats:
         df["_diag_filt"] = df.apply(
             lambda r: _categorise_diagnosis(
-                r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("MRN")
+                r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("Onc Dx")
             ),
             axis=1,
         )
@@ -3780,10 +3692,12 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
             prior_all = prior_all[p_dept.isin(departments)]
         if specialty_filter and "DeptSpecialty" in prior_all.columns:
             prior_all = prior_all[prior_all["DeptSpecialty"] == specialty_filter]
+        if institution_filter and "DoctorInstitution" in prior_all.columns:
+            prior_all = prior_all[prior_all["DoctorInstitution"] == institution_filter]
         if diag_cats:
             prior_all["_diag_filt"] = prior_all.apply(
                 lambda r: _categorise_diagnosis(
-                    r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("MRN")
+                    r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("Onc Dx")
                 ),
                 axis=1,
             )
@@ -3839,7 +3753,7 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
         compare_figs[str(n_prior)] = fig_c
 
     return (kpis, flow_data, flow_details, table_rows, table_cols,
-            dim_trend_store, compare_figs, spec_options,
+            dim_trend_store, compare_figs, spec_options, inst_options,
             pt_data, pt_value, slider_max, slider_marks, sparkline_store, geo_store)
 
 
@@ -3854,6 +3768,7 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
     Input(f"{PAGE_ID}-filter-daterange", "end_date"),
     Input(f"{PAGE_ID}-filter-department", "value"),
     Input(f"{PAGE_ID}-filter-specialty", "value"),
+    Input(f"{PAGE_ID}-filter-institution", "value"),
     Input(f"{PAGE_ID}-diag-store", "data"),
     Input(f"{PAGE_ID}-diag-mode", "data"),
     Input(f"{PAGE_ID}-diag-subcategory", "value"),
@@ -3862,7 +3777,8 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
     running=[(Output(f"{PAGE_ID}-chart-vol-loading", "visible"), True, False)],
 )
 def _update_ref_volume(_n, start_date, end_date, departments, specialty_filter,
-                       diag_cats, diag_mode, diag_subs, vol_slice, vol_agg):
+                       institution_filter, diag_cats, diag_mode, diag_subs,
+                       vol_slice, vol_agg):
     """Build census-format store data for referral volume trend."""
     from data.loader import load_referrals
     try:
@@ -3883,10 +3799,12 @@ def _update_ref_volume(_n, start_date, end_date, departments, specialty_filter,
         df = df[our_dept.isin(departments)]
     if specialty_filter and "DeptSpecialty" in df.columns:
         df = df[df["DeptSpecialty"] == specialty_filter]
+    if institution_filter and "DoctorInstitution" in df.columns:
+        df = df[df["DoctorInstitution"] == institution_filter]
     if diag_cats:
         df["_diag_filt"] = df.apply(
             lambda r: _categorise_diagnosis(
-                r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("MRN")
+                r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("Onc Dx")
             ), axis=1,
         )
         cat_set = set(diag_cats)
@@ -3913,6 +3831,7 @@ def _update_ref_volume(_n, start_date, end_date, departments, specialty_filter,
     Input(f"{PAGE_ID}-filter-daterange", "end_date"),
     Input(f"{PAGE_ID}-filter-department", "value"),
     Input(f"{PAGE_ID}-filter-specialty", "value"),
+    Input(f"{PAGE_ID}-filter-institution", "value"),
     Input(f"{PAGE_ID}-diag-store", "data"),
     Input(f"{PAGE_ID}-diag-mode", "data"),
     Input(f"{PAGE_ID}-diag-subcategory", "value"),
@@ -3923,7 +3842,7 @@ def _update_ref_volume(_n, start_date, end_date, departments, specialty_filter,
     running=[(Output(f"{PAGE_ID}-chart-cumulative-loading", "visible"), True, False)],
 )
 def _update_ref_cumulative(_n, start_date, end_date, departments, specialty_filter,
-                           diag_cats, diag_mode, diag_subs,
+                           institution_filter, diag_cats, diag_mode, diag_subs,
                            cum_mode, period_type, slice_by, date_preset):
     """Build cumulative referral volume store data."""
     from data.loader import load_referrals
@@ -3944,10 +3863,12 @@ def _update_ref_cumulative(_n, start_date, end_date, departments, specialty_filt
         df_all = df_all[our_dept.isin(departments)]
     if specialty_filter and "DeptSpecialty" in df_all.columns:
         df_all = df_all[df_all["DeptSpecialty"] == specialty_filter]
+    if institution_filter and "DoctorInstitution" in df_all.columns:
+        df_all = df_all[df_all["DoctorInstitution"] == institution_filter]
     if diag_cats:
         df_all["_diag_filt"] = df_all.apply(
             lambda r: _categorise_diagnosis(
-                r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("MRN")
+                r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("Onc Dx")
             ), axis=1,
         )
         cat_set = set(diag_cats)
@@ -3996,8 +3917,10 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
-clientside_callback(
-    ClientsideFunction(namespace="cumulative", function_name="renderWithProjectToggle"),
+clientside_callback(f"""function() {{
+        var fig = window.dash_clientside.cumulative.renderWithProjectToggle.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("{PAGE_ID}-chart-cumulative", fig);
+    }}""",
     Output(f"{PAGE_ID}-chart-cumulative", "figure"),
     Input(f"{PAGE_ID}-store-cumulative", "data"),
     Input(f"{PAGE_ID}-cumulative-settings-smooth", "value"),

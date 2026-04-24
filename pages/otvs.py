@@ -1192,8 +1192,10 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
-clientside_callback(
-    ClientsideFunction(namespace="cumulative", function_name="renderWithProjectToggle"),
+clientside_callback(f"""function() {{
+        var fig = window.dash_clientside.cumulative.renderWithProjectToggle.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("{PAGE_ID}-chart-cumulative", fig);
+    }}""",
     Output(f"{PAGE_ID}-chart-cumulative", "figure"),
     Input(f"{PAGE_ID}-store-cumulative", "data"),
     Input(f"{PAGE_ID}-cumulative-settings-smooth", "value"),
@@ -1326,8 +1328,10 @@ for _out_id in [
     f"{PAGE_ID}-spark-avg",
     f"{PAGE_ID}-spark-selfrate",
 ]:
-    clientside_callback(
-        ClientsideFunction(namespace="sparklines", function_name="updateFromStore"),
+    clientside_callback(f"""function() {{
+        var fig = window.dash_clientside.sparklines.updateFromStore.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("{_out_id}", fig);
+    }}""",
         Output(_out_id, "figure"),
         Input(f"{PAGE_ID}-store-kpi-sparklines", "data"),
         Input(_out_id, "id"),

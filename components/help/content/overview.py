@@ -16,7 +16,10 @@ from config.settings import NAV_PAGES, PHI_MODE, PRIMARY, PROJECT_ROOT
 from ..sql_summaries import (
     LARGEST_SCRIPT,
     SMALLEST_SCRIPT,
+    SQL_COMMIT_COUNT,
     SQL_FIRST_COMMIT,
+    SQL_LAST_HASH,
+    SQL_LAST_SUBJECT,
     SQL_LATEST_COMMIT,
     SQL_SCRIPTS,
     SQL_SHARE,
@@ -25,6 +28,7 @@ from ..sql_summaries import (
     TOTAL_SCRIPTS,
     TOTAL_SQL_LINES,
 )
+from utils.git_info import repo_stats, span_months
 from ..renderers import body, bullets, section, subheading
 
 
@@ -113,8 +117,65 @@ PAGE_LOC_MAX = _PAGE_SIZES[-1] if _PAGE_SIZES else (0, "")
 
 FRONTEND_FIRST_COMMIT = "2025-11-01"
 FRONTEND_LATEST_COMMIT = "2026-04-17"
-FRONTEND_COMMIT_COUNT = 59
+FRONTEND_COMMIT_COUNT: int = 59
+FRONTEND_LAST_SUBJECT: str | None = None
+FRONTEND_LAST_HASH: str | None = None
+
+_fe_stats = repo_stats(
+    local_repo=str(PROJECT_ROOT),
+    local_pathspecs=None,
+    gh_owner="mconnor27",
+    gh_repo="RadiantCare_Clinical",
+    gh_paths=("",),  # whole repo
+)
+if _fe_stats:
+    FRONTEND_FIRST_COMMIT = _fe_stats.get("first_commit", FRONTEND_FIRST_COMMIT)
+    FRONTEND_LATEST_COMMIT = _fe_stats.get("latest_commit", FRONTEND_LATEST_COMMIT)
+    FRONTEND_COMMIT_COUNT = _fe_stats.get("count", FRONTEND_COMMIT_COUNT)
+    FRONTEND_LAST_SUBJECT = _fe_stats.get("last_subject")
+    FRONTEND_LAST_HASH = _fe_stats.get("last_hash")
+
 NUM_PAGES = len(NAV_PAGES)
+
+
+def _count_callbacks() -> int:
+    import re as _re
+    pat = _re.compile(r"^\s*@(?:dash\.)?callback\b", _re.MULTILINE)
+    total = 0
+    for d in ("pages", "components"):
+        root = PROJECT_ROOT / d
+        if not root.is_dir():
+            continue
+        for p in root.rglob("*.py"):
+            if "__pycache__" in p.parts:
+                continue
+            try:
+                total += len(pat.findall(p.read_text(encoding="utf-8", errors="replace")))
+            except OSError:
+                continue
+    entry = PROJECT_ROOT / "dash_app.py"
+    if entry.is_file():
+        try:
+            total += len(pat.findall(entry.read_text(encoding="utf-8", errors="replace")))
+        except OSError:
+            pass
+    return total
+
+
+SERVER_CALLBACK_COUNT = _count_callbacks()
+
+
+def _fmt_span(first_iso: str, last_iso: str) -> str:
+    m = span_months(first_iso, last_iso)
+    if m is None:
+        return "—"
+    if m < 2:
+        return f"≈ {max(round(m * 30.44), 1)} days"
+    return f"≈ {m:.1f} months"
+
+
+FRONTEND_SPAN = _fmt_span(FRONTEND_FIRST_COMMIT, FRONTEND_LATEST_COMMIT)
+SQL_SPAN = _fmt_span(SQL_FIRST_COMMIT, SQL_LATEST_COMMIT)
 
 
 def _stat(label: str, value: str, sublabel: str | None = None) -> dmc.Paper:
@@ -151,7 +212,12 @@ BACKEND_SQL_CONTENT = dmc.Stack(
                 dmc.GridCol(_stat("SQL Scripts", f"{TOTAL_SCRIPTS}", "production reports"), span=3),
                 dmc.GridCol(_stat("SQL Code", f"{TOTAL_SQL_LINES:,}", f"{SQL_SHARE:.0%} of {TOTAL_FILE_LINES:,} file lines"), span=3),
                 dmc.GridCol(_stat("Comments / Blank", f"{TOTAL_COMMENT_LINES:,}", "documentation & whitespace"), span=3),
-                dmc.GridCol(_stat("Development Span", "≈ 5 months", f"{SQL_FIRST_COMMIT} → {SQL_LATEST_COMMIT}"), span=3),
+                dmc.GridCol(_stat(
+                    "Development Span",
+                    SQL_SPAN,
+                    (f"{SQL_COMMIT_COUNT} commits · {SQL_FIRST_COMMIT} → {SQL_LATEST_COMMIT}"
+                     if SQL_COMMIT_COUNT else f"{SQL_FIRST_COMMIT} → {SQL_LATEST_COMMIT}"),
+                ), span=3),
             ],
         ),
 
@@ -171,7 +237,10 @@ BACKEND_SQL_CONTENT = dmc.Stack(
             subheading("Overall timeline"),
             body(
                 f"First commit: {SQL_FIRST_COMMIT}. Most recent commit: "
-                f"{SQL_LATEST_COMMIT}. Development spans ~5 months of iterative "
+                f"{SQL_LATEST_COMMIT}"
+                + (f" ({SQL_COMMIT_COUNT} total)" if SQL_COMMIT_COUNT else "")
+                + (f" — “{SQL_LAST_SUBJECT}”" if SQL_LAST_SUBJECT else "")
+                + f". Development spans {SQL_SPAN} of iterative "
                 "work — moving from scheduling-focused reports (Availability, "
                 "DailyVolume) through operational detail (Machine_Error, "
                 "Downtime_Gaps, Downtime_FieldTicks, Machine_Statistics), "
@@ -462,8 +531,12 @@ FRONTEND_CONTENT = dmc.Stack(
             children=[
                 dmc.GridCol(_stat("Front-End LOC", f"{FRONTEND_TOTAL_LOC:,}", "Python + JS + CSS"), span=3),
                 dmc.GridCol(_stat("Pages", f"{NUM_PAGES}", "across 6 sections"), span=3),
-                dmc.GridCol(_stat("Server Callbacks", "310+", "across all pages"), span=3),
-                dmc.GridCol(_stat("Commits", f"{FRONTEND_COMMIT_COUNT}", f"{FRONTEND_FIRST_COMMIT} → {FRONTEND_LATEST_COMMIT}"), span=3),
+                dmc.GridCol(_stat("Server Callbacks", f"{SERVER_CALLBACK_COUNT}", "across all pages"), span=3),
+                dmc.GridCol(_stat(
+                    "Commits",
+                    f"{FRONTEND_COMMIT_COUNT}",
+                    f"{FRONTEND_SPAN} · {FRONTEND_FIRST_COMMIT} → {FRONTEND_LATEST_COMMIT}",
+                ), span=3),
             ],
         ),
 
@@ -518,7 +591,7 @@ FRONTEND_CONTENT = dmc.Stack(
                 "above chart, light horizontal grid only, department-colored series).",
                 "dash-iconify (Tabler icons) throughout.",
                 "Mapbox on Patients and Referrals pages for geographic patient / referral distribution.",
-                "310+ server-side @callback decorators; 22 in the Billing page alone for revenue, "
+                f"{SERVER_CALLBACK_COUNT} server-side @callback decorators; 22 in the Billing page alone for revenue, "
                 "payer, and rate management.",
             ]),
 
@@ -526,8 +599,10 @@ FRONTEND_CONTENT = dmc.Stack(
             body(
                 f"Front-end development started {FRONTEND_FIRST_COMMIT} (Dash app "
                 f"scaffolding, initial analysis scripts). Most recent commit: "
-                f"{FRONTEND_LATEST_COMMIT}. Total commits: {FRONTEND_COMMIT_COUNT}. "
-                "Like the SQL layer, development spans ~5 months of iterative work.",
+                f"{FRONTEND_LATEST_COMMIT}"
+                + (f" — “{FRONTEND_LAST_SUBJECT}”" if FRONTEND_LAST_SUBJECT else "")
+                + f". Total commits: {FRONTEND_COMMIT_COUNT}. "
+                f"Development spans {FRONTEND_SPAN} of iterative work.",
             ),
         ),
 

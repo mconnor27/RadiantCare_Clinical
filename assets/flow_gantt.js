@@ -266,8 +266,13 @@ window.dash_clientside.flowGantt = {
         var yPad = 4;                       // px padding top & bottom
         var drawH = VB_H - 2 * yPad;
 
-        var xPadR = 8;  // px right padding so last label isn't clipped
-        function sx(v) { return v * (VB_W - xPadR); }
+        // Horizontal label padding. Stage labels are centered on bar.cx,
+        // so they extend outward by ~half-label-width. Reserve enough room
+        // on both sides for the longest labels we encounter (e.g.
+        // "Rad-Onc Referral", "Visit Completed").
+        var xPadL = 70;
+        var xPadR = 80;
+        function sx(v) { return xPadL + v * (VB_W - xPadL - xPadR); }
         function sy(v) { return yPad + (yHi - v) / (yHi - yLo) * drawH; }
 
         // Convert {x: [...], y: [...]} polygon to SVG path d attribute
@@ -512,9 +517,27 @@ window.dash_clientside.flowGantt = {
                 _tmpCursor = _tmpCursor - _cH;
             }
             contentBot = Math.min(contentBot, _tmpCursor);
+
+            // Exit-stream bezier polygons dip to  min(source_bar.bot,
+            // collector.bot) - sag  at the curve's belly (sag ≈ 0.02).
+            // Source bars can extend much lower than the collector —
+            // e.g. a max-count stage bar sits at y ≈ 0.25 while a small
+            // collector sits at y ≈ 0.36. Reserve room for the lowest.
+            var _minSrcBot = 1;
+            for (var _k = 0; _k < nStages - 1; _k++) {
+                var _hasExit = (((pending && pending[_k]) || 0)
+                             + ((cancelled && cancelled[_k]) || 0)) > 0;
+                if (_hasExit && bars[_k].bot < _minSrcBot) {
+                    _minSrcBot = bars[_k].bot;
+                }
+            }
+            if (_minSrcBot < 1) {
+                // 0.025 = sag (~0.02) + visual cushion (~0.005)
+                contentBot = Math.min(contentBot, _minSrcBot - 0.025);
+            }
         }
-        yLo = contentBot - 0.04;  // small padding below
-        var yLoFloor = showLoopbacks ? 0.08 : 0.10;
+        yLo = contentBot - 0.02;
+        var yLoFloor = 0.04;
         if (yLo < yLoFloor) yLo = yLoFloor;
 
         // ─── Create SVG ────────────────────────────────────────────────
@@ -1571,11 +1594,17 @@ window.dash_clientside.flowGantt = {
                     showarrow: false, font: {size: 12, color: _flowGanttTheme().mutedText, family: font},
                 }
             ];
+            // Clamp x-axis to ~95th percentile so long tails don't dominate
+            // the visible range (preserves the full data in the density/
+            // histogram but compresses the visual to the informative range).
+            var _tSorted = tot.days.slice().sort(function(a, b) { return a - b; });
+            var _tP95 = _tSorted[Math.min(_tSorted.length - 1, Math.floor(_tSorted.length * 0.95))];
+            var _tXMax = Math.ceil((tu.scale === 1 ? _tP95 : _tP95 * tu.scale) * 1.08);
             var tLay = {
                 font: {family: font, size: 12, color: _flowGanttTheme().plotText},
                 margin: {l: 48, r: 16, t: 32, b: 42},
                 plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
-                xaxis: {showgrid: false, title: tu.axisTitle, autorange: true},
+                xaxis: {showgrid: false, title: tu.axisTitle, range: [0, _tXMax]},
                 yaxis: {gridcolor: _flowGanttTheme().grid, gridwidth: 1},
                 autosize: true, showlegend: false, hovermode: "closest",
                 shapes: tShapes, annotations: tAnnots,
@@ -1656,11 +1685,17 @@ window.dash_clientside.flowGantt = {
             }
         ];
 
+        // Clamp x-axis to ~95th percentile so long tails don't dominate
+        // the visible range. Values above p95 still contribute to the
+        // density/histogram but are not plotted on the visible axis.
+        var _sDays = t.days.slice().sort(function(a, b) { return a - b; });
+        var _sP95 = _sDays[Math.min(_sDays.length - 1, Math.floor(_sDays.length * 0.95))];
+        var _sXMax = Math.ceil((u.scale === 1 ? _sP95 : _sP95 * u.scale) * 1.08);
         var baseLay = {
             font: {family: font, size: 12, color: _flowGanttTheme().plotText},
             margin: {l: 48, r: 16, t: 32, b: 42},
             plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
-            xaxis: {showgrid: false, title: u.axisTitle, autorange: true},
+            xaxis: {showgrid: false, title: u.axisTitle, range: [0, _sXMax]},
             yaxis: {gridcolor: _flowGanttTheme().grid, gridwidth: 1},
             autosize: true, showlegend: false, hovermode: "closest",
             shapes: shapes, annotations: annots,

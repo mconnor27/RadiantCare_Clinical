@@ -72,7 +72,6 @@ def _build_otv_filter_bar():
                                 style={"position": "relative", "display": "inline-block"},
                             ),
                             dmc.Paper(
-                                id="otv-physician-panel",
                                 children=[
                                     dmc.SegmentedControl(
                                         id="otv-physician-role",
@@ -259,7 +258,7 @@ layout = dmc.Stack(
         ),
 
         # KPI row
-        dmc.Grid(id="otv-kpi-row", gutter="md", children=[
+        dmc.Grid(gutter="md", children=[
             dmc.GridCol(kpi_placeholder(), id="otv-kpi-total", span={"base": 6, "md": 2}),
             dmc.GridCol(kpi_placeholder(), id="otv-kpi-compliance", span={"base": 6, "md": 2}),
             dmc.GridCol(kpi_placeholder(), id="otv-kpi-extra", span={"base": 6, "md": 2}),
@@ -1306,8 +1305,10 @@ _OTV_SPARKLINE_IDS = [
 ]
 
 for _spark_id in _OTV_SPARKLINE_IDS:
-    clientside_callback(
-        ClientsideFunction(namespace="sparklines", function_name="updateFromStore"),
+    clientside_callback(f"""function() {{
+        var fig = window.dash_clientside.sparklines.updateFromStore.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("{_spark_id}", fig);
+    }}""",
         Output(_spark_id, "figure"),
         Input("otv-store-kpi-sparklines", "data"),
         Input(_spark_id, "id"),

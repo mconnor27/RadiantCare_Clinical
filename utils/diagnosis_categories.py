@@ -769,3 +769,167 @@ def get_all_subcategory_entries() -> dict[str, tuple[str, str]]:
     except Exception:
         pass
     return dict(_SUBCATEGORY_MAP)
+
+
+# ---------------------------------------------------------------------------
+# Free-text → category regex patterns
+# ---------------------------------------------------------------------------
+# For datasets where structured ICD codes are partially or fully missing
+# (med-onc referrals export, referring-provider diagnoses, etc.), map free-
+# text diagnosis strings to the same category names used for ICD-derived
+# diagnoses. Order matters — first match wins, so specific patterns precede
+# broad ones. Sarcomas early so "osteoblastoma" doesn't fall through to Mets
+# via "bone".
+#
+# Originally lived in pages/referrals.py; lifted here so medonc_referrals.py
+# and any future pages can share it without duplicating the pattern library.
+
+import re as _re
+
+DIAG_TEXT_PATTERNS: list[tuple[str, "_re.Pattern"]] = [
+    ("Sarcomas",               _re.compile(
+        r"sarcoma|soft.?tissue|lipomatous.?tumor|spindle.?cell"
+        r"|giant.?cell.?tumor|osteoblas|fibrous.?tumor|fibromatosis", _re.I)),
+    ("Metastases & Palliative", _re.compile(
+        r"bone\s*met|brain\s*met|secondary.*bone|secondary.*brain|C79\.[35]"
+        r"|metasta|\bmet\b|\bmets\b|spine\s*met|cord.?compress|spinal.?cord"
+        r"|sternal\s*met|rib\s*met|hip\s*met|sacr\w*\s*met|pelvic\s*met"
+        r"|lytic.?lesion|lystic|bone.?lesion|pathologic\w*\s*fracture"
+        r"|\bbone\b|\bspine\b|lspine|\bfemur\b|femurs|\bhumerus\b|\brib\b|\bpelvi"
+        r"|pevic|skull.?lesion|sternum|SVC.?syndrom|\bPCI\b"
+        r"|T\d+\b|L\s*\d+\b|C\d+\s*spin|sacrum|clavicle|lumbar"
+        r"|\bhip\b|shoulder|scapula|chest.?wall|chest\b|axilla"
+        r"|flank|leg.?mass|thigh.?mass|arm\b|elbow|forearm|T-\d+"
+        r"|calf\b|knee\b|dorsal.?hand|finger|ankle|wrist"
+        r"|face.?mass|back.?pain", _re.I)),
+    ("GU – Prostate",          _re.compile(r"prostat", _re.I)),
+    ("Breast",                 _re.compile(
+        r"breast|breat|bresst|breaast|mammary|left brest|DCIS|LCIS", _re.I)),
+    ("Thoracic",               _re.compile(
+        r"\blung\b|pulmon|bronch|\bSCLC\b|\bNSCL\b|mesothelioma"
+        r"|mediastin|thymom|thymus|thymic|paratracheal", _re.I)),
+    ("Central Nervous System", _re.compile(
+        r"\bbrain\b|\bGBM\b|gliob|glioma|oligodendro|astrocyt|mening"
+        r"|ependymoma|pituitary|schwannoma|acoustic.?neuroma|cerebell"
+        r"|cranial|\borbit\b|orbital|choroid|chorodial|vestibul\w+\s*schwann"
+        r"|frontal.?lobe.?lesion|parietal.?lobe|\bcns\b|optic.?nerve"
+        r"|cauda.?equina|brachial.?plex|neuropath", _re.I)),
+    ("Head and Neck",          _re.compile(
+        r"tongue|tounge|tonsil|tonge|laryn|pharyn|pharny|hypo.?pharyn|hypoharyn"
+        r"|oral|oropharyn|orophayn|nasopharyn|salivary|thyroid|palat"
+        r"|sinus|nasal|\bBOT\b|base of tongue|parotid|vocal.?cord"
+        r"|epiglott|glotti|mandib|submandib|buccal|retromolar"
+        r"|adenoid.?cystic|lingual|\bH&N\b|\bSCCA\b|mouth|throat"
+        r"|arytenoid|supraclav|neck.?mass|head.?neck|\bneck\b"
+        r"|midface|zygoma|auditory|adenoid\b|otalgia|perianal", _re.I)),
+    ("Gastrointestinal",       _re.compile(
+        r"pancrea|hepato|hepatocell|esophag|esphag|esopah|esopheal"
+        r"|rectal|rectum|recral|retum|rectosigmoid|colon|colorect"
+        r"|gastri|gastic|bile|biliary|cholang|\banal\b|\banus\b"
+        r"|stomach|small.?bowel|pyloric|\bcec\w+|splenic.?flexure"
+        r"|\bGI\b|\bliver\b|peritoneum|peritoneal|stomal.?tumor"
+        r"|intestin|appendix|appendic|ampullar|GE.?junction"
+        r"|gastroesophag|duoden", _re.I)),
+    ("Gynecologic",            _re.compile(
+        r"cervi|cerivx|uter|endomet|edometr|endrometr|ovar|vulv|vagin|vlava"
+        r"|fallopian|adnex|\bCIN\s*(?:I{1,3}|\d)", _re.I)),
+    ("Hematologic",            _re.compile(
+        r"lymph|lymhoma|hodgkin|leukemi|\bAML\b|\bCML\b|\bCLL\b|\bALL\b"
+        r"|myelom|meyloma|myelona|myelofibro|\bMDS\b|myelodys"
+        r"|polycythem|thrombocyth|essential.?thromb|plasmacytom|plasma.?cyt|plasma.?cell"
+        r"|waldenstrom|macroglob"
+        r"|mycosis.?fungoid|mycosis.?fungod|spleen|spleno|\bSPLEN\b"
+        r"|pancytopen|\bMGUS\b|amyloid", _re.I)),
+    ("Skin",                   _re.compile(
+        r"melan|squamous.{0,10}skin|basal.?cell|basil.?cell|\bBCC\b|\bSCC\b"
+        r"|\bskin\b|cutane|merkel|\bMCC\b|keloid|scalp|ear\b|forehead"
+        r"|cheek|temple|lip\b|nose\b|eyelid|sebaceous.?carcinom"
+        r"|\bAFX\b|hidradenitis|squamous.?cell.?carcinom", _re.I)),
+    ("GU – Non-Prostate",      _re.compile(
+        r"bladder|bkadder|renal|kidney|ureter|ureth|urothel"
+        r"|transitional.?cell|testic|testis|penile|penis|adrenocort|adrenal"
+        r"|seminoma", _re.I)),
+    ("Benign Diseases",        _re.compile(
+        r"benign|keloid|dupuytren|\bAVM\b|arteriovenous|hemangioma"
+        r"|heterotopic.?oss|het\s*erotrophic|hypertrophic.?scar"
+        r"|osteopor|osteopeni|neurofibroma|Graves|psoriasis"
+        r"|\bHHT\b|Osler.?Weber|trigeminal.?neuralgia|neuralgia"
+        r"|arthritis|bursitis", _re.I)),
+]
+
+
+def categorise_free_text(text) -> str | None:
+    """Map a free-text diagnosis string to one of CATEGORIES via regex.
+
+    Returns None if no pattern matches. Use for fields like ``Onc Dx`` or
+    ``Rfl Prim Dx`` when structured ICD codes are missing or unreliable.
+    """
+    if pd.isna(text) or not str(text).strip():
+        return None
+    s = str(text)
+    for name, pat in DIAG_TEXT_PATTERNS:
+        if pat.search(s):
+            return name
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Referral-specific cascade
+# ---------------------------------------------------------------------------
+# Applies to exports (rad-onc and med-onc referrals alike) that carry the
+# same "Diagnoses" / "Rfl Prim Dx" / "Onc Dx" columns. The referral-intent
+# priority order is:
+#   1. ICD-10/ICD-9 code extracted from "Diagnoses"  → taxonomy lookup
+#   2. Free-text regex on "Rfl Prim Dx"
+#   3. Free-text regex on "Diagnoses"
+#   4. Free-text regex on "Onc Dx"  (patient-level, last resort)
+#   5. "Other"
+#
+# Rationale: Diagnoses / Rfl Prim Dx are referral-specific (what the referring
+# provider entered for THIS referral). Onc Dx is patient-level — useful as a
+# safety net for referrals missing the referral-specific fields, but should
+# not preempt the referral-specific signal.
+
+_ICD10_CODE_RE = _re.compile(r"([A-Z]\d[0-9A-Z](?:\.[0-9A-Z]+)?)\s*\(ICD-10")
+_ICD9_CODE_RE = _re.compile(r"(\d{3}(?:\.\d+)?)\s*\(ICD-9")
+
+
+def _extract_icd_code(text) -> str | None:
+    """Return first ICD-10 (preferred) or ICD-9 code from a Diagnoses string."""
+    if pd.isna(text):
+        return None
+    s = str(text)
+    m = _ICD10_CODE_RE.search(s)
+    if m:
+        return m.group(1)
+    m = _ICD9_CODE_RE.search(s)
+    if m:
+        return m.group(1)
+    return None
+
+
+def categorise_referral(diagnoses=None, rfl_prim_dx=None, onc_dx=None,
+                        c2c: dict[str, str] | None = None) -> str:
+    """Referral-intent category for a single referral row.
+
+    Args mirror the common referral-export column names. Pass ``c2c`` (the
+    {ICD_code: category} map from ``build_code_to_category(load_diagnosis())``)
+    when available so tier 1 works; omit it and the function falls through
+    to free-text tiers.
+
+    Returns one of CATEGORIES or "Other". Never returns None/Unknown so
+    callers can safely group without post-filtering.
+    """
+    if c2c:
+        code = _extract_icd_code(diagnoses)
+        if code:
+            cat = c2c.get(code)
+            # Treat "Unknown" (taxonomy sentinel for codes present-but-unmapped)
+            # as a miss so the free-text tiers get a shot.
+            if cat and cat != "Unknown":
+                return cat
+    for field in (rfl_prim_dx, diagnoses, onc_dx):
+        cat = categorise_free_text(field)
+        if cat:
+            return cat
+    return "Other"

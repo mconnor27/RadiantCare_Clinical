@@ -93,7 +93,6 @@ def _build_plans_filter_bar():
                                 style={"position": "relative", "display": "inline-block"},
                             ),
                             dmc.Paper(
-                                id="plans-physician-panel",
                                 children=[
                                     dmc.SegmentedControl(
                                         id="plans-physician-role",
@@ -153,7 +152,6 @@ def _build_plans_filter_bar():
                                     multiple=True,
                                     value=[],
                                 ),
-                                id="plans-technique-panel",
                                 p="xs",
                                 shadow="md",
                                 withBorder=True,
@@ -351,7 +349,7 @@ layout = dmc.Stack(
         ),
 
         # KPI row — 6 cards
-        dmc.Grid(id="plans-kpi-row", gutter="md", children=[
+        dmc.Grid(gutter="md", children=[
             dmc.GridCol(kpi_placeholder(), id="plans-kpi-active", span={"base": 12, "sm": 6, "md": 2}),
             dmc.GridCol(kpi_placeholder(), id="plans-kpi-created", span={"base": 12, "sm": 6, "md": 2}),
             dmc.GridCol(kpi_placeholder(), id="plans-kpi-completed", span={"base": 12, "sm": 6, "md": 2}),
@@ -3404,8 +3402,10 @@ def _update_plans_treatment_site(*args):
 # Clientside callbacks for charts
 # ---------------------------------------------------------------------------
 
-clientside_callback(
-    ClientsideFunction(namespace="census", function_name="smoothChartWithType"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.census.smoothChartWithType.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("plans-chart-volume", fig);
+    }""",
     Output("plans-chart-volume", "figure"),
     Input("plans-store-volume", "data"),
     Input("plans-volume-settings-smooth", "value"),
@@ -3415,8 +3415,10 @@ clientside_callback(
 )
 
 # Cumulative: prior-periods slider moved from server to clientside input
-clientside_callback(
-    ClientsideFunction(namespace="cumulative", function_name="renderWithProjectToggle"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.cumulative.renderWithProjectToggle.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("plans-chart-cumulative", fig);
+    }""",
     Output("plans-chart-cumulative", "figure"),
     Input("plans-store-cumulative", "data"),
     Input("plans-cumulative-settings-smooth", "value"),
@@ -3444,8 +3446,10 @@ _PLANS_SPARKLINE_IDS = [
 ]
 
 for _spark_id in _PLANS_SPARKLINE_IDS:
-    clientside_callback(
-        ClientsideFunction(namespace="sparklines", function_name="updateFromStore"),
+    clientside_callback(f"""function() {{
+        var fig = window.dash_clientside.sparklines.updateFromStore.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("{_spark_id}", fig);
+    }}""",
         Output(_spark_id, "figure"),
         Input("plans-store-kpi-sparklines", "data"),
         Input(_spark_id, "id"),
@@ -3518,7 +3522,8 @@ clientside_callback(
             hideLegend: combo.series.length <= 1,
             stacked: false
         };
-        return window.dash_clientside.census.smoothChartWithType(data, smoothVal, chartType || "line", currentFig);
+        var __fig = (window.dash_clientside.census.smoothChartWithType(data, smoothVal, chartType || "line", currentFig));
+        return window.dash_clientside.chartDeferred.wrap("plans-chart-session-trend", __fig);
     }""",
     Output("plans-chart-session-trend", "figure"),
     Input("plans-store-session-trend", "data"),
@@ -3561,7 +3566,8 @@ clientside_callback(
             hideLegend: combo.series.length <= 1,
             stacked: false
         };
-        return window.dash_clientside.census.smoothChartWithType(data, smoothVal, chartType || "line", currentFig);
+        var __fig = (window.dash_clientside.census.smoothChartWithType(data, smoothVal, chartType || "line", currentFig));
+        return window.dash_clientside.chartDeferred.wrap("plans-chart-quit-trend", __fig);
     }""",
     Output("plans-chart-quit-trend", "figure"),
     Input("plans-store-quit-trend", "data"),

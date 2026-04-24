@@ -249,7 +249,6 @@ def _build_tasks_filter_bar():
                                 style={"position": "relative", "display": "inline-block"},
                             ),
                             dmc.Paper(
-                                id="tasks-physician-panel",
                                 children=[
                                     dmc.ChipGroup(
                                         children=[],
@@ -292,7 +291,6 @@ def _build_tasks_filter_bar():
                                 style={"position": "relative", "display": "inline-block"},
                             ),
                             dmc.Paper(
-                                id="tasks-planner-panel",
                                 children=[
                                     dmc.ChipGroup(
                                         children=[],
@@ -344,7 +342,6 @@ def _build_tasks_filter_bar():
                                     multiple=True,
                                     value=[],
                                 ),
-                                id="tasks-tasktype-panel",
                                 p="xs",
                                 shadow="md",
                                 withBorder=True,
@@ -734,7 +731,7 @@ layout = dmc.Stack(
         ),
 
         # KPI row — one group card per task type (clickable to filter)
-        dmc.SimpleGrid(id="tasks-kpi-row", cols={"base": 1, "sm": 2, "md": 5}, spacing="md", children=[
+        dmc.SimpleGrid(cols={"base": 1, "sm": 2, "md": 5}, spacing="md", children=[
             html.Div(id="tasks-kpi-click-draw", n_clicks=0,
                      style={"cursor": "pointer"},
                      children=[html.Div(kpi_placeholder(), id="tasks-kpi-draw")]),
@@ -2693,8 +2690,10 @@ def _build_day_index_ticks(start_norm, n_days, max_ticks=12):
 # ---------------------------------------------------------------------------
 # Clientside callbacks for charts with smoothing
 # ---------------------------------------------------------------------------
-clientside_callback(
-    ClientsideFunction(namespace="census", function_name="smoothChartWithType"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.census.smoothChartWithType.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("tasks-chart-volume", fig);
+    }""",
     Output("tasks-chart-volume", "figure"),
     Input("tasks-store-volume", "data"),
     Input("tasks-volume-settings-smooth", "value"),
@@ -2703,8 +2702,10 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
-clientside_callback(
-    ClientsideFunction(namespace="cumulative", function_name="renderWithProjectToggle"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.cumulative.renderWithProjectToggle.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("tasks-chart-cumulative", fig);
+    }""",
     Output("tasks-chart-cumulative", "figure"),
     Input("tasks-store-cumulative", "data"),
     Input("tasks-cumulative-settings-smooth", "value"),
@@ -2717,8 +2718,10 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
-clientside_callback(
-    ClientsideFunction(namespace="census", function_name="smoothChartWithType"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.census.smoothChartWithType.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("tasks-chart-time-trend", fig);
+    }""",
     Output("tasks-chart-time-trend", "figure"),
     Input("tasks-store-time-trend", "data"),
     Input("tasks-time-trend-settings-smooth", "value"),
@@ -2727,8 +2730,10 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
-clientside_callback(
-    ClientsideFunction(namespace="census", function_name="smoothChartWithType"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.census.smoothChartWithType.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("tasks-chart-sla", fig);
+    }""",
     Output("tasks-chart-sla", "figure"),
     Input("tasks-store-sla", "data"),
     Input("tasks-sla-settings-smooth", "value"),
@@ -2802,8 +2807,10 @@ clientside_callback(
 for _kg in _KPI_GROUPS:
     for _suffix in ("comp", "time"):
         _spark_id = f"tasks-spark-{_kg['key']}_{_suffix}"
-        clientside_callback(
-            ClientsideFunction(namespace="sparklines", function_name="updateFromStore"),
+        clientside_callback(f"""function() {{
+        var fig = window.dash_clientside.sparklines.updateFromStore.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("{_spark_id}", fig);
+    }}""",
             Output(_spark_id, "figure"),
             Input("tasks-store-kpi-sparklines", "data"),
             Input(_spark_id, "id"),
@@ -2838,8 +2845,10 @@ for _sid in ["tasks-volume-slice", "tasks-hist-slice", "tasks-time-compare-slice
     )
 
 # Histogram: clientside rendering from store
-clientside_callback(
-    ClientsideFunction(namespace="histogram", function_name="render"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.histogram.render.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("tasks-chart-histogram", fig);
+    }""",
     Output("tasks-chart-histogram", "figure"),
     Input("tasks-store-histogram", "data"),
     Input("tasks-histogram-settings-type", "value"),
@@ -2849,8 +2858,10 @@ clientside_callback(
 )
 
 # Time comparison: clientside rendering from store
-clientside_callback(
-    ClientsideFunction(namespace="timeCompare", function_name="render"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.timeCompare.render.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("tasks-chart-time-compare", fig);
+    }""",
     Output("tasks-chart-time-compare", "figure"),
     Input("tasks-store-time-compare", "data"),
     State("tasks-chart-time-compare", "figure"),

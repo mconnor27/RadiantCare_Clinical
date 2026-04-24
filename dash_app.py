@@ -323,6 +323,7 @@ _PAGE_DATASETS = {
     "/machine-statistics": ["machine_statistics"],
     "/patients":        ["treatment_detail", "referrals"],
     "/referrals":       ["referrals", "referring"],
+    "/medonc-referrals": ["medonc_referrals", "referrals", "treatment_detail"],
     "/diagnosis":       ["clinic_visits", "diagnosis"],
     "/physicians":      ["physician_schedule"],
     "/cpt-audit":       ["cpt_audit"],
@@ -333,7 +334,7 @@ _PAGE_DATASETS = {
 def _get_all_loaders():
     from data.loader import (
         load_treatment_detail, load_billing, load_workflow,
-        load_referrals, load_daily_volume, load_daily_volume_future,
+        load_referrals, load_medonc_referrals, load_daily_volume, load_daily_volume_future,
         load_clinic_visits, load_simulations, load_tasks, load_courses,
         load_plans, load_weekly_visits, load_rvu_lookup,
         load_treatment, load_availability, load_machines,
@@ -346,6 +347,7 @@ def _get_all_loaders():
         "billing": load_billing,
         "workflow": load_workflow,
         "referrals": load_referrals,
+        "medonc_referrals": load_medonc_referrals,
         "daily_volume": load_daily_volume,
         "daily_volume_future": load_daily_volume_future,
         "clinic_visits": load_clinic_visits,

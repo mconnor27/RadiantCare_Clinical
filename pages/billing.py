@@ -819,6 +819,35 @@ _PHDSC_COLORS_MAP = {
 _RIDGE_HEIGHT = 720
 
 
+def _row_payor_groups(series, mode, mapping):
+    """Return a Series mapping each PrimaryInsurance value to its group name
+    under the given mode (actual/broad/phdsc). Used by the filter bar — no
+    top-N rollup or 'Other' bucketing so every row keeps its true group."""
+    s = series.fillna("Unknown")
+    if mode == "broad":
+        def _r(name):
+            if name in mapping and mapping[name].get("broad_category"):
+                return mapping[name]["broad_category"]
+            return _broad_payor(name)
+        return s.apply(_r)
+    if mode == "phdsc":
+        def _r(name):
+            if name in mapping and mapping[name].get("phdsc_category"):
+                cat = mapping[name]["phdsc_category"]
+                for pc in _PHDSC_CATEGORIES:
+                    if pc.startswith(f"{cat} "):
+                        return pc
+                return "9 - Other"
+            return "9 - Other"
+        return s.apply(_r)
+    # actual — standardized payor name (fallback to raw)
+    def _r(name):
+        if name in mapping and mapping[name].get("standardized_payor"):
+            return mapping[name]["standardized_payor"]
+        return name
+    return s.apply(_r)
+
+
 def _resolve_payer_group(df, label_col, mode, mapping):
     """Add ``_payer_group`` column based on *mode* (actual/broad/phdsc).
 
@@ -1488,6 +1517,26 @@ def _build_filter_bar():
                         ),
                     ]),
                     cpt_accordion(PAGE_ID),
+                    _chip_dropdown(PAGE_ID, "Payor", "payor-filter", children=[
+                        dmc.SegmentedControl(
+                            id=f"{PAGE_ID}-filter-payor-mode",
+                            data=_PAYOR_MODE_TOGGLE,
+                            value="broad",
+                            size="xs",
+                            fullWidth=True,
+                            mb="xs",
+                        ),
+                        html.Div(
+                            dmc.ChipGroup(
+                                children=[],
+                                id=f"{PAGE_ID}-filter-payor",
+                                multiple=True,
+                                value=[],
+                            ),
+                            style={"maxHeight": 280, "overflowY": "auto",
+                                   "minWidth": 240},
+                        ),
+                    ]),
                     dmc.SegmentedControl(
                         id=f"{PAGE_ID}-filter-codetype",
                         data=[
@@ -3305,21 +3354,26 @@ _BILLING_FILTER_INPUTS = [
     Input(f"{PAGE_ID}-filter-hosp-excl-credited", "checked"),
     Input(f"{PAGE_ID}-filter-hosp-excl-waived", "checked"),
     Input(f"{PAGE_ID}-filter-date-preset", "value"),
+    Input(f"{PAGE_ID}-filter-payor-mode", "value"),
+    Input(f"{PAGE_ID}-filter-payor", "value"),
 ]
+
+_N_BILLING_FILTER_INPUTS = len(_BILLING_FILTER_INPUTS)
 
 
 def _unpack_billing_filter_args(args):
-    """Unpack the 19 common filter args into kwargs for _load_and_filter_billing.
+    """Unpack the common filter args into kwargs for _load_and_filter_billing.
 
-    Also reads rev_adj (args[19] if present) to derive `ar_lag_days`: the
-    saved A/R lag value if the filter-bar toggle is on, otherwise 0.
+    Also reads rev_adj (args[_N_BILLING_FILTER_INPUTS] if present) to derive
+    `ar_lag_days`: the saved A/R lag value if the filter-bar toggle is on,
+    otherwise 0.
     """
     (_n, start_date, end_date, departments, physician,
      physician_role, codetype, charge_status, categories, cpt_codes,
      pro_reviewed, pro_exported, excl_credited, excl_waived,
      hosp_reviewed, hosp_exported, hosp_excl_credited, hosp_excl_waived,
-     date_preset) = args[:19]
-    rev_adj = args[19] if len(args) > 19 else None
+     date_preset, payor_mode, payor_selected) = args[:_N_BILLING_FILTER_INPUTS]
+    rev_adj = args[_N_BILLING_FILTER_INPUTS] if len(args) > _N_BILLING_FILTER_INPUTS else None
     ar_lag_days = 0
     if rev_adj and rev_adj.get("ar_lag_enabled"):
         ar_lag_days = int(rev_adj.get("ar_lag", 0) or 0)
@@ -3332,6 +3386,7 @@ def _unpack_billing_filter_args(args):
         hosp_reviewed=hosp_reviewed, hosp_exported=hosp_exported,
         hosp_excl_credited=hosp_excl_credited, hosp_excl_waived=hosp_excl_waived,
         date_preset=date_preset, ar_lag_days=ar_lag_days,
+        payor_mode=payor_mode, payor_selected=payor_selected,
     )
 
 
@@ -3385,7 +3440,8 @@ def _load_and_filter_billing(start_date=None, end_date=None, departments=None,
                              excl_credited=True, excl_waived=True,
                              hosp_reviewed=None, hosp_exported=None,
                              hosp_excl_credited=True, hosp_excl_waived=True,
-                             date_preset=None, ar_lag_days=0):
+                             date_preset=None, ar_lag_days=0,
+                             payor_mode=None, payor_selected=None):
     """Load enriched billing, apply date range + dimension filters.
 
     `ar_lag_days` shifts every row's DateOfService forward by that many days
@@ -3420,11 +3476,24 @@ def _load_and_filter_billing(start_date=None, end_date=None, departments=None,
         start = _preset_start(last_date, date_preset or "12mo", earliest_date)
         end = last_date
 
+    # Pre-compute per-row payor group for the chosen mode (used in _dim_mask).
+    _payor_row_groups = None
+    if payor_selected and "PrimaryInsurance" in df.columns:
+        try:
+            _payor_mapping = get_payor_mapping_dict()
+        except Exception:
+            _payor_mapping = {}
+        _payor_row_groups = _row_payor_groups(
+            df["PrimaryInsurance"], payor_mode or "broad", _payor_mapping,
+        )
+
     # Non-date dimension mask builder (closes over df and filter args)
     def _dim_mask(base_mask):
         m = base_mask
         if departments and "Department" in df.columns:
             m = m & df["Department"].isin(departments)
+        if _payor_row_groups is not None:
+            m = m & _payor_row_groups.isin(payor_selected)
         if physician:
             rc = "AttendingPhysician" if physician_role == "attending" else "SupervisingPhysician"
             if rc in df.columns:
@@ -3655,8 +3724,8 @@ clientside_callback(
 def _update_billing_kpis(*args):
     """Fast path: KPIs + dollar row + sparklines only. Paints first."""
     filt = _unpack_billing_filter_args(args)
-    rev_adj = args[19]
-    grid_rows = args[20]
+    rev_adj = args[_N_BILLING_FILTER_INPUTS]
+    grid_rows = args[_N_BILLING_FILTER_INPUTS + 1]
     data = _load_and_filter_billing_cached(**filt)
     if data is None:
         return [], [], {}
@@ -3692,8 +3761,8 @@ def _update_billing_kpis(*args):
 def _update_billing_charts_and_table(*args):
     """Slow path: chart data store + detail grid rows. Paints second."""
     filt = _unpack_billing_filter_args(args)
-    rev_adj = args[19]
-    grid_rows = args[20]
+    rev_adj = args[_N_BILLING_FILTER_INPUTS]
+    grid_rows = args[_N_BILLING_FILTER_INPUTS + 1]
     data = _load_and_filter_billing_cached(**filt)
     if data is None:
         return None, [], []
@@ -3908,11 +3977,12 @@ def _build_billing_kpis(bf, bf_prior, start, end, component):
 def update_cumulative(*args):
     """Cumulative stores only — separate callback so toggle changes are fast."""
     filt = _unpack_billing_filter_args(args)
-    rev_adj = args[19]  # store-rev-adj data
+    rev_adj = args[_N_BILLING_FILTER_INPUTS]  # store-rev-adj data
+    _base = _N_BILLING_FILTER_INPUTS + 1
     (volcum_mode, volcum_period_type, volcum_slice,
      rvucum_mode, rvucum_period_type, rvucum_slice,
      dollarcum_mode, dollarcum_period_type,
-     dollarcum_slice) = args[20:29]
+     dollarcum_slice) = args[_base:_base + 9]
 
     data = _load_and_filter_billing_cached(**filt)
     if data is None:
@@ -4021,14 +4091,15 @@ def update_cumulative(*args):
 def _update_payor_charts(*args):
     """Payor trend ridgeline + comparison bars — separate callback for fast toggles."""
     filt = _unpack_billing_filter_args(args)
-    rev_adj = args[19]
-    payor_mode = args[20] or "broad"
-    count_by = args[21] or "event"
-    trend_sort = args[22] or "volume"
-    compare_sort = args[23] or "volume"
-    period_type = args[24] or "calendar"
-    max_prior = args[25] if args[25] is not None else 1
-    compare_unit = args[26] or "count"
+    rev_adj = args[_N_BILLING_FILTER_INPUTS]
+    _base = _N_BILLING_FILTER_INPUTS + 1
+    payor_mode = args[_base] or "broad"
+    count_by = args[_base + 1] or "event"
+    trend_sort = args[_base + 2] or "volume"
+    compare_sort = args[_base + 3] or "volume"
+    period_type = args[_base + 4] or "calendar"
+    max_prior = args[_base + 5] if args[_base + 5] is not None else 1
+    compare_unit = args[_base + 6] or "count"
 
     _empty_fig = empty_figure("No data")
     _empty_fig.update_layout(height=_RIDGE_HEIGHT)
@@ -4302,8 +4373,10 @@ clientside_callback(
 )
 
 # Payor trend ridgeline (reuse diagRidge JS renderer)
-clientside_callback(
-    ClientsideFunction(namespace="diagRidge", function_name="renderTrend"),
+clientside_callback(f"""function() {{
+        var fig = window.dash_clientside.diagRidge.renderTrend.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("{PAGE_ID}-chart-payor-trend", fig);
+    }}""",
     Output(f"{PAGE_ID}-chart-payor-trend", "figure"),
     Input(f"{PAGE_ID}-chart-payor-trend-store", "data"),
     Input(f"{PAGE_ID}-chart-payor-trend-settings-smooth", "value"),
@@ -4417,8 +4490,10 @@ _SPARKLINE_IDS = [f"{PAGE_ID}-spark-{slug}" for slug in CATEGORY_SLUGS.values()]
 # The per-target form tolerates missing targets under
 # suppress_callback_exceptions=True.
 for _spark_id in _SPARKLINE_IDS:
-    clientside_callback(
-        ClientsideFunction(namespace="sparklines", function_name="updateFromStore"),
+    clientside_callback(f"""function() {{
+        var fig = window.dash_clientside.sparklines.updateFromStore.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("{_spark_id}", fig);
+    }}""",
         Output(_spark_id, "figure"),
         Input(f"{PAGE_ID}-store-kpi-sparklines", "data"),
         Input(_spark_id, "id"),
@@ -4672,6 +4747,63 @@ def _populate_physicians(start_date, end_date, departments, role,
 # CPT Accordion filter callbacks
 # ---------------------------------------------------------------------------
 register_cpt_callbacks(PAGE_ID)
+
+
+# ---------------------------------------------------------------------------
+# Payor filter: populate chips based on mode (actual/broad/phdsc)
+# ---------------------------------------------------------------------------
+@callback(
+    Output(f"{PAGE_ID}-filter-payor", "children"),
+    Output(f"{PAGE_ID}-filter-payor", "value"),
+    Input(f"{PAGE_ID}-filter-payor-mode", "value"),
+)
+def _populate_payor_chips(mode):
+    mode = mode or "broad"
+    try:
+        mapping = get_payor_mapping_dict()
+    except Exception:
+        mapping = {}
+
+    if mode == "broad":
+        options = list(_BROAD_CATEGORIES)
+    elif mode == "phdsc":
+        options = list(_PHDSC_CATEGORIES)
+    else:
+        # actual — standardized payor names observed in the data, by frequency
+        try:
+            bdf = _get_enriched_billing()
+        except Exception:
+            bdf = pd.DataFrame()
+        if bdf.empty or "PrimaryInsurance" not in bdf.columns:
+            options = []
+        else:
+            groups = _row_payor_groups(bdf["PrimaryInsurance"], "actual", mapping)
+            options = groups.value_counts().index.tolist()
+
+    chips = [dmc.Chip(opt, value=opt, size="xs", variant="filled") for opt in options]
+    return chips, []
+
+
+# Trigger label + clear-button visibility
+clientside_callback(
+    """function(vals) {
+        var n = (vals && vals.length) || 0;
+        var lbl = n > 0 ? "Payor (" + n + ")" : "Payor";
+        var sty = n > 0 ? {"display": "inline-flex"} : {"display": "none"};
+        return [lbl, sty];
+    }""",
+    Output(f"{PAGE_ID}-payor-filter-trigger", "children"),
+    Output(f"{PAGE_ID}-payor-filter-clear", "style"),
+    Input(f"{PAGE_ID}-filter-payor", "value"),
+)
+
+# Clear button action
+clientside_callback(
+    """function(n) { return []; }""",
+    Output(f"{PAGE_ID}-filter-payor", "value", allow_duplicate=True),
+    Input(f"{PAGE_ID}-payor-filter-clear", "n_clicks"),
+    prevent_initial_call=True,
+)
 
 
 # ---------------------------------------------------------------------------

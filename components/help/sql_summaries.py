@@ -820,5 +820,69 @@ TOTAL_COMMENT_LINES = TOTAL_FILE_LINES - TOTAL_SQL_LINES
 SQL_SHARE = TOTAL_SQL_LINES / TOTAL_FILE_LINES
 LARGEST_SCRIPT = max(SQL_SCRIPTS.items(), key=lambda kv: kv[1]["total"])
 SMALLEST_SCRIPT = min(SQL_SCRIPTS.items(), key=lambda kv: kv[1]["total"])
+
+# Git metadata for the SQL repo — populated from `git log` on the Aria
+# production directory when reachable. Falls back to hardcoded values so the
+# help page still renders on hosts without the repo synced.
 SQL_FIRST_COMMIT = "2025-11-17"
 SQL_LATEST_COMMIT = "2026-04-17"
+SQL_COMMIT_COUNT: int | None = None
+SQL_LAST_SUBJECT: str | None = None
+SQL_LAST_HASH: str | None = None
+
+try:
+    import fnmatch
+    import os as _os
+    from utils.git_info import (
+        git_stats as _git_stats,
+        github_list_tree as _gh_list_tree,
+        github_stats as _gh_stats,
+    )
+
+    # Include every *.sql in the Aria repo EXCEPT these three categories of
+    # utility script that aren't part of the dashboard's pipeline:
+    _SQL_EXCLUDE_GLOBS = (
+        "*/OTV_NewStart.sql",
+        "*/Physician_Schedule_API.sql",
+        "*/Report_*.sql",
+    )
+
+    def _is_production_sql(path: str) -> bool:
+        if not path.startswith("Production/") or not path.endswith(".sql"):
+            return False
+        return not any(fnmatch.fnmatchcase(path, g) for g in _SQL_EXCLUDE_GLOBS)
+
+    # --- Local git path ---------------------------------------------------
+    _local_repo: str | None = None
+    if _sql_dir is not None:
+        for _candidate in (_sql_dir, _sql_dir.parent, _sql_dir.parent.parent):
+            if (_candidate / ".git").exists():
+                _local_repo = str(_candidate)
+                break
+
+    _stats: dict = {}
+    if _local_repo:
+        _local_pathspecs = (
+            ":(glob)Production/**/*.sql",
+            ":(exclude,glob)Production/**/OTV_NewStart.sql",
+            ":(exclude,glob)Production/**/Physician_Schedule_API.sql",
+            ":(exclude,glob)Production/**/Report_*.sql",
+        )
+        _stats = _git_stats(_local_repo, _local_pathspecs)
+
+    # --- GitHub API fallback ---------------------------------------------
+    if not _stats:
+        _gh_token = _os.environ.get("ARIA_GH_TOKEN") or _os.environ.get("GITHUB_TOKEN")
+        _tree = _gh_list_tree("mconnor27", "Aria", _gh_token)
+        _gh_paths = tuple(p for p in _tree if _is_production_sql(p))
+        if _gh_paths:
+            _stats = _gh_stats("mconnor27", "Aria", _gh_paths, _gh_token)
+
+    if _stats:
+        SQL_FIRST_COMMIT = _stats.get("first_commit", SQL_FIRST_COMMIT)
+        SQL_LATEST_COMMIT = _stats.get("latest_commit", SQL_LATEST_COMMIT)
+        SQL_COMMIT_COUNT = _stats.get("count")
+        SQL_LAST_SUBJECT = _stats.get("last_subject")
+        SQL_LAST_HASH = _stats.get("last_hash")
+except Exception:
+    pass

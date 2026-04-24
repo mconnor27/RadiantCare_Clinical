@@ -1360,6 +1360,97 @@ def load_referrals():
     return df
 
 
+# Med-onc site departments (the five PRCS sites referrals go TO).
+_MEDONC_SITES = ("LACEY", "CENTRALIA", "ABERDEEN", "YELM", "SHELTON")
+
+
+@lru_cache(maxsize=1)
+def load_medonc_referrals():
+    """Load the Medical Oncology (PRCS) Referrals Report Excel file.
+
+    Source: Referrals_Report_PRCS_*.xlsx — referrals TO medical oncology
+    across the five PRCS sites (Lacey, Centralia, Aberdeen, Yelm, Shelton).
+    Used to analyze cross-referral patterns (which med-onc patients also
+    reach RadiantCare) and to spot potential under-referral to rad-onc.
+
+    Filters applied:
+      - Drop rows with no oncologic diagnosis (`Onc Dx == "No onc dx"` or null)
+      - Drop self-referrals from the same five med-onc sites (med-onc → med-onc)
+      - Drop referrals from RadiantCare (rad-onc → med-onc handoffs are not
+        the signal we care about here)
+
+    Parses date columns and normalizes MRN to Int64 (joins to rad-onc data
+    via load_referrals() MRN and clinic-visits PatientId).
+    """
+    import glob as _glob
+
+    pattern = str(DATA_DIR / "Referrals_Report_PRCS_*.xlsx")
+    matches = sorted(_glob.glob(pattern))
+    if not matches:
+        return pd.DataFrame()
+
+    src_paths = [Path(m) for m in matches]
+    cached = _read_parquet_cache("MedOncReferrals", src_paths)
+    if cached is not None:
+        return cached
+
+    frames = [pd.read_excel(m) for m in matches]
+    df = pd.concat(frames, ignore_index=True)
+    if "Referral ID" in df.columns:
+        df = df.drop_duplicates(subset=["Referral ID"], keep="last").reset_index(drop=True)
+
+    # Parse date columns
+    date_cols = ["Created", "Expires", "First Appt", "Assigned On",
+                 "Final Status Date", "Authorized On", "DOB"]
+    for col in date_cols:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], errors="coerce")
+
+    # Normalize MRN for joining to rad-onc data
+    if "MRN" in df.columns:
+        df["MRN"] = pd.to_numeric(df["MRN"], errors="coerce").astype("Int64")
+
+    # --- Filter: non-oncologic diagnoses ---
+    if "Onc Dx" in df.columns:
+        has_onc = df["Onc Dx"].notna() & (df["Onc Dx"].astype(str).str.strip() != "No onc dx")
+        df = df.loc[has_onc].reset_index(drop=True)
+
+    # --- Filter: self-referrals (same med-onc sites) and RadiantCare referrals ---
+    if "Referred by Department" in df.columns:
+        # Strip "DO NOT USE - " prefix (same convention as load_referrals)
+        df["Referred by Department"] = df["Referred by Department"].astype("string").str.replace(
+            r"^DO NOT USE\s*-\s*", "", regex=True
+        )
+        by_dept = df["Referred by Department"].fillna("")
+        sites_pat = "|".join(_MEDONC_SITES)
+        self_ref = by_dept.str.contains(
+            rf"PRCS\s+(?:{sites_pat})(?:\s|$)", case=False, regex=True, na=False
+        )
+        radcare = by_dept.str.contains("RADIANTCARE", case=False, na=False)
+        df = df.loc[~(self_ref | radcare)].reset_index(drop=True)
+
+    # --- Normalize "Referred to Department" to short site name ---
+    if "Referred to Department" in df.columns:
+        def _short_site(s):
+            if pd.isna(s):
+                return None
+            s_upper = str(s).upper()
+            for site in _MEDONC_SITES:
+                if site in s_upper:
+                    return site.title()
+            return None
+        df["ReferredToSite"] = df["Referred to Department"].map(_short_site)
+
+    # Alias ICD-10 codes to "DiagnosisCodes" so the standard diagnosis
+    # accordion filter (which expects comma-separated ICD-10s in a
+    # "DiagnosisCodes" column) works on this dataset.
+    if "ICD-10 Diagnosis Code" in df.columns:
+        df["DiagnosisCodes"] = df["ICD-10 Diagnosis Code"]
+
+    _write_parquet_cache("MedOncReferrals", df)
+    return df
+
+
 @lru_cache(maxsize=1)
 def load_referring():
     """Load Lookup - Referring.csv."""

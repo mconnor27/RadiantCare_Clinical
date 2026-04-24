@@ -891,7 +891,7 @@ layout = dmc.Stack(
         dcc.Store(id="wf-outlier-enabled", data=True),
         dcc.Store(id="wf-filter-options"),
         dcc.Store(id="wf-table-filter-rows"),  # filtered row indices from grid
-        html.Div(id="wf-filter-options-applier", style={"display": "none"}),
+        html.Div(style={"display": "none"}),
 
         # Compare mode
         dcc.Store(id="wf-compare-mode", data=False),
@@ -903,7 +903,7 @@ layout = dmc.Stack(
         dcc.Store(id="wf-b-store-selected-flow"),
         dcc.Store(id="wf-b-outlier-enabled", data=True),
         dcc.Store(id="wf-b-filter-options"),
-        html.Div(id="wf-b-filter-options-applier", style={"display": "none"}),
+        html.Div(style={"display": "none"}),
     ],
 )
 
@@ -2322,8 +2322,10 @@ clientside_callback(
 
 # Distribution chart — compare-aware
 # A/B agg toggles passed directly so median↔mean switches are instant (no server round-trip)
-clientside_callback(
-    ClientsideFunction(namespace="flowGantt", function_name="renderFlowDistribution"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.flowGantt.renderFlowDistribution.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("wf-chart-dist", fig);
+    }""",
     Output("wf-chart-dist", "figure"),
     Output("wf-dist-title", "children"),
     Input("wf-store-flow-details", "data"),
@@ -2339,8 +2341,10 @@ clientside_callback(
 )
 
 # Trend chart — compare-aware
-clientside_callback(
-    ClientsideFunction(namespace="flowGantt", function_name="renderFlowTrend"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.flowGantt.renderFlowTrend.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("wf-chart-trend", fig);
+    }""",
     Output("wf-chart-trend", "figure"),
     Output("wf-trend-title", "children"),
     Output("wf-trend-maturity-legend", "style"),

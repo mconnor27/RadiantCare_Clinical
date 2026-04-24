@@ -110,7 +110,6 @@ def _build_tx_filter_bar():
                                         value=[],
                                     ),
                                 ],
-                                id="tx-machine-wrap",
                                 p="xs",
                                 shadow="md",
                                 withBorder=True,
@@ -145,7 +144,6 @@ def _build_tx_filter_bar():
                             ),
                             dcc.Store(id="tx-physician-role", data="treating"),
                             dmc.Paper(
-                                id="tx-physician-panel",
                                 children=[
                                     dmc.SegmentedControl(
                                         id="tx-physician-role-ctrl",
@@ -311,7 +309,7 @@ layout = dmc.Stack(
         ),
 
         # KPI row — 6 cards with clientside sparklines
-        dmc.Grid(id="tx-kpi-row", gutter="md", children=[
+        dmc.Grid(gutter="md", children=[
             dmc.GridCol(kpi_placeholder(), id="tx-kpi-volume", span={"base": 12, "sm": 6, "md": 2}),
             dmc.GridCol(kpi_placeholder(), id="tx-kpi-newstarts", span={"base": 12, "sm": 6, "md": 2}),
             dmc.GridCol(kpi_placeholder(), id="tx-kpi-patients", span={"base": 12, "sm": 6, "md": 2}),
@@ -2509,48 +2507,60 @@ def _update_gating(*args):
 # Clientside callbacks — KPI sparklines via store + smooth slider
 # ---------------------------------------------------------------------------
 
-clientside_callback(
-    ClientsideFunction(namespace="sparklines", function_name="smoothTxVolume"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.sparklines.smoothTxVolume.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("tx-spark-volume", fig);
+    }""",
     Output("tx-spark-volume", "figure"),
     Input("tx-store-kpi-sparklines", "data"),
     Input("tx-smooth-slider", "value"),
     prevent_initial_call=True,
 )
 
-clientside_callback(
-    ClientsideFunction(namespace="sparklines", function_name="smoothTxNewstarts"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.sparklines.smoothTxNewstarts.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("tx-spark-newstarts", fig);
+    }""",
     Output("tx-spark-newstarts", "figure"),
     Input("tx-store-kpi-sparklines", "data"),
     Input("tx-smooth-slider", "value"),
     prevent_initial_call=True,
 )
 
-clientside_callback(
-    ClientsideFunction(namespace="sparklines", function_name="smoothTxPatients"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.sparklines.smoothTxPatients.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("tx-spark-patients", fig);
+    }""",
     Output("tx-spark-patients", "figure"),
     Input("tx-store-kpi-sparklines", "data"),
     Input("tx-smooth-slider", "value"),
     prevent_initial_call=True,
 )
 
-clientside_callback(
-    ClientsideFunction(namespace="sparklines", function_name="smoothTxElapsed"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.sparklines.smoothTxElapsed.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("tx-spark-elapsed", fig);
+    }""",
     Output("tx-spark-elapsed", "figure"),
     Input("tx-store-kpi-sparklines", "data"),
     Input("tx-smooth-slider", "value"),
     prevent_initial_call=True,
 )
 
-clientside_callback(
-    ClientsideFunction(namespace="sparklines", function_name="smoothTxFields"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.sparklines.smoothTxFields.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("tx-spark-fields", fig);
+    }""",
     Output("tx-spark-fields", "figure"),
     Input("tx-store-kpi-sparklines", "data"),
     Input("tx-smooth-slider", "value"),
     prevent_initial_call=True,
 )
 
-clientside_callback(
-    ClientsideFunction(namespace="sparklines", function_name="smoothTxGating"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.sparklines.smoothTxGating.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("tx-spark-gating", fig);
+    }""",
     Output("tx-spark-gating", "figure"),
     Input("tx-store-kpi-sparklines", "data"),
     Input("tx-smooth-slider", "value"),
@@ -2634,7 +2644,8 @@ clientside_callback(
             layout.xaxis = {gridcolor: _gridColor};
         }
 
-        return {data: traces, layout: layout};
+        var __fig = ({data: traces, layout: layout});
+        return window.dash_clientside.chartDeferred.wrap("tx-chart-elapsed", __fig);
     }""",
     Output("tx-chart-elapsed", "figure"),
     Input("tx-store-elapsed", "data"),
@@ -2707,6 +2718,23 @@ for _cx_sid, _cx_slice in [("tx-multiiso", "tx-multiiso-slice"),
 # Inline wrapper reorders args so Dash Input/State ordering matches the
 # smoothChartWithType(rawData, smoothPct, chartType, currentFig, stackOverride)
 # signature (Inputs before States).
+def _census_render(chart_id):
+    """Per-chart factory: bakes chart_id into the callback JS so the wrapped
+    figure can be routed through chartDeferred.wrap() for staggered render."""
+    return f"""function(rawData, smoothPct, chartType, stackOverride, currentFig) {{
+        var fig = window.dash_clientside.census.smoothChartWithType(
+            rawData, smoothPct, chartType, currentFig, stackOverride
+        );
+        if (fig && fig !== window.dash_clientside.no_update && rawData && rawData.series) {{
+            if (rawData.series.length <= 1) {{
+                fig.layout = fig.layout || {{}};
+                fig.layout.showlegend = false;
+            }}
+        }}
+        return window.dash_clientside.chartDeferred.wrap("{chart_id}", fig);
+    }}"""
+
+
 _CENSUS_RENDER = """function(rawData, smoothPct, chartType, stackOverride, currentFig) {
     var fig = window.dash_clientside.census.smoothChartWithType(
         rawData, smoothPct, chartType, currentFig, stackOverride
@@ -2721,7 +2749,7 @@ _CENSUS_RENDER = """function(rawData, smoothPct, chartType, stackOverride, curre
 }"""
 
 clientside_callback(
-    _CENSUS_RENDER,
+    _census_render("tx-chart-volume"),
     Output("tx-chart-volume", "figure"),
     Input("tx-chart-volume-store", "data"),
     Input("tx-volume-settings-smooth", "value"),
@@ -2732,7 +2760,7 @@ clientside_callback(
 )
 
 clientside_callback(
-    _CENSUS_RENDER,
+    _census_render("tx-chart-technique"),
     Output("tx-chart-technique", "figure"),
     Input("tx-chart-technique-store", "data"),
     Input("tx-technique-settings-smooth", "value"),
@@ -2743,7 +2771,7 @@ clientside_callback(
 )
 
 clientside_callback(
-    _CENSUS_RENDER,
+    _census_render("tx-chart-fieldtype"),
     Output("tx-chart-fieldtype", "figure"),
     Input("tx-chart-fieldtype-store", "data"),
     Input("tx-fieldtype-settings-smooth", "value"),
@@ -2753,8 +2781,10 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
-clientside_callback(
-    ClientsideFunction(namespace="cumulative", function_name="renderWithProjectToggle"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.cumulative.renderWithProjectToggle.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("tx-chart-cumulative", fig);
+    }""",
     Output("tx-chart-cumulative", "figure"),
     Input("tx-store-cumulative", "data"),
     Input("tx-cumulative-settings-smooth", "value"),
@@ -2839,7 +2869,7 @@ clientside_callback(
 )
 
 clientside_callback(
-    _CENSUS_RENDER,
+    _census_render("tx-chart-igrt"),
     Output("tx-chart-igrt", "figure"),
     Input("tx-chart-igrt-store", "data"),
     Input("tx-igrt-settings-smooth", "value"),
@@ -2850,7 +2880,7 @@ clientside_callback(
 )
 
 clientside_callback(
-    _CENSUS_RENDER,
+    _census_render("tx-chart-newstarts"),
     Output("tx-chart-newstarts", "figure"),
     Input("tx-chart-newstarts-store", "data"),
     Input("tx-newstarts-settings-smooth", "value"),
@@ -2861,7 +2891,7 @@ clientside_callback(
 )
 
 clientside_callback(
-    _CENSUS_RENDER,
+    _census_render("tx-chart-gating"),
     Output("tx-chart-gating", "figure"),
     Input("tx-chart-gating-store", "data"),
     Input("tx-gating-settings-smooth", "value"),
@@ -2872,7 +2902,7 @@ clientside_callback(
 )
 
 clientside_callback(
-    _CENSUS_RENDER,
+    _census_render("tx-chart-multiiso"),
     Output("tx-chart-multiiso", "figure"),
     Input("tx-chart-multiiso-store", "data"),
     Input("tx-multiiso-settings-smooth", "value"),
@@ -2883,7 +2913,7 @@ clientside_callback(
 )
 
 clientside_callback(
-    _CENSUS_RENDER,
+    _census_render("tx-chart-avgfields"),
     Output("tx-chart-avgfields", "figure"),
     Input("tx-chart-avgfields-store", "data"),
     Input("tx-avgfields-settings-smooth", "value"),

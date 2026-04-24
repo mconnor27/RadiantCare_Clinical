@@ -426,6 +426,7 @@ NAV_SECTIONS = [
         "pages": [
             {"label": "Patients",  "path": "/patients",  "icon": "tabler:users"},
             {"label": "Referrals", "path": "/referrals", "icon": "tabler:link"},
+            {"label": "Referrals (MedOnc)", "path": "/medonc-referrals", "icon": "tabler:transfer"},
         ],
     },
 ]

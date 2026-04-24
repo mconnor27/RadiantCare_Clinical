@@ -93,7 +93,6 @@ def _build_courses_filter_bar():
                                 style={"position": "relative", "display": "inline-block"},
                             ),
                             dmc.Paper(
-                                id="courses-physician-panel",
                                 children=[
                                     dmc.SegmentedControl(
                                         id="courses-physician-role",
@@ -153,7 +152,6 @@ def _build_courses_filter_bar():
                                     multiple=True,
                                     value=[],
                                 ),
-                                id="courses-technique-panel",
                                 p="xs",
                                 shadow="md",
                                 withBorder=True,
@@ -358,7 +356,7 @@ layout = dmc.Stack(
         ),
 
         # KPI row — 6 cards
-        dmc.Grid(id="courses-kpi-row", gutter="md", children=[
+        dmc.Grid(gutter="md", children=[
             dmc.GridCol(kpi_placeholder(), id="courses-kpi-active", span={"base": 12, "sm": 6, "md": 2}),
             dmc.GridCol(kpi_placeholder(), id="courses-kpi-started", span={"base": 12, "sm": 6, "md": 2}),
             dmc.GridCol(kpi_placeholder(), id="courses-kpi-completed", span={"base": 12, "sm": 6, "md": 2}),
@@ -3664,7 +3662,8 @@ def _update_courses_cumulative(*args):
 
 clientside_callback(
     """function(rawData, smoothPct, chartType, stackVal, currentFig) {
-        return window.dash_clientside.census.smoothChartWithType(rawData, smoothPct, chartType, currentFig, stackVal);
+        var __fig = (window.dash_clientside.census.smoothChartWithType(rawData, smoothPct, chartType, currentFig, stackVal));
+        return window.dash_clientside.chartDeferred.wrap("courses-chart-volume", __fig);
     }""",
     Output("courses-chart-volume", "figure"),
     Input("courses-store-volume", "data"),
@@ -3675,8 +3674,10 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
-clientside_callback(
-    ClientsideFunction(namespace="cumulative", function_name="renderWithProjectToggle"),
+clientside_callback("""function() {
+        var fig = window.dash_clientside.cumulative.renderWithProjectToggle.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("courses-chart-cumulative", fig);
+    }""",
     Output("courses-chart-cumulative", "figure"),
     Input("courses-store-cumulative", "data"),
     Input("courses-cumulative-settings-smooth", "value"),
@@ -3705,8 +3706,10 @@ _COURSES_SPARKLINE_IDS = [
 ]
 
 for _spark_id in _COURSES_SPARKLINE_IDS:
-    clientside_callback(
-        ClientsideFunction(namespace="sparklines", function_name="updateFromStore"),
+    clientside_callback(f"""function() {{
+        var fig = window.dash_clientside.sparklines.updateFromStore.apply(null, arguments);
+        return window.dash_clientside.chartDeferred.wrap("{_spark_id}", fig);
+    }}""",
         Output(_spark_id, "figure"),
         Input("courses-store-kpi-sparklines", "data"),
         Input(_spark_id, "id"),
@@ -3877,7 +3880,8 @@ clientside_callback(
             hideLegend: combo.series.length <= 1,
             stacked: false
         };
-        return window.dash_clientside.census.smoothChartWithType(data, smoothVal, chartType || "line", currentFig);
+        var __fig = (window.dash_clientside.census.smoothChartWithType(data, smoothVal, chartType || "line", currentFig));
+        return window.dash_clientside.chartDeferred.wrap("courses-chart-frac-trend", __fig);
     }""",
     Output("courses-chart-frac-trend", "figure"),
     Input("courses-store-frac-trend", "data"),
@@ -3920,7 +3924,8 @@ clientside_callback(
             hideLegend: combo.series.length <= 1,
             stacked: false
         };
-        return window.dash_clientside.census.smoothChartWithType(data, smoothVal, chartType || "line", currentFig);
+        var __fig = (window.dash_clientside.census.smoothChartWithType(data, smoothVal, chartType || "line", currentFig));
+        return window.dash_clientside.chartDeferred.wrap("courses-chart-quit-trend", __fig);
     }""",
     Output("courses-chart-quit-trend", "figure"),
     Input("courses-store-quit-trend", "data"),
