@@ -401,6 +401,14 @@ def sanitize_referrals(raw_root: Path, out_root: Path, salt: str) -> dict:
     Hash: MRN
     Transform: DOB → AgeAtReferral (before dropping)
     Keep: Referred by Provider, institution, specialty, all referral-lifecycle dates
+
+    Matches only the rad-onc report (filename starts with
+    `Referrals_Report_RadiantCare_All_`). The med-onc PRCS report
+    (`Referrals_Report_PRCS_*.xlsx`) is handled separately by
+    `sanitize_medonc_referrals` — we disambiguate on the filename because
+    both arrive in the same OneDrive folder and share the same column
+    shape but represent different referral directions (TO rad-onc vs TO
+    med-onc).
     """
     import glob as _glob
 
@@ -449,6 +457,66 @@ def sanitize_referrals(raw_root: Path, out_root: Path, salt: str) -> dict:
     }
 
 
+def sanitize_medonc_referrals(raw_root: Path, out_root: Path, salt: str) -> dict:
+    """Med-Onc PRCS Referrals report — parallel structure to the rad-onc
+    referrals file. Distinguished from the rad-onc file purely by filename
+    prefix (`Referrals_Report_PRCS_*.xlsx` vs `_RadiantCare_All_*.xlsx`).
+
+    Drop: Patient Name, DOB
+    Hash: MRN
+    Transform: DOB → AgeAtReferral (before dropping), using the referral's
+               Created date as the reference point
+    Keep: provider/department/specialty fields, diagnoses, all
+          referral-lifecycle dates, referring-provider address fields
+          (provider info, not patient PHI)
+    """
+    import glob as _glob
+
+    pattern = str(raw_root / "Referrals_Report_PRCS_*.xlsx")
+    matches = sorted(_glob.glob(pattern))
+    if not matches:
+        return {"name": "MedOncReferrals", "status": "skipped (no xlsx matched)"}
+
+    files_processed = 0
+    rows_in = 0
+    rows_out = 0
+    dropped_any: list[str] = []
+
+    for src in matches:
+        src_path = Path(src)
+        df = pd.read_excel(src_path)
+        rows_in += len(df)
+
+        if "DOB" in df.columns and "Created" in df.columns:
+            ref_dates = pd.to_datetime(df["Created"], errors="coerce")
+            ref = ref_dates.max() if ref_dates.notna().any() else None
+            df["AgeAtReferral"] = derive_age_from_dob(df["DOB"], ref)
+
+        dropped = drop_columns(df, ["Patient Name", "DOB"])
+        for d in dropped:
+            if d not in dropped_any:
+                dropped_any.append(d)
+
+        hash_column(df, "MRN", salt)
+
+        rows_out += len(df)
+        out_path = out_root / src_path.name
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_excel(out_path, index=False)
+        files_processed += 1
+
+    return {
+        "name": "MedOncReferrals",
+        "files": files_processed,
+        "rows_in": rows_in,
+        "rows_out": rows_out,
+        "dropped": dropped_any,
+        "hashed": ["MRN"],
+        "transforms": ["DOB → AgeAtReferral (capped at 90+)"],
+        "status": "ok",
+    }
+
+
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
@@ -462,5 +530,6 @@ def sanitize_all(raw_root: Path, out_root: Path, salt: str) -> list[dict]:
 
     audit.append(sanitize_lookup_patients(raw_root, out_root, salt))
     audit.append(sanitize_referrals(raw_root, out_root, salt))
+    audit.append(sanitize_medonc_referrals(raw_root, out_root, salt))
 
     return audit

@@ -5279,9 +5279,10 @@ def _seed_payor_mappings_if_needed():
     Output(f"{PAGE_ID}-pm-full-store", "data"),
     Input(f"{PAGE_ID}-irm-tabs", "value"),
     Input(f"{PAGE_ID}-irm-btn", "n_clicks"),
+    State(f"{PAGE_ID}-pm-filter", "value"),
     prevent_initial_call=True,
 )
-def _pm_load(tab, n_clicks):
+def _pm_load(tab, n_clicks, active_filter):
     """Load payor mapping grid when tab is selected or button clicked."""
     import time as _t
     _t0 = _t.time()
@@ -5321,8 +5322,10 @@ def _pm_load(tab, n_clicks):
     # Sort by event_count desc by default
     rows.sort(key=lambda r: r["event_count"], reverse=True)
 
-    # Get canonical payors for the editor dropdown
-    canonical = sorted([r["payor"] for r in get_all_insurance_rates()])
+    # Get canonical payors for the editor dropdown — mirror the Payor Entities
+    # tab (names actually referenced by at least one mapping) so the dropdown
+    # stays in sync when entities are renamed/deleted.
+    canonical = sorted({e["name"] for e in get_standardized_payor_counts() if e.get("name")})
 
     # Build column defs with dynamic cellEditorParams
     col_defs = [
@@ -5372,7 +5375,10 @@ def _pm_load(tab, n_clicks):
     mapped = sum(1 for r in rows if r["standardized_payor"])
     count_text = f"{mapped} mapped / {len(rows)} total"
     print(f"[IRM] _pm_load DONE in {(_t.time()-_t0)*1000:.0f}ms", flush=True)
-    return rows, col_defs, count_text, rows
+    # Respect the active filter toggle so that switching tabs / reopening the
+    # modal doesn't silently reset the view to "all".
+    visible = _apply_pm_filter(rows, active_filter)
+    return visible, col_defs, count_text, rows
 
 
 def _apply_pm_filter(full_data, filter_val):

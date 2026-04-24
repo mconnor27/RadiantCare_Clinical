@@ -23,6 +23,7 @@ from config.settings import (
     DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, DEFAULT_GRID_CLASS,
 )
 from components.kpi_card import kpi_card, kpi_placeholder
+from components.chart_card import register_chart_callbacks
 from components.chart_settings import chart_settings_popover
 from components.diagnosis_filter import diagnosis_accordion, register_diagnosis_callbacks
 from components.outlier_panel import outlier_panel, register_outlier_callbacks
@@ -890,7 +891,10 @@ layout = dmc.Stack(
             ),
         ]),
 
-        # Diagnosis + Site conversion (moved here — they're the analytic pair)
+        # Diagnosis (tall, left) + Site conversion / KM curve stacked on right.
+        # Dx graph is exactly 2x the right-column card height so the two
+        # columns align; right column stacks Site on top of KM with the
+        # same 16px gutter.
         dmc.Grid(gutter=16, align="flex-start", children=[
             dmc.GridCol(
                 span={"base": 12, "md": 6},
@@ -898,41 +902,42 @@ layout = dmc.Stack(
                     children=[
                         dmc.Text("Rad-Onc Conversion by Diagnosis", size="sm", fw=500,
                                  c=NEUTRAL["text_secondary"], mb=6),
-                        # Taller graph to fit every diagnosis category as
-                        # its own row without squeezing bar heights.
+                        # Graph height = 2 × right-side graph (400px) + 16px
+                        # stack gutter + one-card-chrome delta so the Dx
+                        # chart visually spans both right-column cards.
                         dcc.Graph(id=f"{PAGE_ID}-dx-conversion", config=DEFAULT_GRAPH_CONFIG,
-                                  style={"height": "640px"}),
+                                  style={"height": "852px"}),
                     ],
                     pt="sm", px="md", pb=4, radius="md", shadow="xs", withBorder=True,
+                    style={"height": "896px"},
                 ),
             ),
             dmc.GridCol(
                 span={"base": 12, "md": 6},
-                children=dmc.Paper(
-                    children=[
-                        dmc.Text("Conversion by Med-Onc Site", size="sm", fw=500,
-                                 c=NEUTRAL["text_secondary"], mb=6),
-                        dcc.Graph(id=f"{PAGE_ID}-site-conversion", config=DEFAULT_GRAPH_CONFIG,
-                                  style={"height": "380px"}),
-                    ],
-                    pt="sm", px="md", pb=4, radius="md", shadow="xs", withBorder=True,
-                    style={"height": "440px"},
-                ),
+                children=dmc.Stack(gap=16, children=[
+                    dmc.Paper(
+                        children=[
+                            dmc.Text("Conversion by Med-Onc Site", size="sm", fw=500,
+                                     c=NEUTRAL["text_secondary"], mb=6),
+                            dcc.Graph(id=f"{PAGE_ID}-site-conversion", config=DEFAULT_GRAPH_CONFIG,
+                                      style={"height": "415px"}),
+                        ],
+                        pt="sm", px="md", pb=4, radius="md", shadow="xs", withBorder=True,
+                        style={"height": "440px"},
+                    ),
+                    dmc.Paper(
+                        children=[
+                            dmc.Text("Cumulative Rad-Onc Contact Over Time (by Diagnosis)",
+                                     size="sm", fw=500, c=NEUTRAL["text_secondary"], mb=6),
+                            dcc.Graph(id=f"{PAGE_ID}-km-curve", config=DEFAULT_GRAPH_CONFIG,
+                                      style={"height": "396px"}),
+                        ],
+                        pt="sm", px="md", pb=8, radius="md", shadow="xs", withBorder=True,
+                        style={"height": "440px"},
+                    ),
+                ]),
             ),
         ]),
-
-        # Timing histogram (full width)
-        dmc.Paper(
-            children=[
-                dmc.Text(
-                    "Days from Med-Onc Referral → Rad-Onc First Contact",
-                    size="sm", fw=500, c=NEUTRAL["text_secondary"], mb=6,
-                ),
-                dcc.Graph(id=f"{PAGE_ID}-timing", config=DEFAULT_GRAPH_CONFIG,
-                          style={"height": "340px"}),
-            ],
-            p="sm", px="md", radius="md", shadow="xs", withBorder=True,
-        ),
 
         # Referring source cross-tab
         dmc.Paper(
@@ -998,6 +1003,16 @@ register_outlier_callbacks(
     defaults=[_CAP_CREATED_TO_SCHED, _CAP_SCHED_TO_APPT],
 )
 
+# Wire gear-icon panel toggle + PNG export for the three companion charts
+# under the Flow Gantt (same wiring the rad-onc Referrals page uses).
+register_chart_callbacks([
+    (f"{PAGE_ID}-dist",  f"{PAGE_ID}-flow-dist"),
+    {"sid": f"{PAGE_ID}-trend", "gid": f"{PAGE_ID}-flow-trend",
+     "store_id": True, "show_grouping": False},
+    {"sid": f"{PAGE_ID}-conv",  "gid": f"{PAGE_ID}-flow-conv",
+     "store_id": True, "show_grouping": False},
+])
+
 
 # ---------------------------------------------------------------------------
 # Linkage window label updaters
@@ -1047,8 +1062,8 @@ def _update_linkwin_button(pre, post):
     Output(f"{PAGE_ID}-store-flow-gantt", "data"),
     Output(f"{PAGE_ID}-store-flow-details", "data"),
     Output(f"{PAGE_ID}-dx-conversion", "figure"),
-    Output(f"{PAGE_ID}-timing", "figure"),
     Output(f"{PAGE_ID}-site-conversion", "figure"),
+    Output(f"{PAGE_ID}-km-curve", "figure"),
     Output(f"{PAGE_ID}-source-table", "children"),
     Output(f"{PAGE_ID}-detail-table", "children"),
     Input(f"{PAGE_ID}-filter-date", "value"),
@@ -1076,7 +1091,8 @@ def _update_all(date_preset, site_filter, diag_cats, diag_mode, pre_days, post_d
             dmc.GridCol(kpi_placeholder(), span={"base": 12, "sm": 6, "md": 2.4}) for _ in range(5)
         ]
         empty = empty_figure("No Data for Current Filters")
-        return placeholders, None, None, empty, empty, empty, html.Div(), html.Div()
+        return (placeholders, None, None, empty, empty, empty,
+                html.Div(), html.Div())
 
     # When outlier filtering is disabled, use very permissive caps so
     # effectively no values are clipped. The Appt → Rad-Onc Ref cap is
@@ -1095,8 +1111,8 @@ def _update_all(date_preset, site_filter, diag_cats, diag_mode, pre_days, post_d
         _compute_medonc_flow_data(cohort, cap_0, cap_1, cap_2),
         _compute_medonc_flow_details(cohort, cap_0, cap_1, cap_2),
         _build_dx_conversion(cohort),
-        _build_timing(cohort),
         _build_site_conversion(cohort),
+        _build_km_curve(cohort, post_days),
         _build_source_table(cohort),
         _build_detail_table(cohort),
     )
@@ -1201,8 +1217,9 @@ def _build_dx_conversion(cohort):
     agg["pct_treated"] = agg["treated"] / agg["n"] * 100
 
     fig = go.Figure()
-    # Traces rendered in reverse order: last-added is top of each group.
-    # Order request: Reached on top, Treated on bottom → add Treated first.
+    # Traces rendered in reverse order: last-added is top of each group, so
+    # we add Treated first → Reached sits on top of each bar group. Legend
+    # order is controlled separately via legendrank so Reached reads first.
     fig.add_bar(
         y=agg["DxCategory"], x=agg["pct_treated"],
         name="Treated by Rad-Onc",
@@ -1211,6 +1228,7 @@ def _build_dx_conversion(cohort):
         text=[f"{v:.0f}%" for v in agg["pct_treated"]],
         textposition="outside",
         hovertemplate="%{y}<br>%{x:.1f}%% treated<extra></extra>",
+        legendrank=2,
     )
     fig.add_bar(
         y=agg["DxCategory"], x=agg["pct_linked"],
@@ -1221,6 +1239,7 @@ def _build_dx_conversion(cohort):
         textposition="outside",
         hovertemplate="%{y}<br>%{x:.1f}%% linked (n=%{customdata})<extra></extra>",
         customdata=agg["n"],
+        legendrank=1,
     )
     apply_default_layout(fig)
     fig.update_layout(
@@ -1229,39 +1248,6 @@ def _build_dx_conversion(cohort):
         yaxis=dict(title=""),
         margin=dict(l=140, r=40, t=10, b=30),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-    )
-    fig.update_xaxes(hoverformat="")
-    return fig
-
-
-def _build_timing(cohort):
-    # Restrict to patients seen by med-onc — others couldn't realistically
-    # have been referred on to rad-onc and would bias the distribution.
-    d = cohort.loc[cohort["SeenByMedOnc"].astype(bool), "DaysToRadOnc"].dropna()
-    if d.empty:
-        return empty_figure("No Linked Patients")
-    pre_lo = -int(abs(d.min())) if not d.empty else 0
-    post_hi = int(d.max()) if not d.empty else 0
-    fig = go.Figure()
-    fig.add_histogram(
-        x=d,
-        xbins=dict(start=min(pre_lo, -30), end=max(post_hi, 30), size=30),
-        marker=dict(color=PRIMARY),
-        hovertemplate="%{x} Days<br>%{y} Patients<extra></extra>",
-    )
-    median = float(d.median())
-    fig.add_vline(
-        x=median, line_dash="dash", line_color=SEMANTIC_COLORS.get("warning", "#F59E0B"),
-        annotation_text=f"Median {median:+.0f}d",
-        annotation_position="top right",
-    )
-    fig.add_vline(x=0, line_color=NEUTRAL["text_muted"], line_width=1)
-    apply_default_layout(fig)
-    fig.update_layout(
-        xaxis=dict(title="Days (Negative = Rad-Onc Preceded Med-Onc)"),
-        yaxis=dict(title="Patients"),
-        margin=dict(l=50, r=20, t=10, b=40),
-        showlegend=False,
     )
     fig.update_xaxes(hoverformat="")
     return fig
@@ -1310,8 +1296,113 @@ def _build_site_conversion(cohort):
         barmode="group",
         xaxis=dict(title=""),
         yaxis=dict(title="% of Patients Seen by Med-Onc", ticksuffix="%", range=[0, 100]),
+        margin=dict(l=50, r=20, t=10, b=20),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+    )
+    fig.update_xaxes(hoverformat="")
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# Kaplan-Meier cumulative-incidence curve
+# ---------------------------------------------------------------------------
+
+def _km_estimator(times, events):
+    """Simple Kaplan-Meier survival estimator. Returns (t, S) arrays with a
+    step at each event time, starting from (0, 1). Cumulative incidence is
+    1 - S. No confidence intervals — this is a compact descriptive view."""
+    times = np.asarray(times, dtype=float)
+    events = np.asarray(events, dtype=int)
+    order = np.argsort(times)
+    times = times[order]
+    events = events[order]
+    if len(times) == 0:
+        return np.array([0.0]), np.array([1.0])
+
+    unique_event_times = np.unique(times[events == 1])
+    t_out = [0.0]
+    S_out = [1.0]
+    S = 1.0
+    for t in unique_event_times:
+        at_risk = int(np.sum(times >= t))
+        d = int(np.sum((times == t) & (events == 1)))
+        if at_risk > 0:
+            S *= (1.0 - d / at_risk)
+        t_out.append(float(t))
+        S_out.append(S)
+    # Extend the last step out to max observed time so the line doesn't
+    # terminate early just because the final event happened before the
+    # longest-followed patient's censor time.
+    if times.max() > t_out[-1]:
+        t_out.append(float(times.max()))
+        S_out.append(S)
+    return np.array(t_out), np.array(S_out)
+
+
+def _build_km_curve(cohort, post_days):
+    """Kaplan-Meier cumulative-incidence curves of rad-onc contact by
+    diagnosis. X axis is days from med-onc referral, Y is cumulative % of
+    patients who reached rad-onc. Non-linked patients are censored at
+    min(data_max - their referral date, post_days window).
+    """
+    if cohort.empty:
+        return empty_figure()
+    seen = cohort[cohort["SeenByMedOnc"].astype(bool)].copy()
+    if seen.empty:
+        return empty_figure()
+
+    cap_days = int(post_days) if post_days is not None else _DEFAULT_POST_DAYS
+    data_max = seen["Created"].max()
+    censor_days = (data_max - seen["Created"]).dt.days.clip(lower=0, upper=cap_days)
+
+    event = seen["LinkedToRadOnc"].astype(bool).astype(int)
+    # Use days-to-event for linked patients (clipped to window), censor time
+    # otherwise. DaysToRadOnc can be negative (rad-onc preceded med-onc) —
+    # treat those as event-at-day-0 for this cumulative view.
+    days_event = pd.to_numeric(seen["DaysToRadOnc"], errors="coerce").clip(lower=0, upper=cap_days)
+    days = days_event.where(event == 1, censor_days)
+
+    mask = days.notna() & (days >= 0)
+    seen = seen.loc[mask]
+    days = days.loc[mask]
+    event = event.loc[mask]
+    if seen.empty:
+        return empty_figure()
+
+    # Top diagnoses with enough N for a meaningful curve.
+    MIN_DX_N = 20
+    dx_counts = seen["DxCategory"].value_counts()
+    top_dx = [d for d in dx_counts.index
+              if str(d) not in ("Unknown", "nan") and dx_counts[d] >= MIN_DX_N][:6]
+
+    fig = go.Figure()
+    palette = ["#7C2A83", "#2196F3", "#F44336", "#4CAF50", "#F59E0B", "#0891B2"]
+    for i, dx in enumerate(top_dx):
+        m = (seen["DxCategory"] == dx).values
+        t, S = _km_estimator(days[m].values, event[m].values)
+        n = int(m.sum())
+        fig.add_scatter(
+            x=t, y=(1 - S) * 100,
+            mode="lines", name=f"{dx} (n={n})",
+            line=dict(color=palette[i % len(palette)], width=2, shape="hv"),
+            hovertemplate="Day %{x:.0f}<br>%{y:.1f}% Reached Rad-Onc<extra></extra>",
+        )
+
+    t, S = _km_estimator(days.values, event.values)
+    fig.add_scatter(
+        x=t, y=(1 - S) * 100,
+        mode="lines", name=f"All (n={len(seen)})",
+        line=dict(color=NEUTRAL["text_muted"], width=1.5, dash="dash", shape="hv"),
+        hovertemplate="Day %{x:.0f}<br>%{y:.1f}% Reached Rad-Onc<extra></extra>",
+    )
+
+    apply_default_layout(fig)
+    fig.update_layout(
+        xaxis=dict(title="Days From Med-Onc Referral", range=[0, cap_days]),
+        yaxis=dict(title="% Reached Rad-Onc (Cumulative)", ticksuffix="%", range=[0, 100]),
         margin=dict(l=50, r=20, t=10, b=40),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        hovermode="x unified",
     )
     fig.update_xaxes(hoverformat="")
     return fig

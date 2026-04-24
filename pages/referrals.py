@@ -77,7 +77,10 @@ _ICD10_RE = re.compile(r"([A-Z]\d[0-9A-Z](?:\.[0-9A-Z]+)?)\s*\(ICD-10")
 _ICD9_RE = re.compile(r"(\d{3}(?:\.\d+)?)\s*\(ICD-9")
 
 from data.loader import load_diagnosis as _load_diag
-from utils.diagnosis_categories import categorise_referral as _categorise_referral
+from utils.diagnosis_categories import (
+    categorise_referral as _categorise_referral,
+    categorise_free_text as _categorise_text,
+)
 _DIAG_C2C: dict[str, str] = build_code_to_category(_load_diag())
 
 
