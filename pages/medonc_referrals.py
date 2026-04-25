@@ -10,23 +10,24 @@ rad-onc conversion flag potential under-referral opportunities.
 
 import dash
 import dash_mantine_components as dmc
-import dash_ag_grid as dag
-from dash import callback, clientside_callback, ClientsideFunction, dcc, html, Input, Output
+from dash import callback, clientside_callback, ClientsideFunction, dcc, html, Input, Output, State
 from dash_iconify import DashIconify
 import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
 
 from config.settings import (
-    PRIMARY, NEUTRAL, SEMANTIC_COLORS,
+    PRIMARY, NEUTRAL, SEMANTIC_COLORS, PHI_MODE,
     DEFAULT_GRAPH_CONFIG,
     DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, DEFAULT_GRID_CLASS,
 )
 from components.kpi_card import kpi_card, kpi_placeholder
 from components.chart_card import register_chart_callbacks
 from components.chart_settings import chart_settings_popover
+from components.detail_table import detail_table
 from components.diagnosis_filter import diagnosis_accordion, register_diagnosis_callbacks
 from components.outlier_panel import outlier_panel, register_outlier_callbacks
+from components.phi import filter_phi_columns
 from utils.charts import apply_default_layout, empty_figure
 from utils.diagnosis_categories import (
     build_code_to_category, categorise_referral,
@@ -45,6 +46,25 @@ _DEFAULT_POST_DAYS = 3650  # 10 years — widest available window
 # counts only direct PRCS med-onc → rad-onc referrals (not external med-onc
 # groups that happen to also be classified as Medical Oncology).
 _PRCS_MEDONC_DEPT_RE = r"PRCS\s+(?:LACEY|CENTRALIA|ABERDEEN|YELM|SHELTON)(?:\s|$)"
+
+# Detail-grid columns whose free-text filter stays enabled in PHI mode.
+# Everything else has its filter suppressed to prevent patient drill-down —
+# these three are the only dimensions an analyst legitimately needs to slice
+# on while deidentified (by diagnosis, by referring dept, by referring MD).
+_PHI_FILTERABLE_FIELDS = {"Onc Diagnosis", "Referred by Dept", "Referred by Provider"}
+
+
+def _apply_grid_row_filter(dff, grid_rows):
+    """Filter dff to only rows matching the grid's visible row indices.
+
+    Called after _build_cohort + index reset so `dff.index` is 0..N-1 and
+    matches the `_row_idx` values rendered in the detail grid. Returns the
+    frame unchanged if no filter is active.
+    """
+    if grid_rows is None or dff is None or dff.empty:
+        return dff
+    idx_set = set(int(i) for i in grid_rows)
+    return dff.loc[dff.index.isin(idx_set)].reset_index(drop=True)
 
 
 _SITE_COLORS = {
@@ -193,8 +213,19 @@ def _build_cohort(date_preset, site_filter, diag_cats, diag_mode,
 # flow_gantt.js clientside renderer (main gantt + companion charts).
 # ---------------------------------------------------------------------------
 
-_FLOW_STAGES = ["Created", "Scheduled", "Med-Onc Appt", "Rad-Onc Referral"]
+_FLOW_STAGE_BASE = ["Created", "Scheduled", "Med-Onc Appt"]
 _FLOW_COLORS_MED = ["#7C2A83", "#2196F3", "#4CAF50", "#F59E0B"]
+
+
+def _flow_final_label(link_mode):
+    """Final-stage label for the flow gantt, driven by the top Linkage
+    toggle: 'any' tracks any rad-onc contact as the terminal event,
+    'medonc' tracks a direct rad-onc referral from PRCS med-onc."""
+    return "Rad-Onc Contact" if link_mode == "any" else "Rad-Onc Referral"
+
+
+def _flow_stages(link_mode):
+    return _FLOW_STAGE_BASE + [_flow_final_label(link_mode)]
 
 # Per-transition outlier cap DEFAULTS (days) — user-adjustable via the
 # outlier panel. Capping keeps a handful of extreme tail values from
@@ -234,19 +265,30 @@ def _safe_stat(series, cap, func="median"):
 
 def _compute_medonc_flow_data(cohort, cap_0=_CAP_CREATED_TO_SCHED,
                                cap_1=_CAP_SCHED_TO_APPT,
-                               cap_2=_CAP_APPT_TO_RADREF):
+                               cap_2=_CAP_APPT_TO_RADREF,
+                               link_mode="any"):
     """Main gantt rawData. Shape matches referrals page's flow-gantt dict
     so flow_gantt.js can render it unchanged.
 
     Stages:
         0  Referral Created (anchor)
         1  Scheduled                (Assigned On is not null)
-        2  Med-Onc Appt             (First Appt is not null)
-        3  Rad-Onc Referral         (LinkedRadRef flag from cohort)
+        2  Med-Onc Appt             (First Appt is not null) — also the
+                                    denominator for all displayed %s
+        3  Rad-Onc Contact/Referral — event type driven by the Linkage
+                                    toggle: 'any' uses LinkedToRadOnc
+                                    (any rad-onc contact), 'medonc' uses
+                                    LinkedRadRef (direct referral from
+                                    PRCS med-onc).
 
     cap_0 / cap_1 / cap_2 are the outlier caps applied when computing
     median/mean durations between stages. Stage counts and dropoffs are
     NOT capped — those reflect the full cohort.
+
+    `totalPatients` is set to the seen-by-med-onc count (stage 2) so
+    downstream flow_gantt.js renders all percentages as "% of seen". The
+    Created/Scheduled bars will display >100% relative to that base,
+    which correctly conveys the in-flow of referrals TO med-onc.
     """
     if cohort.empty:
         return None
@@ -256,15 +298,18 @@ def _compute_medonc_flow_data(cohort, cap_0=_CAP_CREATED_TO_SCHED,
     # Stage masks are CUMULATIVE: reaching stage N requires having reached
     # every prior stage. Guarantees stageCount[i+1] <= stageCount[i] and
     # flow[i] == stageCount[i+1] exactly, so bar heights match their
-    # incoming flow bands. Without this, a patient who got a rad-onc
-    # referral but skipped their med-onc appt would inflate the
-    # Rad-Onc Referral bar without inflating the Appt→RadRef flow.
+    # incoming flow bands.
     scheduled_raw = cohort["Assigned On"].notna() if "Assigned On" in cohort.columns else created_mask & False
     appt_raw = cohort["SeenByMedOnc"].astype(bool) if "SeenByMedOnc" in cohort.columns else created_mask & False
-    radref_raw = cohort["LinkedRadRef"].astype(bool) if "LinkedRadRef" in cohort.columns else created_mask & False
+    # Terminal event: either any rad-onc contact (toggle="any") or a
+    # direct rad-onc referral sourced from PRCS med-onc (toggle="medonc").
+    if link_mode == "any":
+        final_raw = cohort["LinkedToRadOnc"].astype(bool) if "LinkedToRadOnc" in cohort.columns else created_mask & False
+    else:
+        final_raw = cohort["LinkedRadRef"].astype(bool) if "LinkedRadRef" in cohort.columns else created_mask & False
     scheduled_mask = created_mask & scheduled_raw
     appt_mask      = scheduled_mask & appt_raw
-    radref_mask    = appt_mask & radref_raw
+    radref_mask    = appt_mask & final_raw
 
     masks = [created_mask, scheduled_mask, appt_mask, radref_mask]
     stage_counts = [int(m.sum()) for m in masks]
@@ -341,7 +386,8 @@ def _compute_medonc_flow_data(cohort, cap_0=_CAP_CREATED_TO_SCHED,
     # proportional to its median duration. Short transitions compress,
     # long ones (e.g. Appt → Rad-Onc Ref, often a month+) expand, so the
     # horizontal axis roughly represents elapsed time.
-    n_stages = len(_FLOW_STAGES)
+    stages_list = _flow_stages(link_mode)
+    n_stages = len(stages_list)
     n_gaps = len(median_days)
     _min_gap = 0.07
     _total_min = _min_gap * n_gaps
@@ -356,8 +402,8 @@ def _compute_medonc_flow_data(cohort, cap_0=_CAP_CREATED_TO_SCHED,
     x_positions[-1] = 1.0
 
     return {
-        "stages": _FLOW_STAGES,
-        "stageKeys": _FLOW_STAGES,
+        "stages": stages_list,
+        "stageKeys": stages_list,
         "stageCounts": stage_counts,
         "flowValues": flow_values,
         "dropoffs": dropoffs,
@@ -373,7 +419,10 @@ def _compute_medonc_flow_data(cohort, cap_0=_CAP_CREATED_TO_SCHED,
         "loopbacks": [0] * n_stages,
         "loopbackPairs": [],
         "totalMedianDays": total_median,
-        "totalPatients": stage_counts[0],
+        # Denominator for all flow_gantt.js percentage displays: seen-by-
+        # med-onc count (stage 2), per user: "everything denominator
+        # should be patients they actually see".
+        "totalPatients": stage_counts[2] if stage_counts[2] > 0 else stage_counts[0],
         # Match the rad-onc referrals page's internal SVG height — same
         # renderer, same geometry constants, same downstream scaling.
         "height": 480,
@@ -449,7 +498,13 @@ def _compute_medonc_flow_details(cohort, cap_0=_CAP_CREATED_TO_SCHED,
         d_total = (cohort["RadOncReferralCreated"] - cohort["Created"]).dt.days
     else:
         d_total = pd.Series(dtype=float)
-    total = _build(d_total, ref0, "Total: Created → Rad-Onc Ref", PRIMARY, cap_0 + cap_1 + cap_2)
+    # For the total-pipeline distribution we deliberately don't use cap_2 —
+    # cap_2 is the linkage-window bound (up to 10yr) which makes the x axis
+    # far too wide for a "days from referral to rad-onc ref" operational
+    # chart. Use the per-transition default instead so the x range stays
+    # tight on the clinically interesting range (outlier_cap_0/_1 still flex).
+    total_cap = cap_0 + cap_1 + _CAP_APPT_TO_RADREF
+    total = _build(d_total, ref0, "Total: Created → Rad-Onc Ref", PRIMARY, total_cap)
 
     # --- Conversion rate trend data ---
     # The shared JS renders two series on this chart, keyed as `schedPct`
@@ -511,6 +566,13 @@ def _compute_medonc_flow_details(cohort, cap_0=_CAP_CREATED_TO_SCHED,
                 "radrefPct": [
                     round(radref.get(d, 0) / seen.get(d, 1) * 100, 1)
                     if seen.get(d, 0) > 0 else 0.0
+                    for d in all_periods
+                ],
+                # Cumulative-from-Created radref rate — used by the custom
+                # "overall pipeline" default view (no band selected) so we
+                # can stack three Created→X rates on one chart.
+                "radrefPctOverall": [
+                    round(radref.get(d, 0) / created.get(d, 1) * 100, 1)
                     for d in all_periods
                 ],
             }
@@ -635,7 +697,7 @@ def _build_filter_bar():
                         dmc.SegmentedControl(
                             id=f"{PAGE_ID}-filter-date",
                             data=_DATE_PRESETS,
-                            value="24mo", size="sm",
+                            value="all", size="sm",
                         ),
                     ]),
                     dmc.Group(gap=8, align="center", children=[
@@ -727,9 +789,41 @@ layout = dmc.Stack(
             className="page-sticky-header",
             children=[
                 dmc.Title("Referrals (MedOnc)", order=2, className="page-title"),
-                _build_filter_bar(),
+                html.Div(
+                    style={"position": "relative"},
+                    children=[
+                        _build_filter_bar(),
+                        html.Div(
+                            id=f"{PAGE_ID}-grid-filter-badge",
+                            children=dmc.Tooltip(
+                                label="Table column filters are active — page reflects the filtered subset",
+                                position="left", withArrow=True, multiline=True, w=220,
+                                children=dmc.Badge(
+                                    "Table Filtered",
+                                    color="red", variant="filled", size="md",
+                                    leftSection=DashIconify(icon="mdi:filter", width=14),
+                                ),
+                            ),
+                            style={
+                                "position": "absolute", "top": -12, "right": 8,
+                                "zIndex": 10, "display": "none", "cursor": "pointer",
+                            },
+                        ),
+                    ],
+                ),
             ],
         ),
+
+        # Store holding the indices of rows visible after AG Grid's column
+        # filters. Populated by a clientside callback listening to the grid's
+        # virtualRowData; consumed by the main callback to subset the cohort
+        # so KPIs/flow gantt/KM/etc. all reflect the filtered rows.
+        dcc.Store(id=f"{PAGE_ID}-table-filter-rows"),
+
+        # Precomputed KM curves for all three modes (Total / Diagnosis /
+        # Site). A clientside callback picks the right set on toggle change,
+        # so mode switches no longer re-fire the expensive main callback.
+        dcc.Store(id=f"{PAGE_ID}-store-km"),
 
         # KPI row
         dmc.Grid(
@@ -831,8 +925,8 @@ layout = dmc.Stack(
                                         {"value": "area", "label": "Area"},
                                         {"value": "bar", "label": "Bar"},
                                     ],
-                                    chart_type_default="bar",
-                                    show_smooth=True, smooth_max=12, smooth_default=2,
+                                    chart_type_default="area",
+                                    show_smooth=True, smooth_max=12, smooth_default=7,
                                     slider_label="Smoothing",
                                     show_grouping=False,
                                 ),
@@ -875,7 +969,7 @@ layout = dmc.Stack(
                                         {"value": "bar", "label": "Bar"},
                                     ],
                                     chart_type_default="line",
-                                    show_smooth=True, smooth_max=12, smooth_default=0,
+                                    show_smooth=True, smooth_max=12, smooth_default=4,
                                     slider_label="Smoothing",
                                     show_grouping=False,
                                 ),
@@ -900,8 +994,14 @@ layout = dmc.Stack(
                 span={"base": 12, "md": 6},
                 children=dmc.Paper(
                     children=[
-                        dmc.Text("Rad-Onc Conversion by Diagnosis", size="sm", fw=500,
-                                 c=NEUTRAL["text_secondary"], mb=6),
+                        dmc.Group(justify="space-between", mb=6, children=[
+                            dmc.Text("Rad-Onc Conversion by Diagnosis", size="sm", fw=500,
+                                     c=NEUTRAL["text_secondary"]),
+                            chart_settings_popover(
+                                f"{PAGE_ID}-dxconv",
+                                chart_types=None, show_smooth=False, show_grouping=False,
+                            ),
+                        ]),
                         # Graph height = 2 × right-side graph (400px) + 16px
                         # stack gutter + one-card-chrome delta so the Dx
                         # chart visually spans both right-column cards.
@@ -917,8 +1017,14 @@ layout = dmc.Stack(
                 children=dmc.Stack(gap=16, children=[
                     dmc.Paper(
                         children=[
-                            dmc.Text("Conversion by Med-Onc Site", size="sm", fw=500,
-                                     c=NEUTRAL["text_secondary"], mb=6),
+                            dmc.Group(justify="space-between", mb=6, children=[
+                                dmc.Text("Conversion by Med-Onc Site", size="sm", fw=500,
+                                         c=NEUTRAL["text_secondary"]),
+                                chart_settings_popover(
+                                    f"{PAGE_ID}-siteconv",
+                                    chart_types=None, show_smooth=False, show_grouping=False,
+                                ),
+                            ]),
                             dcc.Graph(id=f"{PAGE_ID}-site-conversion", config=DEFAULT_GRAPH_CONFIG,
                                       style={"height": "415px"}),
                         ],
@@ -927,8 +1033,26 @@ layout = dmc.Stack(
                     ),
                     dmc.Paper(
                         children=[
-                            dmc.Text("Cumulative Rad-Onc Contact Over Time (by Diagnosis)",
-                                     size="sm", fw=500, c=NEUTRAL["text_secondary"], mb=6),
+                            dmc.Group(justify="space-between", mb=6, children=[
+                                dmc.Text(id=f"{PAGE_ID}-km-title",
+                                         children="Cumulative Rad-Onc Contact Over Time (by Diagnosis)",
+                                         size="sm", fw=500, c=NEUTRAL["text_secondary"]),
+                                dmc.Group(gap="xs", align="center", wrap="nowrap", children=[
+                                    dmc.SegmentedControl(
+                                        id=f"{PAGE_ID}-km-mode",
+                                        data=[
+                                            {"value": "total",     "label": "Total"},
+                                            {"value": "diagnosis", "label": "Diagnosis"},
+                                            {"value": "site",      "label": "Site"},
+                                        ],
+                                        value="diagnosis", size="xs",
+                                    ),
+                                    chart_settings_popover(
+                                        f"{PAGE_ID}-km",
+                                        chart_types=None, show_smooth=False, show_grouping=False,
+                                    ),
+                                ]),
+                            ]),
                             dcc.Graph(id=f"{PAGE_ID}-km-curve", config=DEFAULT_GRAPH_CONFIG,
                                       style={"height": "396px"}),
                         ],
@@ -939,29 +1063,24 @@ layout = dmc.Stack(
             ),
         ]),
 
-        # Referring source cross-tab
-        dmc.Paper(
-            children=[
-                dmc.Group(justify="space-between", align="center", mb=6, children=[
-                    dmc.Text("Referring Source Cross-Tab — of Patients Seen by Med-Onc, "
-                             "What Fraction Reached Rad-Onc",
-                             size="sm", fw=500, c=NEUTRAL["text_secondary"]),
-                    dmc.Text("Ordered by Volume, Minimum 5 Patients Seen",
-                             size="xs", c=NEUTRAL["text_muted"]),
-                ]),
-                html.Div(id=f"{PAGE_ID}-source-table"),
+        # Patient-level detail table — accordion-wrapped, collapsible, with
+        # grid-level filtering that propagates back into the page's cohort.
+        detail_table(
+            f"{PAGE_ID}-detail-grid",
+            title="Patient Detail (One Row per MRN)",
+            export_id=f"{PAGE_ID}-table-export",
+            column_size="autoSize",
+            extra_controls=[
+                dmc.Button(
+                    "Clear Filters",
+                    id=f"{PAGE_ID}-table-clear-filters",
+                    size="compact-xs",
+                    variant="light",
+                    color="red",
+                    leftSection=DashIconify(icon="mdi:filter-remove", width=14),
+                    style={"display": "none"},
+                ),
             ],
-            p="sm", px="md", radius="md", shadow="xs", withBorder=True,
-        ),
-
-        # Patient-level detail table
-        dmc.Paper(
-            children=[
-                dmc.Text("Patient Detail (One Row per MRN)",
-                         size="sm", fw=500, c=NEUTRAL["text_secondary"], mb=6),
-                html.Div(id=f"{PAGE_ID}-detail-table"),
-            ],
-            p="sm", px="md", radius="md", shadow="xs", withBorder=True,
         ),
     ],
 )
@@ -1004,14 +1123,164 @@ register_outlier_callbacks(
 )
 
 # Wire gear-icon panel toggle + PNG export for the three companion charts
-# under the Flow Gantt (same wiring the rad-onc Referrals page uses).
+# under the Flow Gantt (same wiring the rad-onc Referrals page uses) AND
+# for the three analytic charts below (Dx conversion, Site conversion, KM).
 register_chart_callbacks([
     (f"{PAGE_ID}-dist",  f"{PAGE_ID}-flow-dist"),
     {"sid": f"{PAGE_ID}-trend", "gid": f"{PAGE_ID}-flow-trend",
      "store_id": True, "show_grouping": False},
     {"sid": f"{PAGE_ID}-conv",  "gid": f"{PAGE_ID}-flow-conv",
      "store_id": True, "show_grouping": False},
+    (f"{PAGE_ID}-dxconv",   f"{PAGE_ID}-dx-conversion"),
+    (f"{PAGE_ID}-siteconv", f"{PAGE_ID}-site-conversion"),
+    (f"{PAGE_ID}-km",       f"{PAGE_ID}-km-curve"),
 ])
+
+
+# ---------------------------------------------------------------------------
+# Grid filter propagation — AG Grid column filters drive KPIs/charts via a
+# store, and surface a "Table Filtered" badge on the filter bar + a "Clear
+# Filters" button in the detail table header. Same pattern as referrals.py.
+# ---------------------------------------------------------------------------
+
+clientside_callback(
+    """function(virtual, rowData, prev) {
+        var nu = window.dash_clientside.no_update;
+        var base = {"position": "absolute", "top": -12, "right": 8, "zIndex": 10, "cursor": "pointer"};
+        var hidden = Object.assign({}, base, {"display": "none"});
+        var btnHide = {"display": "none"};
+        if (!rowData || !rowData.length || !virtual) {
+            return prev == null ? [nu, nu, nu] : [null, hidden, btnHide];
+        }
+        if (virtual.length >= rowData.length) {
+            return prev == null ? [nu, nu, nu] : [null, hidden, btnHide];
+        }
+        var idxs = [];
+        for (var i = 0; i < virtual.length; i++) {
+            if (virtual[i]._row_idx != null) idxs.push(virtual[i]._row_idx);
+        }
+        idxs.sort(function(a, b) { return a - b; });
+        if (!idxs.length) {
+            return prev == null ? [nu, nu, nu] : [null, hidden, btnHide];
+        }
+        if (prev && prev.length === idxs.length) {
+            var same = true;
+            for (var j = 0; j < idxs.length; j++) {
+                if (prev[j] !== idxs[j]) { same = false; break; }
+            }
+            if (same) return [nu, nu, nu];
+        }
+        return [idxs, base, {}];
+    }""",
+    Output(f"{PAGE_ID}-table-filter-rows", "data"),
+    Output(f"{PAGE_ID}-grid-filter-badge", "style"),
+    Output(f"{PAGE_ID}-table-clear-filters", "style"),
+    Input(f"{PAGE_ID}-detail-grid", "virtualRowData"),
+    State(f"{PAGE_ID}-detail-grid", "rowData"),
+    State(f"{PAGE_ID}-table-filter-rows", "data"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        return {};
+    }""",
+    Output(f"{PAGE_ID}-detail-grid", "filterModel"),
+    Input(f"{PAGE_ID}-table-clear-filters", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        var el = document.getElementById('""" + f"{PAGE_ID}-detail-grid" + """');
+        if (el) el.scrollIntoView({behavior: 'smooth', block: 'start'});
+        return window.dash_clientside.no_update;
+    }""",
+    Output(f"{PAGE_ID}-grid-filter-badge", "n_clicks"),
+    Input(f"{PAGE_ID}-grid-filter-badge", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+# KM curve — clientside render so the Total/Diagnosis/Site toggle is
+# instant. The server precomputes all three strata in _compute_km_store
+# and dumps them into {PAGE_ID}-store-km; this callback just picks the
+# right set and assembles a Plotly figure dict.
+clientside_callback(
+    """function(store, mode) {
+        var nu = window.dash_clientside.no_update;
+        mode = mode || "diagnosis";
+        var titles = (store && store.titles) || {
+            "total":     "Cumulative Rad-Onc Contact Over Time",
+            "diagnosis": "Cumulative Rad-Onc Contact Over Time (by Diagnosis)",
+            "site":      "Cumulative Rad-Onc Contact Over Time (by Med-Onc Site)"
+        };
+        var title = titles[mode] || titles["diagnosis"];
+        if (!store) {
+            return [{
+                data: [],
+                layout: {
+                    xaxis: {visible: false}, yaxis: {visible: false},
+                    plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
+                    margin: {l: 0, r: 0, t: 0, b: 0},
+                    annotations: [{
+                        text: "No data for current filters",
+                        xref: "paper", yref: "paper", x: 0.5, y: 0.5,
+                        showarrow: false, font: {size: 14, color: "#9CA3AF"}
+                    }]
+                }
+            }, title];
+        }
+        var curves = store[mode] || store["diagnosis"] || [];
+        var traces = curves.map(function(c) {
+            var line = {color: c.color, width: c.width || 2, shape: "hv"};
+            if (c.dash) line.dash = c.dash;
+            return {
+                x: c.t, y: c.y,
+                mode: "lines", name: c.name,
+                line: line,
+                hovertemplate: "Day %{x:.0f}<br>%{y:.1f}% Reached Rad-Onc<extra></extra>",
+            };
+        });
+        var font = "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
+        var layout = {
+            font: {family: font, size: 12, color: "#6B7280"},
+            xaxis: {title: "Days From Med-Onc Referral", range: [0, store.capDays || 3650],
+                    showgrid: false},
+            yaxis: {title: "% Reached Rad-Onc (Cumulative)", ticksuffix: "%",
+                    rangemode: "tozero", autorange: true,
+                    gridcolor: "#E5E7EB", gridwidth: 1},
+            margin: {l: 50, r: 20, t: 10, b: 40},
+            legend: {orientation: "h", yanchor: "bottom", y: 1.02, xanchor: "left", x: 0},
+            hovermode: "x unified",
+            hoverlabel: {
+                bgcolor: "#FFFFFF", bordercolor: "#D1D5DB",
+                font: {color: "#1A1A2E", family: font, size: 12},
+            },
+            plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
+        };
+        return [{data: traces, layout: layout}, title];
+    }""",
+    Output(f"{PAGE_ID}-km-curve", "figure"),
+    Output(f"{PAGE_ID}-km-title", "children"),
+    Input(f"{PAGE_ID}-store-km", "data"),
+    Input(f"{PAGE_ID}-km-mode", "value"),
+)
+
+# Export CSV — uses the shared gridExportCsv helper in assets/00_utils.js
+clientside_callback(
+    """function(n) {
+        if (!n) return window.dash_clientside.no_update;
+        if (typeof gridExportCsv === 'function') {
+            gridExportCsv('""" + f"{PAGE_ID}-detail-grid" + """', 'medonc_referrals_detail.csv');
+        }
+        return window.dash_clientside.no_update;
+    }""",
+    Output(f"{PAGE_ID}-table-export", "n_clicks"),
+    Input(f"{PAGE_ID}-table-export", "n_clicks"),
+    prevent_initial_call=True,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1063,9 +1332,9 @@ def _update_linkwin_button(pre, post):
     Output(f"{PAGE_ID}-store-flow-details", "data"),
     Output(f"{PAGE_ID}-dx-conversion", "figure"),
     Output(f"{PAGE_ID}-site-conversion", "figure"),
-    Output(f"{PAGE_ID}-km-curve", "figure"),
-    Output(f"{PAGE_ID}-source-table", "children"),
-    Output(f"{PAGE_ID}-detail-table", "children"),
+    Output(f"{PAGE_ID}-store-km", "data"),
+    Output(f"{PAGE_ID}-detail-grid", "rowData"),
+    Output(f"{PAGE_ID}-detail-grid", "columnDefs"),
     Input(f"{PAGE_ID}-filter-date", "value"),
     Input(f"{PAGE_ID}-filter-site", "value"),
     Input(f"{PAGE_ID}-diag-store", "data"),
@@ -1076,45 +1345,76 @@ def _update_linkwin_button(pre, post):
     Input(f"{PAGE_ID}-outlier-cap-1", "value"),
     Input(f"{PAGE_ID}-outlier-enabled", "data"),
     Input(f"{PAGE_ID}-filter-linkmode", "value"),
+    Input(f"{PAGE_ID}-table-filter-rows", "data"),
 )
 def _update_all(date_preset, site_filter, diag_cats, diag_mode, pre_days, post_days,
-                cap_0, cap_1, outliers_enabled, link_mode):
+                cap_0, cap_1, outliers_enabled, link_mode, grid_rows):
     cohort = _build_cohort(
         date_preset, site_filter or [],
         diag_cats or [], diag_mode or "primary",
         pre_days, post_days,
         link_mode or "any",
     )
+    # Reset cohort's index so _row_idx values in the detail grid map 1:1
+    # to cohort positions. Required by _apply_grid_row_filter.
+    cohort = cohort.reset_index(drop=True)
 
     if cohort.empty:
         placeholders = [
             dmc.GridCol(kpi_placeholder(), span={"base": 12, "sm": 6, "md": 2.4}) for _ in range(5)
         ]
         empty = empty_figure("No Data for Current Filters")
-        return (placeholders, None, None, empty, empty, empty,
-                html.Div(), html.Div())
+        return (placeholders, None, None, empty, empty, None, [], [])
+
+    # Build the detail table from the FULL cohort (before grid-row filter)
+    # so the user always sees all rows — the grid does its own filtering.
+    # Skip the rebuild when only the grid filter itself triggered this
+    # callback; otherwise we'd rebuild rowData and clobber the user's
+    # live filter model.
+    triggered_by_grid = (
+        dash.callback_context.triggered
+        and len(dash.callback_context.triggered) == 1
+        and dash.callback_context.triggered[0]["prop_id"] == f"{PAGE_ID}-table-filter-rows.data"
+    )
+    if triggered_by_grid:
+        table_rows = dash.no_update
+        table_cols = dash.no_update
+    else:
+        table_rows, table_cols = _build_detail_table(cohort)
+
+    # Apply grid row filter — KPIs/flow/KM/etc. recompute over the subset.
+    cohort = _apply_grid_row_filter(cohort, grid_rows)
+    if cohort.empty:
+        placeholders = [
+            dmc.GridCol(kpi_placeholder(), span={"base": 12, "sm": 6, "md": 2.4}) for _ in range(5)
+        ]
+        empty = empty_figure("No Data for Current Filters")
+        return (placeholders, None, None, empty, empty, None,
+                table_rows, table_cols)
 
     # When outlier filtering is disabled, use very permissive caps so
-    # effectively no values are clipped. The Appt → Rad-Onc Ref cap is
-    # the linkage-window post-days value — that's the bound we already
-    # use elsewhere to decide whether a rad-onc contact counts as linked,
-    # so it doubles as the duration cap here.
+    # effectively no values are clipped. cap_2 (Appt → Rad-Onc Ref) is
+    # deliberately decoupled from the linkage-window post-days: linkage
+    # window decides which rad-onc contacts count as linked (broad — up
+    # to 10yr by default), but the distribution/median charts want a
+    # tight operational range. A 10-year tail here flattens the density
+    # to a spike at 0. Stay on the default cap unless outliers are off.
     if outliers_enabled is False:
-        cap_0, cap_1 = 10_000, 10_000
+        cap_0, cap_1, cap_2 = 10_000, 10_000, 10_000
     else:
         cap_0 = cap_0 or _CAP_CREATED_TO_SCHED
         cap_1 = cap_1 or _CAP_SCHED_TO_APPT
-    cap_2 = int(post_days) if post_days is not None else _CAP_APPT_TO_RADREF
+        cap_2 = _CAP_APPT_TO_RADREF
 
     return (
         _build_kpis(cohort),
-        _compute_medonc_flow_data(cohort, cap_0, cap_1, cap_2),
+        _compute_medonc_flow_data(cohort, cap_0, cap_1, cap_2, link_mode or "any"),
         _compute_medonc_flow_details(cohort, cap_0, cap_1, cap_2),
         _build_dx_conversion(cohort),
         _build_site_conversion(cohort),
-        _build_km_curve(cohort, post_days),
-        _build_source_table(cohort),
-        _build_detail_table(cohort),
+        _compute_km_store(cohort, post_days, link_mode or "any"),
+        table_rows,
+        table_cols,
     )
 
 
@@ -1307,59 +1607,92 @@ def _build_site_conversion(cohort):
 # Kaplan-Meier cumulative-incidence curve
 # ---------------------------------------------------------------------------
 
-def _km_estimator(times, events):
-    """Simple Kaplan-Meier survival estimator. Returns (t, S) arrays with a
-    step at each event time, starting from (0, 1). Cumulative incidence is
-    1 - S. No confidence intervals — this is a compact descriptive view."""
+def _km_estimator(times, events, extend_to=None):
+    """Naive cumulative-incidence estimator: returns (t, S) where S = 1 -
+    cum_events(t)/n_total, stepping at each event time, starting (0, 1).
+
+    This is intentionally NOT the Kaplan-Meier censoring-adjusted
+    estimator — we want the final plateau to equal n_events/n_total
+    exactly so this curve reconciles with the Flow Gantt's stage
+    proportion (user: "same numerator and denominator"). Censored
+    patients count as "no (yet)" rather than being removed from the
+    at-risk set.
+
+    `extend_to`: if given, extend the curve horizontally (flat at the
+    last value) out to this time so curves span the full linkage window
+    even when observed follow-up is shorter.
+    """
     times = np.asarray(times, dtype=float)
     events = np.asarray(events, dtype=int)
     order = np.argsort(times)
     times = times[order]
     events = events[order]
-    if len(times) == 0:
+    n = len(times)
+    if n == 0:
         return np.array([0.0]), np.array([1.0])
 
     unique_event_times = np.unique(times[events == 1])
     t_out = [0.0]
     S_out = [1.0]
-    S = 1.0
+    cum_events = 0
     for t in unique_event_times:
-        at_risk = int(np.sum(times >= t))
         d = int(np.sum((times == t) & (events == 1)))
-        if at_risk > 0:
-            S *= (1.0 - d / at_risk)
+        cum_events += d
         t_out.append(float(t))
-        S_out.append(S)
-    # Extend the last step out to max observed time so the line doesn't
-    # terminate early just because the final event happened before the
-    # longest-followed patient's censor time.
-    if times.max() > t_out[-1]:
-        t_out.append(float(times.max()))
-        S_out.append(S)
+        S_out.append(1.0 - cum_events / n)
+    tail = max(float(times.max()), float(extend_to) if extend_to is not None else 0.0)
+    if tail > t_out[-1]:
+        t_out.append(tail)
+        S_out.append(S_out[-1])
     return np.array(t_out), np.array(S_out)
 
 
-def _build_km_curve(cohort, post_days):
-    """Kaplan-Meier cumulative-incidence curves of rad-onc contact by
-    diagnosis. X axis is days from med-onc referral, Y is cumulative % of
-    patients who reached rad-onc. Non-linked patients are censored at
-    min(data_max - their referral date, post_days window).
+_KM_TITLES = {
+    "total":     "Cumulative Rad-Onc Contact Over Time",
+    "diagnosis": "Cumulative Rad-Onc Contact Over Time (by Diagnosis)",
+    "site":      "Cumulative Rad-Onc Contact Over Time (by Med-Onc Site)",
+}
+
+
+def _km_title(mode):
+    return _KM_TITLES.get(mode or "diagnosis", _KM_TITLES["diagnosis"])
+
+
+def _compute_km_store(cohort, post_days, link_mode="any"):
+    """Precompute per-stratum KM curves for every mode at once.
+
+    The Total/Diagnosis/Site toggle used to re-fire the whole main
+    callback (expensive cohort rebuild + all charts). Now we emit ONE
+    store here with all three strata precomputed; a clientside callback
+    picks the right set when the toggle changes, so mode switches are
+    instant.
+
+    Shape:
+        {
+          "capDays": int,
+          "total":     [{t, y, name, color, width, dash}, ...],
+          "diagnosis": [...],
+          "site":      [...],
+        }
     """
     if cohort.empty:
-        return empty_figure()
+        return None
     seen = cohort[cohort["SeenByMedOnc"].astype(bool)].copy()
     if seen.empty:
-        return empty_figure()
+        return None
 
     cap_days = int(post_days) if post_days is not None else _DEFAULT_POST_DAYS
     data_max = seen["Created"].max()
     censor_days = (data_max - seen["Created"]).dt.days.clip(lower=0, upper=cap_days)
 
-    event = seen["LinkedToRadOnc"].astype(bool).astype(int)
-    # Use days-to-event for linked patients (clipped to window), censor time
-    # otherwise. DaysToRadOnc can be negative (rad-onc preceded med-onc) —
-    # treat those as event-at-day-0 for this cumulative view.
-    days_event = pd.to_numeric(seen["DaysToRadOnc"], errors="coerce").clip(lower=0, upper=cap_days)
+    # Event flag tracks the Linkage toggle so KM aligns with Flow Gantt.
+    if link_mode == "medonc":
+        event = seen["LinkedRadRef"].astype(bool).astype(int)
+        ref_days = (seen["RadOncReferralCreated"] - seen["Created"]).dt.days
+        days_event = pd.to_numeric(ref_days, errors="coerce").clip(lower=0, upper=cap_days)
+    else:
+        event = seen["LinkedToRadOnc"].astype(bool).astype(int)
+        days_event = pd.to_numeric(seen["DaysToRadOnc"], errors="coerce").clip(lower=0, upper=cap_days)
     days = days_event.where(event == 1, censor_days)
 
     mask = days.notna() & (days >= 0)
@@ -1367,107 +1700,77 @@ def _build_km_curve(cohort, post_days):
     days = days.loc[mask]
     event = event.loc[mask]
     if seen.empty:
-        return empty_figure()
+        return None
 
-    # Top diagnoses with enough N for a meaningful curve.
+    def _curve(m_array, name, color, width=2.0, dash=None):
+        t, S = _km_estimator(days[m_array].values, event[m_array].values, extend_to=cap_days)
+        n = int(np.sum(m_array))
+        out = {
+            "t": [round(float(v), 2) for v in t],
+            "y": [round(float((1 - s) * 100), 3) for s in S],
+            "name": f"{name} (n={n})",
+            "color": color,
+            "width": width,
+        }
+        if dash:
+            out["dash"] = dash
+        return out
+
+    all_mask = np.ones(len(seen), dtype=bool)
+
+    # Total mode: single primary-color solid curve.
+    total_curves = [_curve(all_mask, "All", PRIMARY, width=2.5)]
+
+    # Diagnosis mode: top 6 dx categories (min n=20) + dashed All overlay.
     MIN_DX_N = 20
     dx_counts = seen["DxCategory"].value_counts()
     top_dx = [d for d in dx_counts.index
               if str(d) not in ("Unknown", "nan") and dx_counts[d] >= MIN_DX_N][:6]
-
-    fig = go.Figure()
     palette = ["#7C2A83", "#2196F3", "#F44336", "#4CAF50", "#F59E0B", "#0891B2"]
+    diagnosis_curves = []
     for i, dx in enumerate(top_dx):
         m = (seen["DxCategory"] == dx).values
-        t, S = _km_estimator(days[m].values, event[m].values)
-        n = int(m.sum())
-        fig.add_scatter(
-            x=t, y=(1 - S) * 100,
-            mode="lines", name=f"{dx} (n={n})",
-            line=dict(color=palette[i % len(palette)], width=2, shape="hv"),
-            hovertemplate="Day %{x:.0f}<br>%{y:.1f}% Reached Rad-Onc<extra></extra>",
-        )
-
-    t, S = _km_estimator(days.values, event.values)
-    fig.add_scatter(
-        x=t, y=(1 - S) * 100,
-        mode="lines", name=f"All (n={len(seen)})",
-        line=dict(color=NEUTRAL["text_muted"], width=1.5, dash="dash", shape="hv"),
-        hovertemplate="Day %{x:.0f}<br>%{y:.1f}% Reached Rad-Onc<extra></extra>",
+        diagnosis_curves.append(_curve(m, str(dx), palette[i % len(palette)]))
+    diagnosis_curves.append(
+        _curve(all_mask, "All", NEUTRAL["text_muted"], width=1.5, dash="dash")
     )
 
-    apply_default_layout(fig)
-    fig.update_layout(
-        xaxis=dict(title="Days From Med-Onc Referral", range=[0, cap_days]),
-        yaxis=dict(title="% Reached Rad-Onc (Cumulative)", ticksuffix="%", range=[0, 100]),
-        margin=dict(l=50, r=20, t=10, b=40),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        hovermode="x unified",
+    # Site mode: per-site curves (min n=20 per site) + dashed All.
+    site_curves = []
+    for s in _SITES:
+        m = (seen["ReferredToSite"] == s).values
+        if int(np.sum(m)) < 20:
+            continue
+        site_curves.append(_curve(m, s, _SITE_COLORS[s]))
+    site_curves.append(
+        _curve(all_mask, "All", NEUTRAL["text_muted"], width=1.5, dash="dash")
     )
-    fig.update_xaxes(hoverformat="")
-    return fig
+
+    return {
+        "capDays": cap_days,
+        "total":     total_curves,
+        "diagnosis": diagnosis_curves,
+        "site":      site_curves,
+        "titles":    _KM_TITLES,
+    }
 
 
 # ---------------------------------------------------------------------------
 # Tables
 # ---------------------------------------------------------------------------
 
-def _build_source_table(cohort):
-    """Referring-department cross-tab. Denominator is patients seen by
-    med-onc (not total referrals) to align with the page's primary
-    denominator convention — isolates rad-onc referral rate from
-    med-onc's show-rate per source."""
-    if cohort.empty or "Referred by Department" not in cohort.columns:
-        return html.Div()
-    seen = cohort[cohort["SeenByMedOnc"].astype(bool)]
-    if seen.empty:
-        return html.Div()
-    MIN_N = 5
-    agg = (
-        seen.groupby("Referred by Department", dropna=True)
-        .agg(n=("MRN", "size"), linked=("LinkedToRadOnc", "sum"),
-             treated=("LinkedRadTx", "sum"))
-        .reset_index()
-    )
-    agg = agg[agg["n"] >= MIN_N].copy()
-    if agg.empty:
-        return html.Div(dmc.Text("No Referring Departments Meet the Minimum Threshold.",
-                                 size="sm", c=NEUTRAL["text_muted"]))
-    agg["pct_linked"] = (agg["linked"] / agg["n"] * 100).round(1)
-    agg["pct_treated"] = (agg["treated"] / agg["n"] * 100).round(1)
-    agg = agg.sort_values("n", ascending=False).rename(columns={
-        "Referred by Department": "Referring Department",
-        "n": "Patients",
-        "linked": "Reached Rad-Onc",
-        "treated": "Treated",
-        "pct_linked": "% Linked",
-        "pct_treated": "% Treated",
-    })
-    column_defs = [
-        {"field": "Referring Department", "flex": 2, "minWidth": 220},
-        {"field": "Patients", "type": "numericColumn", "width": 110},
-        {"field": "Reached Rad-Onc", "type": "numericColumn", "width": 140},
-        {"field": "% Linked", "type": "numericColumn", "width": 110,
-         "valueFormatter": {"function": "params.value != null ? params.value.toFixed(0) + '%' : '–'"}},
-        {"field": "Treated", "type": "numericColumn", "width": 110},
-        {"field": "% Treated", "type": "numericColumn", "width": 110,
-         "valueFormatter": {"function": "params.value != null ? params.value.toFixed(0) + '%' : '–'"}},
-    ]
-    return dag.AgGrid(
-        id=f"{PAGE_ID}-source-grid",
-        rowData=agg.to_dict("records"),
-        columnDefs=column_defs,
-        defaultColDef=DEFAULT_COLUMN_DEFS,
-        dashGridOptions={**DEFAULT_GRID_OPTIONS, "pagination": True, "paginationPageSize": 15,
-                         "domLayout": "autoHeight"},
-        className=DEFAULT_GRID_CLASS,
-        style={"width": "100%"},
-    )
-
-
 def _build_detail_table(cohort):
+    """Return (rowData, columnDefs) for the patient detail AG Grid.
+
+    Grid rows carry a `_row_idx` column so the clientside filter listener
+    can map visible rows back into the underlying cohort DataFrame (whose
+    index has been reset to 0..N-1 in the caller). In PHI mode, patient-
+    identifying columns are dropped entirely and free-text column filters
+    are suppressed everywhere except the three page-specific analyst
+    dimensions in `_PHI_FILTERABLE_FIELDS`.
+    """
     if cohort.empty:
-        return html.Div()
+        return [], []
     cols = ["MRN", "Patient Name", "Created", "ReferredToSite", "DxCategory",
             "Onc Dx", "Referred by Department", "Referred by Provider",
             "SeenByMedOnc",
@@ -1481,6 +1784,12 @@ def _build_detail_table(cohort):
             view[c] = pd.to_datetime(view[c], errors="coerce").dt.strftime("%Y-%m-%d")
     if "DaysToRadOnc" in view.columns:
         view["DaysToRadOnc"] = view["DaysToRadOnc"].round(0)
+
+    # _row_idx points back to the caller's reset-index cohort so the grid
+    # filter clientside callback can return indices the main callback
+    # applies via _apply_grid_row_filter. Must be set BEFORE any sort.
+    view["_row_idx"] = view.index
+
     view = view.sort_values("Created", ascending=False)
 
     rename = {
@@ -1502,6 +1811,9 @@ def _build_detail_table(cohort):
 
     column_defs = []
     for field in view.columns:
+        if field == "_row_idx":
+            column_defs.append({"field": "_row_idx", "hide": True})
+            continue
         col = {"field": field, "minWidth": 110}
         if field in ("MRN", "Days → Rad-Onc"):
             col["type"] = "numericColumn"
@@ -1517,16 +1829,29 @@ def _build_detail_table(cohort):
             col["minWidth"] = 200
         column_defs.append(col)
 
-    return dag.AgGrid(
-        id=f"{PAGE_ID}-detail-grid",
-        rowData=view.to_dict("records"),
-        columnDefs=column_defs,
-        defaultColDef=DEFAULT_COLUMN_DEFS,
-        dashGridOptions={**DEFAULT_GRID_OPTIONS, "pagination": True, "paginationPageSize": 25,
-                         "domLayout": "autoHeight"},
-        className=DEFAULT_GRID_CLASS,
-        style={"width": "100%"},
-    )
+    # PHI gating: drop identifying columns entirely, then in PHI mode
+    # silence filters on every column except the three analyst dimensions.
+    column_defs = filter_phi_columns(column_defs)
+    if PHI_MODE:
+        gated = []
+        for c in column_defs:
+            cc = dict(c)
+            if cc.get("field") not in _PHI_FILTERABLE_FIELDS:
+                cc["filter"] = False
+                cc["floatingFilter"] = False
+            else:
+                cc["floatingFilter"] = True
+            gated.append(cc)
+        column_defs = gated
+
+    # Drop rowData fields that were stripped from columnDefs so the grid
+    # doesn't hold PHI even in memory under PHI_MODE.
+    allowed_fields = {c.get("field") for c in column_defs}
+    row_data = [
+        {k: v for k, v in r.items() if k in allowed_fields or k == "_row_idx"}
+        for r in view.to_dict("records")
+    ]
+    return row_data, column_defs
 
 
 

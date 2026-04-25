@@ -190,7 +190,52 @@ def upload_to_r2() -> int:
 
     total = time.time() - t0
     print(f"[upload] OK — total {total:.1f}s")
+
+    _trigger_redeploy()
     return 0
+
+
+def _trigger_redeploy() -> None:
+    """Redeploy the Railway service so production pulls the fresh tarball.
+
+    Uses `railway redeploy` — requires Railway CLI installed and logged in,
+    with the Clinical project linked (one-time `railway link`). Falls back
+    to a DEPLOY_HOOK_URL POST if the CLI isn't available (e.g., if sanitize
+    is ever moved off this Mac).
+
+    Non-fatal: the upload already succeeded — if redeploy fails, the
+    tarball still sits in R2 and the next container restart will pick it up.
+    """
+    import shutil
+    import subprocess
+
+    service = os.environ.get("RAILWAY_SERVICE", "radiantcare-clinical").strip()
+
+    if shutil.which("railway"):
+        try:
+            result = subprocess.run(
+                ["railway", "redeploy", "-s", service, "-y"],
+                capture_output=True, text=True, timeout=60,
+            )
+            if result.returncode == 0:
+                print(f"[upload] Railway redeploy triggered for {service}.")
+                return
+            print(
+                f"[upload] railway redeploy failed (rc={result.returncode}): "
+                f"{result.stderr.strip() or result.stdout.strip()}"
+            )
+        except Exception as exc:
+            print(f"[upload] railway redeploy errored: {exc}")
+
+    hook = os.environ.get("DEPLOY_HOOK_URL", "").strip()
+    if hook:
+        try:
+            import urllib.request
+            req = urllib.request.Request(hook, data=b"", method="POST")
+            with urllib.request.urlopen(req, timeout=30) as r:
+                print(f"[upload] Deploy hook fired: HTTP {r.status}")
+        except Exception as exc:
+            print(f"[upload] Deploy hook failed (upload still OK): {exc}")
 
 
 if __name__ == "__main__":

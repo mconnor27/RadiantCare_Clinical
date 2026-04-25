@@ -140,17 +140,19 @@ def _latest_incremental(folder: Path) -> dict | None:
     }
 
 
-def _latest_referrals() -> dict | None:
-    """Find all Referrals report Excel files in DATA_DIR root.
+def _latest_xlsx_group(prefix: str) -> dict | None:
+    """Find all xlsx files in DATA_DIR root matching a given filename prefix.
 
-    Returns the newest file's metadata plus the list of all matching paths
-    (so callers can sum raw row counts across every snapshot).
+    Used to separately scan the rad-onc Referrals feed
+    (`Referrals_Report_RadiantCare_All_*.xlsx`) from the med-onc PRCS feed
+    (`Referrals_Report_PRCS_*.xlsx`) — two manual Excel exports that share
+    the `Referrals_Report_` family prefix but represent different datasets.
     """
     if not DATA_DIR.is_dir():
         return None
     files = [
         p for p in DATA_DIR.iterdir()
-        if p.is_file() and p.name.startswith("Referrals_Report_") and p.suffix.lower() == ".xlsx"
+        if p.is_file() and p.name.startswith(prefix) and p.suffix.lower() == ".xlsx"
     ]
     if not files:
         return None
@@ -333,25 +335,29 @@ def _build_content():
             "unique_rows": _row_count(loader_name),
         })
 
-    # Manual (Referrals) --------------------------------------------------
-    ref = _latest_referrals()
-    if ref is not None:
-        entries.append({
-            "display_name": "Referrals Report",
-            "type": "Manual",
-            "data_date": ref["data_date"] or ref["mtime"],
-            "mtime": ref["mtime"],
-            "size": ref["size"],
-            "file_count": ref["file_count"],
-            "raw_rows": sum((_count_xlsx_rows(p) or 0) for p in ref["paths"]),
-            "unique_rows": _row_count("load_referrals"),
-        })
-    else:
-        entries.append({
-            "display_name": "Referrals Report", "type": "Manual",
-            "data_date": None, "mtime": None, "size": 0,
-            "file_count": 0, "raw_rows": None, "unique_rows": None,
-        })
+    # Manual (two separate xlsx families: rad-onc referrals + med-onc PRCS) -
+    for prefix, display, loader in (
+        ("Referrals_Report_RadiantCare_All_", "Referrals Report",            "load_referrals"),
+        ("Referrals_Report_PRCS_",            "Referrals Report (Med-Onc)",  "load_medonc_referrals"),
+    ):
+        ref = _latest_xlsx_group(prefix)
+        if ref is not None:
+            entries.append({
+                "display_name": display,
+                "type": "Manual",
+                "data_date": ref["data_date"] or ref["mtime"],
+                "mtime": ref["mtime"],
+                "size": ref["size"],
+                "file_count": ref["file_count"],
+                "raw_rows": sum((_count_xlsx_rows(p) or 0) for p in ref["paths"]),
+                "unique_rows": _row_count(loader),
+            })
+        else:
+            entries.append({
+                "display_name": display, "type": "Manual",
+                "data_date": None, "mtime": None, "size": 0,
+                "file_count": 0, "raw_rows": None, "unique_rows": None,
+            })
 
     # Summary stats -------------------------------------------------------
     total_unique = sum((e["unique_rows"] or 0) for e in entries)

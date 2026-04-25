@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib
 
 import dash_mantine_components as dmc
-from dash import ALL, Input, Output, State, callback, callback_context, dcc, html, no_update
+from dash import ALL, Input, Output, State, callback, callback_context, clientside_callback, dcc, html, no_update
 from dash_iconify import DashIconify
 
 from config.settings import NEUTRAL, PRIMARY
@@ -275,3 +275,28 @@ def _render_modal(active_path):
     """Render sidebar (with active highlighting) and content pane."""
     active_path = active_path or "/"
     return _build_sidebar(active_path), _render_page_content(active_path)
+
+
+# Scroll the modal content pane back to top whenever the active help page
+# changes. Without this, a user who has scrolled to the bottom of one page
+# would land mid-scroll on the next page — and during the loading render,
+# our fixed spinner sits viewport-centered, so the user might not see the
+# new page's header at all when the content arrives.
+clientside_callback(
+    """function(path) {
+        // defer so the new content has had a chance to mount
+        setTimeout(function() {
+            var el = document.getElementById("help-modal-content");
+            var pane = el && el.parentElement && el.parentElement.parentElement;
+            if (pane && typeof pane.scrollTo === "function") {
+                pane.scrollTo({top: 0});
+            } else if (pane) {
+                pane.scrollTop = 0;
+            }
+        }, 0);
+        return window.dash_clientside.no_update;
+    }""",
+    Output("help-modal-active-path", "data", allow_duplicate=True),
+    Input("help-modal-active-path", "data"),
+    prevent_initial_call=True,
+)

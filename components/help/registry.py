@@ -279,6 +279,23 @@ HELP_PAGES = [
         ),
         "ui_module": "referrals",
     },
+    {
+        "path": "/medonc-referrals",
+        "label": "Referrals (MedOnc)",
+        "icon": "tabler:transfer",
+        "section": "POPULATION",
+        "sql": [],
+        "sql_intro": (
+            "Referrals (MedOnc) has no dedicated SQL script. Its primary source "
+            "is a manual Excel export from the PRCS medical oncology scheduling "
+            "system (Referrals_Report_PRCS_*.xlsx). That feed is joined by MRN "
+            "against the rad-onc Referrals extract (same xlsx family as the "
+            "Referrals page) and against Treatment_Detail in the loader, so the "
+            "page inherits its SQL coverage from those scripts rather than "
+            "having its own."
+        ),
+        "ui_module": "medonc_referrals",
+    },
 ]
 
 

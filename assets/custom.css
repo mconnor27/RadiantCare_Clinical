@@ -1319,9 +1319,11 @@ html[data-theme="dark"] #mobile-auth-user-btn svg { color: #D1D5DB !important; }
   z-index: 10000 !important;
 }
 
-/* Help modal: pin the loading spinner near the top of the scroll viewport
-   instead of centering it in the (tall) content div, where it would scroll
-   far below the fold.
+/* Help modal: pin the loading spinner to the VIEWPORT (not the scroll
+   container) with position:fixed so it's always visible regardless of
+   how far the user has scrolled within the content pane. Scaled up for
+   visibility on slow-loading pages (Data Sources re-scans the filesystem
+   on every render).
    IMPORTANT: only target the rendered spinner element (.dash-spinner).
    Do NOT target ._dash-loading — Dash applies that class to any component
    whose callback is running, so matching it would push actual page content
@@ -1330,12 +1332,19 @@ html[data-theme="dark"] #mobile-auth-user-btn svg { color: #D1D5DB !important; }
   position: relative;
 }
 .help-modal-loader > .dash-spinner {
-  position: sticky !important;
-  top: 24px !important;
-  left: 50% !important;
-  transform: translateX(-50%) !important;
-  margin: 24px auto 0 !important;
-  z-index: 10 !important;
+  position: fixed !important;
+  top: 50% !important;
+  /* Centered within the modal content pane: modal is ~85% viewport width,
+     centered; content pane inside the modal starts ~230px after its left
+     edge (sidebar). This offsets ~115px past the modal's center to sit
+     in the content pane's middle. */
+  left: calc(50% + 60px) !important;
+  transform: translate(-50%, -50%) scale(2.2) !important;
+  z-index: 1100 !important;
+  padding: 20px !important;
+  background: var(--bg-card) !important;
+  border-radius: 16px !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18) !important;
 }
 
 /* Compact date range picker for billing revenue-adjustments modal */

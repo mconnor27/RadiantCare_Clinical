@@ -180,7 +180,7 @@ def body(text: str, **kwargs) -> dmc.Text:
 
 
 def bullets(items: list[str], **kwargs) -> dmc.List:
-    defaults = {"size": "xs", "spacing": 4}
+    defaults = {"size": "xs", "spacing": 4, "mt": 8, "mb": 8}
     defaults.update(kwargs)
     return dmc.List(
         children=[dmc.ListItem(x) for x in items],
