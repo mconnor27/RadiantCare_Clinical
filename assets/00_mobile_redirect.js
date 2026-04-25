@@ -7,7 +7,8 @@
         var forceMode = params.get('force');
         var path = window.location.pathname;
 
-        if (path === MOBILE_PATH || forceMode === 'mobile') {
+        var onMobilePath = (path === MOBILE_PATH || path.indexOf(MOBILE_PATH + '/') === 0);
+        if (onMobilePath || forceMode === 'mobile') {
             document.documentElement.setAttribute('data-mobile-view', 'true');
         }
 

@@ -1284,6 +1284,33 @@ html[data-mobile-view="true"] .show-only-mobile { display: block; }
     .show-only-mobile { display: block; }
 }
 
+/* Mobile mappings page — tappable cards for triage list. */
+.mmap-card {
+    transition: background-color 0.12s ease, transform 0.12s ease;
+    cursor: pointer;
+    user-select: none;
+}
+.mmap-card:active {
+    transform: scale(0.99);
+    background-color: rgba(124, 42, 131, 0.04);
+}
+html[data-theme="dark"] .mmap-card:active {
+    background-color: rgba(124, 42, 131, 0.12);
+}
+/* The UnstyledButton wrapper around each card — ensure full-width and no focus ring jank on touch */
+button[id*="mmap-card"] {
+    background: transparent;
+    border: none;
+    padding: 0;
+    width: 100%;
+    text-align: left;
+    -webkit-tap-highlight-color: transparent;
+}
+button[id*="mmap-card"]:focus-visible .mmap-card {
+    outline: 2px solid #7C2A83;
+    outline-offset: 2px;
+}
+
 /* Hover state for plain icon buttons (user chip) — matches
    dmc.ActionIcon variant="subtle" color="gray" hover visual. */
 .rc-icon-btn { transition: background-color 0.12s ease; }

@@ -536,6 +536,11 @@ def _build_auth_menu(btn_id, trigger="click-hover", icon_width=20, button_style=
                 href="/admin/users",
                 leftSection=DashIconify(icon="tabler:users", width=14),
             ),
+            dmc.MenuItem(
+                "Data mappings (mobile)",
+                href="/mobile/mappings",
+                leftSection=DashIconify(icon="tabler:tags", width=14),
+            ),
         ]
 
     return dmc.Menu(

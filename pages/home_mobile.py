@@ -10,6 +10,7 @@ import numpy as np
 
 from config.settings import PRIMARY, PRIMARY_DARK, CHART_COLORWAY, FONT_FAMILY, DEPARTMENTS, PHYSICIANS
 from utils.charts import apply_default_layout
+from utils.permissions import is_admin
 from statsmodels.nonparametric.smoothers_lowess import lowess as _lowess
 
 from pages.home import (
@@ -631,16 +632,27 @@ def layout():
                     "gap": "8px",
                 },
                 children=[
-                    html.Button(
-                        DashIconify(
-                            id=f"{PAGE_ID}-theme-icon",
-                            icon="tabler:moon",
-                            width=26,
-                            color="#4B5563",
-                        ),
-                        id=f"{PAGE_ID}-theme-btn",
-                        n_clicks=0,
-                        style={**_HEADER_BTN_STYLE, "padding": "0", "display": "flex", "alignItems": "flex-end"},
+                    html.Div(
+                        style={"display": "flex", "alignItems": "flex-end", "gap": "8px"},
+                        children=[
+                            html.Button(
+                                DashIconify(
+                                    id=f"{PAGE_ID}-theme-icon",
+                                    icon="tabler:moon",
+                                    width=26,
+                                    color="#4B5563",
+                                ),
+                                id=f"{PAGE_ID}-theme-btn",
+                                n_clicks=0,
+                                style={**_HEADER_BTN_STYLE, "padding": "0", "display": "flex", "alignItems": "flex-end"},
+                            ),
+                            (dcc.Link(
+                                DashIconify(icon="tabler:tags", width=26, color="#4B5563"),
+                                href="/mobile/mappings",
+                                title="Data mappings",
+                                style={"display": "inline-flex", "alignItems": "flex-end", "padding": "0"},
+                            ) if is_admin() else None),
+                        ],
                     ),
                     html.A(
                         html.Img(
