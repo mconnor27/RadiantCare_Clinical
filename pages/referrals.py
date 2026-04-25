@@ -124,6 +124,172 @@ def _map_to_our_dept(ref_dept):
 
 
 # ---------------------------------------------------------------------------
+# Payor helpers
+# ---------------------------------------------------------------------------
+
+_PAYOR_MODE_TOGGLE = [
+    {"value": "actual", "label": "Actual"},
+    {"value": "broad", "label": "Broad"},
+    {"value": "phdsc", "label": "PHDSC"},
+]
+
+_BROAD_PAYOR_CATEGORIES = [
+    "Medicare", "Medicaid", "Private", "Military/VA",
+    "Workers Comp", "Tribal/IHS", "Self Pay", "Other/Unknown",
+]
+
+_PHDSC_PAYOR_CATEGORIES = [
+    "1 - Medicare", "2 - Medicaid/CHIP", "3 - Other Govt",
+    "4 - Corrections", "5 - Private", "6 - BCBS",
+    "8 - No Payment", "9 - Other",
+]
+
+_PAYOR_ID_RE = re.compile(r"\s*\[\d+\]\s*$")
+
+
+def _extract_primary_payor(val):
+    """Extract the primary payor name from the raw `Payer` value.
+
+    The Excel export packs multiple payors as newline-separated entries,
+    each suffixed with a bracketed ID like ``[1078]``. The first line is
+    the primary insurer.
+    """
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return None
+    s = str(val).strip()
+    if not s:
+        return None
+    first = s.split("\n")[0].strip()
+    cleaned = _PAYOR_ID_RE.sub("", first).strip()
+    return cleaned or None
+
+
+def _broad_payor_fallback(name):
+    """Map insurer name → broad category (used when no DB mapping exists)."""
+    if not isinstance(name, str) or not name or name == "Unknown":
+        return "Other/Unknown"
+    nl = name.lower()
+    if "medicare" in nl:
+        return "Medicare"
+    if any(kw in nl for kw in (
+        "medicaid", "apple health", "dshs", "molina",
+        "amerigroup medicaid", "coordinated care medicaid",
+        "community hlth plan chpw medicaid",
+        "wellpoint wa medicaid", "united healthcare medicaid",
+    )):
+        return "Medicaid"
+    if any(kw in nl for kw in (
+        "tricare", "champva", "veterans admin", "veteran",
+        "us family healthplan",
+    )):
+        return "Military/VA"
+    if any(kw in nl for kw in (
+        "labor and ind", "dept of labor", "workers comp", " wc",
+        "corvel", "sedgwick",
+    )):
+        return "Workers Comp"
+    if any(kw in nl for kw in (
+        "indian health", "quinault", "chehalis", "nisqually",
+        "tongas",
+    )):
+        return "Tribal/IHS"
+    if "self pay" in nl:
+        return "Self Pay"
+    if any(kw in nl for kw in (
+        "correction", "mcneil island", "stafford creek",
+        "thurston county jail",
+    )):
+        return "Other/Unknown"
+    return "Private"
+
+
+def _payor_mode_groups(series, mode, mapping):
+    """Return Series mapping each payor name to its display group under *mode*."""
+    s = series.fillna("Unknown")
+    if mode == "broad":
+        def _r(name):
+            if name in mapping and mapping[name].get("broad_category"):
+                return mapping[name]["broad_category"]
+            return _broad_payor_fallback(name)
+        return s.apply(_r)
+    if mode == "phdsc":
+        def _r(name):
+            if name in mapping and mapping[name].get("phdsc_category"):
+                cat = str(mapping[name]["phdsc_category"]).strip()
+                # cat may be a bare digit ("1") or the full label ("1 - Medicare")
+                digit = cat.split(" ")[0].split("-")[0].strip()
+                for pc in _PHDSC_PAYOR_CATEGORIES:
+                    if pc.split(" ")[0] == digit:
+                        return pc
+                return "9 - Other"
+            return "9 - Other"
+        return s.apply(_r)
+    # actual — standardized payor name (fallback to raw)
+    def _r(name):
+        if name in mapping and mapping[name].get("standardized_payor"):
+            return mapping[name]["standardized_payor"]
+        return name
+    return s.apply(_r)
+
+
+def _get_payor_mapping():
+    try:
+        from data.reviews_db import get_payor_mapping_dict
+        return get_payor_mapping_dict()
+    except Exception:
+        return {}
+
+
+def _apply_payor_filter(df, selected, mode):
+    """Filter df to rows whose primary payor falls in *selected* under *mode*."""
+    if not selected or "Payer" not in df.columns:
+        return df
+    mapping = _get_payor_mapping()
+    primary = df["Payer"].apply(_extract_primary_payor)
+    grp = _payor_mode_groups(primary, mode or "broad", mapping)
+    return df[grp.isin(selected)]
+
+
+def _chip_dropdown(name, chip_id, multiple=True, children=None):
+    """Reusable chip-dropdown: button + clear + floating panel."""
+    return html.Div(
+        children=[
+            html.Div(
+                children=[
+                    dmc.Button(
+                        name,
+                        id=f"{PAGE_ID}-{chip_id}-trigger",
+                        variant="default",
+                        size="sm",
+                        rightSection=DashIconify(icon="mdi:chevron-down", width=14),
+                    ),
+                    dmc.ActionIcon(
+                        DashIconify(icon="mdi:close-circle", width=18),
+                        id=f"{PAGE_ID}-{chip_id}-clear",
+                        variant="subtle",
+                        color="gray",
+                        size="sm",
+                        className="wf-filter-clear-btn",
+                    ),
+                ],
+                style={"position": "relative", "display": "inline-block"},
+            ),
+            dmc.Paper(
+                id=f"{PAGE_ID}-{chip_id}-panel",
+                children=children or [],
+                p="xs",
+                shadow="md",
+                withBorder=True,
+                radius="md",
+                className="wf-chip-dropdown",
+                style={"display": "none"},
+            ),
+        ],
+        style={"position": "relative", "display": "inline-block"},
+    )
+
+
+# ---------------------------------------------------------------------------
 # Status grouping
 # ---------------------------------------------------------------------------
 
@@ -184,6 +350,26 @@ def _build_filter_bar():
                         comboboxProps={"zIndex": 500},
                     ),
                     diagnosis_accordion(PAGE_ID),
+                    _chip_dropdown("Payor", "payor-filter", children=[
+                        dmc.SegmentedControl(
+                            id=f"{PAGE_ID}-filter-payor-mode",
+                            data=_PAYOR_MODE_TOGGLE,
+                            value="broad",
+                            size="xs",
+                            fullWidth=True,
+                            mb="xs",
+                        ),
+                        html.Div(
+                            dmc.ChipGroup(
+                                children=[],
+                                id=f"{PAGE_ID}-filter-payor",
+                                multiple=True,
+                                value=[],
+                            ),
+                            style={"maxHeight": 280, "overflowY": "auto",
+                                   "minWidth": 240},
+                        ),
+                    ]),
                     outlier_panel(PAGE_ID, transitions=[
                         ("Created \u2192 Scheduled", _CAP_CREATED_TO_SCHEDULED),
                         ("Scheduled \u2192 Visit", _CAP_SCHEDULED_TO_VISIT),
@@ -562,6 +748,7 @@ layout = dmc.Stack(
                                     {"value": "institution", "label": "Institution"},
                                     {"value": "specialty", "label": "Specialty"},
                                     {"value": "diagnosis", "label": "Diagnosis"},
+                                    {"value": "payor", "label": "Payor"},
                                 ],
                                 value="diagnosis",
                                 size="xs",
@@ -659,6 +846,7 @@ layout = dmc.Stack(
                                 {"value": "specialty", "label": "Specialty"},
                                 {"value": "diagnosis", "label": "Dx"},
                                 {"value": "site", "label": "Site"},
+                                {"value": "payor", "label": "Payor"},
                             ],
                             value="",
                             size="xs",
@@ -1310,11 +1498,24 @@ layout = dmc.Stack(
                                          "cellEditorParams": {"function": "getSubcategoryValues(params)"},
                                          "cellStyle": {"cursor": "pointer"},
                                          "filter": "agTextColumnFilter", "floatingFilter": True},
-                                        {"field": "patients", "headerName": "Patients", "flex": 0.4,
+                                        {"field": "patients", "headerName": "Referrals", "flex": 0.4,
                                          "cellRenderer": "DiagCountLink",
                                          "cellRendererParams": {"storeId": f"{PAGE_ID}-rpm-diag-detail-store"},
                                          "type": "numericColumn", "sort": "desc",
+                                         "filter": "agNumberColumnFilter",
+                                         "headerTooltip": "Total referrals (rad-onc + med-onc)"},
+                                        {"field": "rad_onc_count", "headerName": "Rad-Onc", "flex": 0.35,
+                                         "type": "numericColumn",
                                          "filter": "agNumberColumnFilter"},
+                                        {"field": "medonc_count", "headerName": "Med-Onc", "flex": 0.35,
+                                         "type": "numericColumn",
+                                         "filter": "agNumberColumnFilter"},
+                                        {"field": "origin", "headerName": "Origin", "flex": 0.4,
+                                         "filter": "agTextColumnFilter", "floatingFilter": True,
+                                         "cellStyle": {"function":
+                                            "params.value === 'medonc' ? {color: '#9C27B0', fontWeight: 600} : "
+                                            "params.value === 'both' ? {color: '#7C2A83', fontWeight: 600} : "
+                                            "{color: '#6B7280'}"}},
                                         {"field": "source", "headerName": "Source", "flex": 0.4,
                                          "filter": "agTextColumnFilter", "floatingFilter": True,
                                          "cellStyle": {"fontStyle": "italic", "color": NEUTRAL["text_muted"]}},
@@ -1358,6 +1559,11 @@ layout = dmc.Stack(
                                             id=f"{PAGE_ID}-rpm-diag-detail-grid",
                                             columnDefs=apply_phi_grid_rules([
                                                 {"field": "Created", "headerName": "Date", "flex": 0.6, "sort": "desc"},
+                                                {"field": "Source", "headerName": "Source", "flex": 0.5,
+                                                 "filter": "agTextColumnFilter",
+                                                 "cellStyle": {"function":
+                                                    "params.value === 'Med-Onc' ? {color: '#9C27B0', fontWeight: 600} : "
+                                                    "{color: '#7C2A83', fontWeight: 600}"}},
                                                 {"field": "MRN", "headerName": "MRN", "flex": 0.5},
                                                 {"field": "Patient Name", "headerName": "Patient", "flex": 1},
                                                 {"field": "Rfl Prim Dx", "headerName": "Primary Dx", "flex": 1.2},
@@ -2160,8 +2366,11 @@ def _build_referral_map(geo_df, departments_filter, selected_dept="All",
     return fig
 
 
-def _prepare_ref_volume_data(df, agg, slice_by=""):
-    """Census-format store data for referral volume trend."""
+def _prepare_ref_volume_data(df, agg, slice_by="", payor_mode="broad"):
+    """Census-format store data for referral volume trend.
+
+    payor_mode is only consulted when slice_by == "payor".
+    """
     if df.empty or "Created" not in df.columns:
         return None
 
@@ -2229,6 +2438,18 @@ def _prepare_ref_volume_data(df, agg, slice_by=""):
             counts = sub.groupby("period").size().reindex(all_periods, fill_value=0)
             series.append({"name": dept, "values": counts.tolist(),
                            "color": DEPARTMENT_COLORS.get(dept, CHART_COLORWAY[0])})
+
+    elif slice_by == "payor" and "Payer" in df.columns:
+        mapping = _get_payor_mapping()
+        primary = df["Payer"].apply(_extract_primary_payor)
+        df["_payor_grp"] = _payor_mode_groups(primary, payor_mode or "broad", mapping)
+        df_p = df[df["_payor_grp"].notna()]
+        top = df_p["_payor_grp"].value_counts().head(10).index.tolist()
+        for i, p in enumerate(top):
+            sub = df_p[df_p["_payor_grp"] == p]
+            counts = sub.groupby("period").size().reindex(all_periods, fill_value=0)
+            series.append({"name": str(p)[:30], "values": counts.tolist(),
+                           "color": CHART_COLORWAY[i % len(CHART_COLORWAY)]})
 
     if not series:
         return None
@@ -2556,10 +2777,12 @@ _DIM_COLORS = [
 ]
 
 
-def _assign_dimension_group(df, dimension):
+def _assign_dimension_group(df, dimension, payor_mode="broad"):
     """Add _dim_group column based on the chosen dimension.
 
-    dimension: "provider" | "department" | "institution" | "specialty" | "diagnosis"
+    dimension: "provider" | "department" | "institution" | "specialty" |
+               "diagnosis" | "payor"
+    payor_mode: "actual" | "broad" | "phdsc" — only used when dimension="payor"
     Returns df with _dim_group column (rows with None/_dim_group==None dropped).
     """
     df = df.copy()
@@ -2602,6 +2825,15 @@ def _assign_dimension_group(df, dimension):
         )
         # Drop "Other" from diagnosis grouping for cleaner charts
         df.loc[df["_dim_group"] == "Other", "_dim_group"] = None
+    elif dimension == "payor":
+        if "Payer" not in df.columns:
+            df["_dim_group"] = None
+        else:
+            mapping = _get_payor_mapping()
+            primary = df["Payer"].apply(_extract_primary_payor)
+            df["_dim_group"] = _payor_mode_groups(
+                primary, payor_mode or "broad", mapping,
+            )
     else:
         df["_dim_group"] = None
 
@@ -3418,6 +3650,8 @@ def _prior_range(start, end):
     Input(f"{PAGE_ID}-dim-toggle", "value"),
     Input(f"{PAGE_ID}-dim-compare-period", "value"),
     Input(f"{PAGE_ID}-table-filter-rows", "data"),
+    Input(f"{PAGE_ID}-filter-payor-mode", "value"),
+    Input(f"{PAGE_ID}-filter-payor", "value"),
     running=[
         (Output(f"{PAGE_ID}-chart-dim-trend-loading", "visible"), True, False),
     ],
@@ -3425,7 +3659,8 @@ def _prior_range(start, end):
 def update_referrals(_n, start_date, end_date, departments, specialty_filter,
                      institution_filter, diag_cats, diag_mode, diag_subs,
                      outlier_enabled, cap_0, cap_1,
-                     pipeline_window, dim_toggle, dim_compare_period, grid_rows):
+                     pipeline_window, dim_toggle, dim_compare_period, grid_rows,
+                     payor_mode, payor_selected):
     """Master callback: KPIs + all charts."""
     from data.loader import load_referrals, load_referring
 
@@ -3503,6 +3738,10 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
             cat_set.update(diag_subs)
         df = df[df["_diag_filt"].isin(cat_set)]
         df = df.drop(columns=["_diag_filt"])
+
+    # --- Payor filter ---
+    if payor_selected:
+        df = _apply_payor_filter(df, payor_selected, payor_mode)
 
     if df.empty:
         return empty_out
@@ -3665,7 +3904,7 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
 
     # --- Dimension trend + comparison ---
     dimension = dim_toggle or "diagnosis"
-    dim_df = _assign_dimension_group(all_data, dimension)
+    dim_df = _assign_dimension_group(all_data, dimension, payor_mode=payor_mode)
 
     dim_trend_store = _prepare_ref_trend_store(dim_df, dimension) if not dim_df.empty else None
 
@@ -3709,6 +3948,8 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
                 _cat_set.update(diag_subs)
             prior_all = prior_all[prior_all["_diag_filt"].isin(_cat_set)]
             prior_all = prior_all.drop(columns=["_diag_filt"])
+        if payor_selected:
+            prior_all = _apply_payor_filter(prior_all, payor_selected, payor_mode)
 
         for i in range(1, _MAX_PROBE + 1):
             if compare_type == "calendar":
@@ -3726,7 +3967,7 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
             pw = prior_all[
                 (prior_all["Created"] >= ps) & (prior_all["Created"] <= pe)
             ]
-            pw = _assign_dimension_group(pw, dimension)
+            pw = _assign_dimension_group(pw, dimension, payor_mode=payor_mode)
             all_prior_windows.append((pw, ps, pe))
     except Exception:
         pass
@@ -3777,11 +4018,13 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
     Input(f"{PAGE_ID}-diag-subcategory", "value"),
     Input(f"{PAGE_ID}-vol-slice", "value"),
     Input(f"{PAGE_ID}-vol-agg", "value"),
+    Input(f"{PAGE_ID}-filter-payor-mode", "value"),
+    Input(f"{PAGE_ID}-filter-payor", "value"),
     running=[(Output(f"{PAGE_ID}-chart-vol-loading", "visible"), True, False)],
 )
 def _update_ref_volume(_n, start_date, end_date, departments, specialty_filter,
                        institution_filter, diag_cats, diag_mode, diag_subs,
-                       vol_slice, vol_agg):
+                       vol_slice, vol_agg, payor_mode, payor_selected):
     """Build census-format store data for referral volume trend."""
     from data.loader import load_referrals
     try:
@@ -3814,11 +4057,14 @@ def _update_ref_volume(_n, start_date, end_date, departments, specialty_filter,
         if diag_subs:
             cat_set.update(diag_subs)
         df = df[df["_diag_filt"].isin(cat_set)]
+    if payor_selected:
+        df = _apply_payor_filter(df, payor_selected, payor_mode)
 
     if df.empty:
         return None
 
-    return _prepare_ref_volume_data(df, vol_agg, vol_slice or "")
+    return _prepare_ref_volume_data(df, vol_agg, vol_slice or "",
+                                    payor_mode=payor_mode)
 
 
 # ---------------------------------------------------------------------------
@@ -3842,11 +4088,14 @@ def _update_ref_volume(_n, start_date, end_date, departments, specialty_filter,
     Input(f"{PAGE_ID}-cumulative-period-type", "value"),
     Input(f"{PAGE_ID}-cumulative-slice", "value"),
     Input(f"{PAGE_ID}-filter-date-preset", "value"),
+    Input(f"{PAGE_ID}-filter-payor-mode", "value"),
+    Input(f"{PAGE_ID}-filter-payor", "value"),
     running=[(Output(f"{PAGE_ID}-chart-cumulative-loading", "visible"), True, False)],
 )
 def _update_ref_cumulative(_n, start_date, end_date, departments, specialty_filter,
                            institution_filter, diag_cats, diag_mode, diag_subs,
-                           cum_mode, period_type, slice_by, date_preset):
+                           cum_mode, period_type, slice_by, date_preset,
+                           payor_mode, payor_selected):
     """Build cumulative referral volume store data."""
     from data.loader import load_referrals
 
@@ -3878,6 +4127,8 @@ def _update_ref_cumulative(_n, start_date, end_date, departments, specialty_filt
         if diag_subs:
             cat_set.update(diag_subs)
         df_all = df_all[df_all["_diag_filt"].isin(cat_set)]
+    if payor_selected:
+        df_all = _apply_payor_filter(df_all, payor_selected, payor_mode)
 
     if df_all.empty:
         return None, 5, _default_marks
@@ -3896,6 +4147,62 @@ def _update_ref_cumulative(_n, start_date, end_date, departments, specialty_filt
         period_type or "calendar", slice_by or "department",
         date_preset=date_preset,
     )
+
+
+# ---------------------------------------------------------------------------
+# Payor filter: populate chips based on mode (actual/broad/phdsc)
+# ---------------------------------------------------------------------------
+@callback(
+    Output(f"{PAGE_ID}-filter-payor", "children"),
+    Output(f"{PAGE_ID}-filter-payor", "value"),
+    Input(f"{PAGE_ID}-filter-payor-mode", "value"),
+)
+def _populate_payor_chips(mode):
+    from data.loader import load_referrals
+    mode = mode or "broad"
+    mapping = _get_payor_mapping()
+
+    if mode == "broad":
+        options = list(_BROAD_PAYOR_CATEGORIES)
+    elif mode == "phdsc":
+        options = list(_PHDSC_PAYOR_CATEGORIES)
+    else:
+        # actual — standardized payor names observed in the data, by frequency
+        try:
+            df = load_referrals()
+        except Exception:
+            df = pd.DataFrame()
+        if df.empty or "Payer" not in df.columns:
+            options = []
+        else:
+            primary = df["Payer"].apply(_extract_primary_payor)
+            groups = _payor_mode_groups(primary, "actual", mapping)
+            options = groups.value_counts().head(60).index.tolist()
+
+    chips = [dmc.Chip(opt, value=opt, size="xs", variant="filled") for opt in options]
+    return chips, []
+
+
+# Trigger label + clear-button visibility
+clientside_callback(
+    """function(vals) {
+        var n = (vals && vals.length) || 0;
+        var lbl = n > 0 ? "Payor (" + n + ")" : "Payor";
+        var sty = n > 0 ? {"display": "inline-flex"} : {"display": "none"};
+        return [lbl, sty];
+    }""",
+    Output(f"{PAGE_ID}-payor-filter-trigger", "children"),
+    Output(f"{PAGE_ID}-payor-filter-clear", "style"),
+    Input(f"{PAGE_ID}-filter-payor", "value"),
+)
+
+# Clear button action
+clientside_callback(
+    """function(n) { return []; }""",
+    Output(f"{PAGE_ID}-filter-payor", "value", allow_duplicate=True),
+    Input(f"{PAGE_ID}-payor-filter-clear", "n_clicks"),
+    prevent_initial_call=True,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -5394,9 +5701,13 @@ def _load_diag_descriptions() -> dict[str, str]:
 
 _DIAG_DESCRIPTIONS: dict[str, str] = _load_diag_descriptions()
 
-# Cached referral data + index mapping for diagnosis detail panel
+# Cached referral data + per-source index mapping for diagnosis detail panel.
+# Keyed by ICD code (or lowercased free-text); each value lists the row
+# indices for rad-onc and medonc separately so the drill-down can render
+# rows from both dataframes with a Source column.
 _diag_detail_ref: pd.DataFrame | None = None
-_diag_detail_indices: dict[str, list[int]] = {}
+_diag_detail_medonc_ref: pd.DataFrame | None = None
+_diag_detail_indices: dict[str, dict[str, list[int]]] = {}
 
 
 def _resolve_referral_diagnosis(row, cv_mrn_dx, course_mrn_dx, c2c, base_map):
@@ -5539,12 +5850,17 @@ def _build_diag_grid_data():
     5. Free-text from Diagnoses column
 
     Shows entries NOT in the base ARIA lookup CSV. Aggregated by unique
-    diagnosis key (ICD code or normalized free-text).
+    diagnosis key (ICD code or normalized free-text), pooled across rad-onc
+    referrals and med-onc PRCS referrals so a diagnosis appearing only on
+    the med-onc side still surfaces here for review.
     """
-    from data.loader import load_referrals, load_clinic_visits, load_courses
+    from data.loader import (
+        load_referrals, load_medonc_referrals, load_clinic_visits, load_courses,
+    )
     from data.reviews_db import get_all_diagnosis_overrides
 
     ref = load_referrals()
+    medonc = load_medonc_referrals()
     overrides = get_all_diagnosis_overrides()
     base_map = get_all_subcategory_entries()
 
@@ -5580,12 +5896,19 @@ def _build_diag_grid_data():
     except Exception:
         pass
 
-    # Aggregate: key → {count, description, source_type, row_indices}
+    # Aggregate: key → {count, description, source_type, indices_by_origin}
+    # indices_by_origin tracks which referral rows contributed, split by
+    # origin ("radonc" / "medonc"), so the detail panel can render rows
+    # from the correct dataframe.
     agg: dict[str, dict] = {}
 
-    if not ref.empty:
-        for idx, row in ref.iterrows():
-            key, desc, src_type = _resolve_referral_diagnosis(row, cv_mrn_dx, course_mrn_dx, _DIAG_C2C, base_map)
+    def _ingest(df, origin):
+        if df is None or df.empty:
+            return
+        for idx, row in df.iterrows():
+            key, desc, src_type = _resolve_referral_diagnosis(
+                row, cv_mrn_dx, course_mrn_dx, _DIAG_C2C, base_map,
+            )
             if key is None:
                 continue
             # Skip codes already in the ARIA base CSV (managed on Diagnosis page)
@@ -5593,16 +5916,22 @@ def _build_diag_grid_data():
                 continue
 
             if key not in agg:
-                agg[key] = {"desc": desc, "count": 0, "type": src_type, "indices": []}
-            agg[key]["count"] += 1
-            agg[key]["indices"].append(idx)
+                agg[key] = {
+                    "desc": desc, "type": src_type,
+                    "indices": {"radonc": [], "medonc": []},
+                }
+            agg[key]["indices"][origin].append(idx)
             # Keep the best description (longest non-empty)
             if desc and len(desc) > len(agg[key]["desc"]):
                 agg[key]["desc"] = desc
 
-    # Cache the referral dataframe + index mapping for the detail panel
-    global _diag_detail_ref, _diag_detail_indices
+    _ingest(ref, "radonc")
+    _ingest(medonc, "medonc")
+
+    # Cache the referral dataframes + per-origin index mapping for the detail panel
+    global _diag_detail_ref, _diag_detail_medonc_ref, _diag_detail_indices
     _diag_detail_ref = ref
+    _diag_detail_medonc_ref = medonc
     _diag_detail_indices = {k: v["indices"] for k, v in agg.items()}
 
     # Build grid rows
@@ -5611,8 +5940,18 @@ def _build_diag_grid_data():
         is_icd = info["type"] in ("icd", "cv")
         code = key if is_icd else ""
         desc = info["desc"]
-        pts = info["count"]
+        rad_n = len(info["indices"]["radonc"])
+        med_n = len(info["indices"]["medonc"])
+        pts = rad_n + med_n
         src_type = info["type"]
+
+        # Origin badge: rad-onc-only / medonc-only / both
+        if rad_n and med_n:
+            origin = "both"
+        elif med_n:
+            origin = "medonc"
+        else:
+            origin = "rad-onc"
 
         # Resolve category/subcategory
         if is_icd:
@@ -5649,6 +5988,9 @@ def _build_diag_grid_data():
             "category": cat,
             "subcategory": sub,
             "patients": pts,
+            "rad_onc_count": rad_n,
+            "medonc_count": med_n,
+            "origin": origin,
             "source": source,
             "reviewed": reviewed,
         })
@@ -5660,9 +6002,11 @@ def _build_diag_grid_data():
     text_count = total - icd_count
     categorized = sum(1 for r in rows if r["category"])
     overridden = sum(1 for r in rows if r["source"] not in ("icd", "cv", "course", "free-text"))
+    medonc_only = sum(1 for r in rows if r["origin"] == "medonc")
     stats = (
         f"{icd_count:,} ICD  |  {text_count:,} free-text  |  "
         f"{categorized:,} categorized  |  {total - categorized:,} unmapped  |  "
+        f"{medonc_only:,} med-onc only  |  "
         f"{overridden:,} overrides"
     )
     return rows, str(total), stats
@@ -5803,22 +6147,36 @@ def _rpm_diag_show_detail(store_data, close_clicks):
     icd_code = store_data.get("icd_code", "")
     description = store_data.get("description", "")
 
-    # Use the cached index mapping from _build_diag_grid_data
-    # This shows ONLY referrals that resolved to this entry via the cascade
+    # Use the cached index mapping from _build_diag_grid_data.
+    # _diag_detail_indices is now {key: {"radonc": [...], "medonc": [...]}}
+    # so the drill-down can show rows from both dataframes side-by-side.
     lookup_key = icd_code if icd_code else description.lower()
-    indices = _diag_detail_indices.get(lookup_key, [])
-    ref = _diag_detail_ref
+    idx_map = _diag_detail_indices.get(lookup_key) or {}
+    rad_idx = idx_map.get("radonc", [])
+    med_idx = idx_map.get("medonc", [])
 
-    if ref is None or not indices:
+    cols = ["Created", "MRN", "Patient Name", "Rfl Prim Dx", "Diagnoses", "Status"]
+    frames = []
+
+    if rad_idx and _diag_detail_ref is not None:
+        rad = _diag_detail_ref.loc[rad_idx, [c for c in cols if c in _diag_detail_ref.columns]].copy()
+        rad["Source"] = "Rad-Onc"
+        frames.append(rad)
+
+    if med_idx and _diag_detail_medonc_ref is not None:
+        med = _diag_detail_medonc_ref.loc[med_idx, [c for c in cols if c in _diag_detail_medonc_ref.columns]].copy()
+        med["Source"] = "Med-Onc"
+        frames.append(med)
+
+    if not frames:
         label = icd_code or description[:50]
         return {"display": "block", "marginTop": "6px"}, f"{label} — 0 records", []
 
-    detail = ref.loc[indices].copy()
-    cols = ["Created", "MRN", "Patient Name", "Rfl Prim Dx", "Diagnoses", "Status"]
-    detail = detail[[c for c in cols if c in detail.columns]]
-    for dc in ["Created"]:
-        if dc in detail.columns:
-            detail[dc] = detail[dc].dt.strftime("%m/%d/%Y").fillna("")
+    detail = pd.concat(frames, ignore_index=True)
+    if "Created" in detail.columns:
+        detail["Created"] = pd.to_datetime(detail["Created"], errors="coerce") \
+            .dt.strftime("%m/%d/%Y").fillna("")
+    detail = detail.sort_values("Created", ascending=False, na_position="last")
 
     label = f"ICD {icd_code}" if icd_code else f"\"{description[:50]}\""
     title = f"Referrals — {label} — {len(detail)} records"
