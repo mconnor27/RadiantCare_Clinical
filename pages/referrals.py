@@ -5086,7 +5086,9 @@ def _rpm_start_ai_lookup(n, row_data, selected_rows):
     if not blanks:
         return True, {"display": "none"}, "grape", {"display": "block"}, "Selected rows already have institutions."
 
-    # Each row is a unique NPI+address — pass all details for institution research
+    # Each row is a unique NPI+address — pass all details for institution research.
+    # Pass first/last referral as the time anchor so the AI returns the address
+    # the physician held during the referral window (some MDs change practices).
     physicians = [
         {
             "npi": r["npi"],
@@ -5095,6 +5097,14 @@ def _rpm_start_ai_lookup(n, row_data, selected_rows):
             "name": r.get("name", ""),
             "city_state": f"{r.get('city', '')}, {r.get('state', '')}".strip(", "),
             "department": r.get("department", ""),
+            "first_referral": r.get("first_referral", ""),
+            "last_referral": r.get("last_referral", ""),
+            # Snapshot existing address — used to gate whether we accept an
+            # AI-suggested address ("only if blank otherwise").
+            "_addr_blank": not any(
+                (r.get(k) or "").strip()
+                for k in ("address", "city", "state", "zip")
+            ),
         }
         for r in blanks
     ]
@@ -5104,41 +5114,74 @@ def _rpm_start_ai_lookup(n, row_data, selected_rows):
 
     def _bg():
         from utils.institution_inference import infer_institutions
-        from data.reviews_db import bulk_upsert_referring, get_referring_institutions, add_institution
+        from data.reviews_db import (
+            bulk_upsert_referring, get_referring_institutions,
+            add_institution, upsert_referring,
+        )
 
         existing = get_referring_institutions()
 
-        # Process in chunks of 15 and track progress
-        all_results = {}  # row_key -> institution
+        # row_key -> dict from infer_institutions (institution + optional address)
+        all_results: dict[str, dict] = {}
         chunk_size = 15
         for i in range(0, len(physicians), chunk_size):
             chunk = physicians[i : i + chunk_size]
-            # infer_institutions keys results by NPI — map back to row_key
             chunk_results = infer_institutions(chunk, existing)
-            # Map NPI results to each row that has that NPI
             for p in chunk:
                 if p["npi"] in chunk_results:
                     all_results[p["row_key"]] = chunk_results[p["npi"]]
-            existing = list(set(existing + list(chunk_results.values())))
+            existing = list(set(
+                existing + [r["institution"] for r in chunk_results.values() if r.get("institution")]
+            ))
             with _rpm_lock:
                 _rpm_progress["done"] = min(i + chunk_size, len(physicians))
                 _rpm_progress["message"] = f"Researching institutions... {_rpm_progress['done']}/{len(physicians)}"
 
+        # Institution writes go through the bulk path; address writes need
+        # upsert_referring (bulk_upsert_referring doesn't touch address fields).
         records = []
+        addr_filled = 0
         for p in physicians:
-            if p["row_key"] in all_results:
-                inst = all_results[p["row_key"]]
-                records.append({
-                    "npi": p["npi"], "address_key": p["address_key"],
-                    "institution": inst, "source": "claude_ai",
-                })
-                add_institution(inst)
+            res = all_results.get(p["row_key"])
+            if not res:
+                continue
+            inst = res.get("institution") or ""
+            if not inst:
+                continue
+            records.append({
+                "npi": p["npi"], "address_key": p["address_key"],
+                "institution": inst, "source": "claude_ai",
+            })
+            add_institution(inst)
+
+            # Only write address when the row was completely blank — never
+            # overwrite a real address with an AI guess.
+            if p.get("_addr_blank") and (
+                res.get("address") or res.get("city") or res.get("state") or res.get("zip_code")
+            ):
+                try:
+                    upsert_referring(
+                        npi=p["npi"], address_key=p["address_key"],
+                        address=res.get("address") or None,
+                        city=res.get("city") or None,
+                        state=res.get("state") or None,
+                        zip_code=res.get("zip_code") or None,
+                        address_source="claude_ai",
+                        source="claude_ai",
+                    )
+                    addr_filled += 1
+                except Exception:
+                    pass
+
         if records:
             bulk_upsert_referring(records)
 
         with _rpm_lock:
             _rpm_progress["running"] = False
-            _rpm_progress["message"] = f"Done. Updated {len(records)} of {len(physicians)} rows."
+            _rpm_progress["message"] = (
+                f"Done. {len(records)} institutions, {addr_filled} addresses filled "
+                f"({len(physicians)} researched)."
+            )
 
     t = threading.Thread(target=_bg, daemon=True)
     t.start()
