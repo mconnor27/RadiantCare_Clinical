@@ -647,10 +647,17 @@ def layout():
                                 style={**_HEADER_BTN_STYLE, "padding": "0", "display": "flex", "alignItems": "flex-end"},
                             ),
                             (dcc.Link(
-                                DashIconify(icon="tabler:tags", width=26, color="#4B5563"),
+                                DashIconify(
+                                    id=f"{PAGE_ID}-mappings-icon",
+                                    icon="tabler:tags",
+                                    width=26,
+                                    color="#4B5563",
+                                ),
+                                id=f"{PAGE_ID}-mappings-link",
                                 href="/mobile/mappings",
+                                refresh=True,
                                 title="Data mappings",
-                                style={"display": "inline-flex", "alignItems": "flex-end", "padding": "0"},
+                                style={**_HEADER_BTN_STYLE, "padding": "0", "alignItems": "flex-end"},
                             ) if is_admin() else None),
                         ],
                     ),
@@ -1281,6 +1288,14 @@ clientside_callback(
         return (theme === 'dark') ? '#D1D5DB' : '#4B5563';
     }""",
     Output(f"{PAGE_ID}-theme-icon", "color"),
+    Input("global-theme-store", "data"),
+)
+
+clientside_callback(
+    """function(theme) {
+        return (theme === 'dark') ? '#D1D5DB' : '#4B5563';
+    }""",
+    Output(f"{PAGE_ID}-mappings-icon", "color"),
     Input("global-theme-store", "data"),
 )
 
