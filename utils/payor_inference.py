@@ -118,11 +118,13 @@ Example shape:
 For entries you truly cannot classify, omit them from the response (do not return null)."""
 
     try:
+        from utils.ai_config import build_message_kwargs
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=4096,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
+            **build_message_kwargs(
+                max_tokens=4096,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_prompt}],
+            )
         )
 
         text_parts = []

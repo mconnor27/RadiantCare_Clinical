@@ -23,6 +23,7 @@ from utils.geocoding import (
     normalize_zip, geocode_addresses, _addr_geocode_key,
     get_department_patient_flows, bezier_arc, DEPT_COORDS,
 )
+from components.ai_settings import ai_settings_panel, register_ai_settings_callbacks
 from components.diagnosis_filter import diagnosis_accordion, register_diagnosis_callbacks
 from components.filter_bar import department_chips
 from components.kpi_card import kpi_card, kpi_placeholder, create_sparkline
@@ -1062,6 +1063,8 @@ layout = dmc.Stack(
                 "body": {"padding": "0px 16px 4px 16px", "flex": 1, "overflow": "hidden", "display": "flex", "flexDirection": "column"},
             },
             children=[
+                html.Div(ai_settings_panel("ref", compact=True),
+                         style={"marginBottom": "6px"}),
                 dmc.Tabs(
                     id=f"{PAGE_ID}-rpm-tabs",
                     value="providers",
@@ -6454,4 +6457,8 @@ clientside_callback(
     Output(f"{PAGE_ID}-cumulative" + "-project-wrap", "style"),
     Input(f"{PAGE_ID}-filter-date-preset", "value"),
 )
+
+
+# Wire AI settings persistence (referrals prefix "ref")
+register_ai_settings_callbacks("ref")
 

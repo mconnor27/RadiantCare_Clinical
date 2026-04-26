@@ -44,6 +44,7 @@ from data.reviews_db import (
     get_standardized_payor_counts,
     get_revenue_adj_settings, save_revenue_adj_settings,
 )
+from components.ai_settings import ai_settings_panel, register_ai_settings_callbacks
 
 dash.register_page(__name__, path="/billing", name="Billing", order=7)
 
@@ -2643,6 +2644,8 @@ layout = dmc.Stack(
                                         ),
                                     ],
                                 ),
+                                html.Div(ai_settings_panel("bill", compact=True),
+                                         style={"marginBottom": "6px"}),
                                 dmc.Progress(
                                     id=f"{PAGE_ID}-pm-ai-progress",
                                     value=0, size="sm", color="grape",
@@ -6689,4 +6692,8 @@ def _pm_ai_apply(n, review_data, full_data, active_filter):
     return visible, full_data, count_text, False, (
         f"Applied {len(accepted)} AI classifications."
     )
+
+
+# Wire AI settings persistence (desktop billing prefix "bill")
+register_ai_settings_callbacks("bill")
 

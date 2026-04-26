@@ -131,6 +131,11 @@ CREATE TABLE IF NOT EXISTS revenue_adj_settings (
     key   TEXT PRIMARY KEY,
     value REAL NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 # Postgres schema matches SQLite on purpose (same data types: TEXT/INTEGER/REAL)
@@ -1131,3 +1136,27 @@ def save_revenue_adj_settings(settings: dict[str, float]) -> None:
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (k, float(v)),
             )
+
+
+# ---------------------------------------------------------------------------
+# Generic string-valued app settings (model picks, feature toggles, etc.)
+# Distinct from revenue_adj_settings (REAL only) so we can store text values.
+# ---------------------------------------------------------------------------
+
+def get_app_setting(key: str, default: str = "") -> str:
+    """Return a single app setting, or ``default`` if not set."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT value FROM app_settings WHERE key = ?", (key,)
+        ).fetchone()
+    return row["value"] if row else default
+
+
+def set_app_setting(key: str, value: str) -> None:
+    """Upsert one app setting."""
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO app_settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, str(value)),
+        )

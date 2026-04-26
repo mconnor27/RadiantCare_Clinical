@@ -135,12 +135,14 @@ Example response:
 Omit NPIs you cannot identify."""
 
     try:
+        from utils.ai_config import build_message_kwargs
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=4096,
-            system=system_prompt,
-            tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 10}],
-            messages=[{"role": "user", "content": user_prompt}],
+            **build_message_kwargs(
+                max_tokens=4096,
+                system=system_prompt,
+                tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 10}],
+                messages=[{"role": "user", "content": user_prompt}],
+            )
         )
 
         text_parts = []

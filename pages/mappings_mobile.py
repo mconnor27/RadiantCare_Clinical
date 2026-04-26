@@ -43,6 +43,7 @@ from data.reviews_db import (
     delete_institution,
     sync_institutions_from_physicians,
 )
+from components.ai_settings import ai_settings_panel, register_ai_settings_callbacks
 
 
 dash.register_page(
@@ -586,6 +587,9 @@ def layout():
     return dmc.Container(
         size="sm", px="xs", pt=4, pb="xl",
         children=[
+            # AI Settings (collapsed by default — applies to all 3 AI buttons)
+            html.Div(ai_settings_panel("mob", compact=True),
+                     style={"marginBottom": "10px"}),
             # Initial-load trigger
             dcc.Interval(id=_id("boot"), interval=300, n_intervals=0,
                          max_intervals=1),
@@ -696,47 +700,88 @@ def layout():
 # Initial data load — pulled lazily once, then cached in stores
 # --------------------------------------------------------------------------
 
+def _safe_load(name, fn):
+    """Run a loader, log + return [] on failure. Used by per-source callbacks."""
+    try:
+        return fn()
+    except Exception as e:
+        print(f"[mmap] {name} load failed: {e}", flush=True)
+        return []
+
+
+# One callback per data source, all triggered by the boot interval. Dash 3
+# runs them in parallel — each tab paints the moment its data is ready,
+# instead of waiting on the slowest source (provider load reads referrals
+# XLSX + groupby and dominates the wall time).
+
 @callback(
     Output(_id("store-diag"), "data"),
-    Output(_id("store-payor"), "data"),
-    Output(_id("store-payor-entity"), "data"),
-    Output(_id("store-provider"), "data"),
-    Output(_id("store-institution"), "data"),
     Input(_id("boot"), "n_intervals"),
     State(_id("store-diag"), "data"),
     prevent_initial_call=False,
 )
-def _boot_load(n, existing):
+def _boot_diag(n, existing):
     if not is_admin():
-        return [], [], [], [], []
-    if existing:  # already loaded
-        return no_update, no_update, no_update, no_update, no_update
-    try:
-        diag = _load_diag_rows()
-    except Exception as e:
-        print(f"[mmap] diag load failed: {e}", flush=True)
-        diag = []
-    try:
-        payor = _load_payor_rows()
-    except Exception as e:
-        print(f"[mmap] payor load failed: {e}", flush=True)
-        payor = []
-    try:
-        pe = _load_payor_entities()
-    except Exception as e:
-        print(f"[mmap] payor entities load failed: {e}", flush=True)
-        pe = []
-    try:
-        prov = _load_provider_rows()
-    except Exception as e:
-        print(f"[mmap] provider load failed: {e}", flush=True)
-        prov = []
-    try:
-        inst = _load_institutions()
-    except Exception as e:
-        print(f"[mmap] institutions load failed: {e}", flush=True)
-        inst = []
-    return diag, payor, pe, prov, inst
+        return []
+    if existing:
+        return no_update
+    return _safe_load("diag", _load_diag_rows)
+
+
+@callback(
+    Output(_id("store-payor"), "data"),
+    Input(_id("boot"), "n_intervals"),
+    State(_id("store-payor"), "data"),
+    prevent_initial_call=False,
+)
+def _boot_payor(n, existing):
+    if not is_admin():
+        return []
+    if existing:
+        return no_update
+    return _safe_load("payor", _load_payor_rows)
+
+
+@callback(
+    Output(_id("store-payor-entity"), "data"),
+    Input(_id("boot"), "n_intervals"),
+    State(_id("store-payor-entity"), "data"),
+    prevent_initial_call=False,
+)
+def _boot_payor_entities(n, existing):
+    if not is_admin():
+        return []
+    if existing:
+        return no_update
+    return _safe_load("payor entities", _load_payor_entities)
+
+
+@callback(
+    Output(_id("store-provider"), "data"),
+    Input(_id("boot"), "n_intervals"),
+    State(_id("store-provider"), "data"),
+    prevent_initial_call=False,
+)
+def _boot_provider(n, existing):
+    if not is_admin():
+        return []
+    if existing:
+        return no_update
+    return _safe_load("provider", _load_provider_rows)
+
+
+@callback(
+    Output(_id("store-institution"), "data"),
+    Input(_id("boot"), "n_intervals"),
+    State(_id("store-institution"), "data"),
+    prevent_initial_call=False,
+)
+def _boot_institutions(n, existing):
+    if not is_admin():
+        return []
+    if existing:
+        return no_update
+    return _safe_load("institutions", _load_institutions)
 
 
 # --------------------------------------------------------------------------
@@ -744,7 +789,13 @@ def _boot_load(n, existing):
 # --------------------------------------------------------------------------
 
 def _loading_state():
-    return dmc.Center(dmc.Loader(size="sm", color=PRIMARY), h=120)
+    return dmc.Center(
+        dmc.Stack(align="center", gap=6, children=[
+            dmc.Loader(size="md", color=PRIMARY),
+            dmc.Text("Loading…", size="sm", c="dimmed"),
+        ]),
+        h=160,
+    )
 
 
 def _render_list(rows, scope, sort_key, q, *, fields, builder,
@@ -895,12 +946,20 @@ def _drawer_form_diag(row: dict):
             checked=bool(row.get("reviewed")),
             color="green",
         ),
-        dmc.Group(justify="flex-end", gap="xs", mt="sm", children=[
-            dmc.Button("Cancel", id=_id("drawer-cancel"),
-                       variant="subtle", color="gray", size="sm"),
-            dmc.Button("Save", id=_id("drawer-save-diag"),
-                       color="grape", size="sm",
-                       leftSection=DashIconify(icon="tabler:check", width=14)),
+        dmc.Group(justify="space-between", gap="xs", mt="sm", children=[
+            dmc.Button(
+                "Suggest (AI)",
+                id=_id("drawer-diag-ai-btn"),
+                leftSection=DashIconify(icon="tabler:brain", width=14),
+                variant="light", color="grape", size="sm",
+            ),
+            dmc.Group(gap="xs", children=[
+                dmc.Button("Cancel", id=_id("drawer-cancel"),
+                           variant="subtle", color="gray", size="sm"),
+                dmc.Button("Save", id=_id("drawer-save-diag"),
+                           color="grape", size="sm",
+                           leftSection=DashIconify(icon="tabler:check", width=14)),
+            ]),
         ]),
         dmc.Text(id=_id("drawer-diag-msg"), size="xs", c="dimmed"),
     ])
@@ -950,12 +1009,20 @@ def _drawer_form_payor(row: dict):
             checked=bool(row.get("reviewed")),
             color="green",
         ),
-        dmc.Group(justify="flex-end", gap="xs", mt="sm", children=[
-            dmc.Button("Cancel", id=_id("drawer-cancel"),
-                       variant="subtle", color="gray", size="sm"),
-            dmc.Button("Save", id=_id("drawer-save-payor"),
-                       color="grape", size="sm",
-                       leftSection=DashIconify(icon="tabler:check", width=14)),
+        dmc.Group(justify="space-between", gap="xs", mt="sm", children=[
+            dmc.Button(
+                "Suggest (AI)",
+                id=_id("drawer-payor-ai-btn"),
+                leftSection=DashIconify(icon="tabler:brain", width=14),
+                variant="light", color="grape", size="sm",
+            ),
+            dmc.Group(gap="xs", children=[
+                dmc.Button("Cancel", id=_id("drawer-cancel"),
+                           variant="subtle", color="gray", size="sm"),
+                dmc.Button("Save", id=_id("drawer-save-payor"),
+                           color="grape", size="sm",
+                           leftSection=DashIconify(icon="tabler:check", width=14)),
+            ]),
         ]),
         dmc.Text(id=_id("drawer-payor-msg"), size="xs", c="dimmed"),
     ])
@@ -1078,12 +1145,20 @@ def _drawer_form_provider(row: dict):
             checked=bool(row.get("reviewed")),
             color="green",
         ),
-        dmc.Group(justify="flex-end", gap="xs", mt="sm", children=[
-            dmc.Button("Cancel", id=_id("drawer-cancel"),
-                       variant="subtle", color="gray", size="sm"),
-            dmc.Button("Save", id=_id("drawer-save-prov"),
-                       color="grape", size="sm",
-                       leftSection=DashIconify(icon="tabler:check", width=14)),
+        dmc.Group(justify="space-between", gap="xs", mt="sm", children=[
+            dmc.Button(
+                "Suggest (AI)",
+                id=_id("drawer-prov-ai-btn"),
+                leftSection=DashIconify(icon="tabler:brain", width=14),
+                variant="light", color="grape", size="sm",
+            ),
+            dmc.Group(gap="xs", children=[
+                dmc.Button("Cancel", id=_id("drawer-cancel"),
+                           variant="subtle", color="gray", size="sm"),
+                dmc.Button("Save", id=_id("drawer-save-prov"),
+                           color="grape", size="sm",
+                           leftSection=DashIconify(icon="tabler:check", width=14)),
+            ]),
         ]),
         dmc.Text(id=_id("drawer-prov-msg"), size="xs", c="dimmed"),
     ])
@@ -1702,6 +1777,171 @@ def _fetch_nppes_address(n, edit):
     return addr, city, state_, zip_, "Filled from NPPES — review and Save."
 
 
+# ==========================================================================
+# Per-card AI suggestions (Diagnoses / Payors / Providers)
+# Each runs a single-entry batch through the same inference function used on
+# desktop, populates the drawer fields, and lets the user review + Save.
+# Uses Dash 3's `running=` to auto-toggle the button's loading spinner.
+# ==========================================================================
+
+@callback(
+    Output(_id("drawer-diag-cat"), "value", allow_duplicate=True),
+    Output(_id("drawer-diag-sub"), "value", allow_duplicate=True),
+    Output(_id("drawer-diag-msg"), "children", allow_duplicate=True),
+    Input(_id("drawer-diag-ai-btn"), "n_clicks"),
+    State(_id("edit-store"), "data"),
+    State(_id("store-diag"), "data"),
+    running=[(Output(_id("drawer-diag-ai-btn"), "loading"), True, False)],
+    prevent_initial_call=True,
+)
+def _diag_suggest_ai(n, edit, rows):
+    if not n or not edit or edit.get("tab") != "diag":
+        return no_update, no_update, no_update
+    key = edit.get("key") or ""
+    row = _find_row(rows or [], key, "row_key") or {}
+    if not row:
+        return no_update, no_update, "Row not found."
+    try:
+        from utils.diagnosis_inference import infer_diagnosis_categories
+        result = infer_diagnosis_categories([{
+            "key": row.get("icd_code") or row.get("description", ""),
+            "icd_code": row.get("icd_code", ""),
+            "description": row.get("description", ""),
+            "current_category": row.get("category", ""),
+            "current_subcategory": row.get("subcategory", ""),
+            "patients": int(row.get("patients") or 0),
+        }])
+    except Exception as e:
+        return no_update, no_update, f"AI error: {e}"
+    if not result:
+        return no_update, no_update, "AI couldn't classify this entry."
+    proposal = next(iter(result.values()))
+    cat = proposal.get("category", "") or ""
+    sub = proposal.get("subcategory", "") or ""
+    msg = f"AI: {cat}" + (f" / {sub}" if sub else "") + " — review and Save."
+    return cat, sub, msg
+
+
+@callback(
+    Output(_id("drawer-payor-std"), "value", allow_duplicate=True),
+    Output(_id("drawer-payor-broad"), "value", allow_duplicate=True),
+    Output(_id("drawer-payor-phdsc"), "value", allow_duplicate=True),
+    Output(_id("drawer-payor-msg"), "children", allow_duplicate=True),
+    Input(_id("drawer-payor-ai-btn"), "n_clicks"),
+    State(_id("edit-store"), "data"),
+    State(_id("store-payor"), "data"),
+    running=[(Output(_id("drawer-payor-ai-btn"), "loading"), True, False)],
+    prevent_initial_call=True,
+)
+def _payor_suggest_ai(n, edit, rows):
+    if not n or not edit or edit.get("tab") != "payor":
+        return no_update, no_update, no_update, no_update
+    raw = edit.get("key") or ""
+    row = _find_row(rows or [], raw, "raw_name") or {"raw_name": raw}
+    try:
+        from utils.payor_inference import infer_payor_classifications
+        existing_std = sorted({
+            (r.get("standardized_payor") or "").strip()
+            for r in (rows or []) if (r.get("standardized_payor") or "").strip()
+        })
+        result = infer_payor_classifications(
+            [{
+                "raw_name": row.get("raw_name", ""),
+                "event_count": int(row.get("event_count") or 0),
+                "current_standardized": row.get("standardized_payor", ""),
+                "current_broad": row.get("broad_category", ""),
+                "current_phdsc": row.get("phdsc_category", ""),
+            }],
+            existing_std,
+        )
+    except Exception as e:
+        return no_update, no_update, no_update, f"AI error: {e}"
+    if not result:
+        return no_update, no_update, no_update, "AI couldn't classify this entry."
+    proposal = next(iter(result.values()))
+    std = proposal.get("standardized_payor", "") or ""
+    broad = proposal.get("broad_category", "") or "Other/Unknown"
+    phdsc = proposal.get("phdsc_category", "") or "9 - Other"
+    expl = (proposal.get("explanation", "") or "").strip()
+    msg = f"AI: {expl}" if expl else "AI suggestion filled — review and Save."
+    return std, broad, phdsc, msg
+
+
+@callback(
+    Output(_id("drawer-prov-inst"), "value", allow_duplicate=True),
+    Output(_id("drawer-prov-addr"), "value", allow_duplicate=True),
+    Output(_id("drawer-prov-city"), "value", allow_duplicate=True),
+    Output(_id("drawer-prov-state"), "value", allow_duplicate=True),
+    Output(_id("drawer-prov-zip"), "value", allow_duplicate=True),
+    Output(_id("drawer-prov-msg"), "children", allow_duplicate=True),
+    Input(_id("drawer-prov-ai-btn"), "n_clicks"),
+    State(_id("edit-store"), "data"),
+    State(_id("store-provider"), "data"),
+    running=[(Output(_id("drawer-prov-ai-btn"), "loading"), True, False)],
+    prevent_initial_call=True,
+)
+def _prov_suggest_ai(n, edit, rows):
+    """One-shot institution + address inference for the open provider row.
+
+    Address fields fill only when blank (mirrors desktop behavior — never
+    overwrite a real address with an AI guess). Institution always fills.
+    """
+    if not n or not edit or edit.get("tab") != "provider":
+        return (no_update,) * 6
+    row_key = edit.get("key") or ""
+    row = _find_row(rows or [], row_key, "row_key") or {}
+    if not row.get("npi"):
+        return (no_update,) * 5 + ("Row has no NPI — can't research.",)
+    try:
+        from utils.institution_inference import infer_institutions
+        from data.reviews_db import get_referring_institutions
+        existing = get_referring_institutions()
+        result = infer_institutions(
+            [{
+                "npi": row["npi"],
+                "address_key": row.get("address_key", ""),
+                "row_key": row.get("row_key", ""),
+                "name": row.get("name", ""),
+                "city_state": f"{row.get('city', '')}, {row.get('state', '')}".strip(", "),
+                "department": row.get("department", ""),
+                "first_referral": row.get("first_referral", ""),
+                "last_referral": row.get("last_referral", ""),
+            }],
+            existing,
+        )
+    except Exception as e:
+        return (no_update,) * 5 + (f"AI error: {e}",)
+    proposal = result.get(row["npi"])
+    if not proposal:
+        return (no_update,) * 5 + ("AI couldn't identify this physician.",)
+
+    inst = proposal.get("institution", "") or ""
+    # Only fill address fields when they were blank — preserve any real value.
+    addr_blank = not any(
+        (row.get(k) or "").strip() for k in ("address", "city", "state", "zip")
+    )
+    if addr_blank and (proposal.get("address") or proposal.get("city")
+                       or proposal.get("state") or proposal.get("zip_code")):
+        addr = proposal.get("address", "") or ""
+        city = proposal.get("city", "") or ""
+        state_ = proposal.get("state", "") or ""
+        zip_ = proposal.get("zip_code", "") or ""
+    else:
+        addr = no_update
+        city = no_update
+        state_ = no_update
+        zip_ = no_update
+
+    window = (proposal.get("effective_date_range") or "").strip()
+    parts = [f"AI: {inst}" if inst else "AI: (no institution)"]
+    if addr != no_update:
+        parts.append("address filled")
+        if window:
+            parts.append(f"({window})")
+    msg = " — ".join(parts) + " — review and Save."
+    return (inst or no_update), addr, city, state_, zip_, msg
+
+
 @callback(
     Output(_id("store-institution"), "data", allow_duplicate=True),
     Output(_id("store-provider"), "data", allow_duplicate=True),
@@ -1759,3 +1999,7 @@ def _add_institution(n, name):
     except Exception as e:
         return no_update, no_update, f"Failed: {e}"
     return _load_institutions(), "", f"Added {name}."
+
+
+# Wire AI settings persistence (mobile prefix "mob")
+register_ai_settings_callbacks("mob")
