@@ -1033,6 +1033,31 @@ def _drawer_form_provider(row: dict):
             value=cur_inst,
             searchable=True, clearable=True, size="sm",
         ),
+        dmc.Group(justify="space-between", align="flex-end", gap=6, children=[
+            dmc.Text("Address", size="xs", fw=500, c="dimmed"),
+            dmc.Button(
+                "Use NPPES address",
+                id=_id("drawer-prov-nppes-btn"),
+                leftSection=DashIconify(icon="tabler:map-pin", width=12),
+                variant="subtle", color="grape", size="compact-xs",
+                disabled=not (npi or "").strip(),
+            ),
+        ]),
+        dmc.Text(id=_id("drawer-prov-nppes-msg"), size="xs", c="dimmed"),
+        dmc.Select(
+            id=_id("drawer-prov-copy-addr"),
+            placeholder="Copy address from another provider…",
+            data=[],
+            value=None,
+            searchable=True, clearable=True, size="xs",
+            leftSection=DashIconify(icon="tabler:copy", width=12),
+        ),
+        dmc.Textarea(
+            id=_id("drawer-prov-paste"),
+            placeholder="…or paste a full address (e.g. 123 Main St, Seattle, WA 98101) — auto-splits",
+            autosize=True, minRows=1, maxRows=2,
+            size="xs",
+        ),
         dmc.TextInput(
             id=_id("drawer-prov-addr"),
             label="Street address",
@@ -1514,6 +1539,167 @@ def _save_provider(n, edit, rows, spec, inst, addr, city, state_, zip_, reviewed
     except Exception:
         new_inst = no_update
     return new_rows, new_inst, False, ""
+
+
+@callback(
+    Output(_id("drawer-prov-copy-addr"), "data"),
+    Input(_id("edit-store"), "data"),
+    State(_id("store-provider"), "data"),
+    prevent_initial_call=True,
+)
+def _populate_copy_address_options(edit, providers):
+    """Build the copy-from-existing dropdown when the provider drawer opens.
+
+    Ranks options: same NPI first (other addresses on file for this provider),
+    then same institution, then everything else with a usable address. Limits
+    to 200 to keep the Select responsive.
+    """
+    if not edit or edit.get("tab") != "provider" or not providers:
+        return []
+    cur_key = edit.get("key", "") or ""
+    cur_npi = cur_key.partition("|")[0].strip()
+    cur_inst = ""
+    for r in providers:
+        if r.get("row_key") == cur_key:
+            cur_inst = (r.get("institution") or "").strip()
+            break
+
+    same_npi, same_inst, other = [], [], []
+    for r in providers:
+        rk = r.get("row_key") or ""
+        if rk == cur_key:
+            continue
+        if not (r.get("address") or r.get("city") or r.get("state") or r.get("zip")):
+            continue
+        full = r.get("full_address") or ""
+        name = r.get("name") or "(unknown)"
+        label = f"{name} — {full}" if full else name
+        opt = {"value": rk, "label": label[:120]}
+        rnpi = (r.get("npi") or "").strip()
+        rinst = (r.get("institution") or "").strip()
+        if cur_npi and rnpi == cur_npi:
+            same_npi.append(opt)
+        elif cur_inst and rinst == cur_inst:
+            same_inst.append(opt)
+        else:
+            other.append(opt)
+    # Truncate to keep payload + Select snappy
+    return (same_npi + same_inst + other)[:200]
+
+
+# Clientside: fill the four address fields when an option is picked.
+clientside_callback(
+    """
+    function(rowKey, providers) {
+        const NU = window.dash_clientside.no_update;
+        if (!rowKey || !providers) return [NU, NU, NU, NU];
+        const target = providers.find(p => (p.row_key || '') === rowKey);
+        if (!target) return [NU, NU, NU, NU];
+        return [
+            target.address || '',
+            target.city || '',
+            target.state || '',
+            target.zip || '',
+        ];
+    }
+    """,
+    Output(_id("drawer-prov-addr"), "value", allow_duplicate=True),
+    Output(_id("drawer-prov-city"), "value", allow_duplicate=True),
+    Output(_id("drawer-prov-state"), "value", allow_duplicate=True),
+    Output(_id("drawer-prov-zip"), "value", allow_duplicate=True),
+    Input(_id("drawer-prov-copy-addr"), "value"),
+    State(_id("store-provider"), "data"),
+    prevent_initial_call=True,
+)
+
+
+# Clientside: parse a pasted full address into the four fields.
+# Handles "123 Main St, Seattle, WA 98101" and common variants.
+clientside_callback(
+    r"""
+    function(text) {
+        const NU = window.dash_clientside.no_update;
+        if (!text || !text.trim()) return [NU, NU, NU, NU];
+        const STATES = new Set([
+            'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL',
+            'IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT',
+            'NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI',
+            'SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC',
+        ]);
+        // Collapse whitespace, strip USA suffix, strip trailing commas.
+        let s = text.replace(/\s+/g, ' ').trim();
+        s = s.replace(/,?\s*(USA|U\.S\.A\.|United States)\s*$/i, '').trim();
+
+        // ZIP at end, optional +4
+        let zip = '';
+        const zipMatch = s.match(/(\d{5})(?:-\d{4})?\s*$/);
+        if (zipMatch) {
+            zip = zipMatch[1];
+            s = s.slice(0, zipMatch.index).trim().replace(/[,\s]+$/, '').trim();
+        }
+
+        // State at end (2-letter, validated). Allow comma or space separator.
+        let state = '';
+        const stMatch = s.match(/[,\s]+([A-Za-z]{2})\s*$/);
+        if (stMatch && STATES.has(stMatch[1].toUpperCase())) {
+            state = stMatch[1].toUpperCase();
+            s = s.slice(0, stMatch.index).trim().replace(/[,\s]+$/, '').trim();
+        }
+
+        // Remaining: "street, city" or just "street". Split on commas;
+        // last segment is city, everything before is street.
+        const parts = s.split(',').map(x => x.trim()).filter(Boolean);
+        let street = '', city = '';
+        if (parts.length >= 2) {
+            city = parts.pop();
+            street = parts.join(', ');
+        } else if (parts.length === 1) {
+            // No comma — best effort: leave as street, no city
+            street = parts[0];
+        }
+        return [street, city, state, zip];
+    }
+    """,
+    Output(_id("drawer-prov-addr"), "value", allow_duplicate=True),
+    Output(_id("drawer-prov-city"), "value", allow_duplicate=True),
+    Output(_id("drawer-prov-state"), "value", allow_duplicate=True),
+    Output(_id("drawer-prov-zip"), "value", allow_duplicate=True),
+    Input(_id("drawer-prov-paste"), "value"),
+    prevent_initial_call=True,
+)
+
+
+@callback(
+    Output(_id("drawer-prov-addr"), "value", allow_duplicate=True),
+    Output(_id("drawer-prov-city"), "value", allow_duplicate=True),
+    Output(_id("drawer-prov-state"), "value", allow_duplicate=True),
+    Output(_id("drawer-prov-zip"), "value", allow_duplicate=True),
+    Output(_id("drawer-prov-nppes-msg"), "children"),
+    Input(_id("drawer-prov-nppes-btn"), "n_clicks"),
+    State(_id("edit-store"), "data"),
+    prevent_initial_call=True,
+)
+def _fetch_nppes_address(n, edit):
+    """Pull the practice-location address from NPPES into the four fields."""
+    if not n or not edit or edit.get("tab") != "provider":
+        return (no_update,) * 5
+    npi = (edit.get("key") or "").partition("|")[0].strip()
+    if not npi:
+        return no_update, no_update, no_update, no_update, "No NPI on this row."
+    try:
+        from utils.npi_lookup import lookup_npi
+        info = lookup_npi(npi)
+    except Exception as e:
+        return no_update, no_update, no_update, no_update, f"NPPES error: {e}"
+    if not info:
+        return no_update, no_update, no_update, no_update, "NPI not found in NPPES."
+    addr = info.get("address") or ""
+    city = info.get("city") or ""
+    state_ = info.get("state") or ""
+    zip_ = info.get("zip_code") or ""
+    if not (addr or city or state_ or zip_):
+        return no_update, no_update, no_update, no_update, "NPPES returned no address."
+    return addr, city, state_, zip_, "Filled from NPPES — review and Save."
 
 
 @callback(

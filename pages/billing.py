@@ -1,5 +1,7 @@
 """Billing page — CPT category volumes, wRVU production, and payor mix."""
 
+import threading
+
 import dash
 import dash_mantine_components as dmc
 import dash_ag_grid as dag
@@ -2618,17 +2620,37 @@ layout = dmc.Stack(
                                                 dmc.Text(id=f"{PAGE_ID}-pm-count", size="xs", c="dimmed"),
                                             ],
                                         ),
-                                        dmc.SegmentedControl(
-                                            id=f"{PAGE_ID}-pm-filter",
-                                            data=[
-                                                {"value": "all", "label": "All"},
-                                                {"value": "unreviewed", "label": "Unreviewed"},
-                                                {"value": "unmapped", "label": "Unmapped"},
+                                        dmc.Group(
+                                            gap="xs",
+                                            children=[
+                                                dmc.Button(
+                                                    "Classify (AI)",
+                                                    id=f"{PAGE_ID}-pm-ai-btn",
+                                                    leftSection=DashIconify(icon="tabler:brain", width=14),
+                                                    variant="light", color="grape", size="xs",
+                                                ),
+                                                dmc.SegmentedControl(
+                                                    id=f"{PAGE_ID}-pm-filter",
+                                                    data=[
+                                                        {"value": "all", "label": "All"},
+                                                        {"value": "unreviewed", "label": "Unreviewed"},
+                                                        {"value": "unmapped", "label": "Unmapped"},
+                                                    ],
+                                                    value="all",
+                                                    size="xs",
+                                                ),
                                             ],
-                                            value="all",
-                                            size="xs",
                                         ),
                                     ],
+                                ),
+                                dmc.Progress(
+                                    id=f"{PAGE_ID}-pm-ai-progress",
+                                    value=0, size="sm", color="grape",
+                                    style={"display": "none"}, mb=4,
+                                ),
+                                dmc.Text(
+                                    id=f"{PAGE_ID}-pm-ai-progress-text", size="xs",
+                                    c="dimmed", style={"display": "none"}, mb=4,
                                 ),
                                 dag.AgGrid(
                                     id=f"{PAGE_ID}-pm-grid",
@@ -2696,6 +2718,111 @@ layout = dmc.Stack(
                                 ),
                                 # Store for the full (unfiltered) mapping data
                                 dcc.Store(id=f"{PAGE_ID}-pm-full-store", data=[]),
+                                dcc.Interval(id=f"{PAGE_ID}-pm-ai-poll", interval=2000, disabled=True),
+                                dmc.Modal(
+                                    id=f"{PAGE_ID}-pm-ai-review",
+                                    opened=False,
+                                    title=dmc.Group(
+                                        children=[
+                                            DashIconify(icon="tabler:brain", width=22, color="grape"),
+                                            dmc.Text("AI Payor Classification — Review before applying",
+                                                     fw=600, size="lg"),
+                                        ],
+                                        gap="xs",
+                                    ),
+                                    size="95%",
+                                    centered=True,
+                                    zIndex=2100,
+                                    styles={
+                                        "content": {"height": "85vh", "display": "flex",
+                                                    "flexDirection": "column"},
+                                        "body": {"flex": 1, "overflow": "hidden",
+                                                 "display": "flex", "flexDirection": "column"},
+                                    },
+                                    children=[
+                                        dmc.Group(
+                                            justify="flex-end", mb=8,
+                                            children=[
+                                                dmc.Button(
+                                                    "Accept All",
+                                                    id=f"{PAGE_ID}-pm-ai-accept-all",
+                                                    leftSection=DashIconify(icon="tabler:checks", width=14),
+                                                    variant="light", color="green", size="sm",
+                                                ),
+                                                dmc.Button(
+                                                    "Reject All",
+                                                    id=f"{PAGE_ID}-pm-ai-reject-all",
+                                                    leftSection=DashIconify(icon="tabler:x", width=14),
+                                                    variant="light", color="red", size="sm",
+                                                ),
+                                                dmc.Button(
+                                                    "Apply Selected",
+                                                    id=f"{PAGE_ID}-pm-ai-apply",
+                                                    leftSection=DashIconify(icon="tabler:check", width=14),
+                                                    variant="filled", color="green", size="sm",
+                                                ),
+                                            ],
+                                        ),
+                                        dag.AgGrid(
+                                            id=f"{PAGE_ID}-pm-ai-review-grid",
+                                            columnDefs=[
+                                                {"field": "accept", "headerName": "Accept",
+                                                 "width": 90, "cellDataType": "boolean",
+                                                 "editable": True},
+                                                {"field": "raw_name", "headerName": "Raw Name",
+                                                 "flex": 1.4, "minWidth": 200,
+                                                 "cellStyle": {"fontSize": "12px"}},
+                                                {"field": "event_count", "headerName": "Events",
+                                                 "flex": 0.35, "type": "numericColumn"},
+                                                {"field": "current_standardized",
+                                                 "headerName": "Current Std",
+                                                 "flex": 0.9,
+                                                 "cellStyle": {"color": "#9CA3AF"}},
+                                                {"field": "ai_standardized", "headerName": "AI Standardized",
+                                                 "flex": 1, "editable": True,
+                                                 "cellStyle": {"fontWeight": 600}},
+                                                {"field": "ai_broad", "headerName": "AI Category",
+                                                 "flex": 0.7, "editable": True,
+                                                 "cellEditor": "agSelectCellEditor",
+                                                 "cellEditorParams": {"values": [
+                                                     "Medicare", "Medicaid", "Private", "Military/VA",
+                                                     "Workers Comp", "Tribal/IHS", "Self Pay",
+                                                     "Other/Unknown",
+                                                 ]},
+                                                 "cellStyle": {"fontWeight": 600,
+                                                               "cursor": "pointer"}},
+                                                {"field": "ai_phdsc", "headerName": "AI PHDSC",
+                                                 "flex": 0.6, "editable": True,
+                                                 "cellEditor": "agSelectCellEditor",
+                                                 "cellEditorParams": {"values": [
+                                                     "1 - Medicare", "2 - Medicaid/CHIP",
+                                                     "3 - Other Govt", "4 - Corrections",
+                                                     "5 - Private", "6 - BCBS",
+                                                     "8 - No Payment", "9 - Other",
+                                                 ]},
+                                                 "cellStyle": {"fontWeight": 600,
+                                                               "cursor": "pointer"}},
+                                                {"field": "explanation", "headerName": "Explanation",
+                                                 "flex": 2, "wrapText": True, "autoHeight": True,
+                                                 "cellStyle": {"fontSize": "11px",
+                                                               "lineHeight": "1.35",
+                                                               "color": "#374151"}},
+                                            ],
+                                            defaultColDef={"sortable": True, "resizable": True,
+                                                           "valueFormatter": {"function":
+                                                               "params.value == null || params.value === '' ? '–' : params.value"}},
+                                            dashGridOptions={
+                                                "rowHeight": 48,
+                                                "headerHeight": 36,
+                                                "pagination": True,
+                                                "paginationPageSize": 25,
+                                                "singleClickEdit": True,
+                                            },
+                                            style={"flex": 1, "minHeight": 0},
+                                            className="ag-theme-alpine",
+                                        ),
+                                    ],
+                                ),
                             ],  # end TabsPanel "mapping" children
                         ),  # end TabsPanel "mapping"
 
@@ -5317,6 +5444,7 @@ def _pm_load(tab, n_clicks, active_filter):
             "broad_category": m["broad_category"],
             "phdsc_category": m.get("phdsc_category", "9"),
             "reviewed": bool(m["reviewed"]),
+            "ai_explanation": m.get("ai_explanation", ""),
         })
 
     # Sort by event_count desc by default
@@ -5370,6 +5498,12 @@ def _pm_load(tab, n_clicks, active_filter):
          "editable": True, "flex": 0.3, "minWidth": 80,
          "cellDataType": "boolean",
          "cellStyle": {"textAlign": "center"}},
+        {"field": "ai_explanation", "headerName": "AI Note",
+         "editable": False, "flex": 1, "minWidth": 200,
+         "tooltipField": "ai_explanation",
+         "cellStyle": {"fontSize": "11px", "color": "#6B7280",
+                       "fontStyle": "italic", "lineHeight": "1.3"},
+         "filter": "agTextColumnFilter", "floatingFilter": True},
     ]
 
     mapped = sum(1 for r in rows if r["standardized_payor"])
@@ -6321,4 +6455,238 @@ clientside_callback(
     Output(f"{PAGE_ID}-dollarcum-project-wrap", "style"),
     Input(f"{PAGE_ID}-filter-date-preset", "value"),
 )
+
+
+# ==========================================================================
+# Payor Mapping AI Classification
+# ==========================================================================
+
+_pm_ai_progress = {"done": 0, "total": 0, "running": False, "message": ""}
+_pm_ai_results: list[dict] = []
+_pm_ai_lock = threading.Lock()
+
+
+@callback(
+    Output(f"{PAGE_ID}-pm-ai-poll", "disabled"),
+    Output(f"{PAGE_ID}-pm-ai-progress", "style"),
+    Output(f"{PAGE_ID}-pm-ai-progress-text", "style"),
+    Output(f"{PAGE_ID}-pm-ai-progress-text", "children"),
+    Input(f"{PAGE_ID}-pm-ai-btn", "n_clicks"),
+    State(f"{PAGE_ID}-pm-grid", "rowData"),
+    State(f"{PAGE_ID}-pm-full-store", "data"),
+    State(f"{PAGE_ID}-pm-filter", "value"),
+    prevent_initial_call=True,
+)
+def _pm_start_ai(n, visible_rows, full_data, active_filter):
+    """Kick off background AI classification.
+
+    Scope: if the active filter is "unreviewed" or "unmapped", classify only
+    those rows; otherwise classify everything currently in the grid (so the
+    user can pre-filter via floatingFilter and target a subset).
+    """
+    if not n:
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+
+    rows = visible_rows or full_data or []
+    if not rows:
+        return True, {"display": "none"}, {"display": "block"}, "No payors to classify."
+
+    with _pm_ai_lock:
+        if _pm_ai_progress["running"]:
+            return dash.no_update, dash.no_update, dash.no_update, "Already running…"
+
+    entries = []
+    for r in rows:
+        raw = (r.get("raw_name") or "").strip()
+        if not raw:
+            continue
+        entries.append({
+            "raw_name": raw,
+            "event_count": int(r.get("event_count") or 0),
+            "current_standardized": r.get("standardized_payor", "") or "",
+            "current_broad": r.get("broad_category", "") or "",
+            "current_phdsc": r.get("phdsc_category", "") or "",
+        })
+
+    if not entries:
+        return True, {"display": "none"}, {"display": "block"}, "No valid entries."
+
+    # Existing standardized names — pulled from current data so Claude reuses them.
+    existing_std = sorted({
+        (r.get("standardized_payor") or "").strip()
+        for r in (full_data or [])
+        if (r.get("standardized_payor") or "").strip()
+    })
+
+    with _pm_ai_lock:
+        _pm_ai_progress.update(done=0, total=len(entries), running=True,
+                               message="Starting AI classification…")
+        _pm_ai_results.clear()
+
+    def _bg():
+        from utils.payor_inference import infer_payor_classifications
+
+        all_results: dict[str, dict] = {}
+        chunk_size = 25
+        for i in range(0, len(entries), chunk_size):
+            chunk = entries[i : i + chunk_size]
+            chunk_results = infer_payor_classifications(chunk, existing_std)
+            all_results.update(chunk_results)
+            with _pm_ai_lock:
+                _pm_ai_progress["done"] = min(i + chunk_size, len(entries))
+                _pm_ai_progress["message"] = (
+                    f"Classifying… {_pm_ai_progress['done']}/{len(entries)}"
+                )
+
+        review = []
+        for e in entries:
+            raw = e["raw_name"]
+            ai = all_results.get(raw)
+            review.append({
+                "raw_name": raw,
+                "event_count": e["event_count"],
+                "current_standardized": e["current_standardized"],
+                "ai_standardized": ai["standardized_payor"] if ai else "",
+                "ai_broad": ai["broad_category"] if ai else "",
+                "ai_phdsc": ai["phdsc_category"] if ai else "",
+                "explanation": ai["explanation"] if ai else "",
+                "accept": bool(ai),
+            })
+
+        with _pm_ai_lock:
+            _pm_ai_results.clear()
+            _pm_ai_results.extend(review)
+            _pm_ai_progress["running"] = False
+            classified = sum(1 for r in review if r["ai_standardized"])
+            _pm_ai_progress["message"] = (
+                f"Done. {classified:,} classified of {len(review)}."
+            )
+
+    threading.Thread(target=_bg, daemon=True).start()
+
+    return (
+        False,
+        {"display": "block"},
+        {"display": "block"},
+        f"Classifying {len(entries)} entries…",
+    )
+
+
+@callback(
+    Output(f"{PAGE_ID}-pm-ai-poll", "disabled", allow_duplicate=True),
+    Output(f"{PAGE_ID}-pm-ai-progress", "value"),
+    Output(f"{PAGE_ID}-pm-ai-progress", "style", allow_duplicate=True),
+    Output(f"{PAGE_ID}-pm-ai-progress-text", "children", allow_duplicate=True),
+    Output(f"{PAGE_ID}-pm-ai-progress-text", "style", allow_duplicate=True),
+    Output(f"{PAGE_ID}-pm-ai-review", "opened"),
+    Output(f"{PAGE_ID}-pm-ai-review-grid", "rowData"),
+    Input(f"{PAGE_ID}-pm-ai-poll", "n_intervals"),
+    prevent_initial_call=True,
+)
+def _pm_ai_poll(n):
+    """Poll background AI classification progress."""
+    no = dash.no_update
+    with _pm_ai_lock:
+        done = _pm_ai_progress["done"]
+        total = _pm_ai_progress["total"]
+        running = _pm_ai_progress["running"]
+        msg = _pm_ai_progress["message"]
+        review = list(_pm_ai_results) if not running and _pm_ai_results else None
+
+    pct = int(done * 100 / total) if total > 0 else 0
+    if running:
+        return False, pct, {"display": "block"}, msg, {"display": "block"}, no, no
+    if review:
+        return (
+            True, 100, {"display": "none"}, msg, {"display": "block"},
+            True, review,
+        )
+    return True, 100, {"display": "none"}, msg, {"display": "block"}, no, no
+
+
+@callback(
+    Output(f"{PAGE_ID}-pm-ai-review-grid", "rowData", allow_duplicate=True),
+    Input(f"{PAGE_ID}-pm-ai-accept-all", "n_clicks"),
+    State(f"{PAGE_ID}-pm-ai-review-grid", "rowData"),
+    prevent_initial_call=True,
+)
+def _pm_ai_accept_all(n, data):
+    if not n or not data:
+        return dash.no_update
+    for r in data:
+        if r.get("ai_standardized") or r.get("ai_broad"):
+            r["accept"] = True
+    return data
+
+
+@callback(
+    Output(f"{PAGE_ID}-pm-ai-review", "opened", allow_duplicate=True),
+    Output(f"{PAGE_ID}-pm-ai-progress-text", "children", allow_duplicate=True),
+    Input(f"{PAGE_ID}-pm-ai-reject-all", "n_clicks"),
+    prevent_initial_call=True,
+)
+def _pm_ai_reject_all(n):
+    if not n:
+        return dash.no_update, dash.no_update
+    with _pm_ai_lock:
+        _pm_ai_results.clear()
+    return False, "Rejected all — no changes applied."
+
+
+@callback(
+    Output(f"{PAGE_ID}-pm-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-pm-full-store", "data", allow_duplicate=True),
+    Output(f"{PAGE_ID}-pm-count", "children", allow_duplicate=True),
+    Output(f"{PAGE_ID}-pm-ai-review", "opened", allow_duplicate=True),
+    Output(f"{PAGE_ID}-pm-ai-progress-text", "children", allow_duplicate=True),
+    Input(f"{PAGE_ID}-pm-ai-apply", "n_clicks"),
+    State(f"{PAGE_ID}-pm-ai-review-grid", "rowData"),
+    State(f"{PAGE_ID}-pm-full-store", "data"),
+    State(f"{PAGE_ID}-pm-filter", "value"),
+    prevent_initial_call=True,
+)
+def _pm_ai_apply(n, review_data, full_data, active_filter):
+    if not n or not review_data or not full_data:
+        return (dash.no_update,) * 5
+
+    accepted = [r for r in review_data
+                if r.get("accept") and (r.get("ai_standardized") or r.get("ai_broad"))]
+    if not accepted:
+        return (dash.no_update, dash.no_update, dash.no_update,
+                False, "No rows accepted — no changes applied.")
+
+    # Persist + auto-mark reviewed (the explicit accept IS the review).
+    for r in accepted:
+        raw = (r.get("raw_name") or "").strip()
+        if not raw:
+            continue
+        upsert_payor_mapping(
+            raw_name=raw,
+            standardized_payor=r.get("ai_standardized", "") or "",
+            broad_category=r.get("ai_broad") or "Other/Unknown",
+            phdsc_category=r.get("ai_phdsc") or "9 - Other",
+            reviewed=1,
+            ai_explanation=r.get("explanation", "") or "",
+        )
+
+    accepted_map = {r["raw_name"]: r for r in accepted}
+    for row in full_data:
+        a = accepted_map.get(row.get("raw_name"))
+        if a:
+            row["standardized_payor"] = a.get("ai_standardized", "") or ""
+            row["broad_category"] = a.get("ai_broad") or "Other/Unknown"
+            row["phdsc_category"] = a.get("ai_phdsc") or "9 - Other"
+            row["reviewed"] = True
+            row["ai_explanation"] = a.get("explanation", "") or ""
+
+    mapped = sum(1 for r in full_data if r.get("standardized_payor"))
+    count_text = f"{mapped} mapped / {len(full_data)} total"
+    visible = _apply_pm_filter(full_data, active_filter)
+
+    with _pm_ai_lock:
+        _pm_ai_results.clear()
+
+    return visible, full_data, count_text, False, (
+        f"Applied {len(accepted)} AI classifications."
+    )
 

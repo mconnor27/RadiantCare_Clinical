@@ -178,7 +178,35 @@ def lookup_npi(npi: str) -> dict | None:
     basic = result.get("basic", {})
     organization = basic.get("organization_name") or ""
 
-    return {"specialty": specialty, "raw_taxonomy": raw_taxonomy, "organization": organization}
+    # --- Practice location address (prefer LOCATION over MAILING) ---
+    addresses = result.get("addresses", [])
+    practice = next(
+        (a for a in addresses if (a.get("address_purpose") or "").upper() == "LOCATION"),
+        None,
+    )
+    if practice is None and addresses:
+        practice = addresses[0]
+
+    address = city = state = zip_code = ""
+    if practice:
+        line1 = (practice.get("address_1") or "").strip()
+        line2 = (practice.get("address_2") or "").strip()
+        address = f"{line1} {line2}".strip() if line2 else line1
+        city = (practice.get("city") or "").strip()
+        state = (practice.get("state") or "").strip()
+        postal = (practice.get("postal_code") or "").strip()
+        # Normalize 9-digit ZIP+4 to 5-digit ("981010001" → "98101")
+        zip_code = postal[:5] if postal else ""
+
+    return {
+        "specialty": specialty,
+        "raw_taxonomy": raw_taxonomy,
+        "organization": organization,
+        "address": address,
+        "city": city,
+        "state": state,
+        "zip_code": zip_code,
+    }
 
 
 def batch_lookup_npis(

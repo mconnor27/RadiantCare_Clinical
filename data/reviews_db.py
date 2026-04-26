@@ -123,6 +123,7 @@ CREATE TABLE IF NOT EXISTS payor_mappings (
     broad_category      TEXT NOT NULL DEFAULT 'Other/Unknown',
     phdsc_category      TEXT NOT NULL DEFAULT '9',
     reviewed            INTEGER NOT NULL DEFAULT 0,
+    ai_explanation      TEXT NOT NULL DEFAULT '',
     updated_at          TEXT NOT NULL
 );
 
@@ -229,12 +230,15 @@ def _connect():
 
 def _ensure_table():
     if _USE_POSTGRES:
-        # In Postgres the schema is created by the one-shot migration script;
-        # tables are created by this DDL run the first time the app boots
-        # against an empty clinical schema. No PRAGMA-based column migrations
-        # needed — the tables are born with all current columns.
+        # Postgres: CREATE TABLE IF NOT EXISTS handles fresh installs; for
+        # tables that pre-exist with an older shape, add new columns via
+        # idempotent ALTER ... ADD COLUMN IF NOT EXISTS.
         with _connect() as conn:
             conn.executescript(_SCHEMA_POSTGRES)
+            conn.execute(
+                "ALTER TABLE payor_mappings ADD COLUMN IF NOT EXISTS "
+                "ai_explanation TEXT NOT NULL DEFAULT ''"
+            )
         return
 
     # SQLite path (unchanged behaviour)
@@ -250,6 +254,8 @@ def _ensure_table():
         pm_cols = [r[1] for r in conn.execute("PRAGMA table_info(payor_mappings)").fetchall()]
         if "phdsc_category" not in pm_cols:
             conn.execute("ALTER TABLE payor_mappings ADD COLUMN phdsc_category TEXT NOT NULL DEFAULT '9'")
+        if "ai_explanation" not in pm_cols:
+            conn.execute("ALTER TABLE payor_mappings ADD COLUMN ai_explanation TEXT NOT NULL DEFAULT ''")
 
 
 # Run once on import
@@ -979,7 +985,8 @@ def get_all_payor_mappings() -> list[dict]:
     """Return all payor mappings ordered by raw_name."""
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT raw_name, standardized_payor, broad_category, phdsc_category, reviewed, updated_at "
+            "SELECT raw_name, standardized_payor, broad_category, phdsc_category, "
+            "reviewed, ai_explanation, updated_at "
             "FROM payor_mappings ORDER BY raw_name"
         ).fetchall()
     return [dict(r) for r in rows]
@@ -991,23 +998,46 @@ def upsert_payor_mapping(
     broad_category: str = "Other/Unknown",
     phdsc_category: str = "9",
     reviewed: int = 0,
+    ai_explanation: str | None = None,
 ) -> None:
-    """Insert or update a single payor mapping."""
+    """Insert or update a single payor mapping.
+
+    ``ai_explanation=None`` preserves any existing explanation on update;
+    pass ``""`` to explicitly clear it.
+    """
     now = datetime.now(timezone.utc).isoformat()
     with _connect() as conn:
-        conn.execute(
-            """INSERT INTO payor_mappings
-               (raw_name, standardized_payor, broad_category, phdsc_category, reviewed, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?)
-               ON CONFLICT(raw_name) DO UPDATE SET
-                   standardized_payor = excluded.standardized_payor,
-                   broad_category     = excluded.broad_category,
-                   phdsc_category     = excluded.phdsc_category,
-                   reviewed           = excluded.reviewed,
-                   updated_at         = excluded.updated_at""",
-            (raw_name.strip(), standardized_payor, broad_category, phdsc_category,
-             1 if reviewed else 0, now),
-        )
+        if ai_explanation is None:
+            conn.execute(
+                """INSERT INTO payor_mappings
+                   (raw_name, standardized_payor, broad_category, phdsc_category,
+                    reviewed, ai_explanation, updated_at)
+                   VALUES (?, ?, ?, ?, ?, '', ?)
+                   ON CONFLICT(raw_name) DO UPDATE SET
+                       standardized_payor = excluded.standardized_payor,
+                       broad_category     = excluded.broad_category,
+                       phdsc_category     = excluded.phdsc_category,
+                       reviewed           = excluded.reviewed,
+                       updated_at         = excluded.updated_at""",
+                (raw_name.strip(), standardized_payor, broad_category, phdsc_category,
+                 1 if reviewed else 0, now),
+            )
+        else:
+            conn.execute(
+                """INSERT INTO payor_mappings
+                   (raw_name, standardized_payor, broad_category, phdsc_category,
+                    reviewed, ai_explanation, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(raw_name) DO UPDATE SET
+                       standardized_payor = excluded.standardized_payor,
+                       broad_category     = excluded.broad_category,
+                       phdsc_category     = excluded.phdsc_category,
+                       reviewed           = excluded.reviewed,
+                       ai_explanation     = excluded.ai_explanation,
+                       updated_at         = excluded.updated_at""",
+                (raw_name.strip(), standardized_payor, broad_category, phdsc_category,
+                 1 if reviewed else 0, ai_explanation, now),
+            )
 
 
 def get_payor_mapping_dict() -> dict:
