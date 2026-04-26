@@ -45,6 +45,7 @@ if os.environ.get("AUTH_ENABLED", "").lower() in ("1", "true", "yes", "on"):
 app.index_string = """<!DOCTYPE html>
 <html>
     <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
         {%metas%}
         <title>{%title%}</title>
         <link rel="icon" type="image/png" href="/assets/RadiantCare-icon.png">
