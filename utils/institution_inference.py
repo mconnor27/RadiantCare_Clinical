@@ -158,8 +158,28 @@ Omit NPIs you cannot identify."""
 
         parsed = json.loads(json_match.group())
 
+        # Normalize both response shapes (see utils/payor_inference.py for context):
+        # Sonnet/Opus 4.x often return {"results": [{"npi": "X", ...}, ...]}
+        # instead of the requested flat {npi: {...}} dict.
+        records: list[tuple[str, object]] = []
+        if isinstance(parsed, dict) and isinstance(parsed.get("results"), list):
+            for item in parsed["results"]:
+                if isinstance(item, dict):
+                    npi = str(item.get("npi") or "").strip()
+                    if npi:
+                        records.append((npi, item))
+        elif isinstance(parsed, list):
+            for item in parsed:
+                if isinstance(item, dict):
+                    npi = str(item.get("npi") or "").strip()
+                    if npi:
+                        records.append((npi, item))
+        else:
+            for npi, val in parsed.items():
+                records.append((npi, val))
+
         results: dict[str, dict] = {}
-        for npi, val in parsed.items():
+        for npi, val in records:
             # Tolerate the older string-only response shape just in case.
             if isinstance(val, str):
                 if val:
@@ -185,5 +205,9 @@ Omit NPIs you cannot identify."""
             }
         return results
 
-    except (anthropic.APIError, json.JSONDecodeError, Exception):
+    except (anthropic.APIError, json.JSONDecodeError) as e:
+        print(f"[institution_inference] {type(e).__name__}: {e}", flush=True)
+        return {}
+    except Exception as e:
+        print(f"[institution_inference] unexpected {type(e).__name__}: {e}", flush=True)
         return {}

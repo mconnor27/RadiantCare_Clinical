@@ -122,18 +122,40 @@ For entries that are not a diagnosis (scheduling notes, vague admin text), use c
             return {}
 
         parsed = json.loads(json_match.group())
-        # Filter out null values and validate against taxonomy
+
+        # Normalize both response shapes (see utils/payor_inference.py for context):
+        # Sonnet/Opus 4.x often return {"results": [{"key": "X", ...}, ...]}
+        # instead of the requested flat {key: {...}} dict.
+        records: list[tuple[str, dict]] = []
+        if isinstance(parsed, dict) and isinstance(parsed.get("results"), list):
+            for item in parsed["results"]:
+                if isinstance(item, dict):
+                    k = (item.get("key") or "").strip()
+                    if k:
+                        records.append((k, item))
+        elif isinstance(parsed, list):
+            for item in parsed:
+                if isinstance(item, dict):
+                    k = (item.get("key") or "").strip()
+                    if k:
+                        records.append((k, item))
+        else:
+            for key, val in parsed.items():
+                if isinstance(val, dict):
+                    records.append((key, val))
+
         results = {}
         valid_cats = set(CATEGORIES) | {"Unknown"}
-        for key, val in parsed.items():
-            if val is None:
-                continue
+        for key, val in records:
             cat = val.get("category", "")
             sub = val.get("subcategory", "")
             if cat in valid_cats:
                 results[key] = {"category": cat, "subcategory": sub}
-
         return results
 
-    except (anthropic.APIError, json.JSONDecodeError, Exception):
+    except (anthropic.APIError, json.JSONDecodeError) as e:
+        print(f"[diagnosis_inference] {type(e).__name__}: {e}", flush=True)
+        return {}
+    except Exception as e:
+        print(f"[diagnosis_inference] unexpected {type(e).__name__}: {e}", flush=True)
         return {}

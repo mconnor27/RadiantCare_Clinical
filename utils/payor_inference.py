@@ -138,13 +138,34 @@ For entries you truly cannot classify, omit them from the response (do not retur
             return {}
 
         parsed = json.loads(json_match.group())
+
+        # Normalize both response shapes:
+        # 1) flat dict-of-dicts: {"raw_name": {"standardized_payor": ...}}
+        # 2) wrapped list: {"results": [{"raw_name": "X", "standardized_payor": ...}, ...]}
+        # Sonnet 4.6+ tends to return shape (2); older models return (1).
+        records: list[tuple[str, dict]] = []
+        if isinstance(parsed, dict) and isinstance(parsed.get("results"), list):
+            for item in parsed["results"]:
+                if isinstance(item, dict):
+                    raw = (item.get("raw_name") or "").strip()
+                    if raw:
+                        records.append((raw, item))
+        elif isinstance(parsed, list):
+            for item in parsed:
+                if isinstance(item, dict):
+                    raw = (item.get("raw_name") or "").strip()
+                    if raw:
+                        records.append((raw, item))
+        else:
+            for raw, val in parsed.items():
+                if isinstance(val, dict):
+                    records.append((raw, val))
+
         valid_broad = set(_BROAD_CATEGORIES)
         valid_phdsc = set(_PHDSC_CATEGORIES)
 
         results: dict[str, dict] = {}
-        for raw, val in parsed.items():
-            if not isinstance(val, dict):
-                continue
+        for raw, val in records:
             std = (val.get("standardized_payor") or "").strip()
             broad = (val.get("broad_category") or "").strip()
             phdsc = (val.get("phdsc_category") or "").strip()
@@ -161,5 +182,10 @@ For entries you truly cannot classify, omit them from the response (do not retur
             }
         return results
 
-    except (anthropic.APIError, json.JSONDecodeError, Exception):
+    except (anthropic.APIError, json.JSONDecodeError) as e:
+        print(f"[payor_inference] {type(e).__name__}: {e}", flush=True)
+        return {}
+    except Exception as e:
+        # Unexpected — log + re-raise during dev-friendly debugging
+        print(f"[payor_inference] unexpected {type(e).__name__}: {e}", flush=True)
         return {}
