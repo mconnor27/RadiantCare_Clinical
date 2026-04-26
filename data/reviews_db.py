@@ -1005,7 +1005,8 @@ def upsert_payor_mapping(
                    phdsc_category     = excluded.phdsc_category,
                    reviewed           = excluded.reviewed,
                    updated_at         = excluded.updated_at""",
-            (raw_name.strip(), standardized_payor, broad_category, phdsc_category, reviewed, now),
+            (raw_name.strip(), standardized_payor, broad_category, phdsc_category,
+             1 if reviewed else 0, now),
         )
 
 
