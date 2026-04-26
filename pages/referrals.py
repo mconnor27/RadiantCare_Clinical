@@ -5756,15 +5756,26 @@ _diag_detail_medonc_ref: pd.DataFrame | None = None
 _diag_detail_indices: dict[str, dict[str, list[int]]] = {}
 
 
-def _resolve_referral_diagnosis(row, cv_mrn_dx, course_mrn_dx, c2c, base_map):
+def _resolve_referral_diagnosis(row, cv_mrn_dx, course_mrn_dx, c2c, base_map,
+                                is_medonc: bool = False):
     """Resolve a single referral row to (key, description, source_type).
 
     Priority cascade:
-    1. CV DiagnosisCodes — what we actually treated them for
+    1. CV DiagnosisCodes — what we actually treated them for (linked patients)
     2. Course DiagnosisCodes — temporally matched course (within -30 to +180 days)
-    3. Rfl Prim Dx — what the referral is for (uses ICD from Diagnoses to match)
-    4. First ICD-10 code from Diagnoses (for multi-code, pick the one matching Rfl Prim Dx)
-    5. Free-text from Diagnoses column
+    3. Med-Onc only: structured ``ICD-10 Diagnosis Code`` + ``Onc Dx`` columns
+       (authoritative single-code fields, populated for ~56% of Med-Onc rows).
+       Used in preference to the messy multi-code ``Diagnoses`` text since
+       Med-Onc PRCS rows often carry admin/symptom companion codes alongside
+       the real diagnosis.
+    4. ICD-10 codes parsed from ``Diagnoses`` column (single, or _pick_best_icd
+       for multi-code)
+    5. ICD-9 codes from ``Diagnoses`` column
+    6. Free-text fallback (Rfl Prim Dx or Diagnoses, lowercased as the key)
+
+    For rad-onc rows the cascade is unchanged (tier 3 is skipped). Linked
+    Med-Onc rows still resolve via tier 1/2 (rad-onc treatment data wins over
+    Med-Onc's own coding when we know what we treated).
 
     Returns (key, description, source_type) where:
     - key: ICD code or lowercased free-text for aggregation
@@ -5796,7 +5807,25 @@ def _resolve_referral_diagnosis(row, cv_mrn_dx, course_mrn_dx, c2c, base_map):
                         return course_code, desc, "course"
                     break  # found a temporal match but code not in c2c, fall through
 
-    # --- Tier 3/4: ICD codes from Diagnoses column ---
+    # --- Tier 3 (Med-Onc only): authoritative ICD-10 Diagnosis Code + Onc Dx ---
+    # Standalone Med-Onc rows (no rad-onc treatment match) use the structured
+    # PRCS columns directly instead of parsing the multi-code Diagnoses text,
+    # which often carries admin/symptom codes (Z80.3, R19.x) alongside the
+    # real diagnosis and produces the wrong pick.
+    if is_medonc:
+        icd_col = row.get("ICD-10 Diagnosis Code")
+        if pd.notna(icd_col):
+            # Field may be comma-separated when the referral lists multiple codes;
+            # take the first one as the authoritative primary.
+            first_code = str(icd_col).split(",")[0].strip()
+            if first_code:
+                onc_dx = row.get("Onc Dx")
+                desc = (str(onc_dx).strip()
+                        if pd.notna(onc_dx) and str(onc_dx).strip()
+                        else _DIAG_DESCRIPTIONS.get(first_code, first_code))
+                return first_code, desc, "icd"
+
+    # --- Tier 4: ICD codes from Diagnoses column ---
     icd10_codes = _ICD10_RE.findall(diag_text)
     icd9_codes = _ICD9_RE.findall(diag_text)
 
@@ -5989,9 +6018,11 @@ def _build_diag_grid_data():
     def _ingest(df, origin):
         if df is None or df.empty:
             return
+        is_medonc = (origin == "medonc")
         for idx, row in df.iterrows():
             key, desc, src_type = _resolve_referral_diagnosis(
                 row, cv_mrn_dx, course_mrn_dx, _DIAG_C2C, base_map,
+                is_medonc=is_medonc,
             )
             if key is None:
                 continue
