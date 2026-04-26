@@ -265,7 +265,15 @@ UI_CONTENT = dmc.Stack(
                 "with no ICD code AND no text match fall into \"Other\" or "
                 "\"Unknown\" (the latter is excluded from charts). The "
                 "categorizer logic and regex list are shared with the "
-                "rad-onc Referrals page — extensions improve both pages.",
+                "rad-onc Referrals page — extensions improve both pages. "
+                "Medonc-only ICD codes and free-text diagnoses (i.e. those "
+                "never seen in rad-onc referrals) are surfaced for "
+                "classification in two places: the Diagnoses tab of the "
+                "rad-onc Referring Physician Manager modal and the mobile "
+                "Mappings page. Each row there is tagged with an origin "
+                "badge (rad-onc / medonc / both); mappings written through "
+                "either UI immediately propagate back to this page via the "
+                "shared diagnosis_overrides DB.",
                 "~40% of rad-onc referrals for patients in this cohort "
                 "have a blank Referred by Department (external referrals "
                 "from outside Providence). In \"Referred by Med-Onc\" "

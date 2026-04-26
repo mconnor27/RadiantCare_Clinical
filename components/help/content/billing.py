@@ -139,6 +139,109 @@ UI_CONTENT = dmc.Stack(
             ),
         ),
 
+        # --- A/R lag toggle ----------------------------------------------
+        dmc.Paper(
+            p="md", radius="md", withBorder=True,
+            children=[
+                dmc.Group(
+                    gap="xs", mb="xs",
+                    children=[
+                        DashIconify(icon="tabler:clock-dollar", width=20, color=PRIMARY),
+                        dmc.Text("A/R Lag Toggle", fw=600, size="sm"),
+                    ],
+                ),
+                body(
+                    "Filter-bar switch (off by default). When on, every billing row's "
+                    "DateOfService is shifted forward by the saved A/R lag (per-payor "
+                    "days-to-pay configured in the Payor Manager) so dollar metrics "
+                    "and date-bucketed charts read as cash-arriving rather than "
+                    "billing-date. Volume / wRVU charts are unaffected — only "
+                    "revenue. Totals that aren't date-filtered are also unchanged.",
+                ),
+                dmc.Text(
+                    "Use this when comparing forecast revenue against actual "
+                    "deposits, or when reconciling a month-end revenue chart "
+                    "against the bank statement.",
+                    size="xs", c="dimmed", mt="xs",
+                ),
+            ],
+        ),
+
+        # --- Payor filter & analysis -------------------------------------
+        dmc.Paper(
+            p="md", radius="md", withBorder=True,
+            children=[
+                dmc.Group(
+                    gap="xs", mb="xs",
+                    children=[
+                        DashIconify(icon="tabler:building-bank", width=20, color=PRIMARY),
+                        dmc.Text("Payor Filter & Analysis", fw=600, size="sm"),
+                    ],
+                ),
+                subheading("Payor filter (filter bar)"),
+                body(
+                    "Chip-dropdown filter that scopes every chart, KPI, and table on "
+                    "the page to the selected payors. The mode toggle at the top of "
+                    "the panel changes the grouping unit:",
+                ),
+                bullets([
+                    "Actual — standardized payor names rolled up from raw insurance "
+                    "strings via the Payor Manager mapping table (e.g. 'MEDICARE [106]' "
+                    "and 'Medicare Part B' both → 'Medicare').",
+                    "Broad — eight high-level categories: Medicare, Medicaid, Private, "
+                    "Military/VA, Workers Comp, Tribal/IHS, Self Pay, Other/Unknown.",
+                    "PHDSC — the Public Health Data Standards Consortium 8-bucket "
+                    "taxonomy (1-Medicare, 2-Medicaid/CHIP, 3-Other Govt, etc.) used "
+                    "for cross-organization reporting.",
+                ]),
+                dmc.Text(
+                    "The mode toggle is shared with the Payor Trend / Comparison "
+                    "charts below — switching modes simultaneously rebuilds the "
+                    "filter chip list and the chart groupings.",
+                    size="xs", c="dimmed", mt="xs",
+                ),
+
+                dmc.Divider(my="sm"),
+
+                subheading("Payor Trend + Comparison charts"),
+                body(
+                    "A dedicated section near the bottom of the page with its own "
+                    "shared mode + count-by toggle row, followed by two paired charts:",
+                ),
+                bullets([
+                    "Trend (left, ridgeline) — per-payor-group time series with "
+                    "Weekly / Monthly / Yearly aggregation, smoothing, and a "
+                    "Volume / Change / A–Z sort selector.",
+                    "Current vs Prior Period (right, horizontal bars) — current period "
+                    "vs N prior periods (Calendar or Rolling), Count or % unit, with "
+                    "Volume / Change / A–Z sort.",
+                    "Count-by toggle: Per Event (each billing row), Per Patient "
+                    "(distinct PatientId), Per Course (distinct CourseId), or Per $ "
+                    "(estimated revenue contribution).",
+                ]),
+
+                dmc.Divider(my="sm"),
+
+                subheading("Payor Manager modal"),
+                body(
+                    "Opened from the receipt icon next to the page title. Three tabs "
+                    "for managing the standardized payor catalog:",
+                ),
+                bullets([
+                    "Mappings — raw insurance strings mapped to standardized payor "
+                    "name + broad category + PHDSC category. Edit, mark reviewed, "
+                    "or bulk-classify with AI assist.",
+                    "Insurance Rates — per-payor rate methods (E&M / non-E&M "
+                    "conversion factors or % of Medicare) plus an A/R lag (days) "
+                    "field used by the A/R lag toggle. Effective-date history is "
+                    "preserved.",
+                    "Revenue Adjustments — global realization factor + per-broad-"
+                    "category multipliers (Medicare 100% baseline). See the "
+                    "Revenue Adjustments section below for the full math.",
+                ]),
+            ],
+        ),
+
         # --- Data Sources -------------------------------------------------
         dmc.Paper(
             p="md", radius="md", withBorder=True,

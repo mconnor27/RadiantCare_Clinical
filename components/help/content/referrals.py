@@ -86,9 +86,11 @@ UI_CONTENT = dmc.Stack(
             body(
                 "Left: a multi-series trend (ridgeline / area / bar) sliced by "
                 "a dimension — Referring MD, Referring Dept, Institution, "
-                "Specialty, or Diagnosis. Right: the same dimension rolled up "
-                "as a bar chart comparing the current period against 1-N prior "
-                "periods (Calendar or Rolling window mode).",
+                "Specialty, Diagnosis, or Payor. When Payor is selected, the "
+                "grouping unit follows the global Payor mode toggle in the "
+                "filter bar (actual / broad / PHDSC). Right: the same dimension "
+                "rolled up as a bar chart comparing the current period against "
+                "1-N prior periods (Calendar or Rolling window mode).",
             ),
 
             dmc.Space(h="xs"),
@@ -97,7 +99,8 @@ UI_CONTENT = dmc.Stack(
             bullets([
                 "Referral Volume — trend of total referrals with Slice-by "
                 "toggle (Total / Ref Dept / Institution / Specialty / "
-                "Diagnosis / Site).",
+                "Diagnosis / Site / Payor). The Payor slice respects the "
+                "filter-bar Payor mode (actual / broad / PHDSC).",
                 "Cumulative Referral Volume — year-to-date cumulative curve, "
                 "with Prior-Periods overlay mode (show N prior years for "
                 "pace comparison) or Slice-By mode.",
@@ -126,7 +129,14 @@ UI_CONTENT = dmc.Stack(
                 "Institutions / Diagnoses) for editing directory metadata. "
                 "Includes NPI registry lookup for specialty autofill, AI-"
                 "assisted institution research, add-address and mark-reviewed "
-                "workflows, and CSV export.",
+                "workflows, and CSV export. The Diagnoses tab pools "
+                "rad-onc and med-onc PRCS referrals into a single review "
+                "queue: each row carries an Origin badge (rad-onc / medonc / "
+                "both) plus separate Rad-Onc and Med-Onc referral counts. "
+                "Drilling into a row shows the underlying referrals from "
+                "both feeds with a Source column. Mappings written here "
+                "flow to the shared diagnosis_overrides DB and immediately "
+                "categorize on the Med-Onc Referrals page too.",
             ]),
         ),
 
@@ -146,6 +156,14 @@ UI_CONTENT = dmc.Stack(
                 "Diagnosis accordion — ICD-10 categories + subcategories, "
                 "cascade resolution (ICD-10 code → free-text \"Rfl Prim Dx\" → "
                 "free-text \"Diagnoses\" → clinic-visit diagnosis fallback).",
+                "Payor chip-dropdown — multi-select scope to one or more "
+                "payors. The mode toggle (Actual / Broad / PHDSC) at the top "
+                "of the panel changes both the chip list and how the trend / "
+                "volume charts group when sliced by Payor. Actual rolls raw "
+                "insurance strings up to standardized payor names via the "
+                "shared Payor Manager mapping; Broad collapses to 8 categories "
+                "(Medicare, Medicaid, Private, Military/VA, etc.); PHDSC uses "
+                "the public-health 8-bucket taxonomy.",
                 "Outlier caps — per-transition day caps (Created→Scheduled: "
                 "14d, Scheduled→Visit: 28d) to keep a single stalled referral "
                 "from pulling the median.",

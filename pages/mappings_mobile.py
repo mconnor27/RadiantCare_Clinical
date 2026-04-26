@@ -87,9 +87,54 @@ def _id(suffix: str) -> str:
 # --------------------------------------------------------------------------
 
 def _load_diag_rows() -> list[dict]:
+    """Pool the curated catalog with the referral review queue.
+
+    The catalog (~991 codes from diagnosis_subcategories.csv) is the canonical
+    code list. The review queue (built from rad-onc + med-onc referrals)
+    surfaces *new* ICD codes never in the catalog plus free-text diagnoses
+    that need human classification. Free-text entries are keyed by their
+    lowercased description; ICD entries by code. ``row_key`` is the unique
+    identifier across both sources.
+    """
     from pages.diagnosis import _build_diag_mgr_data
-    rows, _stats = _build_diag_mgr_data()
-    return rows
+    from pages.referrals import _build_diag_grid_data
+
+    catalog_rows, _ = _build_diag_mgr_data()
+    catalog_codes = {r.get("icd_code") for r in catalog_rows if r.get("icd_code")}
+
+    pooled = []
+    for r in catalog_rows:
+        code = r.get("icd_code") or ""
+        pooled.append({
+            **r,
+            "row_key": f"icd:{code}" if code else "",
+            "origin": "catalog",
+        })
+
+    try:
+        rq_rows, _count, _stats = _build_diag_grid_data()
+    except Exception as e:
+        print(f"[mmap] review-queue load failed: {e}", flush=True)
+        rq_rows = []
+
+    for r in rq_rows:
+        code = r.get("icd_code") or ""
+        desc = r.get("description") or ""
+        # Skip ICD entries already represented by the catalog (catalog wins)
+        if code and code in catalog_codes:
+            continue
+        if code:
+            row_key = f"icd:{code}"
+        elif desc:
+            row_key = f"text:{desc.lower()}"
+        else:
+            continue
+        pooled.append({
+            **r,
+            "row_key": row_key,
+        })
+
+    return pooled
 
 
 def _load_provider_rows() -> list[dict]:
@@ -228,21 +273,45 @@ def _card_button(card_id: dict, children) -> dmc.UnstyledButton:
 
 
 def _diag_card(row: dict):
-    code = row.get("icd_code", "")
+    code = row.get("icd_code", "") or ""
     desc = row.get("description", "") or ""
     cat = row.get("category", "") or ""
     sub = row.get("subcategory", "") or ""
     pts = int(row.get("patients") or 0)
     reviewed = bool(row.get("reviewed"))
+    origin = row.get("origin") or "catalog"
+    row_key = row.get("row_key") or (f"icd:{code}" if code else f"text:{desc.lower()}")
+
+    # Header badge: ICD code for coded entries, "free-text" for narrative ones.
+    if code:
+        head_badge = _badge(code, color="blue")
+    else:
+        head_badge = _badge("free-text", color="orange")
+
+    # Right-side origin chip (only for review-queue rows; catalog entries omit it).
+    origin_chip = None
+    if origin == "medonc":
+        origin_chip = _badge("med-onc", color="grape")
+    elif origin == "rad-onc":
+        origin_chip = _badge("rad-onc", color="violet")
+    elif origin == "both":
+        origin_chip = _badge("both", color="indigo")
+
+    # Count label adapts to source — catalog tracks unique patients,
+    # review queue tracks referral instances.
+    if origin == "catalog":
+        count_label = f"{pts:,} pt" if pts else "—"
+    else:
+        count_label = f"{pts:,} ref" if pts else "—"
 
     return _card_button(
-        {"type": _id("card"), "tab": "diag", "key": code},
+        {"type": _id("card"), "tab": "diag", "key": row_key},
         children=[
             dmc.Group(justify="space-between", wrap="nowrap", gap=6, children=[
                 dmc.Group(gap=6, wrap="nowrap", children=[
-                    _badge(code, color="blue"),
-                    dmc.Text(f"{pts:,} pt" if pts else "—",
-                             size="xs", c="dimmed"),
+                    head_badge,
+                    dmc.Text(count_label, size="xs", c="dimmed"),
+                    origin_chip,
                 ]),
                 _reviewed_dot(reviewed),
             ]),
@@ -709,9 +778,9 @@ def _render_list(rows, scope, sort_key, q, *, fields, builder,
 def _render_diag(data, scope, sort_key, q):
     return _render_list(
         data, scope, sort_key, q,
-        fields=("icd_code", "description", "category", "subcategory"),
+        fields=("icd_code", "description", "category", "subcategory", "origin"),
         builder=_diag_card,
-        impact_field="patients", recent_field=None, alpha_field="icd_code",
+        impact_field="patients", recent_field=None, alpha_field="row_key",
     )
 
 
@@ -1094,10 +1163,15 @@ def _open_diag(_n, rows):
     if not _click_value():
         return no_update, no_update, no_update
     key = ctx.triggered_id.get("key") if isinstance(ctx.triggered_id, dict) else None
-    row = _find_row(rows, key, "icd_code")
+    row = _find_row(rows, key, "row_key")
     if not row:
         return no_update, no_update, no_update
-    return f"Diagnosis · {key}", _drawer_form_diag(row), {"tab": "diag", "key": key}
+    code = row.get("icd_code") or ""
+    desc = row.get("description") or ""
+    title_label = code if code else (desc[:40] + ("…" if len(desc) > 40 else ""))
+    return (f"Diagnosis · {title_label}",
+            _drawer_form_diag(row),
+            {"tab": "diag", "key": key})
 
 
 @callback(
@@ -1243,16 +1317,24 @@ def _save_diag(n, edit, rows, cat, sub, reviewed):
         return no_update, no_update, no_update
     if not is_admin():
         return no_update, no_update, "Not authorized."
-    code = edit.get("key")
+    row_key = edit.get("key") or ""
+    # Find the source row so we know whether to upsert by ICD code or by
+    # description (free-text entries from the review queue have no code).
+    source_row = _find_row(rows, row_key, "row_key") or {}
+    code = source_row.get("icd_code") or ""
+    desc = source_row.get("description") or ""
+    override_key = code if code else desc
+    if not override_key:
+        return no_update, no_update, "Missing key."
     try:
-        upsert_diagnosis_override(code, category=cat or "",
+        upsert_diagnosis_override(override_key, category=cat or "",
                                   subcategory=sub or "", source="manual")
-        set_diagnosis_reviewed_bulk([code], reviewed=bool(reviewed))
+        set_diagnosis_reviewed_bulk([override_key], reviewed=bool(reviewed))
     except Exception as e:
         return no_update, no_update, f"Save failed: {e}"
     new_rows = []
     for r in rows or []:
-        if r.get("icd_code") == code:
+        if r.get("row_key") == row_key:
             r = {**r, "category": cat or "", "subcategory": sub or "",
                  "reviewed": bool(reviewed), "source": "manual"}
         new_rows.append(r)
