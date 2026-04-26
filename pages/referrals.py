@@ -5850,14 +5850,46 @@ def _extract_icd_desc(diag_text, code):
     return _DIAG_DESCRIPTIONS.get(code, "")
 
 
+def _is_cancer_code(code: str) -> bool:
+    """True for ICD-10 Ch. II Neoplasm codes worth carrying as the primary
+    diagnosis: C00-C97 (malignant) and D00-D49 (in situ / benign / uncertain
+    behavior). Excludes D50-D89 (blood/blood-forming-organ diseases) and
+    all non-Ch. II codes (Z = factors influencing health, R = symptoms,
+    N = genitourinary diseases, etc.) — those are real ICD codes but not
+    things rad-onc would code as the treated diagnosis.
+    """
+    if not code:
+        return False
+    head = code[0]
+    if head == "C":
+        return True
+    if head == "D" and len(code) >= 3:
+        try:
+            return int(code[1:3]) <= 49
+        except ValueError:
+            return False
+    return False
+
+
 def _pick_best_icd(codes, prim_text, diag_text, c2c):
     """For multi-ICD referrals, pick the code that best matches Rfl Prim Dx.
 
-    Strategy:
-    1. If Rfl Prim Dx mentions mets/metastasis → pick the C79.x code
-    2. If Rfl Prim Dx mentions a primary site → pick the non-C79.x code
-    3. Check which code's category matches what _categorise_text returns for Rfl Prim Dx
-    4. Fall back to first code
+    Priority cascade:
+    1. If Rfl Prim Dx mentions mets → pick a C77/C78/C79 metastasis code
+    2. Among non-mets candidates, search by quality tier:
+       a. Codes already in our taxonomy (c2c-known)
+       b. Cancer codes per ``_is_cancer_code`` (Ch. II Neoplasms)
+       c. All non-mets codes (last resort)
+    3. Within each tier, prefer the code whose category matches
+       ``_categorise_text(Rfl Prim Dx)`` when that yields a category;
+       else take the first code in the tier.
+    4. Fall back to the first code overall when nothing else fits.
+
+    The tiered approach addresses Med-Onc referrals where the Diagnoses
+    column carries both a real cancer code (e.g. C50.911) and an
+    administrative companion (Z80.3 family history, R19.00 swelling, etc.).
+    The old behaviour took the first non-mets code, which was often the
+    administrative one and left the referral permanently uncategorised.
     """
     prim_lower = prim_text.lower()
 
@@ -5866,21 +5898,27 @@ def _pick_best_icd(codes, prim_text, diag_text, c2c):
         r"metast|bone met|brain met|lung met|liver met|cord.?compress"
         r"|secondary|mets\b|\bmet\b", prim_lower))
 
-    # Separate mets codes (C79.x, C77.x, C78.x) from primary codes
+    # Separate mets codes (C79.x, C77.x, C78.x) from everything else
     mets_codes = [c for c in codes if re.match(r"C7[789]", c)]
-    primary_codes = [c for c in codes if c not in mets_codes]
-
     if is_mets and mets_codes:
         return mets_codes[0]
-    if not is_mets and primary_codes:
-        return primary_codes[0]
 
-    # Try matching Rfl Prim Dx text to code categories
-    text_cat = _categorise_text(prim_text)
-    if text_cat:
-        for code in codes:
-            if c2c.get(code) == text_cat:
-                return code
+    non_mets = [c for c in codes if c not in mets_codes]
+    if non_mets:
+        text_cat = _categorise_text(prim_text)
+        tiers = [
+            [c for c in non_mets if c in c2c],          # known cancer codes first
+            [c for c in non_mets if _is_cancer_code(c)],  # any Ch. II Neoplasm
+            non_mets,                                    # anything left
+        ]
+        for pool in tiers:
+            if not pool:
+                continue
+            if text_cat:
+                for code in pool:
+                    if c2c.get(code) == text_cat:
+                        return code
+            return pool[0]
 
     return codes[0]
 
