@@ -5033,11 +5033,19 @@ def _rpm_start_npi_lookup(n, row_data, selected_rows):
     Output(f"{PAGE_ID}-rpm-progress-text", "style", allow_duplicate=True),
     Output(f"{PAGE_ID}-rpm-npi-review", "style"),
     Output(f"{PAGE_ID}-rpm-npi-review-grid", "rowData"),
+    Output(f"{PAGE_ID}-rpm-grid", "rowData", allow_duplicate=True),
     Input(f"{PAGE_ID}-rpm-poll", "n_intervals"),
     prevent_initial_call=True,
 )
 def _rpm_poll_progress(n):
-    """Poll background task progress."""
+    """Poll background task progress.
+
+    On AI completion, also rebuilds the grid from the DB so writes the
+    background thread just made (institutions, specialties, addresses)
+    show up immediately — without this the user sees stale "unassigned"
+    in the institution column even though the DB has been updated, and
+    has to re-open the modal to see the change.
+    """
     with _rpm_lock:
         done = _rpm_progress["done"]
         total = _rpm_progress["total"]
@@ -5048,19 +5056,27 @@ def _rpm_poll_progress(n):
     no = dash.no_update
 
     if running:
-        return (False, pct, {"display": "block"}, msg, {"display": "block"}, no, no)
+        return (False, pct, {"display": "block"}, msg, {"display": "block"},
+                no, no, no)
 
-    # Finished — show review panel with results
+    # Finished — show review panel for NPI flow if any, refresh grid for
+    # both flows since either could have written through to the DB.
     with _rpm_lock:
         review_data = list(_rpm_npi_results)
+
+    try:
+        fresh_rows, _ = _build_rpm_grid_data()
+    except Exception as e:
+        print(f"[rpm-poll] grid refresh failed: {e}", flush=True)
+        fresh_rows = no
 
     if review_data:
         return (
             True, 100, {"display": "none"}, msg, {"display": "block"},
-            {"display": "block"}, review_data,
+            {"display": "block"}, review_data, fresh_rows,
         )
-    # No results (e.g. AI lookup finished) — just hide progress
-    return (True, 100, {"display": "none"}, msg, {"display": "block"}, no, no)
+    return (True, 100, {"display": "none"}, msg, {"display": "block"},
+            no, no, fresh_rows)
 
 
 @callback(
@@ -5108,6 +5124,8 @@ def _rpm_start_ai_lookup(n, row_data, selected_rows):
                 (r.get(k) or "").strip()
                 for k in ("address", "city", "state", "zip")
             ),
+            # Snapshot existing specialty — same "fill only when blank" rule.
+            "_spec_blank": not (r.get("specialty") or "").strip(),
         }
         for r in blanks
     ]
@@ -5140,10 +5158,13 @@ def _rpm_start_ai_lookup(n, row_data, selected_rows):
                 _rpm_progress["done"] = min(i + chunk_size, len(physicians))
                 _rpm_progress["message"] = f"Researching institutions... {_rpm_progress['done']}/{len(physicians)}"
 
-        # Institution writes go through the bulk path; address writes need
-        # upsert_referring (bulk_upsert_referring doesn't touch address fields).
+        # Institution + specialty writes go through the bulk path
+        # (bulk_upsert_referring uses COALESCE so passing None preserves
+        # any pre-existing value). Address writes need upsert_referring
+        # since bulk_upsert_referring doesn't touch address fields.
         records = []
         addr_filled = 0
+        spec_filled = 0
         for p in physicians:
             res = all_results.get(p["row_key"])
             if not res:
@@ -5151,9 +5172,18 @@ def _rpm_start_ai_lookup(n, row_data, selected_rows):
             inst = res.get("institution") or ""
             if not inst:
                 continue
+
+            # Specialty: only write if existing was blank AND AI returned one.
+            spec = (res.get("specialty") or "").strip()
+            spec_to_write = spec if (p.get("_spec_blank") and spec) else None
+            if spec_to_write:
+                spec_filled += 1
+
             records.append({
                 "npi": p["npi"], "address_key": p["address_key"],
-                "institution": inst, "source": "claude_ai",
+                "institution": inst,
+                "specialty": spec_to_write,
+                "source": "claude_ai",
             })
             add_institution(inst)
 
@@ -5182,8 +5212,8 @@ def _rpm_start_ai_lookup(n, row_data, selected_rows):
         with _rpm_lock:
             _rpm_progress["running"] = False
             _rpm_progress["message"] = (
-                f"Done. {len(records)} institutions, {addr_filled} addresses filled "
-                f"({len(physicians)} researched)."
+                f"Done. {len(records)} institutions, {spec_filled} specialties, "
+                f"{addr_filled} addresses filled ({len(physicians)} researched)."
             )
 
     t = threading.Thread(target=_bg, daemon=True)
