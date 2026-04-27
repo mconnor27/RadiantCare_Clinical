@@ -51,8 +51,11 @@ DATA_INCREMENTAL = DATA_DIR / "Incremental"
 DATA_LOOKUP = DATA_DIR / "Lookup"
 DATA_CACHE = PROJECT_ROOT / (".data_cache_phi" if PHI_MODE else ".data_cache")
 
-MAPBOX_TOKEN = os.environ.get("MAPBOX_TOKEN", "")
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+MAPBOX_TOKEN = os.environ.get("MAPBOX_TOKEN", "").strip()
+# .strip() defends against trailing newlines in the env var — if the key
+# carries a \n into the x-api-key HTTP header, every Anthropic API call
+# fails with "Connection error" (the SDK doesn't validate header values).
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
 
 # ---------------------------------------------------------------------------
 # Colors

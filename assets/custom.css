@@ -1491,3 +1491,16 @@ html[data-mobile-view="true"] .mantine-TextInput-input,
 html[data-mobile-view="true"] .mantine-Textarea-input {
     font-size: 16px !important;
 }
+
+/* ===================================================================
+   Mobile mapping drawer: keep Select / Combobox dropdowns above the
+   drawer surface. The drawer is z-index 10500; dmc.Select renders its
+   options panel in a portal at z-index ~300 by default — which gets
+   buried under the drawer overlay on mobile, making the options either
+   invisible or untappable. Force the popover to sit above the drawer.
+   =================================================================== */
+html[data-mobile-view="true"] .mantine-Combobox-dropdown,
+html[data-mobile-view="true"] .mantine-Popover-dropdown,
+html[data-mobile-view="true"] .mantine-Select-dropdown {
+    z-index: 11000 !important;
+}
