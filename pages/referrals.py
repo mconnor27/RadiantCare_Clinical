@@ -1304,9 +1304,11 @@ layout = dmc.Stack(
                                          "cellRenderer": "ReferralCountLink",
                                          "filter": "agNumberColumnFilter", "sort": "desc",
                                          "type": "numericColumn"},
-                                        {"field": "first_referral", "headerName": "First", "flex": 0.4,
+                                        {"field": "first_referral", "headerName": "First", "flex": 0.5,
+                                         "minWidth": 100,
                                          "filter": "agTextColumnFilter"},
-                                        {"field": "last_referral", "headerName": "Last", "flex": 0.4,
+                                        {"field": "last_referral", "headerName": "Last", "flex": 0.5,
+                                         "minWidth": 100,
                                          "filter": "agTextColumnFilter"},
                                         {"field": "reviewed", "headerName": "Reviewed", "flex": 0.4,
                                          "cellDataType": "boolean",
@@ -5231,9 +5233,16 @@ def _rpm_start_ai_lookup(n, row_data, selected_rows, review_mode):
 
     if not selected_rows:
         return True, {"display": "none"}, "grape", {"display": "block"}, "Select rows first, then click to research."
-    blanks = [r for r in selected_rows if r.get("npi") and not r.get("institution")]
-    if not blanks:
-        return True, {"display": "none"}, "grape", {"display": "block"}, "Selected rows already have institutions."
+    # Run on every selected row that has an NPI — even rows that already have
+    # an institution. Re-researching is fine because:
+    #  * specialty + address fills are gated to blank-only writes (won't
+    #    overwrite a real value);
+    #  * institution fills via bulk_upsert_referring's COALESCE — passing the
+    #    AI value DOES overwrite, but in review mode the user can reject;
+    #  * in auto mode the user picked these rows on purpose, so respect that.
+    targets = [r for r in selected_rows if r.get("npi")]
+    if not targets:
+        return True, {"display": "none"}, "grape", {"display": "block"}, "Selected rows have no NPI."
 
     # Each row is a unique NPI+address — pass all details for institution research.
     # Pass first/last referral as the time anchor so the AI returns the address
@@ -5257,7 +5266,7 @@ def _rpm_start_ai_lookup(n, row_data, selected_rows, review_mode):
             # Snapshot existing specialty — same "fill only when blank" rule.
             "_spec_blank": not (r.get("specialty") or "").strip(),
         }
-        for r in blanks
+        for r in targets
     ]
 
     mode = "review" if review_mode else "auto"
@@ -5299,7 +5308,7 @@ def _rpm_start_ai_lookup(n, row_data, selected_rows, review_mode):
             for p in physicians:
                 res = all_results.get(p["row_key"]) or {}
                 # Look up the source row to show current values
-                src = next((r for r in blanks if r.get("row_key") == p["row_key"]), {})
+                src = next((r for r in targets if r.get("row_key") == p["row_key"]), {})
                 cur_addr_full = ", ".join(
                     s for s in (
                         (src.get("address") or "").strip(),
