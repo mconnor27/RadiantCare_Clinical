@@ -34,15 +34,17 @@ def infer_institutions(
             (so Claude reuses existing names when possible).
 
     Returns:
-        ``{npi: {"institution": str, "address": str, "city": str, "state": str,
-                 "zip_code": str, "effective_date_range": str}}``
+        ``{npi: {"institution": str, "specialty": str, "address": str,
+                 "city": str, "state": str, "zip_code": str,
+                 "effective_date_range": str}}``
         for physicians where at least an institution was determined.
-        Address fields are empty strings when the AI can't pin them down.
+        Specialty + address fields are empty strings when the AI can't
+        pin them down.
 
     Notes:
         - The return shape changed from ``{npi: str}`` (institution only) to
           ``{npi: dict}``. Callers must read ``result["institution"]`` and
-          (optionally) the address fields.
+          (optionally) the specialty / address fields.
     """
     if not ANTHROPIC_API_KEY:
         return {}
@@ -57,6 +59,7 @@ def infer_institutions(
             city = (phys.get("city_state", "") or "").split(",")[0].strip()
             results[phys["npi"]] = {
                 "institution": f"Providence {city}" if city else "Providence",
+                "specialty": "",
                 "address": "", "city": "", "state": "", "zip_code": "",
                 "effective_date_range": "",
             }
@@ -105,13 +108,20 @@ def _call_claude(
         )
     physician_text = "\n".join(physician_lines)
 
-    system_prompt = """You are a medical data analyst identifying both the INSTITUTION and the PRACTICE ADDRESS of referring physicians.
+    # Inject the controlled specialty list so the model returns one of these
+    # rather than a free-text variant. Imported lazily to avoid a circular
+    # import during dash bootstrap.
+    from config.settings import ABMS_SPECIALTIES
+    specialty_list = ", ".join(ABMS_SPECIALTIES)
+
+    system_prompt = f"""You are a medical data analyst identifying the INSTITUTION, SPECIALTY, and PRACTICE ADDRESS of referring physicians.
 
 For each physician, return:
 1. institution — broad institution name (e.g. "Providence", "Kaiser Permanente", "Virginia Mason", "MultiCare", "UW Medicine"). Different cities CAN be distinct (e.g. "Providence Olympia" vs "Providence Seattle"). Reuse names from the existing list when they match.
-2. address — physical street address of the practice the physician worked at during the referral window (street + suite if applicable). Use the WINDOW field as your time anchor — many physicians change offices over the years, and an out-of-date address is worse than no address.
-3. city, state, zip_code — separate components for the same address.
-4. effective_date_range — short string describing what time window the address is valid for (e.g. "2018-2024", "current", "as of 2022"). Empty if unknown.
+2. specialty — exactly one of the approved specialties below. Pick the BEST single match for what the physician practices. Use "" if you cannot determine.
+3. address — physical street address of the practice the physician worked at during the referral window (street + suite if applicable). Use the WINDOW field as your time anchor — many physicians change offices over the years, and an out-of-date address is worse than no address.
+4. city, state, zip_code — separate components for the same address.
+5. effective_date_range — short string describing what time window the address is valid for (e.g. "2018-2024", "current", "as of 2022"). Empty if unknown.
 
 Address rules:
 - Only return an address if you have HIGH confidence it matches the physician+window. Wrong addresses corrupt downstream maps and reports — silence is better than a guess.
@@ -121,16 +131,19 @@ Address rules:
 
 If you cannot determine the institution with reasonable confidence, omit that NPI from the response (do not return null).
 
+APPROVED SPECIALTIES (return exactly one of these for the specialty field):
+{specialty_list}
+
 EXISTING INSTITUTIONS (reuse these names when they match):
 """ + institution_list
 
-    user_prompt = f"""Research these physicians via web search. Return ONLY a JSON object mapping NPI to a dict with keys: institution, address, city, state, zip_code, effective_date_range.
+    user_prompt = f"""Research these physicians via web search. Return ONLY a JSON object mapping NPI to a dict with keys: institution, specialty, address, city, state, zip_code, effective_date_range.
 
 PHYSICIANS:
 {physician_text}
 
 Example response:
-{{"1234567890": {{"institution": "Providence Olympia", "address": "413 Lilly Rd NE", "city": "Olympia", "state": "WA", "zip_code": "98506", "effective_date_range": "current"}}, "0987654321": {{"institution": "Kaiser Permanente Tacoma", "address": "", "city": "", "state": "", "zip_code": "", "effective_date_range": ""}}}}
+{{"1234567890": {{"institution": "Providence Olympia", "specialty": "Medical Oncology", "address": "413 Lilly Rd NE", "city": "Olympia", "state": "WA", "zip_code": "98506", "effective_date_range": "current"}}, "0987654321": {{"institution": "Kaiser Permanente Tacoma", "specialty": "Urology", "address": "", "city": "", "state": "", "zip_code": "", "effective_date_range": ""}}}}
 
 Omit NPIs you cannot identify."""
 
@@ -178,13 +191,19 @@ Omit NPIs you cannot identify."""
             for npi, val in parsed.items():
                 records.append((npi, val))
 
+        # Validate specialty against the controlled list so misspellings
+        # don't slip through into the dropdown's stored value.
+        from config.settings import ABMS_SPECIALTIES, normalize_specialty
+        valid_specialties = set(ABMS_SPECIALTIES)
+
         results: dict[str, dict] = {}
         for npi, val in records:
             # Tolerate the older string-only response shape just in case.
             if isinstance(val, str):
                 if val:
                     results[npi] = {
-                        "institution": val, "address": "", "city": "",
+                        "institution": val, "specialty": "",
+                        "address": "", "city": "",
                         "state": "", "zip_code": "", "effective_date_range": "",
                     }
                 continue
@@ -193,10 +212,15 @@ Omit NPIs you cannot identify."""
             inst = (val.get("institution") or "").strip()
             if not inst:
                 continue
+            spec_raw = (val.get("specialty") or "").strip()
+            if spec_raw and spec_raw not in valid_specialties:
+                spec_raw = normalize_specialty(spec_raw)
+            specialty = spec_raw if spec_raw in valid_specialties else ""
             postal = (val.get("zip_code") or "").strip()
             zip_clean = postal[:5] if postal else ""
             results[npi] = {
                 "institution": inst,
+                "specialty": specialty,
                 "address": (val.get("address") or "").strip(),
                 "city": (val.get("city") or "").strip(),
                 "state": (val.get("state") or "").strip().upper()[:2],

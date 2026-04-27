@@ -507,19 +507,40 @@ def _filter_bar(prefix: str, *, with_sort: bool = True, with_search: bool = True
 
 def _list_panel(prefix: str, *, with_sort: bool = True, with_search: bool = True,
                 default_sort: str = "impact"):
-    """Filter bar + scrollable card list."""
+    """Filter bar + scrollable card list.
+
+    The list <div> initially renders our own ``_loading_state()`` (a sized
+    purple Loader + "Loading…" label). The render-{tab} callback fires
+    once the corresponding store updates and replaces it with cards. We
+    intentionally do NOT wrap in ``dcc.Loading`` — the dcc spinner only
+    fires while a callback is *executing*, which would compete with our
+    static loader and produce flicker (3 dots → spinner → 3 dots → cards).
+    """
     return dmc.Stack(gap=8, children=[
         _filter_bar(prefix, with_sort=with_sort, with_search=with_search,
                     default_sort=default_sort),
-        dcc.Loading(
-            type="dot", color=PRIMARY,
-            children=html.Div(id=_id(f"{prefix}-list"),
-                              style={"minHeight": 80}),
+        html.Div(
+            id=_id(f"{prefix}-list"),
+            children=_loading_state(),  # visible immediately on mount
+            style={"minHeight": 160},
         ),
     ])
 
 
 def _drawer():
+    """Bottom-sheet drawer for editing a single row.
+
+    NOTE: we deliberately do NOT wrap drawer-body in ``dcc.Loading``.
+    dcc.Loading triggers its overlay on ANY in-flight callback that
+    targets a child of its wrapped element — so the AI button (which
+    updates field values inside the body) would show a full-body
+    spinner for the entire 5-10s API call, hiding the form. Instead,
+    each in-flight action shows progress at the action site (button
+    spinner via ``running=`` for AI buttons, brief native loading on
+    Save). The body content itself only changes during open / form
+    swap; the clientside drawer-open callback replaces it with a
+    static loader between tap and server-side fill.
+    """
     return dmc.Drawer(
         id=_id("drawer"),
         position="bottom",
@@ -528,12 +549,10 @@ def _drawer():
         padding="md",
         title=dmc.Text(id=_id("drawer-title"), fw=700),
         zIndex=10500,
-        children=dcc.Loading(
-            id=_id("drawer-loading"),
-            type="dot",
-            color=PRIMARY,
-            children=html.Div(id=_id("drawer-body")),
-            parent_style={"minHeight": "120px"},
+        children=html.Div(
+            id=_id("drawer-body"),
+            children=_loading_state(),
+            style={"minHeight": "120px"},
         ),
     )
 
@@ -1084,6 +1103,18 @@ def _drawer_form_provider(row: dict):
                         target="_blank", size="xs", c="dimmed")
              if cur_addr_full else None),
         ]),
+        # One-tap NPPES fill (specialty + address). Sits at top of the form
+        # so users see the shortcut before scrolling to individual fields.
+        dmc.Group(gap=6, children=[
+            dmc.Button(
+                "Fill from NPPES",
+                id=_id("drawer-prov-nppes-btn"),
+                leftSection=DashIconify(icon="tabler:database-search", width=12),
+                variant="light", color="grape", size="compact-xs",
+                disabled=not (npi or "").strip(),
+            ),
+            dmc.Text(id=_id("drawer-prov-nppes-msg"), size="xs", c="dimmed"),
+        ]),
         dmc.Select(
             id=_id("drawer-prov-spec"),
             label="Specialty",
@@ -1100,17 +1131,7 @@ def _drawer_form_provider(row: dict):
             value=cur_inst,
             searchable=True, clearable=True, size="sm",
         ),
-        dmc.Group(justify="space-between", align="flex-end", gap=6, children=[
-            dmc.Text("Address", size="xs", fw=500, c="dimmed"),
-            dmc.Button(
-                "Use NPPES address",
-                id=_id("drawer-prov-nppes-btn"),
-                leftSection=DashIconify(icon="tabler:map-pin", width=12),
-                variant="subtle", color="grape", size="compact-xs",
-                disabled=not (npi or "").strip(),
-            ),
-        ]),
-        dmc.Text(id=_id("drawer-prov-nppes-msg"), size="xs", c="dimmed"),
+        dmc.Text("Address", size="xs", fw=500, c="dimmed", mt=4),
         dmc.Select(
             id=_id("drawer-prov-copy-addr"),
             placeholder="Copy address from another provider…",
@@ -1231,8 +1252,26 @@ clientside_callback(
                      institution: 'Institution'}[id.tab]) || '';
         }
         if (id && id.key && id.tab !== 'payor') hint += ' · ' + id.key;
-        // Empty body so dcc.Loading shows its spinner during server fill.
-        return [true, hint || 'Loading…', ''];
+        // Render a small purple-themed loader while the server callback
+        // builds the form. Matches the style of _loading_state() so it
+        // doesn't look like a different "kind" of loading state.
+        var loader = {
+            namespace: 'dash_html_components', type: 'Div',
+            props: {
+                style: {display: 'flex', alignItems: 'center',
+                        justifyContent: 'center', minHeight: '120px',
+                        padding: '24px 0'},
+                children: {
+                    namespace: 'dash_html_components', type: 'Div',
+                    props: {
+                        style: {textAlign: 'center', color: '#7C2A83',
+                                fontSize: '14px'},
+                        children: 'Loading…',
+                    },
+                },
+            },
+        };
+        return [true, hint || 'Loading…', loader];
     }
     """,
     Output(_id("drawer"), "opened", allow_duplicate=True),
@@ -1745,6 +1784,7 @@ clientside_callback(
 
 
 @callback(
+    Output(_id("drawer-prov-spec"), "value", allow_duplicate=True),
     Output(_id("drawer-prov-addr"), "value", allow_duplicate=True),
     Output(_id("drawer-prov-city"), "value", allow_duplicate=True),
     Output(_id("drawer-prov-state"), "value", allow_duplicate=True),
@@ -1752,29 +1792,54 @@ clientside_callback(
     Output(_id("drawer-prov-nppes-msg"), "children"),
     Input(_id("drawer-prov-nppes-btn"), "n_clicks"),
     State(_id("edit-store"), "data"),
+    State(_id("drawer-prov-spec"), "value"),
+    running=[(Output(_id("drawer-prov-nppes-btn"), "loading"), True, False)],
     prevent_initial_call=True,
 )
-def _fetch_nppes_address(n, edit):
-    """Pull the practice-location address from NPPES into the four fields."""
+def _fetch_nppes_address(n, edit, current_spec):
+    """Pull specialty + practice-location address from NPPES.
+
+    Specialty fills only when currently blank (don't overwrite a manual pick).
+    Address fields always fill (NPPES is authoritative for the practice location).
+    """
     if not n or not edit or edit.get("tab") != "provider":
-        return (no_update,) * 5
+        return (no_update,) * 6
     npi = (edit.get("key") or "").partition("|")[0].strip()
     if not npi:
-        return no_update, no_update, no_update, no_update, "No NPI on this row."
+        return (no_update,) * 5 + ("No NPI on this row.",)
     try:
         from utils.npi_lookup import lookup_npi
         info = lookup_npi(npi)
     except Exception as e:
-        return no_update, no_update, no_update, no_update, f"NPPES error: {e}"
+        return (no_update,) * 5 + (f"NPPES error: {e}",)
     if not info:
-        return no_update, no_update, no_update, no_update, "NPI not found in NPPES."
+        return (no_update,) * 5 + ("NPI not found in NPPES.",)
+
+    # Specialty: fill only when blank
+    spec_proposal = (info.get("specialty") or "").strip()
+    if not (current_spec or "").strip() and spec_proposal:
+        spec_out = spec_proposal
+    else:
+        spec_out = no_update
+
     addr = info.get("address") or ""
     city = info.get("city") or ""
     state_ = info.get("state") or ""
     zip_ = info.get("zip_code") or ""
+    if not (addr or city or state_ or zip_) and spec_out is no_update:
+        return (no_update,) * 5 + ("NPPES returned nothing usable.",)
     if not (addr or city or state_ or zip_):
-        return no_update, no_update, no_update, no_update, "NPPES returned no address."
-    return addr, city, state_, zip_, "Filled from NPPES — review and Save."
+        addr = no_update
+        city = no_update
+        state_ = no_update
+        zip_ = no_update
+        msg = f"Filled specialty: {spec_proposal}."
+    else:
+        bits = ["address filled"]
+        if spec_out is not no_update:
+            bits.insert(0, f"specialty: {spec_proposal}")
+        msg = "NPPES — " + " · ".join(bits) + " — review and Save."
+    return spec_out, addr, city, state_, zip_, msg
 
 
 # ==========================================================================
@@ -1868,6 +1933,7 @@ def _payor_suggest_ai(n, edit, rows):
 
 
 @callback(
+    Output(_id("drawer-prov-spec"), "value", allow_duplicate=True),
     Output(_id("drawer-prov-inst"), "value", allow_duplicate=True),
     Output(_id("drawer-prov-addr"), "value", allow_duplicate=True),
     Output(_id("drawer-prov-city"), "value", allow_duplicate=True),
@@ -1877,21 +1943,23 @@ def _payor_suggest_ai(n, edit, rows):
     Input(_id("drawer-prov-ai-btn"), "n_clicks"),
     State(_id("edit-store"), "data"),
     State(_id("store-provider"), "data"),
+    State(_id("drawer-prov-spec"), "value"),
     running=[(Output(_id("drawer-prov-ai-btn"), "loading"), True, False)],
     prevent_initial_call=True,
 )
-def _prov_suggest_ai(n, edit, rows):
-    """One-shot institution + address inference for the open provider row.
+def _prov_suggest_ai(n, edit, rows, current_spec):
+    """One-shot institution + specialty + address inference for the open provider row.
 
     Address fields fill only when blank (mirrors desktop behavior — never
-    overwrite a real address with an AI guess). Institution always fills.
+    overwrite a real address with an AI guess). Specialty fills only when
+    currently blank. Institution always fills.
     """
     if not n or not edit or edit.get("tab") != "provider":
-        return (no_update,) * 6
+        return (no_update,) * 7
     row_key = edit.get("key") or ""
     row = _find_row(rows or [], row_key, "row_key") or {}
     if not row.get("npi"):
-        return (no_update,) * 5 + ("Row has no NPI — can't research.",)
+        return (no_update,) * 6 + ("Row has no NPI — can't research.",)
     try:
         from utils.institution_inference import infer_institutions
         from data.reviews_db import get_referring_institutions
@@ -1910,12 +1978,18 @@ def _prov_suggest_ai(n, edit, rows):
             existing,
         )
     except Exception as e:
-        return (no_update,) * 5 + (f"AI error: {e}",)
+        return (no_update,) * 6 + (f"AI error: {e}",)
     proposal = result.get(row["npi"])
     if not proposal:
-        return (no_update,) * 5 + ("AI couldn't identify this physician.",)
+        return (no_update,) * 6 + ("AI couldn't identify this physician.",)
 
     inst = proposal.get("institution", "") or ""
+    # Only fill specialty when currently blank — don't overwrite a manual pick.
+    spec_proposal = (proposal.get("specialty", "") or "").strip()
+    if not (current_spec or "").strip() and spec_proposal:
+        spec = spec_proposal
+    else:
+        spec = no_update
     # Only fill address fields when they were blank — preserve any real value.
     addr_blank = not any(
         (row.get(k) or "").strip() for k in ("address", "city", "state", "zip")
@@ -1934,12 +2008,14 @@ def _prov_suggest_ai(n, edit, rows):
 
     window = (proposal.get("effective_date_range") or "").strip()
     parts = [f"AI: {inst}" if inst else "AI: (no institution)"]
+    if spec != no_update:
+        parts.append(f"specialty: {spec}")
     if addr != no_update:
         parts.append("address filled")
         if window:
             parts.append(f"({window})")
     msg = " — ".join(parts) + " — review and Save."
-    return (inst or no_update), addr, city, state_, zip_, msg
+    return spec, (inst or no_update), addr, city, state_, zip_, msg
 
 
 @callback(

@@ -1474,3 +1474,20 @@ html[data-theme="dark"] #mobile-auth-user-btn svg { color: #D1D5DB !important; }
     animation-duration: 0s !important;
     animation-delay: 0s !important;
 }
+
+/* ===================================================================
+   Mobile mappings: prevent iOS Safari zoom on input focus.
+   Safari zooms on any focusable form control with font-size < 16px.
+   We force 16px on every input control inside the mobile drawer
+   without enlarging the visible UI elsewhere — the field stays the
+   same size, just the *typed text* renders at 16px so iOS doesn't
+   trigger its zoom heuristic.
+   =================================================================== */
+html[data-mobile-view="true"] input,
+html[data-mobile-view="true"] select,
+html[data-mobile-view="true"] textarea,
+html[data-mobile-view="true"] .mantine-Select-input,
+html[data-mobile-view="true"] .mantine-TextInput-input,
+html[data-mobile-view="true"] .mantine-Textarea-input {
+    font-size: 16px !important;
+}
