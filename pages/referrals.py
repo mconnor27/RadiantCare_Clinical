@@ -5147,12 +5147,14 @@ def _rpm_start_npi_lookup(n, row_data, selected_rows):
     Output(f"{PAGE_ID}-rpm-npi-review", "style"),
     Output(f"{PAGE_ID}-rpm-npi-review-grid", "rowData"),
     Output(f"{PAGE_ID}-rpm-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-grid-full-store", "data", allow_duplicate=True),
     Output(f"{PAGE_ID}-rpm-ai-review", "opened"),
     Output(f"{PAGE_ID}-rpm-ai-review-grid", "rowData"),
     Input(f"{PAGE_ID}-rpm-poll", "n_intervals"),
+    State(f"{PAGE_ID}-rpm-unreviewed-toggle", "checked"),
     prevent_initial_call=True,
 )
-def _rpm_poll_progress(n):
+def _rpm_poll_progress(n, unreviewed_only):
     """Poll background task progress.
 
     Three terminal cases when running flips to False:
@@ -5161,8 +5163,8 @@ def _rpm_poll_progress(n):
         populate its grid; do NOT refresh the rpm-grid (writes happen
         only after Apply Selected).
       * Provider AI in AUTO mode (or any flow that wrote through) →
-        rebuild rpm-grid rowData so the just-applied writes appear
-        without re-opening the modal.
+        rebuild rpm-grid rowData (full store) AND filtered subset (so
+        the "Unreviewed only" toggle is preserved across the refresh).
     """
     with _rpm_lock:
         done = _rpm_progress["done"]
@@ -5176,7 +5178,7 @@ def _rpm_poll_progress(n):
 
     if running:
         return (False, pct, {"display": "block"}, msg, {"display": "block"},
-                no, no, no, no, no)
+                no, no, no, no, no, no)
 
     with _rpm_lock:
         npi_review_data = list(_rpm_npi_results)
@@ -5186,28 +5188,31 @@ def _rpm_poll_progress(n):
     if ai_review_data and mode == "review":
         return (
             True, 100, {"display": "none"}, msg, {"display": "block"},
-            no, no, no, True, ai_review_data,
+            no, no, no, no, True, ai_review_data,
         )
+
+    def _refresh_with_filter():
+        try:
+            fresh, _ = _build_rpm_grid_data()
+        except Exception as e:
+            print(f"[rpm-poll] grid refresh failed: {e}", flush=True)
+            return no, no
+        visible = ([r for r in fresh if not r.get("reviewed")]
+                   if unreviewed_only else fresh)
+        return visible, fresh
 
     # NPI lookup completion: show the NPI review panel.
     if npi_review_data:
-        try:
-            fresh_rows, _ = _build_rpm_grid_data()
-        except Exception:
-            fresh_rows = no
+        visible, fresh = _refresh_with_filter()
         return (
             True, 100, {"display": "none"}, msg, {"display": "block"},
-            {"display": "block"}, npi_review_data, fresh_rows, no, no,
+            {"display": "block"}, npi_review_data, visible, fresh, no, no,
         )
 
-    # Auto-mode AI completion: refresh the grid from the DB.
-    try:
-        fresh_rows, _ = _build_rpm_grid_data()
-    except Exception as e:
-        print(f"[rpm-poll] grid refresh failed: {e}", flush=True)
-        fresh_rows = no
+    # Auto-mode AI completion: refresh both stores, respect filter.
+    visible, fresh = _refresh_with_filter()
     return (True, 100, {"display": "none"}, msg, {"display": "block"},
-            no, no, fresh_rows, no, no)
+            no, no, visible, fresh, no, no)
 
 
 @callback(
@@ -5453,24 +5458,26 @@ def _rpm_ai_reject_all(n):
 
 @callback(
     Output(f"{PAGE_ID}-rpm-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-grid-full-store", "data", allow_duplicate=True),
     Output(f"{PAGE_ID}-rpm-ai-review", "opened", allow_duplicate=True),
     Output(f"{PAGE_ID}-rpm-progress-text", "children", allow_duplicate=True),
     Input(f"{PAGE_ID}-rpm-ai-apply", "n_clicks"),
     State(f"{PAGE_ID}-rpm-ai-review-grid", "rowData"),
+    State(f"{PAGE_ID}-rpm-unreviewed-toggle", "checked"),
     prevent_initial_call=True,
 )
-def _rpm_ai_apply(n, review_data):
+def _rpm_ai_apply(n, review_data, unreviewed_only):
     """Persist accepted rows. Edits to ai_institution/ai_specialty/ai_address
     in the grid are honored — if the user corrected the AI's value before
     accepting, that corrected value is what gets written.
     """
     if not n or not review_data:
-        return dash.no_update, dash.no_update, dash.no_update
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update
 
     accepted = [r for r in review_data
                 if r.get("accept") and (r.get("ai_institution") or "").strip()]
     if not accepted:
-        return dash.no_update, False, "No rows accepted — no changes applied."
+        return dash.no_update, dash.no_update, False, "No rows accepted — no changes applied."
 
     from data.reviews_db import (
         bulk_upsert_referring, add_institution, upsert_referring,
@@ -5558,11 +5565,15 @@ def _rpm_ai_apply(n, review_data):
     try:
         fresh_rows, _ = _build_rpm_grid_data()
     except Exception:
-        fresh_rows = dash.no_update
+        fresh_rows = None
 
     msg = (f"Applied {len(records)} institutions, {spec_filled} specialties, "
            f"{addr_filled} addresses.")
-    return fresh_rows, False, msg
+    if fresh_rows is None:
+        return dash.no_update, dash.no_update, False, msg
+    visible = ([r for r in fresh_rows if not r.get("reviewed")]
+               if unreviewed_only else fresh_rows)
+    return visible, fresh_rows, False, msg
 
 
 @callback(
