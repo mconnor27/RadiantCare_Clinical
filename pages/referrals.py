@@ -1138,6 +1138,13 @@ layout = dmc.Stack(
                                             leftSection=DashIconify(icon="tabler:brain", width=14),
                                             variant="light", color="grape", size="xs",
                                         ),
+                                        dmc.Switch(
+                                            id=f"{PAGE_ID}-rpm-ai-review-toggle",
+                                            label="Review before applying",
+                                            size="xs",
+                                            checked=False,
+                                            color="grape",
+                                        ),
                                         dmc.Button(
                                             "Mark Reviewed",
                                             id=f"{PAGE_ID}-rpm-reviewed-btn",
@@ -1716,6 +1723,108 @@ layout = dmc.Stack(
         ),
         dcc.Store(id=f"{PAGE_ID}-rpm-diag-ai-review-data", data=None),
         dcc.Interval(id=f"{PAGE_ID}-rpm-diag-ai-poll", interval=2000, disabled=True),
+        # ---- Provider AI review modal (opt-in via the toggle) ----
+        # Mirrors the diag/payor pattern: AI runs, results stash here for
+        # editing instead of writing straight through. User edits cells,
+        # checks Accept, and clicks Apply Selected to persist.
+        dmc.Modal(
+            id=f"{PAGE_ID}-rpm-ai-review",
+            opened=False,
+            title=dmc.Group(
+                children=[
+                    DashIconify(icon="tabler:brain", width=22, color="grape"),
+                    dmc.Text("AI Provider Research — Review before applying",
+                             fw=600, size="lg"),
+                ],
+                gap="xs",
+            ),
+            size="95%",
+            centered=True,
+            zIndex=2100,
+            styles={
+                "content": {"height": "85vh", "display": "flex", "flexDirection": "column"},
+                "body": {"flex": 1, "overflow": "hidden",
+                         "display": "flex", "flexDirection": "column"},
+            },
+            children=[
+                dmc.Group(
+                    justify="flex-end", mb=8,
+                    children=[
+                        dmc.Button(
+                            "Accept All",
+                            id=f"{PAGE_ID}-rpm-ai-accept-all",
+                            leftSection=DashIconify(icon="tabler:checks", width=14),
+                            variant="light", color="green", size="sm",
+                        ),
+                        dmc.Button(
+                            "Reject All",
+                            id=f"{PAGE_ID}-rpm-ai-reject-all",
+                            leftSection=DashIconify(icon="tabler:x", width=14),
+                            variant="light", color="red", size="sm",
+                        ),
+                        dmc.Button(
+                            "Apply Selected",
+                            id=f"{PAGE_ID}-rpm-ai-apply",
+                            leftSection=DashIconify(icon="tabler:check", width=14),
+                            variant="filled", color="green", size="sm",
+                        ),
+                    ],
+                ),
+                dag.AgGrid(
+                    id=f"{PAGE_ID}-rpm-ai-review-grid",
+                    columnDefs=[
+                        {"field": "accept", "headerName": "Accept", "width": 80,
+                         "cellDataType": "boolean", "editable": True},
+                        {"field": "name", "headerName": "Name", "flex": 1,
+                         "cellStyle": {"fontSize": "12px"}},
+                        {"field": "npi", "headerName": "NPI", "flex": 0.6,
+                         "cellStyle": {"fontSize": "11px",
+                                       "color": NEUTRAL["text_muted"]}},
+                        {"field": "current_institution", "headerName": "Current Inst",
+                         "flex": 0.9,
+                         "cellStyle": {"color": NEUTRAL["text_muted"], "fontSize": "11px"}},
+                        {"field": "ai_institution", "headerName": "AI Institution",
+                         "flex": 1, "editable": True,
+                         "cellStyle": {"fontWeight": 600, "fontSize": "12px"}},
+                        {"field": "current_specialty", "headerName": "Current Spec",
+                         "flex": 0.7,
+                         "cellStyle": {"color": NEUTRAL["text_muted"], "fontSize": "11px"}},
+                        {"field": "ai_specialty", "headerName": "AI Specialty",
+                         "flex": 0.8, "editable": True,
+                         "cellEditor": "agSelectCellEditor",
+                         "cellEditorParams": {"values": [""] + ABMS_SPECIALTIES},
+                         "cellStyle": {"fontWeight": 600, "cursor": "pointer",
+                                       "fontSize": "12px"}},
+                        {"field": "current_address", "headerName": "Current Address",
+                         "flex": 1.1, "wrapText": True, "autoHeight": True,
+                         "cellStyle": {"color": NEUTRAL["text_muted"], "fontSize": "11px",
+                                       "lineHeight": "1.3"}},
+                        {"field": "ai_address", "headerName": "AI Address",
+                         "flex": 1.2, "editable": True,
+                         "wrapText": True, "autoHeight": True,
+                         "cellStyle": {"fontWeight": 600, "fontSize": "12px",
+                                       "lineHeight": "1.3"}},
+                        {"field": "window", "headerName": "Window",
+                         "flex": 0.5, "cellStyle": {"fontSize": "11px",
+                                                    "color": NEUTRAL["text_muted"]}},
+                    ],
+                    defaultColDef={
+                        "sortable": True, "resizable": True,
+                        "valueFormatter": {"function":
+                            "params.value == null || params.value === '' ? '–' : params.value"},
+                    },
+                    dashGridOptions={
+                        "rowHeight": 56,
+                        "headerHeight": 36,
+                        "pagination": True,
+                        "paginationPageSize": 25,
+                        "singleClickEdit": True,
+                    },
+                    style={"flex": 1, "minHeight": 0},
+                    className="ag-theme-alpine",
+                ),
+            ],
+        ),
         dcc.Store(id=f"{PAGE_ID}-rpm-running", data=False),
         dcc.Store(id=f"{PAGE_ID}-rpm-npi-pending", data=None),
         dcc.Store(id=f"{PAGE_ID}-rpm-detail-store", data=None),
@@ -4315,8 +4424,10 @@ def _update_referral_map(geo_data, selected_dept, departments, show_flows,
 import threading
 
 # Module-level progress state for background NPI/AI operations
-_rpm_progress = {"done": 0, "total": 0, "running": False, "message": ""}
+_rpm_progress = {"done": 0, "total": 0, "running": False, "message": "",
+                 "mode": "auto"}  # mode = "auto" (write through) or "review"
 _rpm_npi_results = []  # Pending NPI lookup results for review
+_rpm_ai_review_results = []  # Pending provider-AI results awaiting user review
 _rpm_lock = threading.Lock()
 
 # Diagnosis AI classification progress
@@ -5034,49 +5145,67 @@ def _rpm_start_npi_lookup(n, row_data, selected_rows):
     Output(f"{PAGE_ID}-rpm-npi-review", "style"),
     Output(f"{PAGE_ID}-rpm-npi-review-grid", "rowData"),
     Output(f"{PAGE_ID}-rpm-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-ai-review", "opened"),
+    Output(f"{PAGE_ID}-rpm-ai-review-grid", "rowData"),
     Input(f"{PAGE_ID}-rpm-poll", "n_intervals"),
     prevent_initial_call=True,
 )
 def _rpm_poll_progress(n):
     """Poll background task progress.
 
-    On AI completion, also rebuilds the grid from the DB so writes the
-    background thread just made (institutions, specialties, addresses)
-    show up immediately — without this the user sees stale "unassigned"
-    in the institution column even though the DB has been updated, and
-    has to re-open the modal to see the change.
+    Three terminal cases when running flips to False:
+      * NPI lookup finished with results → open the NPI review side-panel.
+      * Provider AI in REVIEW mode → open the rpm-ai-review modal,
+        populate its grid; do NOT refresh the rpm-grid (writes happen
+        only after Apply Selected).
+      * Provider AI in AUTO mode (or any flow that wrote through) →
+        rebuild rpm-grid rowData so the just-applied writes appear
+        without re-opening the modal.
     """
     with _rpm_lock:
         done = _rpm_progress["done"]
         total = _rpm_progress["total"]
         running = _rpm_progress["running"]
         msg = _rpm_progress["message"]
+        mode = _rpm_progress.get("mode", "auto")
 
     pct = int(done / total * 100) if total > 0 else 0
     no = dash.no_update
 
     if running:
         return (False, pct, {"display": "block"}, msg, {"display": "block"},
-                no, no, no)
+                no, no, no, no, no)
 
-    # Finished — show review panel for NPI flow if any, refresh grid for
-    # both flows since either could have written through to the DB.
     with _rpm_lock:
-        review_data = list(_rpm_npi_results)
+        npi_review_data = list(_rpm_npi_results)
+        ai_review_data = list(_rpm_ai_review_results)
 
+    # Review mode: open the modal, don't touch the grid yet.
+    if ai_review_data and mode == "review":
+        return (
+            True, 100, {"display": "none"}, msg, {"display": "block"},
+            no, no, no, True, ai_review_data,
+        )
+
+    # NPI lookup completion: show the NPI review panel.
+    if npi_review_data:
+        try:
+            fresh_rows, _ = _build_rpm_grid_data()
+        except Exception:
+            fresh_rows = no
+        return (
+            True, 100, {"display": "none"}, msg, {"display": "block"},
+            {"display": "block"}, npi_review_data, fresh_rows, no, no,
+        )
+
+    # Auto-mode AI completion: refresh the grid from the DB.
     try:
         fresh_rows, _ = _build_rpm_grid_data()
     except Exception as e:
         print(f"[rpm-poll] grid refresh failed: {e}", flush=True)
         fresh_rows = no
-
-    if review_data:
-        return (
-            True, 100, {"display": "none"}, msg, {"display": "block"},
-            {"display": "block"}, review_data, fresh_rows,
-        )
     return (True, 100, {"display": "none"}, msg, {"display": "block"},
-            no, no, fresh_rows)
+            no, no, fresh_rows, no, no)
 
 
 @callback(
@@ -5088,9 +5217,10 @@ def _rpm_poll_progress(n):
     Input(f"{PAGE_ID}-rpm-ai-btn", "n_clicks"),
     State(f"{PAGE_ID}-rpm-grid", "rowData"),
     State(f"{PAGE_ID}-rpm-grid", "selectedRows"),
+    State(f"{PAGE_ID}-rpm-ai-review-toggle", "checked"),
     prevent_initial_call=True,
 )
-def _rpm_start_ai_lookup(n, row_data, selected_rows):
+def _rpm_start_ai_lookup(n, row_data, selected_rows, review_mode):
     """Start background Claude AI institution research. Uses selected rows if any, else unreviewed blanks."""
     if not n or not row_data:
         return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
@@ -5130,8 +5260,11 @@ def _rpm_start_ai_lookup(n, row_data, selected_rows):
         for r in blanks
     ]
 
+    mode = "review" if review_mode else "auto"
     with _rpm_lock:
-        _rpm_progress.update(done=0, total=len(physicians), running=True, message="Starting AI research...")
+        _rpm_progress.update(done=0, total=len(physicians), running=True,
+                             message="Starting AI research...", mode=mode)
+        _rpm_ai_review_results.clear()
 
     def _bg():
         from utils.institution_inference import infer_institutions
@@ -5158,10 +5291,61 @@ def _rpm_start_ai_lookup(n, row_data, selected_rows):
                 _rpm_progress["done"] = min(i + chunk_size, len(physicians))
                 _rpm_progress["message"] = f"Researching institutions... {_rpm_progress['done']}/{len(physicians)}"
 
-        # Institution + specialty writes go through the bulk path
-        # (bulk_upsert_referring uses COALESCE so passing None preserves
-        # any pre-existing value). Address writes need upsert_referring
-        # since bulk_upsert_referring doesn't touch address fields.
+        # ----------------- REVIEW MODE: stash, don't write -----------------
+        # Build review rows for the modal grid; user inspects and edits
+        # before any DB writes happen.
+        if mode == "review":
+            review_rows = []
+            for p in physicians:
+                res = all_results.get(p["row_key"]) or {}
+                # Look up the source row to show current values
+                src = next((r for r in blanks if r.get("row_key") == p["row_key"]), {})
+                cur_addr_full = ", ".join(
+                    s for s in (
+                        (src.get("address") or "").strip(),
+                        (src.get("city") or "").strip(),
+                        (src.get("state") or "").strip(),
+                        (src.get("zip") or "").strip(),
+                    ) if s
+                )
+                ai_addr_full = ", ".join(
+                    s for s in (
+                        (res.get("address") or "").strip(),
+                        (res.get("city") or "").strip(),
+                        (res.get("state") or "").strip(),
+                        (res.get("zip_code") or "").strip(),
+                    ) if s
+                )
+                inst = (res.get("institution") or "").strip()
+                spec = (res.get("specialty") or "").strip()
+                review_rows.append({
+                    "row_key": p["row_key"],
+                    "npi": p["npi"],
+                    "address_key": p["address_key"],
+                    "name": src.get("name", ""),
+                    "current_institution": src.get("institution", "") or "",
+                    "ai_institution": inst,
+                    "current_specialty": src.get("specialty", "") or "",
+                    "ai_specialty": spec,
+                    "current_address": cur_addr_full,
+                    "ai_address": ai_addr_full,
+                    "window": (res.get("effective_date_range") or "").strip(),
+                    "_addr_blank": p.get("_addr_blank", False),
+                    "_spec_blank": p.get("_spec_blank", False),
+                    "accept": bool(inst),  # default-check rows the AI succeeded on
+                })
+            with _rpm_lock:
+                _rpm_ai_review_results.clear()
+                _rpm_ai_review_results.extend(review_rows)
+                _rpm_progress["running"] = False
+                got = sum(1 for r in review_rows if r["ai_institution"])
+                _rpm_progress["message"] = (
+                    f"AI returned proposals for {got} of {len(physicians)} — "
+                    f"review and Apply."
+                )
+            return  # done — modal will pick up via poll callback
+
+        # ----------------- AUTO MODE: write through (current behaviour) -----
         records = []
         addr_filled = 0
         spec_filled = 0
@@ -5173,7 +5357,6 @@ def _rpm_start_ai_lookup(n, row_data, selected_rows):
             if not inst:
                 continue
 
-            # Specialty: only write if existing was blank AND AI returned one.
             spec = (res.get("specialty") or "").strip()
             spec_to_write = spec if (p.get("_spec_blank") and spec) else None
             if spec_to_write:
@@ -5187,8 +5370,6 @@ def _rpm_start_ai_lookup(n, row_data, selected_rows):
             })
             add_institution(inst)
 
-            # Only write address when the row was completely blank — never
-            # overwrite a real address with an AI guess.
             if p.get("_addr_blank") and (
                 res.get("address") or res.get("city") or res.get("state") or res.get("zip_code")
             ):
@@ -5226,6 +5407,153 @@ def _rpm_start_ai_lookup(n, row_data, selected_rows):
         {"display": "block"},
         f"Starting AI research for {len(physicians)} physicians...",
     )
+
+
+# ==========================================================================
+# Provider AI Review Modal — Accept All / Reject All / Apply Selected
+# ==========================================================================
+
+@callback(
+    Output(f"{PAGE_ID}-rpm-ai-review-grid", "rowData", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rpm-ai-accept-all", "n_clicks"),
+    State(f"{PAGE_ID}-rpm-ai-review-grid", "rowData"),
+    prevent_initial_call=True,
+)
+def _rpm_ai_accept_all(n, data):
+    if not n or not data:
+        return dash.no_update
+    for r in data:
+        if r.get("ai_institution"):
+            r["accept"] = True
+    return data
+
+
+@callback(
+    Output(f"{PAGE_ID}-rpm-ai-review", "opened", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-progress-text", "children", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rpm-ai-reject-all", "n_clicks"),
+    prevent_initial_call=True,
+)
+def _rpm_ai_reject_all(n):
+    if not n:
+        return dash.no_update, dash.no_update
+    with _rpm_lock:
+        _rpm_ai_review_results.clear()
+    return False, "Rejected all — no changes applied."
+
+
+@callback(
+    Output(f"{PAGE_ID}-rpm-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-ai-review", "opened", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-progress-text", "children", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rpm-ai-apply", "n_clicks"),
+    State(f"{PAGE_ID}-rpm-ai-review-grid", "rowData"),
+    prevent_initial_call=True,
+)
+def _rpm_ai_apply(n, review_data):
+    """Persist accepted rows. Edits to ai_institution/ai_specialty/ai_address
+    in the grid are honored — if the user corrected the AI's value before
+    accepting, that corrected value is what gets written.
+    """
+    if not n or not review_data:
+        return dash.no_update, dash.no_update, dash.no_update
+
+    accepted = [r for r in review_data
+                if r.get("accept") and (r.get("ai_institution") or "").strip()]
+    if not accepted:
+        return dash.no_update, False, "No rows accepted — no changes applied."
+
+    from data.reviews_db import (
+        bulk_upsert_referring, add_institution, upsert_referring,
+    )
+
+    records = []
+    addr_filled = 0
+    spec_filled = 0
+    for r in accepted:
+        npi = r.get("npi", "")
+        addr_key = r.get("address_key", "") or ""
+        inst = (r.get("ai_institution") or "").strip()
+        if not npi or not inst:
+            continue
+
+        # Specialty: write if existing was blank AND user kept a value.
+        spec = (r.get("ai_specialty") or "").strip()
+        spec_to_write = spec if (r.get("_spec_blank") and spec) else None
+        if spec_to_write:
+            spec_filled += 1
+
+        records.append({
+            "npi": npi, "address_key": addr_key,
+            "institution": inst,
+            "specialty": spec_to_write,
+            "source": "claude_ai",
+        })
+        add_institution(inst)
+
+        # Address: only write when row was blank AND user kept an address.
+        ai_addr = (r.get("ai_address") or "").strip()
+        if r.get("_addr_blank") and ai_addr:
+            # Parse the user-edited combined address back into components.
+            # Same heuristic as the mobile drawer's clientside parser:
+            # strip USA, pull 5-digit ZIP from end, then 2-letter state,
+            # then last comma-separated segment is city, rest is street.
+            import re as _re
+            s = _re.sub(r"\s+", " ", ai_addr).strip()
+            s = _re.sub(r",?\s*(USA|U\.S\.A\.|United States)\s*$", "", s,
+                        flags=_re.I).strip()
+            zip_ = ""
+            m = _re.search(r"(\d{5})(?:-\d{4})?\s*$", s)
+            if m:
+                zip_ = m.group(1)
+                s = _re.sub(r"[,\s]+$", "", s[:m.start()].strip())
+            state_ = ""
+            m = _re.search(r"[,\s]+([A-Za-z]{2})\s*$", s)
+            STATES = {"AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI",
+                      "ID","IL","IN","IA","KS","KY","LA","ME","MD","MA","MI",
+                      "MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC",
+                      "ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT",
+                      "VT","VA","WA","WV","WI","WY","DC"}
+            if m and m.group(1).upper() in STATES:
+                state_ = m.group(1).upper()
+                s = _re.sub(r"[,\s]+$", "", s[:m.start()].strip())
+            parts = [x.strip() for x in s.split(",") if x.strip()]
+            if len(parts) >= 2:
+                city_ = parts.pop()
+                street = ", ".join(parts)
+            elif len(parts) == 1:
+                street, city_ = parts[0], ""
+            else:
+                street, city_ = "", ""
+            try:
+                upsert_referring(
+                    npi=npi, address_key=addr_key,
+                    address=street or None,
+                    city=city_ or None,
+                    state=state_ or None,
+                    zip_code=zip_ or None,
+                    address_source="claude_ai",
+                    source="claude_ai",
+                )
+                addr_filled += 1
+            except Exception as e:
+                print(f"[rpm-ai-apply] address write failed for {npi}: {e}",
+                      flush=True)
+
+    if records:
+        bulk_upsert_referring(records)
+
+    with _rpm_lock:
+        _rpm_ai_review_results.clear()
+
+    try:
+        fresh_rows, _ = _build_rpm_grid_data()
+    except Exception:
+        fresh_rows = dash.no_update
+
+    msg = (f"Applied {len(records)} institutions, {spec_filled} specialties, "
+           f"{addr_filled} addresses.")
+    return fresh_rows, False, msg
 
 
 @callback(
