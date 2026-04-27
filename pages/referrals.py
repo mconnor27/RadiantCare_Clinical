@@ -1133,7 +1133,7 @@ layout = dmc.Stack(
                                             variant="light", color="blue", size="xs",
                                         ),
                                         dmc.Button(
-                                            "Research Institutions (AI)",
+                                            "Research (AI)",
                                             id=f"{PAGE_ID}-rpm-ai-btn",
                                             leftSection=DashIconify(icon="tabler:brain", width=14),
                                             variant="light", color="grape", size="xs",
