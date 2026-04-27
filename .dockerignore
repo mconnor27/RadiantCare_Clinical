@@ -1,0 +1,11 @@
+.git
+.venv/
+__pycache__/
+*.pyc
+*.log
+.DS_Store
+.env
+.data_cache/
+.data_cache_phi/
+data/rvu_files/*.zip
+data/rvu_files/extracted/

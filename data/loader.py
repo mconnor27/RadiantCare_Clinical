@@ -19,37 +19,50 @@ def _parquet_cache_path(name):
     return DATA_CACHE / f"{name}.parquet"
 
 
-def _source_mtime(paths):
-    """Return the newest mtime across a list of Paths."""
-    if not paths:
-        return 0
-    return max(p.stat().st_mtime for p in paths if p.exists())
+def _source_signature(source_paths):
+    """A stable fingerprint of the source files (size + ns mtime)."""
+    parts = []
+    for p in sorted(source_paths or [], key=lambda x: str(x)):
+        if p.exists():
+            st = p.stat()
+            parts.append(f"{p.name}|{st.st_size}|{st.st_mtime_ns}")
+        else:
+            parts.append(f"{p.name}|missing")
+    return "|".join(parts)
 
 
 def _read_parquet_cache(name, source_paths):
-    """Read from parquet cache if it's newer than all source files.
+    """Return the cached DataFrame iff its sidecar matches the live sources.
 
-    Returns the cached DataFrame or None if cache is stale/missing.
+    The mtime of the parquet file itself is unreliable: docker layer COPYs
+    and tarball extractions reset mtimes in ways that don't track content.
+    Instead we write a `<name>.sig` sidecar at parquet-write time and
+    compare that to a freshly-computed signature here.
     """
     pq = _parquet_cache_path(name)
-    if not pq.exists():
+    sig_file = pq.with_suffix(".sig")
+    if not pq.exists() or not sig_file.exists():
         return None
     try:
-        pq_mtime = pq.stat().st_mtime
-        if pq_mtime > _source_mtime(source_paths):
+        if sig_file.read_text() == _source_signature(source_paths):
             return pd.read_parquet(pq, engine="pyarrow")
     except Exception:
         pass
     return None
 
 
-def _write_parquet_cache(name, df):
-    """Write a DataFrame to the parquet cache."""
+def _write_parquet_cache(name, df, source_paths=None):
+    """Write a DataFrame to the parquet cache and stamp a signature sidecar."""
     if df.empty:
         return
     try:
         pq = _parquet_cache_path(name)
         df.to_parquet(pq, engine="pyarrow", compression="zstd")
+        sig_file = pq.with_suffix(".sig")
+        if source_paths is not None:
+            sig_file.write_text(_source_signature(source_paths))
+        elif sig_file.exists():
+            sig_file.unlink()
     except Exception:
         pass  # Cache write failure is non-fatal
 
@@ -341,7 +354,7 @@ def load_treatment_detail():
     if _usable:
         df = df.drop_duplicates(subset=_usable, keep="last")
     df = _rename_generic_physicians(df)
-    _write_parquet_cache("TreatmentDetail", df)
+    _write_parquet_cache("TreatmentDetail", df, _src)
     return df
 
 
@@ -362,7 +375,7 @@ def load_daily_volume():
     df = _clean_department(df)
     df = _reshape_daily_volume(df)
     df = _parse_dates(df, ["ScheduledDate"])
-    _write_parquet_cache("DailyVolumePast", df)
+    _write_parquet_cache("DailyVolumePast", df, [src])
     return df
 
 
@@ -446,7 +459,7 @@ def load_clinic_visits():
     df = _parse_dates(df, ["ScheduledDateTime", "AppointmentCreatedDate",
                            "SimulationDateTime"])
     df = _rename_generic_physicians(df)
-    _write_parquet_cache("ClinicVisits", df)
+    _write_parquet_cache("ClinicVisits", df, _src)
     return df
 
 
@@ -472,7 +485,7 @@ def load_simulations():
             df = df.merge(dept_map, on="PatientId", how="left")
     df = _clean_department(df)
     df = _rename_generic_physicians(df)
-    _write_parquet_cache("Simulations", df)
+    _write_parquet_cache("Simulations", df, _src)
     return df
 
 
@@ -501,7 +514,7 @@ def load_workflow():
             df = df.merge(dept_map, on="PatientId", how="left")
     df = _clean_department(df)
     df = _rename_generic_physicians(df)
-    _write_parquet_cache("Workflow", df)
+    _write_parquet_cache("Workflow", df, _src)
     return df
 
 
@@ -527,7 +540,7 @@ def load_tasks():
     if "UniqueRowID" in df.columns:
         df = df.drop_duplicates(subset=["UniqueRowID"], keep="last")
     df = _rename_generic_physicians(df)
-    _write_parquet_cache("Tasks", df)
+    _write_parquet_cache("Tasks", df, [_src])
     return df
 
 
@@ -553,7 +566,7 @@ def load_weekly_visits():
     df = _normalize_columns(df, {"DepartmentName": "Department"})
     df = _clean_department(df)
     df = _parse_dates(df, ["AppointmentDateTime"])
-    _write_parquet_cache("WeeklyVisits", df)
+    _write_parquet_cache("WeeklyVisits", df, _src)
     return df
 
 
@@ -579,7 +592,7 @@ def load_courses():
     df = _clean_department(df)
     df = _parse_dates(df, ["CourseStartDate", "FirstTreatmentDate", "LastTreatmentDate"])
     df = _rename_generic_physicians(df)
-    _write_parquet_cache("Courses", df)
+    _write_parquet_cache("Courses", df, _src)
     return df
 
 
@@ -603,7 +616,7 @@ def load_plans():
     df = _parse_dates(df, ["PlanCreationDate", "CourseStartDateTime",
                            "FirstTreatmentDate", "LastTreatmentDate"])
     df = _rename_generic_physicians(df)
-    _write_parquet_cache("Plans", df)
+    _write_parquet_cache("Plans", df, _src)
     return df
 
 
@@ -645,7 +658,7 @@ def load_downtime_gaps():
     for col in pq_df.columns:
         if pq_df[col].dtype == object:
             pq_df[col] = pq_df[col].astype(str).replace({"None": "", "nan": ""})
-    _write_parquet_cache("DowntimeGaps", pq_df)
+    _write_parquet_cache("DowntimeGaps", pq_df, _src)
     return df
 
 
@@ -838,7 +851,7 @@ def load_billing():
     df = _clean_department(df)
     df = _parse_dates(df, ["DateOfService", "ActivityDateTime"])
     df = _rename_generic_physicians(df)
-    _write_parquet_cache("Billing", df)
+    _write_parquet_cache("Billing", df, _src)
     return df
 
 
@@ -1356,7 +1369,7 @@ def load_referrals():
             .str.strip()
         )
 
-    _write_parquet_cache("Referrals", df)
+    _write_parquet_cache("Referrals", df, src_paths)
     return df
 
 
@@ -1447,7 +1460,7 @@ def load_medonc_referrals():
     if "ICD-10 Diagnosis Code" in df.columns:
         df["DiagnosisCodes"] = df["ICD-10 Diagnosis Code"]
 
-    _write_parquet_cache("MedOncReferrals", df)
+    _write_parquet_cache("MedOncReferrals", df, src_paths)
     return df
 
 
