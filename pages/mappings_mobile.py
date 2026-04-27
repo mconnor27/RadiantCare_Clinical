@@ -1132,19 +1132,20 @@ def _drawer_form_provider(row: dict):
             searchable=True, clearable=True, size="sm",
         ),
         dmc.Text("Address", size="xs", fw=500, c="dimmed", mt=4),
-        dmc.Select(
+        # Single combined input: dropdown of existing provider addresses
+        # (ranked by NPI / institution match) AND free-text typing. If the
+        # value matches one of the suggested options, the four address
+        # fields fill from that provider. If it doesn't match (the user
+        # typed or pasted a fresh address), the same parser the textarea
+        # used auto-splits it into street/city/state/zip.
+        dmc.Autocomplete(
             id=_id("drawer-prov-copy-addr"),
-            placeholder="Copy address from another provider…",
+            placeholder="Copy from existing OR type / paste a new address…",
             data=[],
-            value=None,
-            searchable=True, clearable=True, size="xs",
-            leftSection=DashIconify(icon="tabler:copy", width=12),
-        ),
-        dmc.Textarea(
-            id=_id("drawer-prov-paste"),
-            placeholder="…or paste a full address (e.g. 123 Main St, Seattle, WA 98101) — auto-splits",
-            autosize=True, minRows=1, maxRows=2,
+            value="",
             size="xs",
+            limit=200,
+            leftSection=DashIconify(icon="tabler:edit", width=12),
         ),
         dmc.TextInput(
             id=_id("drawer-prov-addr"),
@@ -1662,11 +1663,13 @@ def _save_provider(n, edit, rows, spec, inst, addr, city, state_, zip_, reviewed
     prevent_initial_call=True,
 )
 def _populate_copy_address_options(edit, providers):
-    """Build the copy-from-existing dropdown when the provider drawer opens.
+    """Build the dropdown of existing provider addresses.
 
-    Ranks options: same NPI first (other addresses on file for this provider),
-    then same institution, then everything else with a usable address. Limits
-    to 200 to keep the Select responsive.
+    Ranks: same NPI first (other addresses on file for this provider),
+    then same institution, then everything else with a usable address.
+    Capped at 200 to keep the Autocomplete snappy. Returns plain strings
+    (Autocomplete data); the clientside change handler matches the
+    string back to a provider row to fill the four fields.
     """
     if not edit or edit.get("tab") != "provider" or not providers:
         return []
@@ -1679,6 +1682,7 @@ def _populate_copy_address_options(edit, providers):
             break
 
     same_npi, same_inst, other = [], [], []
+    seen_labels: set[str] = set()
     for r in providers:
         rk = r.get("row_key") or ""
         if rk == cur_key:
@@ -1687,89 +1691,79 @@ def _populate_copy_address_options(edit, providers):
             continue
         full = r.get("full_address") or ""
         name = r.get("name") or "(unknown)"
-        label = f"{name} — {full}" if full else name
-        opt = {"value": rk, "label": label[:120]}
+        label = (f"{name} — {full}" if full else name)[:140]
+        if label in seen_labels:  # collapse duplicate (same name+address) entries
+            continue
+        seen_labels.add(label)
         rnpi = (r.get("npi") or "").strip()
         rinst = (r.get("institution") or "").strip()
         if cur_npi and rnpi == cur_npi:
-            same_npi.append(opt)
+            same_npi.append(label)
         elif cur_inst and rinst == cur_inst:
-            same_inst.append(opt)
+            same_inst.append(label)
         else:
-            other.append(opt)
-    # Truncate to keep payload + Select snappy
+            other.append(label)
     return (same_npi + same_inst + other)[:200]
 
 
-# Clientside: fill the four address fields when an option is picked.
-clientside_callback(
-    """
-    function(rowKey, providers) {
-        const NU = window.dash_clientside.no_update;
-        if (!rowKey || !providers) return [NU, NU, NU, NU];
-        const target = providers.find(p => (p.row_key || '') === rowKey);
-        if (!target) return [NU, NU, NU, NU];
-        return [
-            target.address || '',
-            target.city || '',
-            target.state || '',
-            target.zip || '',
-        ];
-    }
-    """,
-    Output(_id("drawer-prov-addr"), "value", allow_duplicate=True),
-    Output(_id("drawer-prov-city"), "value", allow_duplicate=True),
-    Output(_id("drawer-prov-state"), "value", allow_duplicate=True),
-    Output(_id("drawer-prov-zip"), "value", allow_duplicate=True),
-    Input(_id("drawer-prov-copy-addr"), "value"),
-    State(_id("store-provider"), "data"),
-    prevent_initial_call=True,
-)
-
-
-# Clientside: parse a pasted full address into the four fields.
-# Handles "123 Main St, Seattle, WA 98101" and common variants.
+# Single clientside handler: when the Autocomplete value changes,
+#   1) if the value matches one of the suggested labels (== existing
+#      provider's address), fill the four fields from that provider;
+#   2) otherwise, treat as free text and parse it as a full address
+#      (the same regex parser the textarea used to run).
 clientside_callback(
     r"""
-    function(text) {
+    function(value, providers) {
         const NU = window.dash_clientside.no_update;
-        if (!text || !text.trim()) return [NU, NU, NU, NU];
+        if (!value || !value.trim()) return [NU, NU, NU, NU];
+
+        // (1) Try to match an existing provider's "Name — Full Address" label.
+        if (providers && providers.length) {
+            for (const p of providers) {
+                const full = p.full_address || '';
+                const name = p.name || '(unknown)';
+                const label = (full ? (name + ' — ' + full) : name).slice(0, 140);
+                if (label === value) {
+                    return [p.address || '', p.city || '',
+                            p.state || '', p.zip || ''];
+                }
+            }
+        }
+
+        // (2) Free-text path: parse "123 Main St, Seattle, WA 98101"
         const STATES = new Set([
             'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL',
             'IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT',
             'NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI',
             'SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC',
         ]);
-        // Collapse whitespace, strip USA suffix, strip trailing commas.
-        let s = text.replace(/\s+/g, ' ').trim();
+        let s = value.replace(/\s+/g, ' ').trim();
         s = s.replace(/,?\s*(USA|U\.S\.A\.|United States)\s*$/i, '').trim();
 
-        // ZIP at end, optional +4
         let zip = '';
         const zipMatch = s.match(/(\d{5})(?:-\d{4})?\s*$/);
         if (zipMatch) {
             zip = zipMatch[1];
             s = s.slice(0, zipMatch.index).trim().replace(/[,\s]+$/, '').trim();
         }
-
-        // State at end (2-letter, validated). Allow comma or space separator.
         let state = '';
         const stMatch = s.match(/[,\s]+([A-Za-z]{2})\s*$/);
         if (stMatch && STATES.has(stMatch[1].toUpperCase())) {
             state = stMatch[1].toUpperCase();
             s = s.slice(0, stMatch.index).trim().replace(/[,\s]+$/, '').trim();
         }
-
-        // Remaining: "street, city" or just "street". Split on commas;
-        // last segment is city, everything before is street.
         const parts = s.split(',').map(x => x.trim()).filter(Boolean);
         let street = '', city = '';
         if (parts.length >= 2) {
             city = parts.pop();
             street = parts.join(', ');
         } else if (parts.length === 1) {
-            // No comma — best effort: leave as street, no city
             street = parts[0];
+        }
+        // If we couldn't parse anything useful, leave fields alone — user
+        // is probably mid-typing and we don't want to clobber.
+        if (!street && !city && !state && !zip) {
+            return [NU, NU, NU, NU];
         }
         return [street, city, state, zip];
     }
@@ -1778,7 +1772,8 @@ clientside_callback(
     Output(_id("drawer-prov-city"), "value", allow_duplicate=True),
     Output(_id("drawer-prov-state"), "value", allow_duplicate=True),
     Output(_id("drawer-prov-zip"), "value", allow_duplicate=True),
-    Input(_id("drawer-prov-paste"), "value"),
+    Input(_id("drawer-prov-copy-addr"), "value"),
+    State(_id("store-provider"), "data"),
     prevent_initial_call=True,
 )
 
