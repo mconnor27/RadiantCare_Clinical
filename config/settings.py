@@ -414,6 +414,7 @@ NAV_SECTIONS = [
             {"label": "Machine Downtime", "path": "/machines", "icon": "tabler:alert-triangle"},
             {"label": "Machine Statistics", "path": "/machine-statistics", "icon": "tabler:chart-dots-3"},
             {"label": "Physicians", "path": "/physicians", "icon": "tabler:stethoscope-off"},
+            {"label": "Scheduling", "path": "/scheduling", "icon": "tabler:calendar-event"},
         ],
     },
     {

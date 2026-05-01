@@ -1504,3 +1504,106 @@ html[data-mobile-view="true"] .mantine-Popover-dropdown,
 html[data-mobile-view="true"] .mantine-Select-dropdown {
     z-index: 11000 !important;
 }
+
+/* ===================================================================
+   Scheduling page — calendar slot colors (light + dark variants)
+   =================================================================== */
+.sched-slot-lacey {
+    background-color: #e3f2fd;
+    border-color: #2196f3;
+}
+[data-theme="dark"] .sched-slot-lacey {
+    background-color: rgba(33, 150, 243, 0.20);
+    border-color: #64B5F6;
+}
+
+.sched-slot-centralia {
+    background-color: #ffebee;
+    border-color: #f44336;
+}
+[data-theme="dark"] .sched-slot-centralia {
+    background-color: rgba(244, 67, 54, 0.20);
+    border-color: #EF5350;
+}
+
+.sched-slot-aberdeen {
+    background-color: #e8f5e9;
+    border-color: #4caf50;
+}
+[data-theme="dark"] .sched-slot-aberdeen {
+    background-color: rgba(76, 175, 80, 0.20);
+    border-color: #66BB6A;
+}
+
+.sched-slot-booked {
+    background-color: #f1f3f5;
+    border-color: #adb5bd;
+    opacity: 0.65;
+}
+[data-theme="dark"] .sched-slot-booked {
+    background-color: rgba(108, 117, 125, 0.18);
+    border-color: #6C757D;
+    opacity: 0.55;
+}
+
+/* Time labels & day-header chrome inside calendar grid */
+.sched-time-label {
+    color: var(--text-muted);
+    border-top-color: var(--border-light) !important;
+}
+.sched-hour-cell {
+    background-color: var(--bg-card-alt);
+    border-color: var(--border-light) !important;
+}
+.sched-day-card {
+    border: 1px solid var(--border) !important;
+    background: var(--bg-card);
+}
+.sched-day-card.sched-day-today {
+    border: 2px solid #2196f3 !important;
+    box-shadow: 0 2px 8px rgba(33, 150, 243, 0.2);
+}
+.sched-day-header {
+    background-color: var(--bg-card-alt);
+    border-bottom: 1px solid var(--border) !important;
+}
+.sched-day-header.sched-day-today {
+    background-color: rgba(33, 150, 243, 0.15);
+    border-bottom: 2px solid #2196f3 !important;
+}
+.sched-day-name { color: var(--text-primary); }
+.sched-day-date { color: var(--text-muted); }
+
+/* CSS-only hover tooltip on each calendar slot */
+.sched-slot {
+    cursor: default;
+}
+.sched-slot:hover {
+    z-index: 200;
+}
+.sched-slot-tooltip {
+    display: none;
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: pre-line;
+    z-index: 1000;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+    pointer-events: none;
+    text-align: left;
+    width: 220px;
+    font-weight: normal;
+    text-decoration: none !important;
+    opacity: 1 !important;
+}
+.sched-slot:hover .sched-slot-tooltip {
+    display: block;
+}
