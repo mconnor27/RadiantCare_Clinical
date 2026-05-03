@@ -1533,9 +1533,9 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
         if sb == "total":
             return {"Total": len(sub)}
         if sb == "dept" and "Department" in sub.columns:
-            return sub.groupby("Department").size().to_dict()
+            return sub.groupby("Department", observed=True).size().to_dict()
         elif sb == "treating" and "TreatingPhysician" in sub.columns:
-            counts = sub.groupby("TreatingPhysician").size()
+            counts = sub.groupby("TreatingPhysician", observed=True).size()
             return {physician_short_name(k): v for k, v in counts.items()}
         elif sb == "performing" and "AppointmentPhysician" in sub.columns:
             counts = sub.groupby("AppointmentPhysician").size()
@@ -1743,7 +1743,7 @@ def _build_coverage_chart(df, theme="light"):
         return empty_figure("Physician columns not available")
 
     coverage = (
-        df.groupby(["TreatingPhysician", "AppointmentPhysician"])
+        df.groupby(["TreatingPhysician", "AppointmentPhysician"], observed=True)
         .size()
         .unstack(fill_value=0)
     )

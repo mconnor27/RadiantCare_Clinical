@@ -2144,9 +2144,9 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
         if sb == "total":
             return {"Total": len(sub)}
         if sb == "site" and "Department" in sub.columns:
-            return sub.groupby("Department").size().to_dict()
+            return sub.groupby("Department", observed=True).size().to_dict()
         elif sb == "physician" and "TreatingPhysician" in sub.columns:
-            counts = sub.groupby("TreatingPhysician").size()
+            counts = sub.groupby("TreatingPhysician", observed=True).size()
             return {(k.split(",")[0] if "," in k else k): v for k, v in counts.items()}
         elif sb == "diagnosis" and c2b and "DiagnosisCodes" in sub.columns:
             sub = sub.copy()

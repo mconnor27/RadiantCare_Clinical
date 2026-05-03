@@ -23,6 +23,8 @@ from data.sanitize.core import (
     short_patient_code,
     truncate_zip3,
 )
+from data.availability_enrichment import enrich as _enrich_availability
+from data.clinic_visits_enrichment import enrich as _enrich_clinic_visits
 
 
 # ---------------------------------------------------------------------------
@@ -61,6 +63,7 @@ SIMPLE_RULES: list[dict] = [
         "name": "Availability",
         "subdir": "Incremental/Availability",
         "pattern": "Availability_*.csv",
+        "enrich": _enrich_availability,  # AppointmentNotes → HasNote (boolean)
         "drop": ["AppointmentNotes"],
         "hash": [],
         "incremental": True,
@@ -69,6 +72,7 @@ SIMPLE_RULES: list[dict] = [
         "name": "ClinicVisits",
         "subdir": "Incremental/ClinicVisits",
         "pattern": "Clinic Visits_*.csv",
+        "enrich": _enrich_clinic_visits,  # AppointmentNotes → VisitType (categorical)
         "drop": ["PatientFullName", "PatientName", "AppointmentNotes"],
         "hash": ["PatientId"],
         "incremental": True,
@@ -296,9 +300,23 @@ def apply_simple_rule(rule: dict, raw_root: Path, out_root: Path, salt: str) -> 
             "status": "skipped (source dir missing)",
         }
 
+    enrich_fn = rule.get("enrich")
+    enriched_cols: list[str] = []
+
     for src_path in sorted(src_dir.glob(pattern)):
         df = _read_csv(src_path)
         rows_in += len(df)
+
+        # Enrich BEFORE dropping — lets the hook derive a non-PHI signal
+        # (categorical / boolean / aggregate) from columns that won't
+        # survive sanitization.
+        if enrich_fn is not None:
+            cols_before = set(df.columns)
+            df = enrich_fn(df, salt)
+            new_cols = [c for c in df.columns if c not in cols_before]
+            for c in new_cols:
+                if c not in enriched_cols:
+                    enriched_cols.append(c)
 
         dropped = drop_columns(df, rule.get("drop", []))
         for d in dropped:
@@ -325,6 +343,7 @@ def apply_simple_rule(rule: dict, raw_root: Path, out_root: Path, salt: str) -> 
         "rows_out": rows_out,
         "dropped": dropped_any,
         "hashed": list(rule.get("hash", [])),
+        "enriched": enriched_cols,
         "short_code_from": rule.get("add_short_code_from"),
         "note": rule.get("note", ""),
         "status": "ok" if files_processed > 0 else "no files matched",

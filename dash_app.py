@@ -369,13 +369,23 @@ def _get_all_loaders():
         "physician_schedule": load_physician_schedule,
         "cpt_audit": load_cpt_audit,
         "otvs": load_otvs,
+        "billing_enriched": _warm_billing_enriched,
     }
+
+
+def _warm_billing_enriched():
+    """Pre-build the enriched billing frame (RVU/OPPS merges, payor fallback,
+    per-row revenue) so the first navigation to /billing skips a 10-15s cold
+    enrichment. Depends on billing + referrals + rvu_lookup being loaded first.
+    """
+    from data.billing_enrichment import _get_enriched_billing
+    _get_enriched_billing()
 
 
 # Preload state: tracks loaded datasets, current activity, and priority queue
 _preload_state = {
     "loaded": set(),
-    "total": 18,  # heavy datasets count (matches len of _PRELOAD_ORDER)
+    "total": 19,  # heavy datasets count (matches len of _PRELOAD_ORDER)
     "current": None,
     "done": False,
 }
@@ -384,10 +394,13 @@ _priority_queue = []  # datasets to load next (set by page navigation)
 
 # Heavy datasets to preload (ordered by load time, heaviest first).
 # `machines` was missing — that's why /machines was slow on first visit.
+# `billing_enriched` runs after its deps (billing, referrals, rvu_lookup) so
+# the enrichment cache is warm before the user opens /billing.
 _PRELOAD_ORDER = [
     "treatment_detail", "billing", "referrals", "workflow",
     "daily_volume", "clinic_visits", "simulations", "tasks",
     "courses", "plans", "weekly_visits", "rvu_lookup",
+    "billing_enriched",
     "machines", "availability", "procedures", "patients",
     "diagnosis", "otvs",
 ]

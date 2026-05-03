@@ -213,6 +213,21 @@ HELP_PAGES = [
         ),
         "ui_module": "physicians",
     },
+    {
+        "path": "/scheduling",
+        "label": "Scheduling",
+        "icon": "tabler:calendar-event",
+        "section": "RESOURCES",
+        "sql": ["Availability", "Clinic_Visits", "Simulations"],
+        "sql_intro": (
+            "Scheduling is built on the Availability extract — a forward-looking "
+            "snapshot of HOLD / scheduleable slots — and overlays already-booked "
+            "appointments from Clinic Visits (consults, re-evals, follow-ups) "
+            "and Simulations onto the same time grid so taken capacity is "
+            "visible alongside open capacity."
+        ),
+        "ui_module": "scheduling",
+    },
 
     # FINANCIAL --------------------------------------------------------------
     {

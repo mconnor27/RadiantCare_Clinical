@@ -51,13 +51,14 @@ dash.register_page(__name__, path="/billing", name="Billing", order=7)
 PAGE_ID = "billing"
 _DEFAULT_DATE_PRESET = "12mo"
 
-# CMS Conversion Factor (Medicare PFS) — update annually
-_CMS_CF = {
-    2015: 35.80, 2016: 35.80, 2017: 35.89, 2018: 36.00, 2019: 36.04,
-    2020: 36.09, 2021: 34.89, 2022: 34.61, 2023: 33.89, 2024: 33.29,
-    2025: 32.35, 2026: 33.40,
-}
-_CMS_CF_DEFAULT = 33.40
+# Enrichment helpers + revenue constants live in data/billing_enrichment so
+# scripts/sanitize.py can rebuild the parquet cache without importing Dash.
+from data.billing_enrichment import (
+    _CMS_CF, _CMS_CF_DEFAULT,
+    _strip_modifier, _assign_category, _derive_charge_status,
+    _merge_rvu,
+    _get_enriched_billing, _enriched_source_paths, _enriched_cache,
+)
 # All sites: physician group bills pro fees only (wRVU + MP_RVU)
 # Aberdeen is freestanding but group still earns pro component only
 
@@ -229,28 +230,6 @@ def _load_fee_schedule_detail(payor: str) -> list[dict]:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _strip_modifier(code):
-    """Strip -TC, -26, NC suffixes to get the base HCPCS code."""
-    if not isinstance(code, str):
-        return str(code)
-    code = code.strip()
-    for suffix in ("-TC", "-26", " NC"):
-        if code.endswith(suffix):
-            code = code[: -len(suffix)].strip()
-    return code
-
-
-def _assign_category(base_code):
-    """Return category name for a base HCPCS code, or 'Other'."""
-    return _CODE_TO_CATEGORY.get(base_code, "Other")
-
-
-def _derive_charge_status(code):
-    """Return 'No Charge' if code has NC suffix, else 'Billable'."""
-    if not isinstance(code, str):
-        return "Billable"
-    return "No Charge" if " NC" in code or code.endswith("NC") else "Billable"
-
 
 def _broad_payor(name):
     """Map insurer name to broad category."""
@@ -291,94 +270,6 @@ def _broad_payor(name):
     )):
         return "Other/Unknown"
     return "Private"
-
-
-def _merge_rvu(df, rvu):
-    """Add individual RVU component columns for physician revenue estimation.
-
-    Strategy: for codes with a 26/TC split, use the 26 row (physician group
-    bills professional component only — does not own any facility).  For
-    codes without a 26 row that have physician work (wRVU > 0), use the
-    global row (e.g. E&M, management codes).
-
-    PE selection by site:
-      Lacey/Centralia (POS 22) → Fac_PE_RVU
-      Aberdeen (POS 11)        → NonFac_PE_RVU
-    For -26 rows these are identical; the distinction is negligible for
-    non-split global codes (E&M etc.).
-
-    Columns added (per billing row):
-      wRVU, Fac_PE_RVU, NonFac_PE_RVU, MP_RVU, Pro_Total_RVU, Fac_Total_RVU
-      TC_wRVU, TC_PE_RVU, TC_MP_RVU (for hospital revenue at Aberdeen)
-    """
-    _empty_cols = ["wRVU", "Fac_PE_RVU", "NonFac_PE_RVU", "MP_RVU",
-                   "Pro_Total_RVU", "Fac_Total_RVU",
-                   "TC_wRVU", "TC_PE_RVU", "TC_MP_RVU"]
-    if df.empty:
-        for c in _empty_cols:
-            df[c] = 0.0
-        return df
-
-    df = df.copy()
-    df["_base"] = df["ProcedureCode"].apply(_strip_modifier)
-    df["_yr"] = df["DateOfService"].dt.year
-    yr_str = df["_yr"].astype(str)
-
-    # Build lookup dicts keyed by HCPCS|MOD|Year
-    rvu_key = rvu["HCPCS"] + "|" + rvu["MOD"] + "|" + rvu["Year"].astype(str)
-    wrvu_dict = dict(zip(rvu_key, rvu["wRVU"]))
-    fac_pe_dict = dict(zip(rvu_key, rvu["Fac_PE_RVU"]))
-    nonfac_pe_dict = dict(zip(rvu_key, rvu["NonFac_PE_RVU"]))
-    mp_dict = dict(zip(rvu_key, rvu["MP_RVU"]))
-    fac_total_dict = dict(zip(rvu_key, rvu["Fac_Total_RVU"]))
-
-    pro_key = df["_base"] + "|26|" + yr_str
-    global_key = df["_base"] + "||" + yr_str
-    tc_key = df["_base"] + "|TC|" + yr_str
-
-    # --- For each component: try 26 row first, fall back to global ---
-    def _lookup(primary, fallback, lookup_dict):
-        vals = primary.map(lookup_dict)
-        miss = vals.isna()
-        if miss.any():
-            vals[miss] = fallback[miss].map(lookup_dict)
-        return vals.fillna(0)
-
-    df["wRVU"] = _lookup(pro_key, global_key, wrvu_dict)
-    df["Fac_PE_RVU"] = _lookup(pro_key, global_key, fac_pe_dict)
-    df["NonFac_PE_RVU"] = _lookup(pro_key, global_key, nonfac_pe_dict)
-    df["MP_RVU"] = _lookup(pro_key, global_key, mp_dict)
-
-    # For codes with no physician work (TC-only, e.g. delivery at hospital),
-    # zero out the professional components — physician group doesn't bill these
-    no_work = df["wRVU"] == 0
-    for c in ["Fac_PE_RVU", "NonFac_PE_RVU", "MP_RVU"]:
-        df.loc[no_work, c] = 0.0
-
-    # Pro total (facility-site version) for quick reference
-    df["Pro_Total_RVU"] = df["wRVU"] + df["Fac_PE_RVU"] + df["MP_RVU"]
-
-    # Global total for reference
-    df["Fac_Total_RVU"] = global_key.map(fac_total_dict).fillna(0)
-
-    # --- TC components for Aberdeen hospital revenue (PFS TC rows) ---
-    # For true split codes: use TC modifier row
-    # For TC-only codes (PCTC=3, wRVU=0): use global row (entire code is technical)
-    # For professional-only codes (wRVU>0, no TC row): hospital gets nothing
-    df["TC_wRVU"] = tc_key.map(wrvu_dict)
-    df["TC_PE_RVU"] = tc_key.map(fac_pe_dict)
-    df["TC_MP_RVU"] = tc_key.map(mp_dict)
-    # Fall back to global for TC-only codes (no TC row, no physician work)
-    tc_miss = df["TC_PE_RVU"].isna()
-    tc_only = tc_miss & no_work  # wRVU=0 → entire code is technical
-    if tc_only.any():
-        df.loc[tc_only, "TC_wRVU"] = global_key[tc_only].map(wrvu_dict).fillna(0)
-        df.loc[tc_only, "TC_PE_RVU"] = global_key[tc_only].map(fac_pe_dict).fillna(0)
-        df.loc[tc_only, "TC_MP_RVU"] = global_key[tc_only].map(mp_dict).fillna(0)
-    df[["TC_wRVU", "TC_PE_RVU", "TC_MP_RVU"]] = df[["TC_wRVU", "TC_PE_RVU", "TC_MP_RVU"]].fillna(0)
-
-    df.drop(columns=["_base", "_yr"], inplace=True)
-    return df
 
 
 def _preset_start(last_date, preset, earliest_date):
@@ -1247,181 +1138,6 @@ def _plabel_payor(start, end):
             return str(start.year)
         return f"{start.strftime('%b')} – {end.strftime('%b %Y')}"
     return f"{start.strftime('%b %y')} – {end.strftime('%b %y')}"
-
-
-# ---------------------------------------------------------------------------
-# Cached enriched billing dataframe
-# ---------------------------------------------------------------------------
-
-_enriched_cache = {"key": None, "df": None}
-
-
-def _get_enriched_billing():
-    """Return billing df with Category, ChargeStatus, wRVU columns added.
-
-    Caches result — only recomputes when the underlying loader cache changes
-    (i.e., new data loaded).
-    """
-    from data.loader import load_billing, load_rvu_lookup, load_opps_lookup
-
-    billing = load_billing()
-    rvu = load_rvu_lookup()
-    opps = load_opps_lookup()
-
-    # Use object ids as cache key (lru_cache returns same object if unchanged)
-    key = (id(billing), id(rvu), id(opps))
-    if _enriched_cache["key"] == key and _enriched_cache["df"] is not None:
-        return _enriched_cache["df"]
-
-    df = billing.copy()
-    # Ensure Quantity column exists and defaults to 1
-    if "Quantity" not in df.columns:
-        df["Quantity"] = 1
-    else:
-        df["Quantity"] = pd.to_numeric(df["Quantity"], errors="coerce").fillna(1).astype(int).clip(lower=1)
-    # Auto-exclude incomplete charges (credited/waived now filter-controlled)
-    if "Completed" in df.columns:
-        df = df[df["Completed"] == "Yes"]
-
-    # Vectorized: build lookup dicts from unique codes, then map
-    unique_codes = df["ProcedureCode"].dropna().unique()
-    strip_map = {c: _strip_modifier(c) for c in unique_codes}
-    df["_base_code"] = df["ProcedureCode"].map(strip_map).fillna("")
-    unique_base = df["_base_code"].unique()
-    cat_map = {b: _assign_category(b) for b in unique_base}
-    df["Category"] = df["_base_code"].map(cat_map)
-    subcat_map = {b: _CODE_TO_SUBCATEGORY.get(b, "Other") for b in unique_base}
-    df["Subcategory"] = df["_base_code"].map(subcat_map)
-    status_map = {c: _derive_charge_status(c) for c in unique_codes}
-    df["ChargeStatus"] = df["ProcedureCode"].map(status_map)
-    if not rvu.empty:
-        df = _merge_rvu(df, rvu)
-    else:
-        for _c in ["wRVU", "Fac_PE_RVU", "NonFac_PE_RVU", "MP_RVU",
-                    "Pro_Total_RVU", "Fac_Total_RVU",
-                    "TC_wRVU", "TC_PE_RVU", "TC_MP_RVU"]:
-            df[_c] = 0.0
-
-    # Merge OPPS payment rates for hospital revenue (keyed by base HCPCS + year)
-    if not opps.empty and "DateOfService" in df.columns:
-        df["_opps_yr"] = df["DateOfService"].dt.year
-        opps_rates = opps[opps["PaymentRate"] > 0][["HCPCS", "Year", "PaymentRate"]].copy()
-        opps_rates = opps_rates.drop_duplicates(subset=["HCPCS", "Year"], keep="last")
-        opps_key = dict(zip(
-            opps_rates["HCPCS"] + "|" + opps_rates["Year"].astype(str),
-            opps_rates["PaymentRate"],
-        ))
-        df["OPPS_Rate"] = (df["_base_code"] + "|" + df["_opps_yr"].astype(str)).map(opps_key).fillna(0)
-        df.drop(columns=["_opps_yr"], inplace=True)
-    else:
-        df["OPPS_Rate"] = 0.0
-
-    # Scale RVU and rate columns by Quantity (per-unit → total for this line)
-    qty = df["Quantity"]
-    for _rc in ["wRVU", "Fac_PE_RVU", "NonFac_PE_RVU", "MP_RVU",
-                "Pro_Total_RVU", "Fac_Total_RVU",
-                "TC_wRVU", "TC_PE_RVU", "TC_MP_RVU", "OPPS_Rate"]:
-        if _rc in df.columns:
-            df[_rc] = df[_rc] * qty
-
-    # Payor: use billing's own PayorName (81.6% populated), then fall back to
-    # Referrals Payer (per-patient, covers 98% of the gap) for the rest.
-    import re as _re_payor
-    from data.loader import load_referrals
-
-    if "PayorName" in df.columns:
-        df["PrimaryInsurance"] = df["PayorName"].where(
-            df["PayorName"].notna() & (df["PayorName"].str.strip() != "")
-        )
-    else:
-        df["PrimaryInsurance"] = np.nan
-
-    # Referral fallback for rows missing PayorName — match to the closest
-    # referral by date so a 2024 billing row doesn't pick up a 2020 payer.
-    mask = df["PrimaryInsurance"].isna()
-    if mask.any() and "PatientId" in df.columns and "DateOfService" in df.columns:
-        def _parse_ref_payer(v):
-            if pd.isna(v):
-                return None
-            first_line = str(v).split("\n")[0].strip()
-            return _re_payor.sub(r"\s*\[\d+\]\s*$", "", first_line).strip() or None
-
-        try:
-            referrals = load_referrals()
-        except Exception:
-            referrals = pd.DataFrame()
-        if not referrals.empty and "Payer" in referrals.columns and "MRN" in referrals.columns:
-            ref_payer = referrals[["MRN", "Created", "Payer"]].copy()
-            ref_payer["RefPayer"] = ref_payer["Payer"].apply(_parse_ref_payer)
-            ref_payer = ref_payer.dropna(subset=["RefPayer", "Created"])
-            ref_payer = ref_payer.sort_values("Created")
-
-            # Prepare billing rows that need filling
-            need = df.loc[mask, ["PatientId", "DateOfService"]].copy()
-            need["_MRN"] = pd.to_numeric(need["PatientId"], errors="coerce").astype("Int64")
-            need = need.dropna(subset=["_MRN", "DateOfService"])
-            need = need.sort_values("DateOfService")
-
-            if not need.empty:
-                matched = pd.merge_asof(
-                    need[["_MRN", "DateOfService"]].rename(columns={"_MRN": "MRN"}),
-                    ref_payer[["MRN", "Created", "RefPayer"]],
-                    left_on="DateOfService", right_on="Created",
-                    by="MRN", direction="backward",
-                )
-                # Map back by original index
-                matched.index = need.index
-                df.loc[matched.index, "PrimaryInsurance"] = matched["RefPayer"]
-
-    df["PrimaryInsurance"] = df["PrimaryInsurance"].fillna("Unknown")
-
-    # Pre-compute per-row revenue estimates for trend/cumulative charts
-    # Professional: [(wRVU × W_GPCI) + (PE × PE_GPCI) + (MP × MP_GPCI)] × CF × HPSA
-    # Hospital: OPPS wage-adjusted with SCH (Lacey/Centralia) or PFS TC (Aberdeen)
-    from data.loader import load_gpci, load_opps_params
-    gpci = load_gpci()
-    opps_params = load_opps_params()
-    if "DateOfService" in df.columns and not df.empty:
-        yrs = df["DateOfService"].dt.year
-        w_g = yrs.map({y: g[0] for y, g in gpci.items()}).fillna(1.0)
-        pe_g = yrs.map({y: g[1] for y, g in gpci.items()}).fillna(1.0)
-        mp_g = yrs.map({y: g[2] for y, g in gpci.items()}).fillna(1.0)
-        cf = yrs.map(_CMS_CF).fillna(_CMS_CF_DEFAULT)
-
-        # PE: For split codes (-26), Fac and NonFac PE are identical.
-        # For non-split codes (E&M etc.), POS determines rate:
-        #   POS 22 (Lacey/Centralia) → Fac_PE
-        #   POS 11 (Aberdeen) → NonFac_PE
-        is_ab = df["Department"] == "Aberdeen" if "Department" in df.columns else False
-        pe = df["Fac_PE_RVU"].copy()
-        if hasattr(is_ab, 'any') and is_ab.any():
-            pe.loc[is_ab] = df.loc[is_ab, "NonFac_PE_RVU"]
-        hpsa = pd.Series(1.0, index=df.index)
-        if "Department" in df.columns:
-            hpsa.loc[df["Department"].isin(["Centralia", "Aberdeen"])] = 1.10
-        df["Pro_Revenue"] = (df["wRVU"] * w_g + pe * pe_g + df["MP_RVU"] * mp_g) * cf * hpsa
-
-        # Hospital revenue per row
-        is_ab = df["Department"] == "Aberdeen" if "Department" in df.columns else pd.Series(False, index=df.index)
-        # OPPS wage-adjusted for Lacey/Centralia
-        wi = yrs.map({y: p[1] for y, p in opps_params.items()}).fillna(1.0)
-        labor = yrs.map({y: p[2] for y, p in opps_params.items()}).fillna(0.60)
-        sch = yrs.map({y: p[3] for y, p in opps_params.items()}).fillna(1.071)
-        opps_adj = df["OPPS_Rate"] * (labor * wi + (1 - labor)) * sch
-        # PFS TC for Aberdeen (no HPSA)
-        tc_adj = (df["TC_wRVU"] * w_g + df["TC_PE_RVU"] * pe_g + df["TC_MP_RVU"] * mp_g) * cf
-        df["Hosp_Revenue"] = 0.0
-        df.loc[~is_ab, "Hosp_Revenue"] = opps_adj[~is_ab]
-        df.loc[is_ab, "Hosp_Revenue"] = tc_adj[is_ab]
-        df["Total_Revenue"] = df["Pro_Revenue"] + df["Hosp_Revenue"]
-    else:
-        df["Pro_Revenue"] = 0.0
-        df["Hosp_Revenue"] = 0.0
-        df["Total_Revenue"] = 0.0
-
-    _enriched_cache["key"] = key
-    _enriched_cache["df"] = df
-    return df
 
 
 # ---------------------------------------------------------------------------

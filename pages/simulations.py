@@ -2424,7 +2424,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
         if sb == "total":
             return {"Total": len(sub)}
         if sb == "dept" and "Department" in sub.columns:
-            return sub.groupby("Department").size().to_dict()
+            return sub.groupby("Department", observed=True).size().to_dict()
         elif sb == "type" and "ActivityName" in sub.columns:
             counts = sub.groupby("ActivityName").size()
             return {_sim_display_name(k): v for k, v in counts.items()}

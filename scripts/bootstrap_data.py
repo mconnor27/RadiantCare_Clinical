@@ -130,6 +130,35 @@ def main() -> int:
     inner = staging / "data"
     source_dir = inner if inner.is_dir() else staging
 
+    # Optional second subtree: pre-built parquet caches (e.g. BillingEnriched).
+    # Lives at staging/data_cache/, gets installed under PROJECT_ROOT/.data_cache_phi/
+    # so the loaders find it on first request — no 10s cold rebuild.
+    cache_subtree = staging / "data_cache"
+    if cache_subtree.is_dir():
+        project_root = Path(__file__).resolve().parent.parent
+        phi = os.environ.get("PHI_MODE", "").lower() in ("1", "true", "yes", "on")
+        cache_target = project_root / (".data_cache_phi" if phi else ".data_cache")
+        cache_target.mkdir(parents=True, exist_ok=True)
+        installed = 0
+        for entry in cache_subtree.iterdir():
+            try:
+                if entry.is_dir():
+                    # Subdirectories (e.g. MachineDowntimeFields_per_date/) — copy
+                    # the whole tree. copytree fails if the target exists, so
+                    # remove it first to keep the install idempotent.
+                    dst = cache_target / entry.name
+                    if dst.exists():
+                        shutil.rmtree(dst)
+                    shutil.copytree(str(entry), str(dst))
+                    installed += sum(1 for _ in dst.rglob("*") if _.is_file())
+                else:
+                    shutil.copy2(str(entry), str(cache_target / entry.name))
+                    installed += 1
+            except Exception as exc:
+                print(f"[bootstrap]   cache {entry.name} install failed: {exc}")
+        if installed:
+            print(f"[bootstrap]   pre-warmed cache: {installed} file(s) → {cache_target}")
+
     # Swap into place. We don't keep an "_old" rollback copy because
     # Path.rename() fails with OSError 18 (cross-device link) when /app/data
     # happens to be a mount point (common in Railway's squashfs image),

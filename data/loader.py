@@ -1,10 +1,228 @@
 """Data loading and preprocessing for RadiantCare Clinical Dashboard."""
 
+import gc
+import os
+import threading
+import time as _time
 import pandas as pd
 from functools import lru_cache
 from pathlib import Path
 
 from config.settings import DATA_DIR, DATA_COMPLETE, DATA_INCREMENTAL, DATA_LOOKUP, DATA_CACHE
+
+
+# ---------------------------------------------------------------------------
+# Memory-conscious caching for the heavy loaders.
+#
+# Background: a Railway hobby-plan dashboard pays per minutely-GB of RSS.
+# The 4 monster datasets (billing, treatment_detail, downtime_gaps, workflow)
+# account for >90% of dataframe memory. A plain @lru_cache pins them in RAM
+# forever; a TTL cache lets idle datasets fall out and the OS reclaim pages.
+# Categorical dtypes shrink the held footprint of the surviving frames 2-5x.
+# ---------------------------------------------------------------------------
+
+
+def _categorize_low_cardinality(df, ratio_threshold=0.5):
+    """In-place: cast object columns with <50% uniqueness to category dtype.
+
+    Patient identifiers and free-text fields are skipped automatically by the
+    ratio check. Department/Physician/Status/CPT-code style columns become
+    dictionary-encoded, which slashes both pandas memory_usage and the
+    parquet-on-disk size (pyarrow preserves the encoding round-trip).
+    """
+    n = len(df)
+    if n < 100:
+        return df
+    for col in df.columns:
+        if df[col].dtype != object:
+            continue
+        try:
+            nunique = df[col].nunique(dropna=True)
+        except Exception:
+            continue
+        if nunique > 0 and (nunique / n) < ratio_threshold:
+            try:
+                df[col] = df[col].astype("category")
+            except Exception:
+                pass
+    return df
+
+
+# malloc_trim hint after eviction — tells glibc to return freed heap pages
+# to the OS. Without this, RSS often stays high even after the DataFrame is
+# garbage-collected, defeating the purpose of the TTL.
+def _malloc_trim():
+    try:
+        import ctypes
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
+
+
+class _TTLEntry:
+    """Single-value TTL cache, thread-safe, with touch-on-access."""
+
+    def __init__(self, ttl_seconds):
+        self.ttl = ttl_seconds
+        self._df = None
+        self._expiry = 0.0
+        self._lock = threading.Lock()
+
+    def get_or_load(self, loader):
+        # Fast path — no need to lock if already populated and unexpired.
+        df = self._df
+        if df is not None and _time.monotonic() < self._expiry:
+            self._expiry = _time.monotonic() + self.ttl
+            return df
+        with self._lock:
+            df = self._df
+            now = _time.monotonic()
+            if df is not None and now < self._expiry:
+                self._expiry = now + self.ttl
+                return df
+            df = loader()
+            self._df = df
+            self._expiry = _time.monotonic() + self.ttl
+            return df
+
+    def maybe_evict(self):
+        """Drop the held DataFrame if its TTL has expired. Returns True if evicted."""
+        if self._df is None:
+            return False
+        if _time.monotonic() < self._expiry:
+            return False
+        with self._lock:
+            if self._df is not None and _time.monotonic() >= self._expiry:
+                self._df = None
+                return True
+        return False
+
+    def clear(self):
+        with self._lock:
+            self._df = None
+            self._expiry = 0.0
+
+
+_TTL_REGISTRY = []  # all _TTLEntry / _TTLDictEntry instances, for the sweeper
+
+
+class _TTLDictEntry:
+    """Touch-on-access TTL eviction for an externally-owned dict cache.
+
+    Used for derived caches that hold multiple correlated values
+    (e.g., {"df": ..., "gap_evt": ..., "fd_evt": ...}). Caller calls .touch()
+    on every cache hit or populate so the TTL window resets on activity.
+    The sweeper resets all values to None after the TTL expires.
+    """
+
+    def __init__(self, cache_dict, ttl_seconds):
+        self.cache = cache_dict
+        self.ttl = ttl_seconds
+        self._expiry = 0.0
+        self._lock = threading.Lock()
+
+    def touch(self):
+        self._expiry = _time.monotonic() + self.ttl
+
+    def maybe_evict(self):
+        if not any(v is not None for v in self.cache.values()):
+            return False
+        if _time.monotonic() < self._expiry:
+            return False
+        with self._lock:
+            if _time.monotonic() < self._expiry:
+                return False
+            for k in list(self.cache.keys()):
+                self.cache[k] = None
+            return True
+
+
+def register_ttl_dict(cache_dict, ttl_seconds=None):
+    """Register a dict-style cache for TTL eviction by the global sweeper.
+
+    Returns a _TTLDictEntry — callers must invoke `.touch()` on each cache
+    hit or write so the TTL window resets on activity. Without touch the
+    sweeper will evict on the next pass after `ttl_seconds`.
+    """
+    if ttl_seconds is None:
+        env_ttl = os.environ.get("LOADER_TTL_SECONDS", "").strip()
+        ttl_seconds = int(env_ttl) if env_ttl.isdigit() else 1800
+    entry = _TTLDictEntry(cache_dict, ttl_seconds)
+    _TTL_REGISTRY.append(entry)
+    return entry
+
+
+def _ttl_cache(ttl_seconds=1800):
+    """Decorator: TTL-cache the result of a no-arg function.
+
+    Default TTL is 30 minutes. After expiry the next call re-runs the
+    underlying loader (which itself reads the parquet cache off disk in
+    1-2s — much cheaper than holding ~500MB in RAM 24/7).
+    """
+    # Allow override via env so we can tune without code change.
+    env_ttl = os.environ.get("LOADER_TTL_SECONDS", "").strip()
+    if env_ttl.isdigit():
+        ttl_seconds = int(env_ttl)
+
+    def deco(fn):
+        entry = _TTLEntry(ttl_seconds)
+        _TTL_REGISTRY.append(entry)
+
+        def wrapper():
+            return entry.get_or_load(fn)
+
+        wrapper.cache_clear = entry.clear
+        wrapper._ttl_entry = entry
+        return wrapper
+
+    return deco
+
+
+def _ttl_sweep_loop(interval_seconds=300):
+    """Background thread: periodically evict expired TTL entries and trim heap.
+
+    Without an active sweeper, an entry stays in memory until the next time
+    its loader is called. For datasets that go idle for hours, the sweeper
+    is what actually frees the pages.
+    """
+    while True:
+        try:
+            _time.sleep(interval_seconds)
+            evicted = sum(1 for e in _TTL_REGISTRY if e.maybe_evict())
+            if evicted:
+                gc.collect()
+                _malloc_trim()
+        except Exception:
+            # Sweeper must never crash the worker thread.
+            continue
+
+
+# Start the sweeper exactly once per process.
+_SWEEPER_STARTED = False
+_SWEEPER_LOCK = threading.Lock()
+
+
+def _start_sweeper_once():
+    global _SWEEPER_STARTED
+    if _SWEEPER_STARTED:
+        return
+    with _SWEEPER_LOCK:
+        if _SWEEPER_STARTED:
+            return
+        # Disable in test/profile contexts via env if needed.
+        if os.environ.get("LOADER_TTL_DISABLE_SWEEPER", "").strip().lower() in ("1", "true", "yes"):
+            _SWEEPER_STARTED = True
+            return
+        t = threading.Thread(
+            target=_ttl_sweep_loop,
+            name="loader-ttl-sweeper",
+            daemon=True,
+        )
+        t.start()
+        _SWEEPER_STARTED = True
+
+
+_start_sweeper_once()
 
 
 # ---------------------------------------------------------------------------
@@ -19,9 +237,14 @@ def _parquet_cache_path(name):
     return DATA_CACHE / f"{name}.parquet"
 
 
+# Bump when the on-disk parquet format changes (dtype shifts, schema changes,
+# etc.) — old caches with mismatched signatures get rebuilt on next load.
+_PARQUET_FORMAT_VERSION = "v2-categorical"
+
+
 def _source_signature(source_paths):
     """A stable fingerprint of the source files (size + ns mtime)."""
-    parts = []
+    parts = [f"fmt={_PARQUET_FORMAT_VERSION}"]
     for p in sorted(source_paths or [], key=lambda x: str(x)):
         if p.exists():
             st = p.stat()
@@ -329,7 +552,7 @@ def load_treatment():
     return df
 
 
-@lru_cache(maxsize=1)
+@_ttl_cache()
 def load_treatment_detail():
     """Load Treatment - Detail.csv — per-session treatment records.
 
@@ -354,6 +577,7 @@ def load_treatment_detail():
     if _usable:
         df = df.drop_duplicates(subset=_usable, keep="last")
     df = _rename_generic_physicians(df)
+    df = _categorize_low_cardinality(df)
     _write_parquet_cache("TreatmentDetail", df, _src)
     return df
 
@@ -408,17 +632,89 @@ def load_daily_volume_by_resource():
     return df
 
 
-@lru_cache(maxsize=1)
-def load_availability():
-    """Load the most recent Availability snapshot.
+def _availability_r2_config():
+    """Return (account_id, access_key, secret_key, bucket, key) or None.
 
-    Availability files are full snapshots (not deltas), so only the latest
-    file should be used — older files contain stale slot states.
+    All five must be present for the live-refresh path to be considered
+    configured. Falls back to the bundled R2 creds (R2_ACCOUNT_ID etc.)
+    so a single R2 token can cover both the daily tarball and the live
+    Availability feed; bucket/key default to the same conventions.
+    """
+    account_id = os.environ.get("R2_ACCOUNT_ID", "").strip()
+    access_key = os.environ.get("R2_ACCESS_KEY_ID", "").strip()
+    secret_key = os.environ.get("R2_SECRET_ACCESS_KEY", "").strip()
+    bucket = (
+        os.environ.get("R2_AVAILABILITY_BUCKET", "").strip()
+        or os.environ.get("R2_BUCKET", "").strip()
+        or "radiantcare-sanitized"
+    )
+    key = os.environ.get("R2_AVAILABILITY_KEY", "").strip()
+    if not (account_id and access_key and secret_key and bucket and key):
+        return None
+    return account_id, access_key, secret_key, bucket, key
 
-    Columns: DepartmentName→Department, AppointmentDateTime→SlotDate,
-    Category, ScheduledEndTime, DurationMinutes, ActivityName, etc.
+
+def _load_availability_from_r2():
+    """Pull the latest Availability CSV from R2. Returns DataFrame or None.
+
+    Returns None on any failure (missing config, network error, parse error)
+    so the caller can fall back to disk. Errors are printed once and not
+    raised — a stale-but-served disk snapshot beats a 500 page.
+    """
+    cfg = _availability_r2_config()
+    if cfg is None:
+        return None
+    account_id, access_key, secret_key, bucket, key = cfg
+    try:
+        import boto3
+        from botocore.config import Config as _BotoConfig
+        from io import BytesIO
+
+        endpoint = f"https://{account_id}.r2.cloudflarestorage.com"
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=endpoint,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            region_name="auto",
+            config=_BotoConfig(
+                signature_version="s3v4",
+                s3={"addressing_style": "path"},
+                retries={"max_attempts": 2, "mode": "standard"},
+                connect_timeout=10,
+                read_timeout=30,
+            ),
+        )
+        resp = s3.get_object(Bucket=bucket, Key=key)
+        body = resp["Body"].read()
+        # Try pyarrow first (matches _read_csv_safe semantics on bytes).
+        try:
+            df = pd.read_csv(BytesIO(body), encoding="utf-8-sig", engine="pyarrow")
+        except Exception:
+            df = pd.read_csv(
+                BytesIO(body), encoding="utf-8-sig",
+                on_bad_lines="skip", low_memory=False,
+            )
+        # Drop trailing all-NaN rows (ARIA footer artifacts).
+        while len(df) > 0 and df.iloc[-1].isna().all():
+            df = df.iloc[:-1]
+        return df
+    except Exception as exc:
+        print(f"[availability] R2 fetch failed (key={key}): {exc}")
+        return None
+
+
+def _load_availability_from_disk():
+    """Read Availability from the local incremental folder.
+
+    Prefers a single canonical Availability.csv (the static-file layout).
+    Falls back to the legacy Availability_yyyymmdd.csv glob — keeps any
+    pre-migration files working until they're cleaned up.
     """
     folder = DATA_INCREMENTAL / "Availability"
+    canonical = folder / "Availability.csv"
+    if canonical.exists():
+        return _read_csv_safe(canonical)
     files = []
     for f in folder.glob("Availability_*.csv"):
         suffix = f.stem[len("Availability") + 1:]
@@ -429,14 +725,62 @@ def load_availability():
     if not files:
         return pd.DataFrame()
     files.sort(key=lambda x: x[0])
-    df = _read_csv_safe(files[-1][1])  # Latest file only
+    return _read_csv_safe(files[-1][1])
+
+
+# Availability gets its own short TTL (default 5 min) — independent of
+# LOADER_TTL_SECONDS, which targets the heavy clinical datasets. Override
+# with AVAILABILITY_TTL_SECONDS for tuning the live-feed cache window.
+_AVAILABILITY_TTL = int(
+    os.environ.get("AVAILABILITY_TTL_SECONDS", "").strip() or "300"
+)
+_AVAILABILITY_ENTRY = _TTLEntry(_AVAILABILITY_TTL)
+_TTL_REGISTRY.append(_AVAILABILITY_ENTRY)
+
+
+def _availability_inner():
+    df = _load_availability_from_r2()
+    if df is None or df.empty:
+        df = _load_availability_from_disk()
+    if df is None or df.empty:
+        return pd.DataFrame()
     df = _normalize_columns(df, {"DepartmentName": "Department"})
     df = _clean_department(df)
     df = _parse_dates(df, ["AppointmentDateTime", "ScheduledEndTime"])
-    # Add SlotDate as the date-only portion for filtering
     if "AppointmentDateTime" in df.columns:
         df["SlotDate"] = df["AppointmentDateTime"].dt.normalize()
+    # AppointmentNotes is only consulted as a boolean (is the slot blocked /
+    # reserved by the front desk?) — the text itself is never rendered.
+    # Derive HasNote here and drop the source column so neither this process
+    # nor anything downstream ever holds the free-text PHI.
+    if "AppointmentNotes" in df.columns:
+        df["HasNote"] = (
+            df["AppointmentNotes"].fillna("").astype(str).str.strip() != ""
+        )
+        df = df.drop(columns=["AppointmentNotes"])
+    elif "HasNote" not in df.columns:
+        df["HasNote"] = False
     return df
+
+
+def load_availability():
+    """Load the latest Availability snapshot.
+
+    Two-tier source resolution:
+      1. R2 live feed — when R2_AVAILABILITY_KEY (and R2 creds) are set,
+         pulls the canonical CSV from R2 on every cache miss. Power Automate
+         overwrites that object on each email export (~30-60 min cadence).
+      2. Disk — single Availability.csv preferred, with a fallback to the
+         legacy date-suffixed Availability_yyyymmdd.csv glob.
+
+    Cached for AVAILABILITY_TTL_SECONDS (default 300s). The TTL sweeper
+    handles eviction so an idle dashboard isn't holding a stale snapshot
+    indefinitely.
+    """
+    return _AVAILABILITY_ENTRY.get_or_load(_availability_inner)
+
+
+load_availability.cache_clear = _AVAILABILITY_ENTRY.clear
 
 
 @lru_cache(maxsize=1)
@@ -489,7 +833,7 @@ def load_simulations():
     return df
 
 
-@lru_cache(maxsize=1)
+@_ttl_cache()
 def load_workflow():
     """Load Workflow.csv — stage-based format.
 
@@ -514,6 +858,7 @@ def load_workflow():
             df = df.merge(dept_map, on="PatientId", how="left")
     df = _clean_department(df)
     df = _rename_generic_physicians(df)
+    df = _categorize_low_cardinality(df)
     _write_parquet_cache("Workflow", df, _src)
     return df
 
@@ -632,7 +977,7 @@ def load_machines():
     return df
 
 
-@lru_cache(maxsize=1)
+@_ttl_cache()
 def load_downtime_gaps():
     """Load Machine Downtime - Gaps incremental files.
 
@@ -653,12 +998,14 @@ def load_downtime_gaps():
         "RowKey",
     )
     df = _parse_dates(df, ["DowntimeDate"])
-    # Convert mixed-type object columns to strings for parquet compatibility
-    pq_df = df.copy()
-    for col in pq_df.columns:
-        if pq_df[col].dtype == object:
-            pq_df[col] = pq_df[col].astype(str).replace({"None": "", "nan": ""})
-    _write_parquet_cache("DowntimeGaps", pq_df, _src)
+    # Normalise mixed-type object columns to clean strings in-place — the
+    # previous version made a full df.copy() just for the parquet write, which
+    # transiently doubled RAM on a 366MB frame.
+    for col in df.columns:
+        if df[col].dtype == object:
+            df[col] = df[col].astype(str).replace({"None": "", "nan": ""})
+    df = _categorize_low_cardinality(df)
+    _write_parquet_cache("DowntimeGaps", df, _src)
     return df
 
 
@@ -670,48 +1017,164 @@ _FIELDS_USECOLS = [
 ]
 
 
+def _fields_files():
+    """Return MachineDowntimeFields incremental CSVs sorted oldest→newest."""
+    folder = DATA_INCREMENTAL / "MachineDowntimeFields"
+    return sorted(
+        folder.glob("Machine Downtime - Fields_*.csv"),
+        key=lambda f: f.stem.rsplit("_", 1)[-1],
+    )
+
+
+@lru_cache(maxsize=1)
+def _downtime_fields_date_index():
+    """Map date_str → newest source file containing that date.
+
+    Built once per process and persisted to disk (`.data_cache/MachineDowntimeFields.idx.json`)
+    so it survives container restarts. Invalidated when the source file
+    list / sizes / mtimes change.
+
+    Why: load_downtime_fields_for_date used to linearly scan all 17 files
+    newest→oldest until it found a match. For dates outside the latest
+    file that's 3-6s of wasted CSV parsing per drill-down. With the index
+    in place, we open exactly one file per date.
+    """
+    import json
+
+    files = _fields_files()
+    if not files:
+        return {}
+
+    sig = _source_signature(files)
+    idx_path = _parquet_cache_path("MachineDowntimeFields.idx").with_suffix(".json")
+
+    # Try the disk cache first
+    if idx_path.exists():
+        try:
+            payload = json.loads(idx_path.read_text())
+            if payload.get("sig") == sig:
+                # Resolve file names back to absolute paths
+                by_name = {p.name: p for p in files}
+                return {d: by_name[n] for d, n in payload.get("index", {}).items()
+                        if n in by_name}
+        except Exception:
+            pass
+
+    # Source files have changed — wipe stale per-date parquet sidecars so
+    # subsequent loads rebuild them with current data.
+    import shutil
+    per_date_dir = _fields_per_date_parquet("dummy").parent
+    if per_date_dir.exists():
+        try:
+            shutil.rmtree(per_date_dir)
+        except Exception:
+            pass
+
+    # Build: walk files newest→oldest, record each date the first time we see it
+    index = {}
+    for fpath in reversed(files):
+        try:
+            dates = pd.read_csv(
+                fpath, usecols=["ActivityDate"],
+                encoding="utf-8-sig", engine="pyarrow",
+            )["ActivityDate"]
+        except Exception:
+            try:
+                dates = pd.read_csv(
+                    fpath, usecols=["ActivityDate"],
+                    encoding="utf-8-sig", on_bad_lines="skip", low_memory=False,
+                )["ActivityDate"]
+            except Exception:
+                continue
+        for d in dates.dropna().unique():
+            d = str(d)
+            if d not in index:
+                index[d] = fpath
+
+    # Persist
+    try:
+        idx_path.parent.mkdir(parents=True, exist_ok=True)
+        idx_path.write_text(json.dumps({
+            "sig": sig,
+            "index": {d: f.name for d, f in index.items()},
+        }))
+    except Exception:
+        pass
+
+    return index
+
+
+def _fields_per_date_parquet(target_date_safe):
+    """Per-date parquet cache path for downtime fields rows."""
+    return DATA_CACHE / "MachineDowntimeFields_per_date" / f"{target_date_safe}.parquet"
+
+
 @lru_cache(maxsize=256)
 def load_downtime_fields_for_date(target_date):
     """Load Machine Downtime - Fields, filtered to a single date.
 
-    Scans ALL incremental files (not just the latest) since each file
-    is a date-range snapshot and older dates only exist in older files.
-    Only loads essential columns via usecols for reduced memory.
+    Two-tier cache:
+      1. Per-date parquet on disk (~few KB each) — survives restarts and
+         skips CSV parsing entirely. Invalidated by index signature change.
+      2. lru_cache(256) in process — repeated calls within a session are O(1).
 
-    Cached by date so repeated drill-downs to the same day are instant.
-
-    Parameters
-    ----------
-    target_date : str or pd.Timestamp
-        Date to filter to.  Accepts MM/DD/YYYY string or Timestamp.
+    The index built by `_downtime_fields_date_index()` tells us which file
+    a date lives in. If the date isn't in the index AND the index is
+    populated, we know no file has data for that date → return empty
+    immediately (this used to trigger a 5s linear scan of all 17 files).
     """
     if hasattr(target_date, "strftime"):
         target_date = target_date.strftime("%m/%d/%Y")
-    folder = DATA_INCREMENTAL / "MachineDowntimeFields"
-    files = sorted(
-        folder.glob("Machine Downtime - Fields_*.csv"),
-        key=lambda f: f.stem.rsplit("_", 1)[-1],
-    )
-    if not files:
-        return pd.DataFrame()
 
-    # Scan files from newest to oldest; stop once we find the target date.
-    # usecols passed as a callable so sanitized (PHI_MODE) files that drop
-    # columns like PatientName don't raise.
     wanted = set(_FIELDS_USECOLS)
     usecols = lambda c: c in wanted
-    for fpath in reversed(files):
-        try:
-            df = pd.read_csv(
-                fpath, usecols=usecols,
-                encoding="utf-8-sig", engine="pyarrow",
-            )
-        except Exception:
-            df = pd.read_csv(
-                fpath, usecols=usecols,
-                encoding="utf-8-sig", on_bad_lines="skip", low_memory=False,
-            )
 
+    # Tier 1: per-date parquet sidecar
+    safe = target_date.replace("/", "-")
+    pq_path = _fields_per_date_parquet(safe)
+    if pq_path.exists():
+        try:
+            return pd.read_parquet(pq_path, engine="pyarrow")
+        except Exception:
+            pass
+
+    def _read(fpath):
+        try:
+            return pd.read_csv(fpath, usecols=usecols, encoding="utf-8-sig",
+                               engine="pyarrow")
+        except Exception:
+            return pd.read_csv(fpath, usecols=usecols, encoding="utf-8-sig",
+                               on_bad_lines="skip", low_memory=False)
+
+    def _persist(matched):
+        try:
+            pq_path.parent.mkdir(parents=True, exist_ok=True)
+            matched.to_parquet(pq_path, engine="pyarrow", compression="zstd")
+        except Exception:
+            pass
+
+    # Fast path: index lookup
+    index = _downtime_fields_date_index()
+    if index:
+        fpath = index.get(target_date)
+        if fpath is None:
+            # Index is built and date is absent — no file has data for it.
+            # Cache the empty result so we don't re-check.
+            empty = pd.DataFrame(columns=_FIELDS_USECOLS)
+            _persist(empty)
+            return empty
+        if fpath.exists():
+            df = _read(fpath)
+            matched = df[df["ActivityDate"] == target_date].copy()
+            _persist(matched)
+            return matched
+
+    # Fallback (e.g., index build failed): linear scan
+    files = _fields_files()
+    if not files:
+        return pd.DataFrame(columns=_FIELDS_USECOLS)
+    for fpath in reversed(files):
+        df = _read(fpath)
         matched = df[df["ActivityDate"] == target_date]
         if not matched.empty:
             return matched.copy()
@@ -835,7 +1298,7 @@ def load_machine_statistics():
     return df
 
 
-@lru_cache(maxsize=1)
+@_ttl_cache()
 def load_billing():
     """Load Billing.csv.
 
@@ -851,11 +1314,12 @@ def load_billing():
     df = _clean_department(df)
     df = _parse_dates(df, ["DateOfService", "ActivityDateTime"])
     df = _rename_generic_physicians(df)
+    df = _categorize_low_cardinality(df)
     _write_parquet_cache("Billing", df, _src)
     return df
 
 
-@lru_cache(maxsize=1)
+@_ttl_cache()
 def load_pluvicto_workflow():
     """Load Pluvicto-specific workflow chains from Workflow CSV.
 
@@ -865,7 +1329,9 @@ def load_pluvicto_workflow():
     wf = load_workflow()
     if "ModalityType" not in wf.columns:
         return pd.DataFrame()
-    mask = wf["ModalityType"].str.strip().str.upper() == "PLUVICTO"
+    # ModalityType is now a category; .str works on the underlying values
+    # but we cast to string for the comparison to avoid category-mismatch issues.
+    mask = wf["ModalityType"].astype(str).str.strip().str.upper() == "PLUVICTO"
     return wf[mask].copy()
 
 

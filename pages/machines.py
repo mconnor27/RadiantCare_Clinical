@@ -26,6 +26,17 @@ from utils.date_slider import (
     preset_to_slider_val, preset_to_exact_dates,
 )
 
+# Transformation pipeline lives in data/ so scripts/sanitize.py can pre-build
+# the parquet cache without importing Dash.
+from data.downtime_gaps_transform import (
+    _EVENT_KEYS, _CONFIDENCE_ORDER, _NOTE_TYPE_MAP,
+    _time_str_to_min, _get_holidays_set,
+    _dedup_events, _compute_downtime_type, _compute_local_confidence,
+    _propagate_event_note,
+    _compute_interpolated_gap_minutes, _apply_interpolated_minutes,
+    _transformed_cache, _get_transformed_gaps,
+)
+
 dash.register_page(__name__, path="/machines", name="Machine Downtime", order=8)
 
 # ---------------------------------------------------------------------------
@@ -987,7 +998,7 @@ def _machine_lifespans(df):
     gap_rows = df[df["RowType"] == "Gap"]
     if gap_rows.empty:
         return {}
-    spans = gap_rows.groupby("Machine")["DowntimeDate"].agg(["min", "max"])
+    spans = gap_rows.groupby("Machine", observed=True)["DowntimeDate"].agg(["min", "max"])
     return {m: (row["min"], row["max"]) for m, row in spans.iterrows()}
 
 
@@ -1444,89 +1455,6 @@ def _build_detail_table(df):
     return records
 
 
-def _time_str_to_min(t):
-    """Convert HH:MM:SS string to minutes from midnight."""
-    if pd.isna(t):
-        return None
-    s = str(t)[:5]
-    parts = s.split(":")
-    try:
-        return int(parts[0]) * 60 + int(parts[1])
-    except (ValueError, IndexError):
-        return None
-
-
-def _get_holidays_set():
-    """Get set of holiday dates (schedule-derived + static fallback)."""
-    from utils.holidays import get_holidays
-    try:
-        return get_holidays()
-    except Exception:
-        return set()
-
-
-_EVENT_KEYS = ("RowType", "Machine", "DowntimeDate", "GapStartTime")
-
-_CONFIDENCE_ORDER = {"High": 3, "Medium": 2, "Low": 1}
-
-
-def _dedup_events(df):
-    """Deduplicate to one row per gap event for event-level aggregation.
-
-    The SQL output is dual-grain:
-      - A-branch: one row per affected patient (PatientId populated)
-      - B-branch: one row per event with no patients (PatientId NULL)
-
-    Event-level columns (GapMinutes, CancelledInGap, MachineErrorsNearGap,
-    etc.) carry the same value on every A-branch row for a given gap. Summing
-    without deduplication inflates counts by the number of affected patients.
-
-    Propagation rules applied before collapsing:
-      - DowntimeNoteMatch: best (first non-null) from any A-branch row
-      - LocalConfidence: highest severity from any row in the event group
-    """
-    if df.empty:
-        return df
-    keys = [c for c in _EVENT_KEYS if c in df.columns]
-    if not keys:
-        return df
-
-    # Sort so rows with non-null notes and highest confidence come first,
-    # then a single drop_duplicates keeps the best row per event.
-    df_sorted = df.copy()
-    has_note = df_sorted["DowntimeNoteMatch"].notna() if "DowntimeNoteMatch" in df_sorted.columns else pd.Series(False, index=df_sorted.index)
-    conf_rank = df_sorted["LocalConfidence"].map(_CONFIDENCE_ORDER).fillna(0) if "LocalConfidence" in df_sorted.columns else pd.Series(0, index=df_sorted.index)
-    df_sorted["_note_rank"] = has_note.astype(int)
-    df_sorted["_conf_rank"] = conf_rank
-    df_sorted = df_sorted.sort_values(["_note_rank", "_conf_rank"], ascending=False)
-    deduped = df_sorted.drop_duplicates(subset=keys).drop(columns=["_note_rank", "_conf_rank"])
-
-    return deduped
-
-
-_NOTE_TYPE_MAP = {
-    "Machine Down": "Equipment Fault",
-    "Component Down": "Equipment Fault",
-    "Power": "Equipment Fault",
-    "Varian Called": "Vendor Response",
-    "Patient Redirected": "Patient Logistics",
-}
-
-
-def _compute_downtime_type(df):
-    """Add DowntimeType column derived from DowntimeNoteMatch.
-
-    Equipment Fault   — Machine Down, Component Down, Power
-    Vendor Response   — Varian Called
-    Patient Logistics — Patient Redirected
-    Unclassified      — no note match
-    """
-    if df.empty or "DowntimeNoteMatch" not in df.columns:
-        return df
-    df = df.copy()
-    df["DowntimeType"] = df["DowntimeNoteMatch"].map(_NOTE_TYPE_MAP).fillna("Unclassified")
-    return df
-
 
 def _compute_true_availability(df_events, start, end, machines, holidays):
     """Compute availability using actual treatment operating windows.
@@ -1563,12 +1491,12 @@ def _compute_true_availability(df_events, start, end, machines, holidays):
 
     # Per-machine median daily operating window from all-time data
     # (used to estimate FullDay outage duration and to fill any gaps)
-    all_daily = td_m.groupby(["Machine", "_date"]).agg(
+    all_daily = td_m.groupby(["Machine", "_date"], observed=True).agg(
         first_min=("_start_min", "min"),
         last_min=("_end_min", "max"),
     ).reset_index()
     all_daily["window_min"] = (all_daily["last_min"] - all_daily["first_min"]).clip(lower=0)
-    machine_median_min = all_daily.groupby("Machine")["window_min"].median().to_dict()
+    machine_median_min = all_daily.groupby("Machine", observed=True)["window_min"].median().to_dict()
 
     # Operating windows within the selected date range (workdays only)
     range_td = td_m[(td_m["_date"] >= start) & (td_m["_date"] <= end)]
@@ -1577,7 +1505,7 @@ def _compute_true_availability(df_events, start, end, machines, holidays):
         range_td = range_td[~range_td["_date"].isin(holidays)]
 
     if not range_td.empty:
-        range_daily = range_td.groupby(["Machine", "_date"]).agg(
+        range_daily = range_td.groupby(["Machine", "_date"], observed=True).agg(
             first_min=("_start_min", "min"),
             last_min=("_end_min", "max"),
         ).reset_index()
@@ -1606,149 +1534,6 @@ def _compute_true_availability(df_events, start, end, machines, holidays):
     availability = max(0.0, (1.0 - total_downtime_min / total_op_min)) * 100.0
     return availability, fullday_est_min / 60.0
 
-
-def _compute_local_confidence(df):
-    """Add LocalConfidence column based on agreed scoring tiers.
-
-    All rows — if the gap detection algorithm found a gap in field records, it is
-    real downtime. CompletedInGap reflects scheduling decisions made around the
-    outage, not evidence the machine was running. Confidence tiers reflect only
-    how certain we are of the cause:
-
-    Gap / StartOfDay / EndOfDay:
-      High   — DowntimeNoteMatch is not null
-      Medium — LastFieldTerminationStatus == 'MACHINE'
-      Low    — everything else
-
-    FullDay rows — CancelledInGap replaces termination status as the Medium signal
-    (multi-day outages often lack a note after day 1 but will show cancellations):
-      High   — DowntimeNoteMatch is not null
-      Medium — CancelledInGap > 0
-      Low    — everything else
-    """
-    if df.empty:
-        return df
-    df = df.copy()
-
-    has_note = df["DowntimeNoteMatch"].notna()
-    is_fullday = df["RowType"] == "FullDay"
-    has_cancellations = df["CancelledInGap"].fillna(0) > 0
-    is_machine_term = df.get("LastFieldTerminationStatus", pd.Series("", index=df.index)) == "MACHINE"
-
-    # Vectorized scoring with np.select (order matters — first match wins)
-    conditions = [
-        has_note,                                # High for any row with a note
-        is_fullday & has_cancellations,          # Medium for FullDay with cancellations
-        ~is_fullday & is_machine_term,           # Medium for Gap/SOD/EOD with machine termination
-    ]
-    choices = ["High", "Medium", "Medium"]
-    df["LocalConfidence"] = np.select(conditions, choices, default="Low")
-
-    return df
-
-
-def _propagate_event_note(df):
-    """Add EventNote column: the event's best non-null DowntimeNoteMatch broadcast to all rows.
-
-    B-branch rows have null DowntimeNoteMatch in the SQL output. This propagates
-    the A-branch note to all rows sharing the same event keys so that the note
-    filter operates at the event level (not just on the row that happens to have it).
-    Also normalises the string 'None' value (which can appear in the CSV) to NaN.
-    """
-    if df.empty or "DowntimeNoteMatch" not in df.columns:
-        return df
-    df = df.copy()
-    # Normalise string 'None' → NaN
-    df["DowntimeNoteMatch"] = df["DowntimeNoteMatch"].replace("None", np.nan)
-    evt_keys = [c for c in _EVENT_KEYS if c in df.columns]
-    if not evt_keys:
-        df["EventNote"] = np.nan
-        return df
-    # Take first non-null note per event
-    best = (
-        df[df["DowntimeNoteMatch"].notna()]
-        .drop_duplicates(subset=evt_keys)[evt_keys + ["DowntimeNoteMatch"]]
-        .rename(columns={"DowntimeNoteMatch": "EventNote"})
-    )
-    df = df.drop(columns=["EventNote"], errors="ignore")
-    if not best.empty:
-        df = df.merge(best, on=evt_keys, how="left")
-    else:
-        df["EventNote"] = np.nan
-    return df
-
-
-# ---------------------------------------------------------------------------
-# Cached transformed dataset — avoids recomputing on every callback
-# ---------------------------------------------------------------------------
-
-_transformed_cache = {"hash": None, "df": None, "gap_evt": None, "fd_evt": None}
-
-
-def _get_transformed_gaps():
-    """Return the fully transformed downtime gaps dataframe, cached across callbacks.
-
-    Cache invalidates when the underlying loader returns a new object
-    (i.e., after load_downtime_gaps.cache_clear() or app restart).
-    On cold start, tries to load pre-computed results from disk parquet cache
-    (transform + dedup + interpolation) to avoid the full 4+ second rebuild.
-    """
-    from data.loader import load_downtime_gaps, _read_parquet_cache, _write_parquet_cache
-    from pathlib import Path
-    from config.settings import DATA_INCREMENTAL
-
-    raw = load_downtime_gaps()
-    raw_id = id(raw)
-    if _transformed_cache["hash"] != raw_id:
-        # Try disk cache first — check if parquet is newer than source CSVs
-        _src_files = sorted((DATA_INCREMENTAL / "MachineDowntimeGaps").glob("*.csv"))
-        df_cached = _read_parquet_cache("DowntimeGaps_transformed", _src_files)
-        gap_cached = _read_parquet_cache("DowntimeGaps_gap_evt", _src_files)
-        fd_cached = _read_parquet_cache("DowntimeGaps_fd_evt", _src_files)
-
-        if df_cached is not None and gap_cached is not None and fd_cached is not None:
-            df = df_cached
-            gap_evt = gap_cached
-            fd_evt = fd_cached
-        else:
-            # Full rebuild
-            df = _compute_downtime_type(
-                _compute_local_confidence(
-                    _propagate_event_note(raw.copy())
-                )
-            )
-            # Compute MU Delivered % from last field before gap
-            if "LastFieldPlannedMU" in df.columns and "LastFieldDeliveredMU" in df.columns:
-                planned = df["LastFieldPlannedMU"].fillna(0)
-                delivered = df["LastFieldDeliveredMU"].fillna(0)
-                df["MUDeliveredPct"] = np.where(planned > 0, (delivered / planned * 100).round(1), np.nan)
-            gap_rows = df[df["RowType"].isin(["Gap", "StartOfDay", "EndOfDay"])]
-            fd_rows = df[df["RowType"] == "FullDay"]
-            gap_evt = _dedup_events(gap_rows) if not gap_rows.empty else pd.DataFrame()
-            fd_evt = _dedup_events(fd_rows) if not fd_rows.empty else pd.DataFrame()
-            # Apply interpolated gap minutes so all consumers get consistent values
-            if not gap_evt.empty or not fd_evt.empty:
-                interp_map = _compute_interpolated_gap_minutes(gap_evt, fd_evt)
-                gap_evt, fd_evt = _apply_interpolated_minutes(gap_evt, fd_evt, interp_map)
-            # Persist to disk — convert object columns to strings for parquet compatibility
-            # (datetime.time objects in mixed-type columns cause pyarrow errors)
-            def _prep_for_parquet(frame):
-                if frame.empty:
-                    return frame
-                frame = frame.copy()
-                for col in frame.columns:
-                    if frame[col].dtype == object:
-                        frame[col] = frame[col].astype(str).replace({"NaT": "", "None": "", "nan": ""})
-                return frame
-            _write_parquet_cache("DowntimeGaps_transformed", _prep_for_parquet(df))
-            _write_parquet_cache("DowntimeGaps_gap_evt", _prep_for_parquet(gap_evt))
-            _write_parquet_cache("DowntimeGaps_fd_evt", fd_evt)
-
-        _transformed_cache["hash"] = raw_id
-        _transformed_cache["df"] = df
-        _transformed_cache["gap_evt"] = gap_evt
-        _transformed_cache["fd_evt"] = fd_evt
-    return _transformed_cache["df"]
 
 
 def _get_deduped_events(df):
@@ -1786,135 +1571,6 @@ def _get_deduped_events(df):
     return gap_evt, fd_evt
 
 
-def _compute_interpolated_gap_minutes(gap_evt, fd_evt):
-    """Compute interpolated gap minutes matching the strip's visual rendering.
-
-    For each gap event, returns an adjusted GapMinutes value:
-    - Intraday Gap: uses source GapMinutes as-is.
-    - EndOfDay: interpolates the gap end from neighboring days' latest treatment
-      time, then recomputes duration from gap start to interpolated end.
-    - StartOfDay: interpolates the gap start from neighboring days' earliest
-      treatment time, then recomputes duration from interpolated start to gap end.
-    - FullDay: interpolates the full operating window from neighbor days.
-
-    Returns a dict: {(Machine, DowntimeDate_str, RowType, GapStartTime_str): minutes}
-    """
-    from data.loader import load_treatment_detail
-
-    td = load_treatment_detail()
-    if td.empty:
-        return {}
-
-    td = td.copy()
-    td["_date"] = td["ScheduledDateTime"].dt.normalize()
-    td["_start_min"] = td["TreatmentStartTime"].dt.hour * 60 + td["TreatmentStartTime"].dt.minute
-    td["_end_min"] = td["TreatmentEndTime"].dt.hour * 60 + td["TreatmentEndTime"].dt.minute
-
-    # Per-machine per-day treatment windows
-    tx_daily = td.groupby(["Machine", "_date"]).agg(
-        ft=("_start_min", "min"),
-        lt=("_end_min", "max"),
-    ).reset_index()
-
-    # Build sorted arrays per machine for O(log n) neighbor lookups
-    machine_tx = {}
-    for machine, grp in tx_daily.groupby("Machine"):
-        grp = grp.sort_values("_date")
-        dates = grp["_date"].values.astype("datetime64[ns]")
-        fts = grp["ft"].values.astype(int)
-        lts = grp["lt"].values.astype(int)
-        machine_tx[machine] = (dates, fts, lts)
-
-    def _neighbor_interp(machine, target_date):
-        """Find nearest prev/next treatment day via binary search, return interpolated (ft, lt)."""
-        if machine not in machine_tx:
-            return 480, 1020
-        dates, fts, lts = machine_tx[machine]
-        td64 = np.datetime64(target_date)
-        idx = np.searchsorted(dates, td64)
-
-        prev_ft, prev_lt = (None, None)
-        if idx > 0:
-            prev_ft, prev_lt = int(fts[idx - 1]), int(lts[idx - 1])
-
-        next_ft, next_lt = (None, None)
-        # idx might point at the target date itself (if it has treatments); skip it
-        ni = idx
-        if ni < len(dates) and dates[ni] == td64:
-            ni += 1
-        if ni < len(dates):
-            next_ft, next_lt = int(fts[ni]), int(lts[ni])
-
-        if prev_ft is not None and next_ft is not None:
-            return round((prev_ft + next_ft) / 2), round((prev_lt + next_lt) / 2)
-        elif prev_ft is not None:
-            return prev_ft, prev_lt
-        elif next_ft is not None:
-            return next_ft, next_lt
-        return 480, 1020
-
-    result = {}
-
-    # Process FullDay events — interpolate full window from neighbors
-    if not fd_evt.empty:
-        for machine, dt in fd_evt[["Machine", "DowntimeDate"]].drop_duplicates().itertuples(index=False):
-            dt_n = dt.normalize()
-            ds = dt_n.strftime("%Y-%m-%d")
-            interp_ft, interp_lt = _neighbor_interp(machine, dt_n)
-            result[(machine, ds, "FullDay", "")] = max(0, interp_lt - interp_ft)
-
-    # Process EndOfDay / StartOfDay gaps — interpolate boundary from neighbors
-    if not gap_evt.empty:
-        boundary = gap_evt[gap_evt["RowType"].isin(["EndOfDay", "StartOfDay"])].copy()
-        if not boundary.empty:
-            boundary["_gs"] = boundary["GapStartTime"].apply(_time_str_to_min)
-            boundary["_ge"] = boundary["GapEndTime"].apply(_time_str_to_min)
-            for row_type, machine, dt, gs, ge, gs_raw in zip(
-                boundary["RowType"], boundary["Machine"], boundary["DowntimeDate"],
-                boundary["_gs"], boundary["_ge"], boundary["GapStartTime"],
-            ):
-                dt_n = dt.normalize()
-                ds = dt_n.strftime("%Y-%m-%d")
-                gs_str = str(gs_raw)[:8] if pd.notna(gs_raw) else ""
-                interp_ft, interp_lt = _neighbor_interp(machine, dt_n)
-
-                if row_type == "EndOfDay" and gs is not None:
-                    result[(machine, ds, "EndOfDay", gs_str)] = max(0, interp_lt - int(gs))
-                elif row_type == "StartOfDay" and ge is not None:
-                    result[(machine, ds, "StartOfDay", gs_str)] = max(0, int(ge) - interp_ft)
-
-    return result
-
-
-def _apply_interpolated_minutes(gap_evt, fd_evt, interp_map):
-    """Apply interpolated minutes to gap and fullday event dataframes.
-
-    Returns (gap_evt_with_adjusted_minutes, fd_evt_with_minutes).
-    """
-    if not gap_evt.empty:
-        gap_evt = gap_evt.copy()
-        is_boundary = gap_evt["RowType"].isin(["EndOfDay", "StartOfDay"])
-        if is_boundary.any():
-            keys = (
-                gap_evt.loc[is_boundary, "Machine"]
-                + "|" + gap_evt.loc[is_boundary, "DowntimeDate"].dt.strftime("%Y-%m-%d")
-                + "|" + gap_evt.loc[is_boundary, "RowType"]
-                + "|" + gap_evt.loc[is_boundary, "GapStartTime"].fillna("").astype(str).str[:8]
-            )
-            # Build a fast lookup from the interp_map
-            flat_map = {f"{m}|{d}|{rt}|{gs}": v for (m, d, rt, gs), v in interp_map.items()
-                        if rt in ("EndOfDay", "StartOfDay")}
-            gap_evt.loc[is_boundary, "GapMinutes"] = keys.map(flat_map).fillna(
-                gap_evt.loc[is_boundary, "GapMinutes"]
-            ).astype(float)
-
-    if not fd_evt.empty:
-        fd_evt = fd_evt.copy()
-        keys = fd_evt["Machine"] + "|" + fd_evt["DowntimeDate"].dt.strftime("%Y-%m-%d") + "|FullDay|"
-        flat_map = {f"{m}|{d}|FullDay|": v for (m, d, rt, gs), v in interp_map.items() if rt == "FullDay"}
-        fd_evt["GapMinutes"] = keys.map(flat_map).fillna(600).astype(float)
-
-    return gap_evt, fd_evt
 
 
 def _build_strip_data(gaps_df, machines, start_date, end_date):
@@ -1961,7 +1617,7 @@ def _build_strip_data(gaps_df, machines, start_date, end_date):
     # Build treatment windows: per machine per day → first/last treatment time
     td["_start_min"] = td["TreatmentStartTime"].dt.hour * 60 + td["TreatmentStartTime"].dt.minute
     td["_end_min"] = td["TreatmentEndTime"].dt.hour * 60 + td["TreatmentEndTime"].dt.minute
-    tx_daily = td.groupby(["Machine", "_date"]).agg(
+    tx_daily = td.groupby(["Machine", "_date"], observed=True).agg(
         ft=("_start_min", "min"),
         lt=("_end_min", "max"),
     ).reset_index()
@@ -1987,7 +1643,7 @@ def _build_strip_data(gaps_df, machines, start_date, end_date):
             gap_rows["_is_eod"] = gap_rows["RowType"] == "EndOfDay"
             gap_rows["_is_bod"] = gap_rows["RowType"] == "StartOfDay"
 
-            for (machine, date_str), dg in gap_rows.groupby(["Machine", "_date_str"]):
+            for (machine, date_str), dg in gap_rows.groupby(["Machine", "_date_str"], observed=True):
                 valid = dg[dg["_gs"].notna() & dg["_ge"].notna()]
                 if not valid.empty:
                     gap_lookup[(machine, date_str)] = list(zip(
@@ -2119,7 +1775,7 @@ def update_main_data(_n, machines, filter_rules, slider_val, date_preset, grid_f
 
     gap_hours = gap_rows_evt["GapMinutes"].sum() / 60 if not gap_rows_evt.empty else 0
     fullday_hours = fd_rows_evt["GapMinutes"].sum() / 60 if not fd_rows_evt.empty else 0
-    fullday_count = fullday_rows.groupby(["Machine", "DowntimeDate"]).ngroups if not fullday_rows.empty else 0
+    fullday_count = fullday_rows.groupby(["Machine", "DowntimeDate"], observed=True).ngroups if not fullday_rows.empty else 0
 
     # Availability — use actual treatment operating windows from Treatment-Detail.
     # FullDay outage days are estimated from each machine's median daily window.
@@ -2217,7 +1873,7 @@ def update_main_data(_n, machines, filter_rules, slider_val, date_preset, grid_f
         # Prior period deduped events already have interpolated minutes from cache
         p_gap_hours = prior_gap_rows_evt["GapMinutes"].sum() / 60 if not prior_gap_rows_evt.empty else 0
         p_fd_hours = p_fd_evt["GapMinutes"].sum() / 60 if not p_fd_evt.empty else 0
-        p_fullday_count = prior_fullday_rows.groupby(["Machine", "DowntimeDate"]).ngroups if not prior_fullday_rows.empty else 0
+        p_fullday_count = prior_fullday_rows.groupby(["Machine", "DowntimeDate"], observed=True).ngroups if not prior_fullday_rows.empty else 0
         p_total_hours = p_gap_hours + p_fd_hours
         _t_hours = _trend(total_hours, p_total_hours, invert=True)
 

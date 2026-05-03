@@ -1393,7 +1393,7 @@ def _build_department_chart(df, mode="count"):
     if "Department" not in df.columns or "AuditResult" not in df.columns:
         return empty_figure("No department data")
 
-    pivot = df.groupby(["Department", "AuditResult"]).size().unstack(fill_value=0)
+    pivot = df.groupby(["Department", "AuditResult"], observed=True).size().unstack(fill_value=0)
 
     if mode == "pct":
         row_totals = pivot.sum(axis=1)

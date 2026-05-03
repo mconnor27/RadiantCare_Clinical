@@ -2282,7 +2282,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
         if sb == "total":
             return {"Total": len(sub)}
         if sb == "site" and "Department" in sub.columns:
-            return sub.groupby("Department").size().to_dict()
+            return sub.groupby("Department", observed=True).size().to_dict()
         elif sb == "physician":
             _pc = "ConsultPhysician" if physician_role == "consult" else "TreatingPhysician"
             if _pc in sub.columns:

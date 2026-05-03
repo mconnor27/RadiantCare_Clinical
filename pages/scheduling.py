@@ -63,10 +63,19 @@ def _open_slots(mode="physicians"):
     return _physician_slots()
 
 
-def _has_note(series):
-    """A non-empty AppointmentNotes value flags a slot as blocked / not truly open."""
-    s = series.fillna("").astype(str).str.strip()
-    return s != ""
+def _blocked_flag(df):
+    """Boolean Series: True when a slot is reserved/blocked by a front-desk note.
+
+    The Availability loader synthesizes a HasNote column from the upstream
+    AppointmentNotes text and drops the text itself — the page only ever
+    needed the emptiness check, so neither this process nor R2 has to hold
+    the free-text PHI. Falls back to an empty-string check on AppointmentNotes
+    if HasNote isn't present (e.g. an older bundled snapshot).
+    """
+    if "HasNote" in df.columns:
+        return df["HasNote"].fillna(False).astype(bool)
+    notes = df.get("AppointmentNotes", pd.Series("", index=df.index))
+    return notes.fillna("").astype(str).str.strip() != ""
 
 
 def _sim_slots():
@@ -78,7 +87,7 @@ def _sim_slots():
     avail["AppointmentDateTime"] = pd.to_datetime(avail["AppointmentDateTime"])
     avail["ScheduledEndTime"] = pd.to_datetime(avail.get("ScheduledEndTime"))
     is_taken = avail["SlotTaken"].astype(str).str.lower() == "yes"
-    is_blocked = _has_note(avail.get("AppointmentNotes", pd.Series(dtype=str)))
+    is_blocked = _blocked_flag(avail)
     avail["IsTaken"] = is_taken | is_blocked
     avail["IsBlocked"] = is_blocked & ~is_taken
     avail = avail[[
@@ -138,7 +147,7 @@ def _physician_slots():
             avail["SlotTaken"].astype(str).str.lower() == "yes"
             if "SlotTaken" in avail.columns else pd.Series(False, index=avail.index)
         )
-        is_blocked = _has_note(avail.get("AppointmentNotes", pd.Series(dtype=str)))
+        is_blocked = _blocked_flag(avail)
         avail["IsTaken"] = is_taken | is_blocked
         avail["IsBlocked"] = is_blocked & ~is_taken
         avail = avail[[

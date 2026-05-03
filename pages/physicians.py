@@ -1100,11 +1100,11 @@ def _build_site_assignments(df, mode="count", barmode="group"):
     assigned["Site"] = assigned["Status"].str.upper().map(_SITE_MAP)
     # Count unique physician-days per site
     site_days = assigned.drop_duplicates(subset=["Date", "Physician", "Site"])
-    counts = site_days.groupby(["Physician", "Site"]).size().reset_index(name="count")
+    counts = site_days.groupby(["Physician", "Site"], observed=True).size().reset_index(name="count")
     counts["short_name"] = counts["Physician"].str.split(",").str[0]
 
     if mode == "pct":
-        totals = counts.groupby("Physician")["count"].transform("sum")
+        totals = counts.groupby("Physician", observed=True)["count"].transform("sum")
         counts["value"] = (counts["count"] / totals * 100).round(1)
         y_title = "% of Assignment Days"
         hover_fmt = ".1f"

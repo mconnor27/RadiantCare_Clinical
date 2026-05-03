@@ -1221,11 +1221,11 @@ def _prepare_cumulative_data(df, start, end, date_preset,
         if sb == "total":
             return {"Total": len(sub)}
         if sb == "dept" and "Department" in sub.columns:
-            return sub.groupby("Department").size().to_dict()
+            return sub.groupby("Department", observed=True).size().to_dict()
         elif sb == "machine" and "Machine" in sub.columns:
-            return sub.groupby("Machine").size().to_dict()
+            return sub.groupby("Machine", observed=True).size().to_dict()
         elif sb == "physician" and "TreatingPhysician" in sub.columns:
-            counts = sub.groupby("TreatingPhysician").size()
+            counts = sub.groupby("TreatingPhysician", observed=True).size()
             return {(k.split(",")[0] if "," in k else k): v for k, v in counts.items()}
         elif sb == "technique" and "PlanTechniques" in sub.columns:
             sub = sub.copy()

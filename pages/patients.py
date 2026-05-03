@@ -614,7 +614,7 @@ def _build_kpis(df, geo_df):
     dept_counts = {}
     if "Department" in df.columns and "PatientId" in df.columns:
         dept_counts = (
-            df.groupby("Department")["PatientId"].nunique().to_dict()
+            df.groupby("Department", observed=True)["PatientId"].nunique().to_dict()
         )
 
     cards = [
