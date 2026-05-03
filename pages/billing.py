@@ -15,7 +15,8 @@ from datetime import timedelta
 from config.settings import (
     DEPARTMENTS, DEPARTMENT_COLORS, CHART_COLORWAY, PRIMARY,
     DEFAULT_LAYOUT, FONT_FAMILY, SEMANTIC_COLORS, NEUTRAL, CHART_PAPER_HEIGHT,
-    DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, PRIOR_PERIOD_COLORS,
+    DEFAULT_COLUMN_DEFS, DEFAULT_GRID_OPTIONS, DEFAULT_GRID_STYLE,
+    DEFAULT_GRID_CLASS, PRIOR_PERIOD_COLORS,
 )
 from components.filter_bar import department_chips
 from components.detail_table import detail_table
@@ -3128,23 +3129,64 @@ layout = dmc.Stack(
             ],
         ),
 
-        # Detail table — lazy-mounted. The detail_table() helper is NOT in the
-        # initial layout. A small "Show detail rows" button is rendered instead;
-        # the heavy AgGrid + Accordion + ~1000-row table mounts only when the
-        # user clicks the button. Reduces React's startup reconciliation work
-        # for users who never scroll to the bottom of /billing.
+        # Detail table — lazy-mounted on accordion expand. The Accordion shell
+        # is in the layout from the start so the UI matches the rest of the
+        # app, but the AccordionPanel ships with empty children. A callback
+        # injects the heavy AgGrid + ~1000-row table the first time the user
+        # expands the accordion. Once mounted, it stays mounted across
+        # subsequent collapse/expand cycles.
         html.Div(
-            id=f"{PAGE_ID}-detail-mount",
+            style={"position": "relative"},
             children=[
-                dmc.Center(
-                    dmc.Button(
-                        "Show 1,000-row Detail Table",
-                        id=f"{PAGE_ID}-detail-show-btn",
-                        size="sm",
-                        variant="light",
-                        leftSection=DashIconify(icon="mdi:table", width=16),
-                    ),
-                    style={"padding": "12px"},
+                dmc.Accordion(
+                    id=f"{PAGE_ID}-detail-accordion",
+                    variant="contained",
+                    radius="md",
+                    chevronPosition="left",
+                    value=None,  # start collapsed
+                    children=[
+                        dmc.AccordionItem(
+                            value="detail",
+                            children=[
+                                dmc.AccordionControl(
+                                    dmc.Text("Billing Detail", size="sm", fw=500, c="#6B7280"),
+                                ),
+                                dmc.AccordionPanel(
+                                    id=f"{PAGE_ID}-detail-panel",
+                                    children=[],  # populated on first expand
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+                # Export + Clear Filters controls overlay the accordion header
+                # so clicks on them don't toggle the accordion. Only show
+                # them after the grid has actually mounted.
+                html.Div(
+                    id=f"{PAGE_ID}-detail-controls",
+                    className="detail-table-controls",
+                    style={
+                        "position": "absolute", "top": 0, "right": 12,
+                        "height": "42px", "display": "none",
+                        "alignItems": "center", "zIndex": 2,
+                    },
+                    children=dmc.Group(gap="sm", align="center", children=[
+                        dmc.Button(
+                            "Clear Filters",
+                            id=f"{PAGE_ID}-table-clear-filters",
+                            size="compact-xs",
+                            variant="light",
+                            color="red",
+                            leftSection=DashIconify(icon="mdi:filter-remove", width=14),
+                            style={"display": "none"},
+                        ),
+                        dmc.Button(
+                            "Export CSV",
+                            id=f"{PAGE_ID}-table-export",
+                            size="compact-xs",
+                            variant="light",
+                        ),
+                    ]),
                 ),
             ],
         ),
@@ -3166,40 +3208,45 @@ layout = dmc.Stack(
 
 
 # ---------------------------------------------------------------------------
-# Lazy-mount the detail table on first user click. Replaces the placeholder
-# button with the real detail_table() component (AgGrid + Accordion +
-# Export/Clear controls). Once mounted, downstream callbacks targeting
-# {PAGE_ID}-detail-grid resolve normally (suppress_callback_exceptions=True
-# in dash_app.py keeps them registered until the IDs appear).
+# Lazy-mount the detail table on first accordion expand. The AgGrid + ~1000
+# rows + headers stay out of the DOM until the user explicitly opens the
+# panel. Once injected, the grid stays mounted across subsequent collapse/
+# expand cycles (sentinel store prevents re-injection). The Export + Clear
+# Filters control overlay reveals at the same time.
+#
+# suppress_callback_exceptions=True (dash_app.py) keeps the existing
+# callbacks targeting billing-detail-grid (rowData / columnDefs / virtual
+# filtering / export) registered until the IDs land in the DOM.
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output(f"{PAGE_ID}-detail-mount", "children"),
+    Output(f"{PAGE_ID}-detail-panel", "children"),
+    Output(f"{PAGE_ID}-detail-controls", "style"),
     Output(f"{PAGE_ID}-detail-mounted", "data"),
-    Input(f"{PAGE_ID}-detail-show-btn", "n_clicks"),
+    Input(f"{PAGE_ID}-detail-accordion", "value"),
     State(f"{PAGE_ID}-detail-mounted", "data"),
+    State(f"{PAGE_ID}-detail-controls", "style"),
     prevent_initial_call=True,
 )
-def _lazy_mount_billing_detail(n_clicks, already):
-    if already or not n_clicks:
-        return dash.no_update, dash.no_update
-    return detail_table(
-        f"{PAGE_ID}-detail-grid",
-        title="Billing Detail",
-        export_id=f"{PAGE_ID}-table-export",
-        column_size="autoSize",
-        extra_controls=[
-            dmc.Button(
-                "Clear Filters",
-                id=f"{PAGE_ID}-table-clear-filters",
-                size="compact-xs",
-                variant="light",
-                color="red",
-                leftSection=DashIconify(icon="mdi:filter-remove", width=14),
-                style={"display": "none"},
-            ),
-        ],
-    ), True
+def _lazy_mount_billing_detail(accordion_value, already, ctrl_style):
+    # Only mount on the first expand. accordion_value is None / [] when
+    # collapsed; non-empty when an item is open.
+    if already:
+        return dash.no_update, dash.no_update, dash.no_update
+    if not accordion_value:
+        return dash.no_update, dash.no_update, dash.no_update
+    grid = dag.AgGrid(
+        id=f"{PAGE_ID}-detail-grid",
+        columnDefs=[],
+        rowData=[],
+        defaultColDef=DEFAULT_COLUMN_DEFS,
+        columnSize="autoSize",
+        dashGridOptions={**DEFAULT_GRID_OPTIONS, "domLayout": "normal"},
+        style=DEFAULT_GRID_STYLE,
+        className=DEFAULT_GRID_CLASS,
+    )
+    visible_style = {**(ctrl_style or {}), "display": "flex"}
+    return grid, visible_style, True
 
 
 # ---------------------------------------------------------------------------
