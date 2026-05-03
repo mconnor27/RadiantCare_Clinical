@@ -11,8 +11,18 @@ def sanitize_for_grid(df: pd.DataFrame) -> pd.DataFrame:
     Converts float columns to string so AG Grid won't auto-detect them
     as numeric and fail on missing values.  All NaN, empty strings, and
     em-dashes become '--' for display.
+
+    Categorical columns are decoded to object dtype first — pandas refuses
+    to fillna with a value that isn't already in the category set, and the
+    loader's memory-saving categorical encoding (data/loader.py) means many
+    string columns from cached datasets arrive as Categorical.
     """
     df = _coerce_floats(df)
+    cat_cols = [c for c in df.columns if isinstance(df[c].dtype, pd.CategoricalDtype)]
+    if cat_cols:
+        df = df.copy()
+        for c in cat_cols:
+            df[c] = df[c].astype(object)
     df = df.fillna(BLANK_PLACEHOLDER)
     df = df.replace({"": BLANK_PLACEHOLDER, "—": BLANK_PLACEHOLDER})
     return df
