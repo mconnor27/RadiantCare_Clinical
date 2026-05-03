@@ -422,26 +422,57 @@ def _load_dataset(name, loaders):
 
 
 def _preload():
-    """Background preload: respects priority queue, then loads remaining."""
+    """Parallel background preload.
+
+    Phase 1: 4 worker threads pull from a shared queue, taking priority-queue
+    items first (set by page navigation in _prioritize_page_datasets). All
+    standalone datasets load concurrently.
+
+    Phase 2: derived datasets (billing_enriched depends on billing + referrals
+    + rvu_lookup) run sequentially after Phase 1 completes.
+
+    Why not a single ThreadPoolExecutor.map: we need dynamic priority pulls,
+    not a fixed submission order. The page-navigation callback inserts into
+    _priority_queue and we want the next worker to pick it up immediately.
+    """
     loaders = _get_all_loaders()
-    remaining = list(_PRELOAD_ORDER)
+    independents = [d for d in _PRELOAD_ORDER if d != "billing_enriched"]
 
-    while remaining:
-        # Check priority queue first
-        with _preload_lock:
-            if _priority_queue:
-                name = _priority_queue.pop(0)
-            else:
-                name = None
+    pool_lock = threading.Lock()
+    remaining = list(independents)
 
-        if name and name in remaining:
+    def next_dataset():
+        with pool_lock:
+            with _preload_lock:
+                # Priority queue first — page nav can interleave at any time.
+                while _priority_queue:
+                    name = _priority_queue.pop(0)
+                    if name in remaining:
+                        remaining.remove(name)
+                        return name
+            if remaining:
+                return remaining.pop(0)
+            return None
+
+    def worker_loop():
+        while True:
+            name = next_dataset()
+            if name is None:
+                return
             _load_dataset(name, loaders)
-            remaining = [r for r in remaining if r not in _preload_state["loaded"]]
-            continue
 
-        if name is None and remaining:
-            _load_dataset(remaining[0], loaders)
-            remaining = [r for r in remaining if r not in _preload_state["loaded"]]
+    workers = [
+        threading.Thread(target=worker_loop, daemon=True, name=f"preload-{i}")
+        for i in range(4)
+    ]
+    for t in workers:
+        t.start()
+    for t in workers:
+        t.join()
+
+    # Phase 2: derived datasets that depend on Phase 1 completing.
+    if "billing_enriched" in _PRELOAD_ORDER:
+        _load_dataset("billing_enriched", loaders)
 
     with _preload_lock:
         _preload_state["done"] = True
