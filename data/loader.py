@@ -538,7 +538,7 @@ def _patient_department_map():
 # Public loaders — one per data source
 # ---------------------------------------------------------------------------
 
-@lru_cache(maxsize=1)
+@_ttl_cache()
 def load_treatment():
     """Load Treatment.csv — daily aggregated data per location.
 
@@ -582,7 +582,7 @@ def load_treatment_detail():
     return df
 
 
-@lru_cache(maxsize=1)
+@_ttl_cache()
 def load_daily_volume():
     """Load Daily Volume - Past.csv.
 
@@ -603,7 +603,7 @@ def load_daily_volume():
     return df
 
 
-@lru_cache(maxsize=1)
+@_ttl_cache()
 def load_daily_volume_future():
     """Load Daily Volume - Future.csv.
 
@@ -617,7 +617,7 @@ def load_daily_volume_future():
     return df
 
 
-@lru_cache(maxsize=1)
+@_ttl_cache()
 def load_daily_volume_by_resource():
     """Load Daily Volume - Past.csv at resource (machine) granularity.
 
@@ -783,7 +783,7 @@ def load_availability():
 load_availability.cache_clear = _AVAILABILITY_ENTRY.clear
 
 
-@lru_cache(maxsize=1)
+@_ttl_cache()
 def load_clinic_visits():
     """Load Clinic Visits.csv.
 
@@ -807,7 +807,7 @@ def load_clinic_visits():
     return df
 
 
-@lru_cache(maxsize=1)
+@_ttl_cache()
 def load_simulations():
     """Load Simulations.csv.
 
@@ -863,7 +863,7 @@ def load_workflow():
     return df
 
 
-@lru_cache(maxsize=1)
+@_ttl_cache()
 def load_tasks():
     """Load Tasks.csv.
 
@@ -889,7 +889,7 @@ def load_tasks():
     return df
 
 
-@lru_cache(maxsize=1)
+@_ttl_cache()
 def load_otvs():
     """Load OTV Audit.csv."""
     df = _read_csv_safe(DATA_COMPLETE / "OTV Audit.csv")
@@ -900,7 +900,7 @@ def load_otvs():
     return df
 
 
-@lru_cache(maxsize=1)
+@_ttl_cache()
 def load_weekly_visits():
     """Load Weekly Visits.csv."""
     _src = _source_files_for_incremental(DATA_INCREMENTAL / "WeeklyVisits", "Weekly Visits")
@@ -915,7 +915,7 @@ def load_weekly_visits():
     return df
 
 
-@lru_cache(maxsize=1)
+@_ttl_cache()
 def load_courses():
     """Load Courses.csv.
 
@@ -941,7 +941,7 @@ def load_courses():
     return df
 
 
-@lru_cache(maxsize=1)
+@_ttl_cache()
 def load_plans():
     """Load Plans.csv.
 
@@ -965,7 +965,7 @@ def load_plans():
     return df
 
 
-@lru_cache(maxsize=1)
+@_ttl_cache()
 def load_machines():
     """Load Machine Errors.csv.
 
@@ -1281,7 +1281,7 @@ def load_machine_downtime():
     return load_downtime_gaps()
 
 
-@lru_cache(maxsize=1)
+@_ttl_cache()
 def load_machine_statistics():
     """Load Machine Statistics.csv — lifetime and yearly stats per linac.
 
@@ -1335,7 +1335,7 @@ def load_pluvicto_workflow():
     return wf[mask].copy()
 
 
-@lru_cache(maxsize=1)
+@_ttl_cache()
 def load_procedures():
     """Load Procedures.csv — ancillary procedures (SpaceOAR, Lupron, etc.).
 
@@ -1349,7 +1349,7 @@ def load_procedures():
     return df
 
 
-@lru_cache(maxsize=1)
+@_ttl_cache()
 def load_cpt_audit():
     """Load 2026 CPT Delivery Audit.csv."""
     df = _read_csv_safe(DATA_COMPLETE / "2026 CPT Delivery Audit.csv")
@@ -1358,14 +1358,14 @@ def load_cpt_audit():
     return df
 
 
-@lru_cache(maxsize=1)
+@_ttl_cache()
 def load_patients():
     """Load Lookup - Patients.csv."""
     df = _read_csv_safe(DATA_LOOKUP / "Lookup - Patients.csv")
     return df
 
 
-@lru_cache(maxsize=1)
+@_ttl_cache()
 def load_referrals():
     """Load the Referrals Report Excel file.
 
@@ -1843,7 +1843,7 @@ def load_referrals():
 _MEDONC_SITES = ("LACEY", "CENTRALIA", "ABERDEEN", "YELM", "SHELTON")
 
 
-@lru_cache(maxsize=1)
+@_ttl_cache()
 def load_medonc_referrals():
     """Load the Medical Oncology (PRCS) Referrals Report Excel file.
 

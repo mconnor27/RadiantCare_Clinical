@@ -2980,8 +2980,10 @@ def _update_courses_kpis(*args):
         from data.loader import load_treatment_detail
         td = load_treatment_detail()
         if not td.empty and "UniqueIsocenters" in td.columns and "CourseName" in td.columns:
-            td["_isos"] = pd.to_numeric(td["UniqueIsocenters"], errors="coerce")
-            iso_map = td.groupby(["PatientId", "CourseName"])["_isos"].max()
+            # Don't write _isos onto the cached frame — compute the iso column
+            # locally so the shared TTL-cached DataFrame stays clean.
+            isos = pd.to_numeric(td["UniqueIsocenters"], errors="coerce")
+            iso_map = isos.groupby([td["PatientId"], td["CourseName"]]).max()
             iso_map.index.names = ["PatientId", "CourseId"]
     except Exception:
         pass
