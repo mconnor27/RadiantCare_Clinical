@@ -332,42 +332,48 @@ def _count_spark_raw(df, date_col, start, end, value_col=None):
 
 
 def _build_census_data(df, date_col, start, end, group_col, group_names, group_colors,
-                       value_col=None, y_title="Count", stacked=True, freq="M"):
+                       value_col=None, y_title="Count", stacked=True, freq="M",
+                       _wide=None):
     """Build census-format store data for smoothChartWithType.
 
     freq: 'W' (weekly), 'M' (monthly), 'Y' (yearly).
 
     Implementation: ONE groupby + pivot, then iterate the wide frame to
-    build series. The previous N-groupbys-in-a-loop pattern was O(N × len(df))
-    and dominated the heavy /billing render path — for 50 CPT codes × 600K
-    rows the wall-time difference is roughly 10×.
+    build series.
+
+    _wide (optional): pre-pivoted wide frame (period index × group_col cols)
+    of the value already aggregated. When the caller has already done the
+    groupby for multiple value_cols at once (see _build_multi_value_aggregates),
+    pass it through to skip a redundant groupby — saves ~3× across the heavy
+    /billing render path which builds 3 stores from the same group axes.
     """
     if df.empty or date_col not in df.columns:
         return None
 
-    freq_map = {"W": "W-MON", "M": "M", "Y": "Y"}
-    pd_freq = freq_map.get(freq, "M")
-    period = df[date_col].dt.to_period(pd_freq).dt.to_timestamp()
-
-    if group_col not in df.columns:
-        # Fallback path: no group_col → treat the whole frame as one series.
-        if value_col and value_col in df.columns:
-            grouped = pd.Series(df[value_col].values).groupby(period.values).sum()
-        else:
-            grouped = period.value_counts().sort_index()
-        periods = list(grouped.index)
-        wide = pd.DataFrame({group_names[0] if group_names else "All": grouped.values},
-                            index=periods)
-    else:
-        if value_col and value_col in df.columns:
-            agg = df.groupby([period, df[group_col]])[value_col].sum()
-        else:
-            agg = df.groupby([period, df[group_col]]).size()
-        wide = agg.unstack(level=1, fill_value=0)
-        # Some pandas versions return arbitrary level names — make sure the
-        # period index is sorted so the dates list is monotonic.
-        wide = wide.sort_index()
+    if _wide is not None:
+        wide = _wide
         periods = list(wide.index)
+    else:
+        freq_map = {"W": "W-MON", "M": "M", "Y": "Y"}
+        pd_freq = freq_map.get(freq, "M")
+        period = df[date_col].dt.to_period(pd_freq).dt.to_timestamp()
+
+        if group_col not in df.columns:
+            # Fallback path: no group_col → treat the whole frame as one series.
+            if value_col and value_col in df.columns:
+                grouped = pd.Series(df[value_col].values).groupby(period.values).sum()
+            else:
+                grouped = period.value_counts().sort_index()
+            periods = list(grouped.index)
+            wide = pd.DataFrame({group_names[0] if group_names else "All": grouped.values},
+                                index=periods)
+        else:
+            if value_col and value_col in df.columns:
+                agg = df.groupby([period, df[group_col]])[value_col].sum()
+            else:
+                agg = df.groupby([period, df[group_col]]).size()
+            wide = agg.unstack(level=1, fill_value=0).sort_index()
+            periods = list(wide.index)
 
     dates = [pd.Timestamp(d).strftime("%Y-%m-%d") for d in periods]
 
@@ -392,6 +398,31 @@ def _build_census_data(df, date_col, start, end, group_col, group_names, group_c
         "stacked": stacked,
         "height": 380,
     }
+
+
+def _build_multi_value_aggregates(df, date_col, group_col, value_cols, freq="M"):
+    """One multi-column groupby that produces a dict of pre-pivoted wide frames.
+
+    Returns {value_col: wide_frame} where each wide_frame has period index +
+    group_col-value columns. Used by the heavy /billing chart-store path so
+    Volume / RVU / Dollar stores share a single groupby per (group_col, freq)
+    instead of running it three separate times.
+
+    Skipped value_cols (not present in df) are omitted from the returned dict.
+    """
+    if df.empty or date_col not in df.columns or group_col not in df.columns:
+        return {}
+    cols_present = [c for c in value_cols if c in df.columns]
+    if not cols_present:
+        return {}
+    freq_map = {"W": "W-MON", "M": "M", "Y": "Y"}
+    pd_freq = freq_map.get(freq, "M")
+    period = df[date_col].dt.to_period(pd_freq).dt.to_timestamp()
+    multi = df.groupby([period, df[group_col]])[cols_present].sum()
+    out = {}
+    for vc in cols_present:
+        out[vc] = multi[vc].unstack(level=1, fill_value=0).sort_index()
+    return out
 
 
 def _build_cumulative(df, date_col, start, end, date_preset,
@@ -3674,52 +3705,61 @@ def _update_billing_charts_and_table(*args):
         cpt_codes_list = sorted(bf["_base_code"].dropna().unique())
         cpt_colors = {c: CHART_COLORWAY[i % len(CHART_COLORWAY)] for i, c in enumerate(cpt_codes_list)}
 
-    def _build_all_aggs(group_col, group_names, group_colors, value_col=None, y_title="Count"):
-        out = {}
-        for freq in ("W", "M", "Y"):
-            out[freq] = _build_census_data(
-                bf, "DateOfService", start, end,
-                group_col, group_names, group_colors,
-                value_col=value_col, y_title=y_title, freq=freq,
-            )
-        return out
-
-    def _build_store(value_col, y_title):
-        store = {
-            "category": _build_all_aggs("Category", active_cat_names, CATEGORY_COLORS,
-                                         value_col=value_col, y_title=y_title),
-            "department": _build_all_aggs("Department", dept_names, DEPARTMENT_COLORS,
-                                           value_col=value_col, y_title=y_title),
-            "physician": _build_all_aggs(_role_col, phys_names, phys_colors,
-                                          value_col=value_col, y_title=y_title),
-        }
-        if subcat_names:
-            store["subcategory"] = _build_all_aggs("Subcategory", subcat_names, subcat_colors,
-                                                    value_col=value_col, y_title=y_title)
-        if cpt_codes_list:
-            store["cpt"] = _build_all_aggs("_base_code", cpt_codes_list, cpt_colors,
-                                            value_col=value_col, y_title=y_title)
-        return store
-
-    # ---- Volume Store ----
-    volume_store = _build_store("Quantity", "Billing Units")
-
-    # ---- RVU Store (skip when hospital-only — RVUs don't apply to OPPS).
-    # Also skip entirely for non-partners: wRVU = professional RVU which is
-    # gated the same as dollar amounts.
-    if component == "hospital" or not can_see_professional_rvu():
-        rvu_store = None
-    else:
-        rvu_store = _build_store("wRVU", "wRVU")
-
-    # ---- Dollar Store ----
+    # Pick which dollar column / label is in scope for this render.
     if component == "pro":
         dollar_col, dollar_label = "Pro_Revenue", "Professional Revenue ($)"
     elif component == "hospital":
         dollar_col, dollar_label = "Hosp_Revenue", "Hospital Revenue ($)"
     else:
         dollar_col, dollar_label = "Total_Revenue", "Total Revenue ($)"
-    dollar_store = _build_store(dollar_col, dollar_label)
+
+    # RVU is gated separately (skip for hospital-only and non-partner viewers).
+    rvu_active = (component != "hospital") and can_see_professional_rvu()
+
+    # Build the list of (store_label, value_col, y_title) to compute. All
+    # active stores are computed from a SHARED multi-column groupby per
+    # (group_col, freq) — _build_multi_value_aggregates does it once and
+    # _build_census_data reads the pre-pivoted wide frame, so we go from
+    # 45 separate groupbys to 15 combined ones (3× faster on the chart path).
+    _store_specs = [("volume", "Quantity", "Billing Units")]
+    if rvu_active:
+        _store_specs.append(("rvu", "wRVU", "wRVU"))
+    _store_specs.append(("dollar", dollar_col, dollar_label))
+
+    _value_cols = [vc for _, vc, _ in _store_specs]
+
+    # Group axes that the page may render. (label, group_col, group_names, group_colors)
+    _axes = [
+        ("category", "Category", active_cat_names, CATEGORY_COLORS),
+        ("department", "Department", dept_names, DEPARTMENT_COLORS),
+        ("physician", _role_col, phys_names, phys_colors),
+    ]
+    if subcat_names:
+        _axes.append(("subcategory", "Subcategory", subcat_names, subcat_colors))
+    if cpt_codes_list:
+        _axes.append(("cpt", "_base_code", cpt_codes_list, cpt_colors))
+
+    # store_label → axis_label → freq → census struct
+    _stores_acc = {label: {} for label, _, _ in _store_specs}
+
+    for axis_label, group_col, group_names, group_colors in _axes:
+        for freq in ("W", "M", "Y"):
+            wides = _build_multi_value_aggregates(
+                bf, "DateOfService", group_col, _value_cols, freq=freq,
+            )
+            for store_label, value_col, y_title in _store_specs:
+                _stores_acc[store_label].setdefault(axis_label, {})[freq] = (
+                    _build_census_data(
+                        bf, "DateOfService", start, end,
+                        group_col, group_names, group_colors,
+                        value_col=value_col, y_title=y_title, freq=freq,
+                        _wide=wides.get(value_col),
+                    )
+                )
+
+    volume_store = _stores_acc["volume"]
+    rvu_store = _stores_acc.get("rvu")
+    dollar_store = _stores_acc["dollar"]
 
     metrics_store = {
         "volume": volume_store,
