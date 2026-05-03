@@ -46,19 +46,20 @@ from utils.cpt_categories import (
 _ACCORDION_CATS = [c for c in CATEGORY_NAMES if c != "Other"]
 
 
-def cpt_accordion(page_id: str) -> html.Div:
-    """Return the CPT accordion filter widget for a page."""
+def _build_cpt_accordion_contents(page_id: str):
+    """Build the heavy accordion body (~262 chips + tooltips). Returned as
+    a list so it can be injected into the panel's children via a callback
+    on first open.
+    """
     cat_type = f"cpt-cat-{page_id}"
     sub_type = f"cpt-sub-{page_id}"
 
     accordion_items = []
     for i, cat in enumerate(_ACCORDION_CATS):
         subs = CPT_SUBCATEGORIES.get(cat, {})
-        # Build subcategory sections
         sub_sections = []
         for sub_name, codes in subs.items():
             sub_key = f"{cat}|{sub_name}"
-            # Subcategory heading with checkbox
             heading = html.Div(
                 children=[
                     dmc.Checkbox(
@@ -70,7 +71,6 @@ def cpt_accordion(page_id: str) -> html.Div:
                 ],
                 className="wf-cpt-sub-heading",
             )
-            # Individual code chips with tooltips
             code_chips = html.Div(
                 children=[
                     dmc.Tooltip(
@@ -115,6 +115,36 @@ def cpt_accordion(page_id: str) -> html.Div:
             )
         )
 
+    return [
+        html.Div(
+            children=[
+                dmc.Accordion(
+                    children=accordion_items,
+                    multiple=True,
+                    id=f"{page_id}-cpt-accordion",
+                    value=[],
+                    variant="contained",
+                    chevronPosition="right",
+                ),
+            ],
+            className="wf-diag-scroll",
+        ),
+    ]
+
+
+def cpt_accordion(page_id: str) -> html.Div:
+    """Return the CPT accordion filter widget — lazy-mount.
+
+    The panel children (~262 chips + tooltips for billing) are NOT in the
+    initial layout. They're injected by a callback on first trigger click,
+    saving ~25% of billing's component-tree size from React's startup
+    reconciliation. First click incurs a one-time render cost; subsequent
+    opens are instant because the children persist.
+
+    suppress_callback_exceptions=True (set in dash_app.py) lets the chip /
+    checkbox callbacks defined in register_cpt_callbacks resolve later
+    when the IDs actually appear in the DOM.
+    """
     return html.Div(
         children=[
             html.Div(
@@ -140,22 +170,12 @@ def cpt_accordion(page_id: str) -> html.Div:
             # Stores
             dcc.Store(id=f"{page_id}-cpt-store", data=[]),          # selected category names
             dcc.Store(id=f"{page_id}-cpt-code-store", data=[]),     # selected individual codes
+            # Sentinel store that flips True after lazy-mount, so the populator
+            # callback can short-circuit without re-rendering 262 components on
+            # every subsequent trigger click.
+            dcc.Store(id=f"{page_id}-cpt-mounted", data=False),
             dmc.Paper(
-                children=[
-                    html.Div(
-                        children=[
-                            dmc.Accordion(
-                                children=accordion_items,
-                                multiple=True,
-                                id=f"{page_id}-cpt-accordion",
-                                value=[],
-                                variant="contained",
-                                chevronPosition="right",
-                            ),
-                        ],
-                        className="wf-diag-scroll",
-                    ),
-                ],
+                children=[],  # populated lazily on first trigger click
                 id=f"{page_id}-cpt-panel",
                 p="xs",
                 shadow="md",
@@ -179,7 +199,27 @@ def register_cpt_callbacks(page_id: str) -> None:
     accordion_id = f"{page_id}-cpt-accordion"
     trigger_id = f"{page_id}-cpt-trigger"
     clear_id = f"{page_id}-cpt-clear"
+    panel_id = f"{page_id}-cpt-panel"
+    mounted_id = f"{page_id}-cpt-mounted"
     n_cats = len(_ACCORDION_CATS)
+
+    # ----------------------------------------------------------------------
+    # 0. Lazy-mount the heavy accordion contents on first trigger click.
+    # The panel ships with empty children at page load to keep the
+    # initial React reconciliation cheap; the chips are injected the
+    # first time the user actually opens the dropdown.
+    # ----------------------------------------------------------------------
+    @callback(
+        Output(panel_id, "children"),
+        Output(mounted_id, "data"),
+        Input(trigger_id, "n_clicks"),
+        State(mounted_id, "data"),
+        prevent_initial_call=True,
+    )
+    def _lazy_mount_cpt_panel(n_clicks, already_mounted):
+        if already_mounted:
+            return dash.no_update, dash.no_update
+        return _build_cpt_accordion_contents(page_id), True
 
     # Build subcategory index for callbacks
     all_sub_keys = []  # "Cat|Sub" keys in order
