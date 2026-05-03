@@ -22,29 +22,36 @@ from config.settings import DATA_DIR, DATA_COMPLETE, DATA_INCREMENTAL, DATA_LOOK
 # ---------------------------------------------------------------------------
 
 
-def _categorize_low_cardinality(df, ratio_threshold=0.5):
-    """In-place: cast object columns with <50% uniqueness to category dtype.
+import re as _re_loader
 
-    Patient identifiers and free-text fields are skipped automatically by the
-    ratio check. Department/Physician/Status/CPT-code style columns become
-    dictionary-encoded, which slashes both pandas memory_usage and the
-    parquet-on-disk size (pyarrow preserves the encoding round-trip).
+# Columns whose names match this pattern are treated as identifiers / join
+# keys and skipped from categorical encoding even when their cardinality is
+# low enough to qualify. CategoricalIndex breaks several pandas merge/join
+# code paths (KeyError: slice(None, None, None) etc.) and the dictionary-
+# encoding savings on ID columns are minimal anyway because every value is
+# unique-ish.
+_KEY_COLUMN_RE = _re_loader.compile(
+    r"(?:^|[A-Z_])(?:id|mrn|key|hash|guid|uuid|rowid|uniquerow)$"
+    r"|^(?:CourseName|SessionUniqueID|UniqueRowID|PatientMRN|PatientId)$",
+    _re_loader.IGNORECASE,
+)
+
+
+def _categorize_low_cardinality(df, ratio_threshold=0.5, max_unique=1000):
+    """No-op: dictionary-encoding is disabled to prevent CategoricalIndex
+    bugs in downstream pivot/join/fillna code paths.
+
+    Categorical encoding saved roughly 240 MB across the big-four datasets
+    but produced a steady stream of latent bugs (KeyError: slice(...) in
+    merge.py, fillna(unknown_category) on grid sanitization, etc.) that
+    only surface on specific pages and only after a parquet round-trip.
+    The TTL eviction on heavy loaders provides the actual memory headroom
+    we need without changing dtypes.
+
+    The `_KEY_COLUMN_RE`, ratio_threshold, and max_unique parameters are
+    kept for reference / future re-enablement under a feature flag — they
+    document the rules we'd reapply if categorical encoding ever returns.
     """
-    n = len(df)
-    if n < 100:
-        return df
-    for col in df.columns:
-        if df[col].dtype != object:
-            continue
-        try:
-            nunique = df[col].nunique(dropna=True)
-        except Exception:
-            continue
-        if nunique > 0 and (nunique / n) < ratio_threshold:
-            try:
-                df[col] = df[col].astype("category")
-            except Exception:
-                pass
     return df
 
 
@@ -239,7 +246,7 @@ def _parquet_cache_path(name):
 
 # Bump when the on-disk parquet format changes (dtype shifts, schema changes,
 # etc.) — old caches with mismatched signatures get rebuilt on next load.
-_PARQUET_FORMAT_VERSION = "v2-categorical"
+_PARQUET_FORMAT_VERSION = "v4-no-categorical"
 
 
 def _source_signature(source_paths):

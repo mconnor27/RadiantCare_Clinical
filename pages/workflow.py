@@ -1113,6 +1113,12 @@ def _pivot_to_courses(wf):
         values="StageDateTime",
         aggfunc="first",
     )
+    # Decode the pivot's columns Index from CategoricalIndex back to a plain
+    # Index. When StageName is categorical (loader's memory-saving encoding
+    # makes it so), the pivot result's .columns is a CategoricalIndex, and
+    # the .join() below trips on `key in self.columns` with a
+    # `KeyError: slice(None, None, None)`.
+    pivot.columns = pd.Index(list(pivot.columns), name=pivot.columns.name)
 
     # Attach patient/exam info from the Exam row (or first available row)
     info_cols = ["UniqueRowID", "PatientId", "PatientName", "Department",
