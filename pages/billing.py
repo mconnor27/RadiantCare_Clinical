@@ -1197,17 +1197,29 @@ def _plabel_payor(start, end):
 
 _filter_cache = {"key": None, "result": None}
 
+# Cache for the slow chart-store callback's full output (metrics_store +
+# table). Single slot, keyed by filter state + rev_adj + grid_rows. The
+# heavy work is ~1s on full-history data; same filters firing twice (e.g.
+# user navigates away and back, or two browser tabs land on /billing with
+# default filters) hit the cache instantly.
+_charts_table_cache = {"key": None, "result": None}
 
-def _load_and_filter_billing_cached(**kwargs):
-    """Cached wrapper — avoids re-filtering when main and cumulative callbacks
-    fire on the same filter state (sequential execution in single-threaded Dash)."""
-    key_parts = []
+
+def _filter_kwargs_key(kwargs):
+    """Stable hashable key from filter kwargs (lists → tuples)."""
+    parts = []
     for k in sorted(kwargs.keys()):
         v = kwargs[k]
         if isinstance(v, list):
             v = tuple(v) if v else ()
-        key_parts.append((k, v))
-    key = tuple(key_parts)
+        parts.append((k, v))
+    return tuple(parts)
+
+
+def _load_and_filter_billing_cached(**kwargs):
+    """Cached wrapper — avoids re-filtering when main and cumulative callbacks
+    fire on the same filter state (sequential execution in single-threaded Dash)."""
+    key = _filter_kwargs_key(kwargs)
     if _filter_cache["key"] == key and _filter_cache["result"] is not None:
         return _filter_cache["result"]
     result = _load_and_filter_billing(**kwargs)
@@ -3660,6 +3672,19 @@ def _update_billing_charts_and_table(*args):
     filt = _unpack_billing_filter_args(args)
     rev_adj = args[_N_BILLING_FILTER_INPUTS]
     grid_rows = args[_N_BILLING_FILTER_INPUTS + 1]
+
+    # Single-slot result cache — same filter state firing twice (e.g. two
+    # browser tabs land with default filters, or user navigates away and
+    # back) hits this and skips ~1s of compute. Key includes rev_adj and
+    # grid_rows because the table output depends on both.
+    _cache_key = (
+        _filter_kwargs_key(filt),
+        tuple(sorted(rev_adj.items())) if isinstance(rev_adj, dict) else rev_adj,
+        tuple(grid_rows) if isinstance(grid_rows, list) else grid_rows,
+    )
+    if _charts_table_cache["key"] == _cache_key and _charts_table_cache["result"] is not None:
+        return _charts_table_cache["result"]
+
     data = _load_and_filter_billing_cached(**filt)
     if data is None:
         return None, [], []
@@ -3766,7 +3791,14 @@ def _update_billing_charts_and_table(*args):
         "rvu": rvu_store,
         "dollar": dollar_store,
     }
-    return metrics_store, table_rows, table_cols
+    result = (metrics_store, table_rows, table_cols)
+    # Only cache when we built the full table (not a grid-filter passthrough
+    # where table_rows/cols are dash.no_update) — caching no_update would
+    # poison subsequent renders.
+    if not triggered_by_grid:
+        _charts_table_cache["key"] = _cache_key
+        _charts_table_cache["result"] = result
+    return result
 
 
 # ---------------------------------------------------------------------------
