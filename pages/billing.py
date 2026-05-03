@@ -3128,24 +3128,27 @@ layout = dmc.Stack(
             ],
         ),
 
-        # Detail table
-        detail_table(
-            f"{PAGE_ID}-detail-grid",
-            title="Billing Detail",
-            export_id=f"{PAGE_ID}-table-export",
-            column_size="autoSize",
-            extra_controls=[
-                dmc.Button(
-                    "Clear Filters",
-                    id=f"{PAGE_ID}-table-clear-filters",
-                    size="compact-xs",
-                    variant="light",
-                    color="red",
-                    leftSection=DashIconify(icon="mdi:filter-remove", width=14),
-                    style={"display": "none"},
+        # Detail table — lazy-mounted. The detail_table() helper is NOT in the
+        # initial layout. A small "Show detail rows" button is rendered instead;
+        # the heavy AgGrid + Accordion + ~1000-row table mounts only when the
+        # user clicks the button. Reduces React's startup reconciliation work
+        # for users who never scroll to the bottom of /billing.
+        html.Div(
+            id=f"{PAGE_ID}-detail-mount",
+            children=[
+                dmc.Center(
+                    dmc.Button(
+                        "Show 1,000-row Detail Table",
+                        id=f"{PAGE_ID}-detail-show-btn",
+                        size="sm",
+                        variant="light",
+                        leftSection=DashIconify(icon="mdi:table", width=16),
+                    ),
+                    style={"padding": "12px"},
                 ),
             ],
         ),
+        dcc.Store(id=f"{PAGE_ID}-detail-mounted", data=False),
 
         # Stores
         dcc.Store(id=f"{PAGE_ID}-store-kpi-sparklines"),
@@ -3160,6 +3163,43 @@ layout = dmc.Stack(
         dcc.Interval(id=f"{PAGE_ID}-interval", interval=300_000, n_intervals=0),
     ],
 )
+
+
+# ---------------------------------------------------------------------------
+# Lazy-mount the detail table on first user click. Replaces the placeholder
+# button with the real detail_table() component (AgGrid + Accordion +
+# Export/Clear controls). Once mounted, downstream callbacks targeting
+# {PAGE_ID}-detail-grid resolve normally (suppress_callback_exceptions=True
+# in dash_app.py keeps them registered until the IDs appear).
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output(f"{PAGE_ID}-detail-mount", "children"),
+    Output(f"{PAGE_ID}-detail-mounted", "data"),
+    Input(f"{PAGE_ID}-detail-show-btn", "n_clicks"),
+    State(f"{PAGE_ID}-detail-mounted", "data"),
+    prevent_initial_call=True,
+)
+def _lazy_mount_billing_detail(n_clicks, already):
+    if already or not n_clicks:
+        return dash.no_update, dash.no_update
+    return detail_table(
+        f"{PAGE_ID}-detail-grid",
+        title="Billing Detail",
+        export_id=f"{PAGE_ID}-table-export",
+        column_size="autoSize",
+        extra_controls=[
+            dmc.Button(
+                "Clear Filters",
+                id=f"{PAGE_ID}-table-clear-filters",
+                size="compact-xs",
+                variant="light",
+                color="red",
+                leftSection=DashIconify(icon="mdi:filter-remove", width=14),
+                style={"display": "none"},
+            ),
+        ],
+    ), True
 
 
 # ---------------------------------------------------------------------------
