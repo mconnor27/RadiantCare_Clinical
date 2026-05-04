@@ -61,12 +61,12 @@ SIMPLE_RULES: list[dict] = [
     },
     {
         "name": "Availability",
-        "subdir": "Incremental/Availability",
-        "pattern": "Availability_*.csv",
+        "subdir": "Complete",
+        "pattern": "Availability.csv",
         "enrich": _enrich_availability,  # AppointmentNotes → HasNote (boolean)
         "drop": ["AppointmentNotes"],
         "hash": [],
-        "incremental": True,
+        "incremental": False,
     },
     {
         "name": "ClinicVisits",

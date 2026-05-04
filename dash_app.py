@@ -308,8 +308,9 @@ import threading
 
 # Map page paths to dataset loader names they need
 _PAGE_DATASETS = {
-    "/":                ["daily_volume", "treatment_detail", "clinic_visits", "simulations", "availability"],
-    "/operations":      ["daily_volume", "daily_volume_future", "treatment", "clinic_visits", "simulations"],
+    "/":                ["daily_volume", "treatment_detail", "clinic_visits", "simulations", "schedule_upcoming"],
+    "/operations":      ["daily_volume", "daily_volume_future", "treatment", "clinic_visits", "simulations", "schedule_upcoming"],
+    "/scheduling":      ["schedule_upcoming", "clinic_visits", "simulations"],
     "/workflow":        ["workflow"],
     "/clinic-visits":   ["clinic_visits", "diagnosis"],
     "/simulations":     ["simulations", "diagnosis"],
@@ -338,7 +339,7 @@ def _get_all_loaders():
         load_referrals, load_medonc_referrals, load_daily_volume, load_daily_volume_future,
         load_clinic_visits, load_simulations, load_tasks, load_courses,
         load_plans, load_weekly_visits, load_rvu_lookup,
-        load_treatment, load_availability, load_machines,
+        load_treatment, load_availability, load_schedule_upcoming, load_machines,
         load_machine_statistics, load_procedures, load_patients,
         load_referring, load_diagnosis, load_physician_schedule,
         load_cpt_audit, load_otvs,
@@ -360,6 +361,7 @@ def _get_all_loaders():
         "rvu_lookup": load_rvu_lookup,
         "treatment": load_treatment,
         "availability": load_availability,
+        "schedule_upcoming": load_schedule_upcoming,
         "machines": load_machines,
         "machine_statistics": load_machine_statistics,
         "procedures": load_procedures,
@@ -401,7 +403,7 @@ _PRELOAD_ORDER = [
     "daily_volume", "clinic_visits", "simulations", "tasks",
     "courses", "plans", "weekly_visits", "rvu_lookup",
     "billing_enriched",
-    "machines", "availability", "procedures", "patients",
+    "machines", "schedule_upcoming", "procedures", "patients",
     "diagnosis", "otvs",
 ]
 

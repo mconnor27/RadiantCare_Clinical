@@ -712,27 +712,15 @@ def _load_availability_from_r2():
 
 
 def _load_availability_from_disk():
-    """Read Availability from the local incremental folder.
+    """Read Availability from the local Complete folder.
 
-    Prefers a single canonical Availability.csv (the static-file layout).
-    Falls back to the legacy Availability_yyyymmdd.csv glob — keeps any
-    pre-migration files working until they're cleaned up.
+    Single canonical Availability.csv — full-refresh snapshot, not
+    date-suffixed.
     """
-    folder = DATA_INCREMENTAL / "Availability"
-    canonical = folder / "Availability.csv"
+    canonical = DATA_COMPLETE / "Availability.csv"
     if canonical.exists():
         return _read_csv_safe(canonical)
-    files = []
-    for f in folder.glob("Availability_*.csv"):
-        suffix = f.stem[len("Availability") + 1:]
-        try:
-            files.append((int(suffix), f))
-        except ValueError:
-            continue
-    if not files:
-        return pd.DataFrame()
-    files.sort(key=lambda x: x[0])
-    return _read_csv_safe(files[-1][1])
+    return pd.DataFrame()
 
 
 # Availability gets its own short TTL (default 5 min) — independent of
@@ -777,8 +765,8 @@ def load_availability():
       1. R2 live feed — when R2_AVAILABILITY_KEY (and R2 creds) are set,
          pulls the canonical CSV from R2 on every cache miss. Power Automate
          overwrites that object on each email export (~30-60 min cadence).
-      2. Disk — single Availability.csv preferred, with a fallback to the
-         legacy date-suffixed Availability_yyyymmdd.csv glob.
+      2. Disk — single Availability.csv from the Complete folder
+         (full-refresh snapshot, not date-suffixed).
 
     Cached for AVAILABILITY_TTL_SECONDS (default 300s). The TTL sweeper
     handles eviction so an idle dashboard isn't holding a stale snapshot
@@ -788,6 +776,234 @@ def load_availability():
 
 
 load_availability.cache_clear = _AVAILABILITY_ENTRY.clear
+
+
+# ---------------------------------------------------------------------------
+# ScheduleUpcoming — successor to Availability for the forward-looking
+# schedule views (Home, Operations, Scheduling). Same shape concept (one
+# row per slot, two-month forward window) but covers BOTH open holds and
+# already-booked appointments in a single feed, and with no AppointmentNotes
+# (no PHI) so the path is simpler:
+#
+#   - Local: Complete/ScheduleUpcoming.csv (full-refresh snapshot)
+#   - Production: ARIA writes the CSV directly to R2; the loader fetches
+#     it on each cache miss. There is NO sanitize step and NO inclusion
+#     in the daily tarball — the live R2 object is the source of truth.
+# ---------------------------------------------------------------------------
+
+
+def _schedule_upcoming_r2_config():
+    """Return (account_id, access_key, secret_key, bucket, key) or None.
+
+    R2_SCHEDULE_UPCOMING_KEY is required to opt into the live path; the
+    bucket falls back to R2_BUCKET, and the standard R2 creds cover auth.
+    """
+    account_id = os.environ.get("R2_ACCOUNT_ID", "").strip()
+    access_key = os.environ.get("R2_ACCESS_KEY_ID", "").strip()
+    secret_key = os.environ.get("R2_SECRET_ACCESS_KEY", "").strip()
+    bucket = (
+        os.environ.get("R2_SCHEDULE_UPCOMING_BUCKET", "").strip()
+        or os.environ.get("R2_BUCKET", "").strip()
+        or "radiantcare-sanitized"
+    )
+    key = os.environ.get("R2_SCHEDULE_UPCOMING_KEY", "").strip()
+    if not (account_id and access_key and secret_key and bucket and key):
+        return None
+    return account_id, access_key, secret_key, bucket, key
+
+
+def _load_schedule_upcoming_from_r2():
+    """Pull the latest ScheduleUpcoming CSV from R2. Returns DataFrame or None."""
+    cfg = _schedule_upcoming_r2_config()
+    if cfg is None:
+        return None
+    account_id, access_key, secret_key, bucket, key = cfg
+    try:
+        import boto3
+        from botocore.config import Config as _BotoConfig
+        from io import BytesIO
+
+        endpoint = f"https://{account_id}.r2.cloudflarestorage.com"
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=endpoint,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            region_name="auto",
+            config=_BotoConfig(
+                signature_version="s3v4",
+                s3={"addressing_style": "path"},
+                retries={"max_attempts": 2, "mode": "standard"},
+                connect_timeout=10,
+                read_timeout=30,
+            ),
+        )
+        resp = s3.get_object(Bucket=bucket, Key=key)
+        body = resp["Body"].read()
+        try:
+            df = pd.read_csv(BytesIO(body), encoding="utf-8-sig", engine="pyarrow")
+        except Exception:
+            df = pd.read_csv(
+                BytesIO(body), encoding="utf-8-sig",
+                on_bad_lines="skip", low_memory=False,
+            )
+        while len(df) > 0 and df.iloc[-1].isna().all():
+            df = df.iloc[:-1]
+        return df
+    except Exception as exc:
+        print(f"[schedule_upcoming] R2 fetch failed (key={key}): {exc}")
+        return None
+
+
+def _load_schedule_upcoming_from_disk():
+    """Read ScheduleUpcoming.csv from the local Complete folder.
+
+    In PHI_MODE the active DATA_COMPLETE points to the sanitized tree, but
+    ScheduleUpcoming bypasses sanitize entirely (the dataset has no PHI —
+    no patient names, MRNs, or free-text notes — so there's nothing to
+    redact). Falling back to the raw OneDrive Complete folder lets local
+    PHI-mode dev work without standing up the production R2 path.
+    """
+    from config.settings import DATA_DIR_RAW
+    candidates = [
+        DATA_COMPLETE / "ScheduleUpcoming.csv",
+        DATA_DIR_RAW / "Complete" / "ScheduleUpcoming.csv",
+    ]
+    for path in candidates:
+        if path.exists():
+            return _read_csv_safe(path)
+    return pd.DataFrame()
+
+
+_SCHEDULE_UPCOMING_TTL = int(
+    os.environ.get("SCHEDULE_UPCOMING_TTL_SECONDS", "").strip()
+    or os.environ.get("AVAILABILITY_TTL_SECONDS", "").strip()
+    or "300"
+)
+_SCHEDULE_UPCOMING_ENTRY = _TTLEntry(_SCHEDULE_UPCOMING_TTL)
+_TTL_REGISTRY.append(_SCHEDULE_UPCOMING_ENTRY)
+
+
+def _schedule_upcoming_inner():
+    df = _load_schedule_upcoming_from_r2()
+    if df is None or df.empty:
+        df = _load_schedule_upcoming_from_disk()
+    if df is None or df.empty:
+        return pd.DataFrame()
+    # Normalize source column names to the legacy Availability schema so
+    # downstream consumers don't need to learn a second vocabulary:
+    #   ActivityCategory  → Category   (Exam / Simulation)
+    #   ScheduledDateTime → AppointmentDateTime
+    #   DepartmentName    → Department
+    df = _normalize_columns(df, {
+        "DepartmentName": "Department",
+        "ActivityCategory": "Category",
+        "ScheduledDateTime": "AppointmentDateTime",
+    })
+    df = _clean_department(df)
+    df = _parse_dates(df, ["AppointmentDateTime", "ScheduledEndTime"])
+    if "AppointmentDateTime" in df.columns:
+        df["SlotDate"] = df["AppointmentDateTime"].dt.normalize()
+    # Cancelled bookings: usually the underlying HOLD slot is still in
+    # the extract as a separate Available row (so the cancellation row is
+    # redundant and we drop it). But sometimes staff doesn't recreate a
+    # placeholder open slot when an appointment cancels — in that case
+    # the cancelled row is the ONLY signal that the time block exists,
+    # and we restore it as an Available HOLD so the slot doesn't vanish
+    # from open-capacity views.
+    #
+    # Match key: (AppointmentDateTime, AssignedResource) — "is there any
+    # non-cancelled row at this time slot for this resource?"
+    if "ActivityStatus" in df.columns:
+        cancelled_mask = df["ActivityStatus"].astype(str).str.lower() == "cancelled"
+        cancelled = df[cancelled_mask].copy()
+        rest = df[~cancelled_mask].copy()
+        if not cancelled.empty:
+            rest_keys = set(zip(
+                rest["AppointmentDateTime"],
+                rest["AssignedResource"].astype(str),
+            ))
+            keep = [
+                (dt, str(res)) not in rest_keys
+                for dt, res in zip(
+                    cancelled["AppointmentDateTime"],
+                    cancelled["AssignedResource"],
+                )
+            ]
+            survivors = cancelled[keep].copy()
+            if not survivors.empty:
+                # Restore as Available. Remap ActivityName to its HOLD
+                # equivalent so the scheduling page's HOLD-only filter
+                # still matches.
+                _hold_name_map = {
+                    "Consult": "HOLD CONSULT",
+                    "Re-eval": "HOLD RE EVAL/2 FOLLOW UPS",
+                    "Follow-Up": "HOLD RE EVAL/2 FOLLOW UPS",
+                }
+                def _to_hold(row):
+                    if str(row.get("WorkflowType", "")).lower() == "simulation":
+                        return "HOLD SIM TIME"
+                    return _hold_name_map.get(row["ActivityName"], row["ActivityName"])
+                survivors["ActivityName"] = survivors.apply(_to_hold, axis=1)
+                survivors["BookingStatus"] = "Available"
+                survivors["ActivityStatus"] = pd.NA
+            df = pd.concat([rest, survivors], ignore_index=True)
+    # Drop the daily 8:00 AM 30-minute HOLD SIM TIME placeholder that
+    # exists only to warm the linac — it's not a bookable slot and would
+    # otherwise inflate every "open sim capacity" count and clutter the
+    # scheduling calendar.
+    if "AppointmentDateTime" in df.columns and "Category" in df.columns:
+        is_warmup = (
+            (df["Category"].astype(str).str.contains("Simulation", case=False, na=False))
+            & (df.get("ActivityName", "").astype(str) == "HOLD SIM TIME")
+            & (df["AppointmentDateTime"].dt.hour == 8)
+            & (df["AppointmentDateTime"].dt.minute == 0)
+            & (df.get("DurationMinutes", 0).fillna(0).astype(int) == 30)
+        )
+        df = df[~is_warmup]
+    # ScheduleUpcoming includes BOTH open holds (BookingStatus="Available")
+    # and already-booked appointments (BookingStatus="Booked"). Map that
+    # into the legacy SlotTaken Yes/No vocabulary so existing filters
+    # (`avail[avail["SlotTaken"] != "Yes"]`) keep meaning "open only" —
+    # otherwise booked rows would slip through with SlotTaken=NaN.
+    if "BookingStatus" in df.columns:
+        booked = df["BookingStatus"].astype(str).str.lower() == "booked"
+        df["SlotTaken"] = booked.map({True: "Yes", False: "No"})
+    elif "SlotTaken" not in df.columns:
+        df["SlotTaken"] = "No"
+    # No AppointmentNotes column on this feed — the scheduling page's
+    # _blocked_flag() helper falls back to all-False when neither HasNote
+    # nor AppointmentNotes is present, which is the correct behavior.
+    df["HasNote"] = False
+    return df.reset_index(drop=True)
+
+
+def load_schedule_upcoming():
+    """Load the latest ScheduleUpcoming snapshot.
+
+    Successor to load_availability() for forward-looking views. Two-tier
+    source resolution:
+
+      1. R2 live feed — when R2_SCHEDULE_UPCOMING_KEY (and R2 creds) are
+         set, pulls the canonical CSV from R2 on every cache miss. ARIA
+         writes that object directly (no sanitize / no tarball).
+      2. Disk — single Complete/ScheduleUpcoming.csv (full-refresh
+         snapshot, not date-suffixed).
+
+    Cached for SCHEDULE_UPCOMING_TTL_SECONDS (default 300s; falls back to
+    AVAILABILITY_TTL_SECONDS for tuning parity, then 300s). The TTL
+    sweeper handles eviction so an idle dashboard isn't holding a stale
+    snapshot indefinitely.
+
+    Returned columns are normalized to the legacy Availability schema —
+    Department / Category / AppointmentDateTime / SlotDate / SlotTaken
+    (Yes/No, derived from BookingStatus) — plus the new BookingStatus,
+    WorkflowType, ActivityStatus columns when downstream code wants them.
+    """
+    return _SCHEDULE_UPCOMING_ENTRY.get_or_load(_schedule_upcoming_inner)
+
+
+load_schedule_upcoming.cache_clear = _SCHEDULE_UPCOMING_ENTRY.clear
 
 
 @_ttl_cache()

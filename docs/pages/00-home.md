@@ -8,7 +8,7 @@ At-a-glance KPI summary across all domains. Landing page for all users. Features
 - `Simulations.csv` — weekly simulation counts
 - `Clinic Visits.csv` — consult counts (past + future)
 - `OTV Audit.csv` — audit pass rate
-- `Availability.csv` — open slot counts by category
+- `ScheduleUpcoming.csv` — open slot counts by category (forward-looking schedule)
 - `Courses.csv` — active course counts
 - KPIs pulled from multiple sources (see below)
 
@@ -29,7 +29,7 @@ All KPI cards include a small inline sparkline showing the recent trend. For met
 | Simulations per Week | Simulations | Count of simulations in the current calendar week (by `ScheduledDateTime`) | Solid line, weekly count over last 12 weeks |
 | Consults per Week | Clinic Visits | Count where `ActivityName = "Consult"` in the current calendar week; includes both past (completed) and future (scheduled) consults | Solid past + dotted future, weekly over last 8 weeks + next 4 weeks |
 | OTV Audit Pass Rate | OTV Audit | % where `AuditResult = "OK"` for courses with `FirstTreatmentDate` in YTD period | Solid line, monthly % over last 6 months |
-| Open Slots in Next 2 Weeks | Availability | Count of open/unbooked slots from `Availability.csv` in the next 14 days, broken down by `Category` (Exam vs Simulation) displayed as sub-values on the card | Dotted line (all future), daily open count over next 14 days |
+| Open Slots in Next 2 Weeks | ScheduleUpcoming | Count of open/unbooked slots from `ScheduleUpcoming.csv` (`BookingStatus = "Available"`) in the next 14 days, broken down by `Category` (Exam vs Simulation) displayed as sub-values on the card | Dotted line (all future), daily open count over next 14 days |
 | Active Courses | Courses | Count where `ClinicalStatus = "ACTIVE"` | Solid line, daily active count over last 30 days |
 
 ### Sparkline Implementation Notes

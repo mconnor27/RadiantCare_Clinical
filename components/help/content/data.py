@@ -28,7 +28,6 @@ from ..renderers import body, section
 
 # Incremental folder → (display name, loader function name)
 INCREMENTAL_DATASETS = [
-    ("Availability",              "Availability",            "load_availability"),
     ("Billing",                   "Billing",                 "load_billing"),
     ("ClinicVisits",              "Clinic Visits",           "load_clinic_visits"),
     ("Courses",                   "Courses",                 "load_courses"),
@@ -46,12 +45,14 @@ INCREMENTAL_DATASETS = [
 # Complete file → (display name, loader function name)
 COMPLETE_DATASETS = [
     ("2026 CPT Delivery Audit.csv", "CPT Delivery Audit",    "load_cpt_audit"),
+    ("Availability.csv",            "Availability (legacy)", "load_availability"),
     ("Daily Volume - Future.csv",   "Daily Volume (Future)", "load_daily_volume_future"),
     ("Daily Volume - Past.csv",     "Daily Volume (Past)",   "load_daily_volume"),
     ("Machine Errors.csv",          "Machine Errors",        "load_machines"),
     ("Machine Statistics.csv",      "Machine Statistics",    "load_machine_statistics"),
     ("OTV Audit.csv",               "OTV Audit",             "load_otvs"),
     ("Physician Schedule.csv",      "Physician Schedule",    "load_physician_schedule"),
+    ("ScheduleUpcoming.csv",        "Schedule Upcoming",     "load_schedule_upcoming"),
     ("Tasks.csv",                   "Tasks",                 "load_tasks"),
 ]
 

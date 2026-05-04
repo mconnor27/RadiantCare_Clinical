@@ -1424,7 +1424,7 @@ def update_volume_smooth_slider(range_days, current_value):
 )
 def update_heatmap(*args):
     """Build combined heatmap of treatment schedule + exam/sim availability."""
-    from data.loader import load_daily_volume_future, load_availability, load_clinic_visits, load_simulations
+    from data.loader import load_daily_volume_future, load_schedule_upcoming, load_clinic_visits, load_simulations
 
     ctx = _unpack_ops_filter_args(args)
     scope = args[3]
@@ -1434,7 +1434,7 @@ def update_heatmap(*args):
 
     try:
         dv = load_daily_volume_future()
-        avail = load_availability()
+        avail = load_schedule_upcoming()
         cv = load_clinic_visits()
         sims_all = load_simulations()
 
@@ -1481,16 +1481,13 @@ def update_heatmap(*args):
             (avail["SlotDate"] >= today) & (avail["SlotDate"] <= four_weeks)
         ] if not avail.empty and "SlotDate" in avail.columns else pd.DataFrame()
 
-        # Drop non-bookable sim holds: 8:00 AM 30-min setup + lunch holds
+        # 8:00 AM 30-min sim warmup placeholders are dropped at the loader
+        # layer (see _schedule_upcoming_inner). Only the lunch hold
+        # (hour=12) is filtered here at the page level.
         if not avail_future.empty and "Category" in avail_future.columns:
             _is_sim = avail_future["Category"].str.contains("Simulation", case=False, na=False)
             _hour = avail_future["AppointmentDateTime"].dt.hour
-            _minute = avail_future["AppointmentDateTime"].dt.minute
-            _dur = avail_future["DurationMinutes"]
-            avail_future = avail_future[~(_is_sim & (
-                ((_hour == 8) & (_minute == 0) & (_dur == 30)) |
-                (_hour == 12)
-            ))]
+            avail_future = avail_future[~(_is_sim & (_hour == 12))]
 
         # Exam availability: open holds per dept per day
         exam_avail = avail_future[

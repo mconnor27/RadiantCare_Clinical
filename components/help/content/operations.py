@@ -206,8 +206,8 @@ UI_CONTENT = dmc.Stack(
                 "plans, new starts per date × department.",
                 "load_clinic_visits() and load_simulations() — consult and sim slots "
                 "that fill the Upcoming 4 Weeks heatmap.",
-                "load_availability() — exam / sim HOLD slots so the heatmap can show "
-                "where there's still bookable capacity.",
+                "load_schedule_upcoming() — exam / sim HOLD slots so the heatmap can "
+                "show where there's still bookable capacity.",
             ]),
         ),
 
@@ -249,10 +249,12 @@ UI_CONTENT = dmc.Stack(
                 "Future projection covers 14 days. Beyond that the charts and KPIs "
                 "show blanks; the heatmap fills at most 4 weeks (weekdays) and uses "
                 "the availability extract for anything past day 14.",
-                "Non-bookable sim HOLD slots (8 AM 30-min and lunch blocks) are "
-                "dropped from the availability heatmap even though they technically "
-                "appear in the schedule — they would otherwise imply free capacity "
-                "that doesn't actually exist.",
+                "Non-bookable sim HOLD slots are dropped before the heatmap counts "
+                "open capacity — they would otherwise imply free capacity that "
+                "doesn't actually exist. The 8 AM 30-min linac warm-up placeholder "
+                "is dropped at the loader layer (so every consumer sees a clean "
+                "feed); the lunch hold (hour=12) is filtered here at the page "
+                "level because some pages may want to surface it.",
                 "The detail table's Include Future toggle shows the forecast for "
                 "appointment count and minute metrics, but Completed, Patients, and "
                 "New Starts are zero in future rows because those columns come from "

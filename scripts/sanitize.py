@@ -154,12 +154,12 @@ def upload_to_r2() -> int:
         base = os.path.basename(ti.name)
         if base in (".DS_Store",) or base.startswith("._"):
             return None
-        # Availability ships via its own live R2 feed (Power Automate →
-        # availability.csv), not the daily tarball. Excluding it here keeps
-        # the daily redeploy from clobbering whatever the live feed wrote
-        # most recently.
+        # ScheduleUpcoming ships via its own live R2 feed — ARIA writes
+        # the CSV directly to R2, bypassing sanitize. Excluding it from
+        # the daily tarball keeps the redeploy from clobbering whatever
+        # the live feed wrote most recently.
         norm = ti.name.replace("\\", "/")
-        if "/Incremental/Availability" in norm or norm.endswith("/Incremental/Availability"):
+        if norm.endswith("/Complete/ScheduleUpcoming.csv"):
             return None
         # Determinism: zero out per-file timestamps and ownership so an
         # unchanged dataset produces an unchanged tarball, byte-for-byte.

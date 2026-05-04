@@ -53,7 +53,7 @@ HELP_PAGES = [
             "Treatment_Detail",
             "Clinic_Visits",
             "Simulations",
-            "Availability",
+            "ScheduleUpcoming",
         ],
         "sql_intro": (
             "The Home page aggregates signals from several of the per-page "
@@ -218,13 +218,14 @@ HELP_PAGES = [
         "label": "Scheduling",
         "icon": "tabler:calendar-event",
         "section": "RESOURCES",
-        "sql": ["Availability", "Clinic_Visits", "Simulations"],
+        "sql": ["ScheduleUpcoming", "Clinic_Visits", "Simulations"],
         "sql_intro": (
-            "Scheduling is built on the Availability extract — a forward-looking "
-            "snapshot of HOLD / scheduleable slots — and overlays already-booked "
-            "appointments from Clinic Visits (consults, re-evals, follow-ups) "
-            "and Simulations onto the same time grid so taken capacity is "
-            "visible alongside open capacity."
+            "Scheduling is built on the ScheduleUpcoming extract — a "
+            "forward-looking snapshot of HOLD / scheduleable slots and "
+            "already-booked appointments — augmented by Clinic Visits "
+            "(consults, re-evals, follow-ups) and Simulations to fill in "
+            "any taken capacity that isn't already represented in the "
+            "ScheduleUpcoming snapshot."
         ),
         "ui_module": "scheduling",
     },

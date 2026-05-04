@@ -65,6 +65,35 @@ All data originates from **ARIA** (Varian) via automated SQL data warehouse expo
 
 ---
 
+### Availability (legacy — superseded by ScheduleUpcoming)
+
+- **File:** `Complete/Availability.csv`
+- **Size:** ~53 KB
+- **Refresh:** Legacy live feed (~30–60 min cadence) via Power Automate → R2; nightly full replace on disk. **No longer the active source for any page.**
+- **Used by:** Nothing in the current code path. `load_availability()` is retained for back-compat reference but Home, Operations, and Scheduling all moved to `load_schedule_upcoming()`.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `UniqueRowID` | int | Row identifier (full-refresh snapshot — not used for dedup) |
+| `Category` | string | Appointment category (Exam, Simulation) |
+| `DepartmentName` | string | Department name |
+| `AppointmentDateTime` | datetime (M/D/YYYY H:MM:SS AM/PM) | Appointment start |
+| `ScheduledEndTime` | datetime (M/D/YYYY H:MM:SS AM/PM) | Appointment end |
+| `DurationMinutes` | int | Duration in minutes |
+| `AppointmentNotes` | string | Free text scheduling notes (dropped at sanitize → `HasNote` boolean) |
+| `ActivityName` | string | Hold/block type (HOLD SIM TIME, HOLD CONSULT, HOLD RE EVAL/2 FOLLOW UPS) |
+| `AssignedResource` | string | Physician name or machine/room (e.g., CT_RC_LACEY) |
+| `SlotTaken` | string | Whether the slot has been filled (Yes/No) |
+
+**Business rules:**
+- Shows future availability slots and holds (typically a two-month forward window)
+- `AssignedResource` can be either a physician name or a machine identifier
+- `SlotTaken` indicates if a hold has been converted to an actual appointment
+- Used to analyze scheduling lead times and find openings
+- Full-refresh snapshot — each export replaces the prior file (no incremental concatenation)
+
+---
+
 ### Daily Volume - Future
 
 - **File:** `Complete/Daily Volume - Future.csv`
@@ -221,6 +250,38 @@ All data originates from **ARIA** (Varian) via automated SQL data warehouse expo
 
 ---
 
+### Schedule Upcoming
+
+- **File:** `Complete/ScheduleUpcoming.csv`
+- **Size:** ~85 KB
+- **Refresh:** Live feed — ARIA writes the CSV directly to R2 (no Power Automate / no sanitize / no daily tarball). The dashboard loader fetches it with a 5-minute TTL.
+- **Used by:** Home page, Operations page, Scheduling page
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `UniqueRowID` | int | Row identifier (full-refresh snapshot — not used for dedup) |
+| `BookingStatus` | string | `Available` (open hold) or `Booked` (already-scheduled appointment) |
+| `WorkflowType` | string | `Simulation` or `Consult` |
+| `ActivityName` | string | Slot type / appointment name (HOLD SIM TIME, HOLD CONSULT, HOLD RE EVAL/2 FOLLOW UPS, Initial Simulation, Consult, …) |
+| `ActivityCategory` | string | `Exam` or `Simulation` (renamed to `Category` by the loader) |
+| `DepartmentName` | string | Department name (renamed to `Department` by the loader) |
+| `ScheduledDateTime` | datetime (M/D/YYYY H:MM:SS AM/PM) | Slot start (renamed to `AppointmentDateTime` by the loader) |
+| `ScheduledEndTime` | datetime (M/D/YYYY H:MM:SS AM/PM) | Slot end |
+| `DurationMinutes` | int | Duration in minutes |
+| `AssignedResource` | string | Physician name (exam rows) or scanner identifier (simulation rows) |
+| `ActivityStatus` | string | `Open` for booked rows; blank for available holds |
+| `SlotTaken` | string | `No` for available holds; blank for booked rows. The loader overrides this from BookingStatus to give callers a stable Yes/No filter — see below. |
+
+**Business rules:**
+- Successor to the legacy Availability extract — combines open holds AND already-booked appointments in a single feed
+- Two-month forward window (hard-coded `GETDATE() → +2 months` at extract time)
+- Loader normalizes column names to the legacy Availability schema (`Department`, `Category`, `AppointmentDateTime`) so downstream consumers don't need to learn a second vocabulary
+- Loader rewrites `SlotTaken` from `BookingStatus` (`Booked → "Yes"`, `Available → "No"`) so the existing `df["SlotTaken"] != "Yes"` "open only" filter keeps meaning what it always did
+- Loader handling of `ActivityStatus = "Cancelled"` rows is informative-aware: if some other (non-cancelled) row covers the same (`AppointmentDateTime`, `AssignedResource`) the cancellation is dropped as redundant; if nothing else covers that time block — staff didn't recreate a placeholder — the cancellation is restored as an Available HOLD (with `ActivityName` remapped via `Consult → HOLD CONSULT`, `Re-eval`/`Follow-Up → HOLD RE EVAL/2 FOLLOW UPS`, and any Simulation-workflow row → `HOLD SIM TIME`) so the slot stays visible in open-capacity views. The daily 8:00 AM 30-minute `HOLD SIM TIME` warm-up placeholder is always dropped (not a bookable slot — it just exists to warm the linac).
+- No `AppointmentNotes` column → no PHI to scrub → no sanitize step. Production reads the CSV from R2 directly; local dev reads it from the OneDrive `Complete/` folder. In PHI_MODE, the disk loader falls back to the raw OneDrive folder since the sanitized tree never gets a copy.
+
+---
+
 ### Tasks
 
 - **File:** `Complete/Tasks.csv`
@@ -266,33 +327,6 @@ All data originates from **ARIA** (Varian) via automated SQL data warehouse expo
 ## Incremental Files
 
 All incremental files use `UniqueRowID` as the deduplication key. New rows are appended; existing rows may be updated. Always deduplicate on `UniqueRowID`, keeping the latest version.
-
-### Availability
-
-- **File:** `Incremental/Availability/Availability.csv`
-- **Size:** ~53 KB
-- **Used by:** Operations page
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `UniqueRowID` | int | Deduplication key |
-| `Category` | string | Appointment category (Exam, Simulation) |
-| `DepartmentName` | string | Department name |
-| `AppointmentDateTime` | datetime (M/D/YYYY H:MM:SS AM/PM) | Appointment start |
-| `ScheduledEndTime` | datetime (M/D/YYYY H:MM:SS AM/PM) | Appointment end |
-| `DurationMinutes` | int | Duration in minutes |
-| `AppointmentNotes` | string | Free text scheduling notes |
-| `ActivityName` | string | Hold/block type (HOLD SIM TIME, HOLD CONSULT, HOLD RE EVAL/2 FOLLOW UPS) |
-| `AssignedResource` | string | Physician name or machine/room (e.g., CT_RC_LACEY) |
-| `SlotTaken` | string | Whether the slot has been filled (Yes/No) |
-
-**Business rules:**
-- Shows future availability slots and holds
-- `AssignedResource` can be either a physician name or a machine identifier
-- `SlotTaken` indicates if a hold has been converted to an actual appointment
-- Used to analyze scheduling lead times and find openings
-
----
 
 ### Billing
 

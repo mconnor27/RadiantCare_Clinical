@@ -345,13 +345,15 @@ BACKEND_SQL_CONTENT = dmc.Stack(
                 "(Courses_20260417.csv, Plans_20260417.csv, …) to a OneDrive folder "
                 "shared with the dashboard host.",
                 "Incremental reports (Courses, Plans, Treatment, Billing, Clinic_Visits, "
-                "Simulations, Tasks, Workflow, Procedures, Weekly_Visits, Treatment-Detail, "
-                "Availability) are date-suffixed — the loader concatenates all increments "
+                "Simulations, Tasks, Workflow, Procedures, Weekly_Visits, Treatment-Detail) "
+                "are date-suffixed — the loader concatenates all increments "
                 "in chronological order and deduplicates on UniqueRowID (keeping the latest "
                 "record per key).",
                 "Complete/ reports (Daily Volume Past/Future, Tasks, OTV Audit, Machine "
-                "Errors, Physician Schedule) are full-refresh files — each run replaces "
-                "the prior snapshot.",
+                "Errors, Physician Schedule, Availability, ScheduleUpcoming) are full-"
+                "refresh files — each run replaces the prior snapshot. ScheduleUpcoming "
+                "additionally bypasses the sanitize step entirely: ARIA writes the CSV "
+                "directly to R2, where the loader fetches it on a 5-minute TTL.",
                 "Data may lag by 1–2 days during periods when overnight exports miss their "
                 "window. The dashboard uses data-relative dates (max date in the dataset) "
                 "rather than wall-clock today, so KPIs and filters handle that lag gracefully.",

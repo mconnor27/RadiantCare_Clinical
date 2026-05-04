@@ -399,25 +399,22 @@ def _build_availability_calendar(departments, consults_only=True, view="both"):
         consults_only: if True, filter consult calendar to Consult activities only.
         view: "both" (default, side-by-side), "consults" (exam only), or "sims".
     """
-    from data.loader import load_availability, load_clinic_visits, load_simulations
+    from data.loader import load_schedule_upcoming, load_clinic_visits, load_simulations
 
     try:
         today = pd.Timestamp.now(tz="America/Los_Angeles").normalize().tz_localize(None)
         four_weeks = today + timedelta(days=28)
 
-        # Load open holds from Availability (only unfilled slots)
-        avail = load_availability()
+        # Load open holds from ScheduleUpcoming (only unfilled slots)
+        avail = load_schedule_upcoming()
         if "SlotTaken" in avail.columns:
             avail = avail[avail["SlotTaken"] != "Yes"]
-        # Drop non-bookable sim holds: 8:00 AM 30-min setup slot + lunch holds
+        # The 8:00 AM 30-min sim warmup placeholders are dropped at the
+        # loader layer — only the lunch hold (hour=12) needs page-level
+        # filtering here, since some pages may want to surface it.
         _is_sim = avail["Category"].str.contains("Simulation", case=False, na=False)
         _hour = avail["AppointmentDateTime"].dt.hour
-        _minute = avail["AppointmentDateTime"].dt.minute
-        _dur = avail["DurationMinutes"]
-        avail = avail[~(_is_sim & (
-            ((_hour == 8) & (_minute == 0) & (_dur == 30)) |
-            (_hour == 12)
-        ))]
+        avail = avail[~(_is_sim & (_hour == 12))]
         avail_future = avail[
             (avail["SlotDate"] >= today) &
             (avail["SlotDate"] <= four_weeks)

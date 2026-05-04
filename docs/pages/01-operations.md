@@ -1,13 +1,13 @@
 # Page: Operations
 
 ## Purpose
-Daily treatment operations view. Combines past volume, future schedule, and availability into a unified operational picture. Answers: "How busy are we? How busy will we be? Where are the openings?"
+Daily treatment operations view. Combines past volume, future schedule, and upcoming availability into a unified operational picture. Answers: "How busy are we? How busy will we be? Where are the openings?"
 
 ## Data Sources
 - `Daily Volume - Past.csv` — historical daily volume with actual times
 - `Daily Volume - Future.csv` — scheduled future volume
 - `Treatment.csv` — daily aggregates by location with technique breakdowns, new starts by course
-- `Availability.csv` — future appointment holds and open slots (Exam + Simulation categories)
+- `ScheduleUpcoming.csv` — future appointment holds and open slots (Exam + Simulation categories) — successor to the legacy `Availability.csv`
 
 ## Layout
 Template C (timeline/band chart)
@@ -23,7 +23,7 @@ Template C (timeline/band chart)
 |-----|--------|-------------|
 | Treatments Today | Daily Volume - Past | `AppointmentCount` for today, all locations |
 | Avg Daily Volume (30d) | Daily Volume - Past | Mean `AppointmentCount` over last 30 days |
-| Next Available Slot | Availability | Earliest future date with open capacity |
+| Next Available Slot | ScheduleUpcoming | Earliest future date with open capacity (`BookingStatus = "Available"`) |
 | Scheduled This Week | Daily Volume - Future | Sum `AppointmentCount` for current week |
 | New Starts This Week | Treatment | Sum `NewStarts_ByCourseFirstTreatmentDate` for current week (counted by course, not by fraction) |
 
@@ -46,11 +46,11 @@ Template C (timeline/band chart)
   - `21EX` (treatment)
   - `21iX_CEN` (treatment)
   - `21iX_AB` (treatment)
-  - `Exam` (from Availability.csv, `Category = "Exam"`)
-  - `Simulation` (from Availability.csv, `Category = "Simulation"`)
+  - `Exam` (from ScheduleUpcoming.csv, `ActivityCategory = "Exam"`)
+  - `Simulation` (from ScheduleUpcoming.csv, `ActivityCategory = "Simulation"`)
 - **Color intensity:** Number of scheduled appointments per cell. Use a sequential color scale (light = few/open, dark = heavily booked)
 - **Cell annotation:** Show the appointment count number inside each heatmap cell
-- **Source:** Merge `Daily Volume - Future` (treatment rows by machine/location) with `Availability.csv` (Exam and Simulation rows, aggregated by day and category)
+- **Source:** Merge `Daily Volume - Future` (treatment rows by machine/location) with `ScheduleUpcoming.csv` (Exam and Simulation rows, filtered to `BookingStatus = "Available"`, aggregated by day and category)
 - **Hover:** Show location, date, appointment count, and any available slot info
 - **Purpose:** Single visual combining future schedule density + exam/sim availability. Replaces the former Future Schedule Lookahead, Availability Calendar, and Scheduling Lead Time charts
 
@@ -101,7 +101,7 @@ Current implementation uses server-side rendering only. Upgrade to home.py patte
 ### Key Data Loaders
 
 ```python
-from data.loader import load_treatment, load_daily_volume, load_daily_volume_future, load_availability
+from data.loader import load_treatment, load_daily_volume, load_daily_volume_future, load_schedule_upcoming
 ```
 
 ### Operating Hours Ribbon Implementation
@@ -126,9 +126,9 @@ Treatment.csv contains both site-level (`Lacey`) and machine-level (`Lacey - 21E
 site_depts = [d for d in tx["Department"].unique() if d in DEPARTMENTS]
 ```
 
-### Availability Grouping
+### Schedule Upcoming Grouping
 
-Groups by `Category` column (Exam vs Simulation) when present.
+Groups by `Category` column (Exam vs Simulation, normalized from `ActivityCategory` by the loader) when present. Filter to `SlotTaken != "Yes"` (or equivalently `BookingStatus == "Available"`) to count only open holds.
 
 ### Filter Wiring
 

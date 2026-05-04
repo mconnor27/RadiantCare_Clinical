@@ -1,7 +1,7 @@
 """Scheduling page — open appointment slots (HOLD CONSULT / HOLD RE EVAL).
 
 Calendar (M-F, time-scaled) and list views of open slots from the latest
-Availability snapshot.
+ScheduleUpcoming snapshot.
 """
 
 import dash
@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, date as date_class
 from config.settings import (
     DEPARTMENTS, DEPARTMENT_COLORS, PRIMARY, NEUTRAL, PHYSICIANS,
 )
-from data.loader import load_availability, load_clinic_visits, load_simulations
+from data.loader import load_schedule_upcoming, load_clinic_visits, load_simulations
 
 dash.register_page(__name__, path="/scheduling", name="Scheduling", order=20)
 
@@ -56,6 +56,23 @@ _CV_TYPE_MAP = {
 }
 
 
+_SLOT_COLUMNS = [
+    "AppointmentDateTime", "ScheduledEndTime", "DurationMinutes",
+    "ActivityName", "AssignedResource", "Department",
+    "IsTaken", "IsBlocked", "Hour", "DayOfWeek",
+]
+
+
+def _empty_slots():
+    """Empty slot DataFrame with the schema downstream callbacks expect.
+
+    Without this, an upstream loader miss (R2 down, ScheduleUpcoming.csv
+    absent in PHI mode) leaves the page callback with a column-less
+    DataFrame that crashes on `df[~df["IsTaken"]]`.
+    """
+    return pd.DataFrame({col: pd.Series(dtype="object") for col in _SLOT_COLUMNS})
+
+
 def _open_slots(mode="physicians"):
     """Dispatch to the right slot loader based on the selected mode."""
     if mode == "simulations":
@@ -66,11 +83,11 @@ def _open_slots(mode="physicians"):
 def _blocked_flag(df):
     """Boolean Series: True when a slot is reserved/blocked by a front-desk note.
 
-    The Availability loader synthesizes a HasNote column from the upstream
-    AppointmentNotes text and drops the text itself — the page only ever
-    needed the emptiness check, so neither this process nor R2 has to hold
-    the free-text PHI. Falls back to an empty-string check on AppointmentNotes
-    if HasNote isn't present (e.g. an older bundled snapshot).
+    ScheduleUpcoming does not carry an AppointmentNotes column, so HasNote
+    is always False on the new feed and this helper returns all-False —
+    blocked-vs-booked styling collapses to a single BOOKED state. Kept as
+    a function so any future signal (e.g. ActivityStatus) can plug in here
+    without touching the call sites.
     """
     if "HasNote" in df.columns:
         return df["HasNote"].fillna(False).astype(bool)
@@ -79,10 +96,10 @@ def _blocked_flag(df):
 
 
 def _sim_slots():
-    """Sim-mode slots: HOLD SIM TIME from Availability + booked Sims (gray)."""
-    avail = load_availability()
+    """Sim-mode slots: HOLD SIM TIME from ScheduleUpcoming + booked Sims (gray)."""
+    avail = load_schedule_upcoming()
     if avail.empty:
-        return pd.DataFrame()
+        return _empty_slots()
     avail = avail[avail["ActivityName"] == "HOLD SIM TIME"].copy()
     avail["AppointmentDateTime"] = pd.to_datetime(avail["AppointmentDateTime"])
     avail["ScheduledEndTime"] = pd.to_datetime(avail.get("ScheduledEndTime"))
@@ -125,7 +142,7 @@ def _sim_slots():
 
     df = pd.concat([avail, sim_extra], ignore_index=True) if not sim_extra.empty else avail
     if df.empty:
-        return df
+        return _empty_slots()
     if "IsBlocked" not in df.columns:
         df["IsBlocked"] = False
     df["Hour"] = df["AppointmentDateTime"].dt.hour
@@ -136,9 +153,9 @@ def _sim_slots():
 
 
 def _physician_slots():
-    avail = load_availability()
+    avail = load_schedule_upcoming()
     if avail.empty:
-        avail = pd.DataFrame()
+        avail = _empty_slots()
     else:
         avail = avail[avail["ActivityName"].isin(APPT_TYPES.keys())].copy()
         avail["AppointmentDateTime"] = pd.to_datetime(avail["AppointmentDateTime"])
@@ -187,7 +204,7 @@ def _physician_slots():
 
     df = pd.concat([avail, cv_extra], ignore_index=True) if not cv_extra.empty else avail
     if df.empty:
-        return df
+        return _empty_slots()
     if "IsBlocked" not in df.columns:
         df["IsBlocked"] = False
     df["Hour"] = df["AppointmentDateTime"].dt.hour

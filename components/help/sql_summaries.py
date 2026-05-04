@@ -10,31 +10,50 @@ Each entry is keyed by script filename (without .sql extension) and contains:
 """
 
 SQL_SCRIPTS = {
-    "Availability": {
-        "total": 162, "sql": 90,
+    "ScheduleUpcoming": {
+        "total": 0, "sql": 0,
         "purpose": (
-            "Forward-looking capacity report that surfaces unbooked HOLD slots, "
-            "scheduleable blocks, and dedicated exam/simulation time on the schedule "
-            "so front-desk staff and operational managers can see, at a glance, where "
-            "the department has room to add patients over the coming two months. "
-            "The report distinguishes between slots that are genuinely open and HOLD "
-            "slots that already have a real patient booked against them (the HOLD was "
-            "not released) — a common failure mode in the schedule that otherwise looks "
-            "like free capacity."
+            "Successor to the Availability report. Forward-looking schedule "
+            "snapshot that surfaces both open HOLD slots and already-booked "
+            "appointments side-by-side, so front-desk staff and operational "
+            "managers can see — in one extract — where the department has "
+            "room to add patients and what's already on the books over the "
+            "coming two months."
         ),
         "unique_logic": [
-            "Filters to 5 specific activity names: HOLD SIM TIME, LUNCH- SIM DOWN, "
-            "SCHEDULEABLE, HOLD CONSULT, HOLD RE EVAL/2 FOLLOW UPS in Exam or Simulation categories.",
-            "SlotTaken flag: detects HOLD slots where a real patient is already booked "
-            "at the same resource/time/duration (ignores cancelled/deleted overlaps). "
-            "Surfaces \"phantom availability\".",
-            "Excludes slots held for real patients via a NOT(…) predicate on PatientId plus name validation.",
-            "Assigned-resource logic differs by category: physician for Exam rows (who's free for a consult), "
-            "machine for Simulation rows (which sim scanner is idle).",
+            "Replaces Availability: ARIA writes the CSV directly to R2 "
+            "(no Power Automate / email / sanitize / tarball step). The "
+            "loader fetches it on each cache miss with a 5-minute TTL.",
+            "BookingStatus column distinguishes Available (open hold) from "
+            "Booked (already-scheduled appointment) — both ship in the same "
+            "extract, eliminating the separate \"phantom availability\" "
+            "detection that the Availability report needed.",
+            "WorkflowType (Simulation / Consult) and ActivityCategory "
+            "(Exam / Simulation) identify the slot type.",
+            "AssignedResource is a physician name for exam rows and a sim "
+            "scanner identifier (e.g. CT_RC_LACEY) for simulation rows.",
+            "No AppointmentNotes column — the upstream extract no longer "
+            "carries the front-desk free-text field, so there's no PHI to "
+            "sanitize. The legacy IsBlocked / HOLD-badge state is therefore "
+            "absent from the new feed.",
+            "Loader cleans the feed before any consumer sees it: "
+            "(1) ActivityStatus = Cancelled bookings are matched against the "
+            "rest of the snapshot on (AppointmentDateTime, AssignedResource) "
+            "— if some other slot already covers that time block (the usual "
+            "case: the underlying HOLD is restored as Available, or another "
+            "booking took the slot), the cancellation row is dropped as "
+            "redundant. If nothing else covers that time block (staff didn't "
+            "recreate a placeholder), the cancellation is restored as an "
+            "Available HOLD so the slot doesn't disappear from open-capacity "
+            "views. (2) The daily 8:00 AM 30-minute HOLD SIM TIME warm-up "
+            "placeholder is dropped — it's not a bookable slot, it just "
+            "exists to warm the linac.",
         ],
         "output_cols": (
-            "UniqueRowID, ActivityName, Category, DepartmentName, AppointmentDateTime, "
-            "ScheduledEndTime, DurationMinutes, AppointmentNotes, AssignedResource, SlotTaken."
+            "UniqueRowID, BookingStatus, WorkflowType, ActivityName, "
+            "ActivityCategory, DepartmentName, ScheduledDateTime, "
+            "ScheduledEndTime, DurationMinutes, AssignedResource, "
+            "ActivityStatus, SlotTaken."
         ),
         "date_range": "Hardcoded GETDATE() → +2 months (always \"what's open right now going forward\").",
     },
