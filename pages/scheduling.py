@@ -14,7 +14,10 @@ from datetime import datetime, timedelta, date as date_class
 from config.settings import (
     DEPARTMENTS, DEPARTMENT_COLORS, PRIMARY, NEUTRAL, PHYSICIANS,
 )
-from data.loader import load_schedule_upcoming, load_clinic_visits, load_simulations
+from data.loader import (
+    load_schedule_upcoming, load_clinic_visits, load_simulations,
+    schedule_upcoming_last_modified,
+)
 
 dash.register_page(__name__, path="/scheduling", name="Scheduling", order=20)
 
@@ -794,6 +797,11 @@ layout = dmc.Stack(
                            rightSection=DashIconify(icon="tabler:chevron-right", width=14)),
             ]),
             html.Div(id=f"{PAGE_ID}-calendar-grid"),
+            dmc.Text(
+                id=f"{PAGE_ID}-last-updated",
+                size="xs", c="dimmed", ta="center",
+                mt="md", mb="xs",
+            ),
         ]),
         # List view
         html.Div(id=f"{PAGE_ID}-list-container", style={"display": "none"}, children=[
@@ -888,6 +896,7 @@ def _toggle_type_filter(mode):
     Output(f"{PAGE_ID}-week-title", "children"),
     Output(f"{PAGE_ID}-list-cards", "children"),
     Output(f"{PAGE_ID}-page-display", "children"),
+    Output(f"{PAGE_ID}-last-updated", "children"),
     Input(f"{PAGE_ID}-filter-department", "value"),
     Input(f"{PAGE_ID}-filter-physician", "value"),
     Input(f"{PAGE_ID}-filter-appt-type", "value"),
@@ -914,4 +923,18 @@ def _update_content(depts, phys, appts, view, show_mode, mode,
     # List
     cards, page_label = _list_view(df, page or 1)
 
-    return grid, title, cards, page_label
+    # Last updated — read after the loader has run so the cache is populated
+    last_updated = _format_last_updated()
+
+    return grid, title, cards, page_label, last_updated
+
+
+def _format_last_updated():
+    """Format the ScheduleUpcoming source's last-modified time for display."""
+    ts, source = schedule_upcoming_last_modified()
+    if ts is None:
+        return ""
+    local = pd.Timestamp(ts).tz_convert("America/Los_Angeles")
+    when = local.strftime("%b %-d, %Y at %-I:%M %p PT")
+    where = "live R2 feed" if source == "r2" else "local file"
+    return f"Last updated: {when} ({where})"

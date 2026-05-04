@@ -812,6 +812,12 @@ def _schedule_upcoming_r2_config():
     return account_id, access_key, secret_key, bucket, key
 
 
+# Tracks the source + last-modified timestamp of the most recent successful
+# ScheduleUpcoming load, so the scheduling page can show a "Last updated" hint.
+# Set by whichever fetch path (R2 / disk) actually returned data.
+_SCHEDULE_UPCOMING_META = {"last_modified": None, "source": None}
+
+
 def _load_schedule_upcoming_from_r2():
     """Pull the latest ScheduleUpcoming CSV from R2. Returns DataFrame or None."""
     cfg = _schedule_upcoming_r2_config()
@@ -840,6 +846,7 @@ def _load_schedule_upcoming_from_r2():
         )
         resp = s3.get_object(Bucket=bucket, Key=key)
         body = resp["Body"].read()
+        last_modified = resp.get("LastModified")  # tz-aware UTC
         try:
             df = pd.read_csv(BytesIO(body), encoding="utf-8-sig", engine="pyarrow")
         except Exception:
@@ -849,6 +856,8 @@ def _load_schedule_upcoming_from_r2():
             )
         while len(df) > 0 and df.iloc[-1].isna().all():
             df = df.iloc[:-1]
+        _SCHEDULE_UPCOMING_META["last_modified"] = last_modified
+        _SCHEDULE_UPCOMING_META["source"] = "r2"
         return df
     except Exception as exc:
         print(f"[schedule_upcoming] R2 fetch failed (key={key}): {exc}")
@@ -871,8 +880,23 @@ def _load_schedule_upcoming_from_disk():
     ]
     for path in candidates:
         if path.exists():
+            mtime = pd.Timestamp(path.stat().st_mtime, unit="s", tz="UTC")
+            _SCHEDULE_UPCOMING_META["last_modified"] = mtime
+            _SCHEDULE_UPCOMING_META["source"] = f"disk:{path.name}"
             return _read_csv_safe(path)
     return pd.DataFrame()
+
+
+def schedule_upcoming_last_modified():
+    """Return (timestamp, source_label) for the most recent successful load.
+
+    Timestamp is a tz-aware pandas Timestamp in UTC, or None if no fetch
+    has succeeded yet. Source is "r2" or "disk:<filename>".
+    """
+    return (
+        _SCHEDULE_UPCOMING_META["last_modified"],
+        _SCHEDULE_UPCOMING_META["source"],
+    )
 
 
 _SCHEDULE_UPCOMING_TTL = int(
