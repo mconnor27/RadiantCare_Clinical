@@ -90,6 +90,15 @@ def _cache_static(response):
     return response
 
 
+# Railway zero-downtime deploy healthcheck. Bootstrap runs before gunicorn
+# (see Procfile), so any response here implies the data tarball has finished
+# downloading. Railway flips traffic to the new container only after this
+# returns 200, keeping the old container live in the meantime.
+@server.route("/healthz")
+def _healthz():
+    return ("ok", 200, {"Content-Type": "text/plain"})
+
+
 # Set Mapbox token globally
 if MAPBOX_TOKEN:
     import plotly.express
