@@ -10,6 +10,7 @@ Return value: a dict summarizing what was done (for the audit log).
 from __future__ import annotations
 
 import shutil
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -259,14 +260,29 @@ SIMPLE_RULES: list[dict] = [
 # ---------------------------------------------------------------------------
 
 def _read_csv(path: Path) -> pd.DataFrame:
-    """Read a CSV using the same tolerant approach as the app loader."""
-    try:
-        return pd.read_csv(path, encoding="utf-8-sig", engine="pyarrow")
-    except Exception:
-        return pd.read_csv(
-            path, encoding="utf-8-sig",
-            on_bad_lines="skip", low_memory=False,
-        )
+    """Read a CSV using the same tolerant approach as the app loader.
+
+    Retries on macOS errno 11 (EDEADLK), which occurs when OneDrive holds
+    an exclusive lock on a source file mid-sync; the kernel breaks the cycle
+    by failing one syscall rather than deadlocking. Locks are typically
+    released within ~1s, so a few backed-off retries are enough.
+    """
+    for attempt in range(4):
+        try:
+            try:
+                return pd.read_csv(path, encoding="utf-8-sig", engine="pyarrow")
+            except OSError:
+                raise
+            except Exception:
+                return pd.read_csv(
+                    path, encoding="utf-8-sig",
+                    on_bad_lines="skip", low_memory=False,
+                )
+        except OSError as e:
+            if e.errno == 11 and attempt < 3:
+                time.sleep(2.0 * (attempt + 1))
+                continue
+            raise
 
 
 def _write_csv(df: pd.DataFrame, path: Path) -> None:

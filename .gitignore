@@ -14,3 +14,4 @@ data/rvu_files/extracted/
 data/rvu_files/download_rvu.sh
 .data_cache/
 .data_cache_phi/
+.aura_sanitized/

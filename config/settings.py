@@ -31,7 +31,7 @@ DATA_DIR_RAW = Path(
 DATA_DIR_SANITIZED = Path(
     os.environ.get(
         "DATA_SANITIZED",
-        str(DATA_DIR_RAW.parent / f"{DATA_DIR_RAW.name}_Sanitized"),
+        str(PROJECT_ROOT / ".aura_sanitized"),
     )
 )
 
