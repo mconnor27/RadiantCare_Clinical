@@ -102,12 +102,25 @@ def create_sidebar():
                             pb="md",
                         ),
                     ),
-                    # Bottom section
-                    dmc.Divider(color="var(--sidebar-border, rgba(255,255,255,0.12))"),
+                    # Bottom section — pinned below the scrollable nav.
+                    # Divider + soft top-shadow give it the "raised sticky
+                    # footer" cue so on short viewports (where the nav
+                    # scrolls) the Help button reads as a separate region
+                    # instead of just the next item in the list.
                     dmc.Stack(
                         gap=2,
                         px="xs",
-                        py="sm",
+                        py=8,
+                        style={
+                            "borderTop": "1px solid rgba(255, 255, 255, 0.22)",
+                            "boxShadow": "0 -6px 10px -6px rgba(0, 0, 0, 0.35)",
+                            # Use the sidebar bg explicitly so the shadow
+                            # casts onto the section above (rather than
+                            # showing through transparency).
+                            "backgroundColor": "var(--bg-sidebar)",
+                            "position": "relative",
+                            "zIndex": 1,
+                        },
                         children=[
                             dmc.NavLink(
                                 label="Help",
@@ -121,7 +134,7 @@ def create_sidebar():
                                 styles={
                                     "root": {
                                         "borderRadius": "6px",
-                                        "padding": "6px 8px 6px 12px",
+                                        "padding": "4px 8px 4px 12px",
                                         "minHeight": "unset",
                                         "color": "var(--sidebar-text)",
                                     },

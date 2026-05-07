@@ -213,7 +213,13 @@ window.dash_clientside.hoursRibbon = {
                     connectgaps: true
                 });
 
-                // Lower bound (start hours) with fill to previous trace
+                // Lower bound (start hours) with fill to previous trace —
+                // visible only. No legend, no hover. Plotly's unified-hover
+                // swatch on a fill trace uses the alpha-reduced fillcolor
+                // regardless of line.color, so we keep the fill on its own
+                // trace and let the visible bottom edge line below act as
+                // the hover provider (full-opacity line.color → full-color
+                // swatch).
                 traces.push({
                     x: dates,
                     y: startHours,
@@ -221,10 +227,8 @@ window.dash_clientside.hoursRibbon = {
                     line: {width: 0},
                     fill: "tonexty",
                     fillcolor: fillColor,
-                    name: s.name,
-                    showlegend: true,
-                    text: hoverText,
-                    hovertemplate: "%{text}<extra></extra>",
+                    showlegend: false,
+                    hoverinfo: "skip",
                     connectgaps: true
                 });
 
@@ -239,14 +243,19 @@ window.dash_clientside.hoursRibbon = {
                     connectgaps: true
                 });
 
-                // Edge line - bottom (start hours)
+                // Edge line - bottom (start hours). Doubles as the hover/
+                // legend provider — already visible at full brand color, so
+                // Plotly's unified-hover swatch picks up the saturated color
+                // even when the ribbon fill above is alpha-reduced.
                 traces.push({
                     x: dates,
                     y: startHours,
                     mode: "lines",
                     line: {color: color, width: 1.5},
-                    showlegend: false,
-                    hoverinfo: "skip",
+                    name: s.name,
+                    showlegend: true,
+                    text: hoverText,
+                    hovertemplate: "%{text}<extra></extra>",
                     connectgaps: true
                 });
             }
@@ -320,19 +329,37 @@ window.dash_clientside.hoursRibbon = {
                         hasConn = true;
                     }
 
-                    // Future start line (dotted)
-                    traces.push({
-                        x: dates,
-                        y: startHours,
-                        name: s.name + " (scheduled)",
-                        mode: "lines",
-                        line: {color: color, width: 1.5, dash: "dot"},
-                        showlegend: false,
-                        hoverinfo: "skip",
-                        connectgaps: true
-                    });
+                    // Future start line (dotted). Split so the connection
+                    // segment is hover-skip (it's just visual continuity to
+                    // the last past point) while the main future segment
+                    // doubles as the hover/legend provider — full-opacity
+                    // line.color → solid swatch in unified hover.
+                    var fstart = hasConn ? 1 : 0;
+                    if (hasConn && dates.length > 1) {
+                        traces.push({
+                            x: [dates[0], dates[1]],
+                            y: [startHours[0], startHours[1]],
+                            mode: "lines",
+                            line: {color: color, width: 1.5, dash: "dot"},
+                            showlegend: false,
+                            hoverinfo: "skip"
+                        });
+                    }
+                    if (dates.length > fstart) {
+                        traces.push({
+                            x: dates.slice(fstart),
+                            y: startHours.slice(fstart),
+                            mode: "lines",
+                            line: {color: color, width: 1.5, dash: "dot"},
+                            name: s.name + " (scheduled)",
+                            showlegend: true,
+                            text: hoverText,
+                            hovertemplate: "%{text}<extra></extra>",
+                            connectgaps: true
+                        });
+                    }
 
-                    // Future end line (dotted)
+                    // Future end line (dotted) — visual only.
                     traces.push({
                         x: dates,
                         y: endHours,
@@ -342,21 +369,6 @@ window.dash_clientside.hoursRibbon = {
                         hoverinfo: "skip",
                         connectgaps: true
                     });
-
-                    // Hover-only trace for future points (excludes connection point)
-                    var hoverDates = hasConn ? dates.slice(1) : dates;
-                    var hoverY = hasConn ? startHours.slice(1) : startHours;
-                    if (hoverDates.length > 0) {
-                        traces.push({
-                            x: hoverDates,
-                            y: hoverY,
-                            mode: "lines",
-                            line: {width: 0},
-                            showlegend: false,
-                            text: hoverText,
-                            hovertemplate: "%{text}<extra></extra>"
-                        });
-                    }
                 } else {
                     // Ribbon chart - prepend past end point to connect visually
                     var pastEnd = pastEndPoints[s.name];
@@ -395,21 +407,6 @@ window.dash_clientside.hoursRibbon = {
                         connectgaps: true
                     });
 
-                    // Hover-only trace for future points (excludes connection point)
-                    var hoverDates = hasConn ? dates.slice(1) : dates;
-                    var hoverY = hasConn ? startHours.slice(1) : startHours;
-                    if (hoverDates.length > 0) {
-                        traces.push({
-                            x: hoverDates,
-                            y: hoverY,
-                            mode: "lines",
-                            line: {width: 0},
-                            showlegend: false,
-                            text: hoverText,
-                            hovertemplate: "%{text}<extra></extra>"
-                        });
-                    }
-
                     // Edge line - top (dashed for future)
                     traces.push({
                         x: dates,
@@ -420,15 +417,34 @@ window.dash_clientside.hoursRibbon = {
                         hoverinfo: "skip"
                     });
 
-                    // Edge line - bottom (dashed for future)
-                    traces.push({
-                        x: dates,
-                        y: startHours,
-                        mode: "lines",
-                        line: {color: color, width: 1, dash: "dot"},
-                        showlegend: false,
-                        hoverinfo: "skip"
-                    });
+                    // Edge line - bottom (dashed for future). Split so the
+                    // visible bottom edge can also carry the hover/legend
+                    // (full-opacity line.color → solid swatch in unified
+                    // hover), while the connection segment to the last past
+                    // point stays hover-skip (it's just visual continuity).
+                    var fstart = hasConn ? 1 : 0;
+                    if (hasConn && dates.length > 1) {
+                        traces.push({
+                            x: [dates[0], dates[1]],
+                            y: [startHours[0], startHours[1]],
+                            mode: "lines",
+                            line: {color: color, width: 1, dash: "dot"},
+                            showlegend: false,
+                            hoverinfo: "skip"
+                        });
+                    }
+                    if (dates.length > fstart) {
+                        traces.push({
+                            x: dates.slice(fstart),
+                            y: startHours.slice(fstart),
+                            mode: "lines",
+                            line: {color: color, width: 1, dash: "dot"},
+                            name: s.name + " (scheduled)",
+                            showlegend: true,
+                            text: hoverText,
+                            hovertemplate: "%{text}<extra></extra>"
+                        });
+                    }
                 }
             }
         }
@@ -456,20 +472,47 @@ window.dash_clientside.hoursRibbon = {
             line: {color: "rgba(124, 42, 131, 0.4)", width: 1, dash: "dash"}
         }];
 
+        var _isDarkRb = (typeof document !== "undefined") &&
+            document.documentElement.getAttribute("data-theme") === "dark";
+        // Theme-aware text + grid colors so the chart renders correctly on
+        // first paint without waiting for the global theme sweep. Values
+        // mirror the DARK/LIGHT palettes in assets/02_theme.js.
+        var _tickFont = _isDarkRb ? "#E6E7EC" : "#374151";
+        var _gridCol  = _isDarkRb ? "#262932" : "#E5E7EB";
         var layout = {
             uirevision: "hours-timeseries",
-            font: {family: "Inter, system-ui, sans-serif", size: 11},
+            font: {family: "Inter, system-ui, sans-serif", size: 11, color: _tickFont},
             plot_bgcolor: "rgba(0,0,0,0)",
             paper_bgcolor: "rgba(0,0,0,0)",
             margin: {l: 36, r: 8, t: 8, b: 32, pad: 0},
             showlegend: false,
             hovermode: "x unified",
+            // Generous hoverdistance so the cursor doesn't have to be
+            // pixel-perfect on a data point — but finite, so Plotly doesn't
+            // extrapolate the future ("scheduled") trace into past-date
+            // hovers. With daily data on this chart width, ~50px ≈ 3-4
+            // days, plenty of slack but well short of the gap between past
+            // data and the future trace's first point.
+            hoverdistance: 50,
+            // Solid hoverlabel — without this Plotly's "x unified" tooltip
+            // inherits the transparent plot_bgcolor and is unreadable over
+            // chart content.
+            hoverlabel: {
+                bgcolor: _isDarkRb ? "#25282F" : "#FFFFFF",
+                bordercolor: _isDarkRb ? "#2D3039" : "#E0E0E0",
+                font: {
+                    family: "Inter, system-ui, sans-serif",
+                    size: 11,
+                    color: _isDarkRb ? "#E6E7EC" : "#1A1A2E"
+                }
+            },
             transition: {duration: 0},
             yaxis: {
                 range: [yAxis.min, yAxis.max],
                 tickvals: yAxis.tickvals,
                 ticktext: yAxis.ticktext,
-                gridcolor: "#E5E7EB",
+                gridcolor: _gridCol,
+                tickfont: {color: _tickFont},
                 automargin: true
             },
             shapes: shapes
@@ -480,6 +523,7 @@ window.dash_clientside.hoursRibbon = {
             side: "bottom",
             showgrid: false,
             automargin: true,
+            tickfont: {color: _tickFont},
             ticklabelposition: "outside bottom",
             tickmode: "auto"
         };

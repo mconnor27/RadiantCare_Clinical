@@ -39,52 +39,75 @@
         return null;
     }
 
-    // Rewrite any slider label whose parent slider id is registered.
-    // Matches .mantine-Slider-label (stable Mantine class) AND falls back
-    // to any [class*="Slider-label"] for class-name drift across versions.
-    function rewriteLabels() {
-        var labels = document.querySelectorAll(
-            '.mantine-Slider-label, [class*="Slider-label"]'
-        );
-        for (var i = 0; i < labels.length; i++) {
-            var lbl = labels[i];
-            var raw = lbl.textContent;
-            var n = parseInt(raw, 10);
-            // Only rewrite if textContent is purely an integer (otherwise
-            // it's already been rewritten, or it's a non-numeric label).
-            if (isNaN(n) || String(n) !== raw.trim()) continue;
+    // Rewrite a single slider label in-place. Idempotent: a label whose
+    // textContent is already non-numeric (already rewritten, or a label
+    // we don't manage) is left alone — that's also what stops the
+    // observer's own characterData mutations from looping.
+    function rewriteLabel(lbl) {
+        if (!lbl) return;
+        var raw = lbl.textContent;
+        var n = parseInt(raw, 10);
+        if (isNaN(n) || String(n) !== raw.trim()) return;
 
-            var fmt = labelToFmt.get(lbl);
-            if (!fmt) {
-                fmt = findFormatterForLabel(lbl);
-                if (!fmt) continue;
-                labelToFmt.set(lbl, fmt);
-            }
-            var next = fmt(n);
-            if (next !== raw) lbl.textContent = next;
+        var fmt = labelToFmt.get(lbl);
+        if (!fmt) {
+            fmt = findFormatterForLabel(lbl);
+            if (!fmt) return;
+            labelToFmt.set(lbl, fmt);
         }
+        var next = fmt(n);
+        if (next !== raw) lbl.textContent = next;
     }
 
-    // Coalesce bursts of DOM mutations (Dash renders fire thousands during
-    // initial load) into a single rewrite per animation frame. Without this
-    // coalesce, each mutation triggers a full-document querySelectorAll.
-    var pending = false;
-    function scheduleRewrite() {
-        if (pending) return;
-        pending = true;
-        requestAnimationFrame(function() {
-            pending = false;
-            rewriteLabels();
-        });
+    var LABEL_SELECTOR = '.mantine-Slider-label, [class*="Slider-label"]';
+
+    function rewriteLabels() {
+        var labels = document.querySelectorAll(LABEL_SELECTOR);
+        for (var i = 0; i < labels.length; i++) rewriteLabel(labels[i]);
     }
 
-    var observer = new MutationObserver(scheduleRewrite);
+    // Synchronous, scoped rewrite directly inside the MutationObserver
+    // callback (no rAF coalesce). MutationObserver callbacks run as
+    // microtasks, which drain before the next browser paint — so the
+    // raw integer never gets a chance to render. We narrow the work by
+    // only inspecting labels actually involved in this mutation batch
+    // (added nodes, or characterData updates whose parent is a label),
+    // not the full document.
+    var observer = new MutationObserver(function(mutations) {
+        for (var mi = 0; mi < mutations.length; mi++) {
+            var m = mutations[mi];
+            if (m.type === "childList") {
+                for (var ai = 0; ai < m.addedNodes.length; ai++) {
+                    var node = m.addedNodes[ai];
+                    if (!node || node.nodeType !== 1) continue;
+                    if (node.matches && node.matches(LABEL_SELECTOR)) {
+                        rewriteLabel(node);
+                    }
+                    if (node.querySelectorAll) {
+                        var inner = node.querySelectorAll(LABEL_SELECTOR);
+                        for (var ii = 0; ii < inner.length; ii++) rewriteLabel(inner[ii]);
+                    }
+                }
+            } else if (m.type === "characterData") {
+                // Slider drags update label textContent in place — caught
+                // here. Our own rewrites also fire characterData, but
+                // rewriteLabel skips non-numeric content so it no-ops.
+                var parent = m.target && m.target.parentElement;
+                if (parent && parent.matches && parent.matches(LABEL_SELECTOR)) {
+                    rewriteLabel(parent);
+                }
+            }
+        }
+    });
 
     function startObserver() {
-        // childList only — characterData fires on our own textContent writes
-        // and isn't needed (new labels arrive as new nodes, not as text edits
-        // to existing ones).
-        observer.observe(document.body, {childList: true, subtree: true});
+        // childList for label appearance, characterData for in-place text
+        // updates during slider drags (DMC rewrites the same label node).
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true,
+            characterData: true
+        });
         rewriteLabels();
     }
     if (document.readyState === "loading") {
@@ -94,7 +117,7 @@
     }
     // Safety-net poll for timing races when assets load after
     // DOMContentLoaded. 1s is plenty — the observer catches real changes.
-    setInterval(scheduleRewrite, 1000);
+    setInterval(rewriteLabels, 1000);
 
     function registerSlider(namespaceName, baseYear, sliderIds) {
         var fmtIdx = makeIdxFormatter(baseYear);

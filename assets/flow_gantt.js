@@ -58,8 +58,12 @@ function _flowGanttTheme() {
     // Metric colors get swapped to brighter variants in dark mode so text
     // annotations remain readable on dark backgrounds. Mirrors the map in
     // assets/02_theme.js.
+    // Must mirror METRIC_COLOR_LIGHT_TO_DARK in assets/02_theme.js. The
+    // global theme sweeper uses that map to swap baked-in trace/annotation
+    // colors on theme toggle — if our local variants drift, the sweeper
+    // can't reverse them and the colors get stuck on theme toggle.
     var METRIC_LIGHT_TO_DARK = {
-        "#7c2a83": "#E4A7EA",
+        "#7c2a83": "#CD8AD0",
         "#2196f3": "#64B5F6",
         "#f44336": "#EF9A9A",
         "#4caf50": "#81C784",
@@ -72,8 +76,10 @@ function _flowGanttTheme() {
         // Default Plotly font color (axis ticks, titles) — matches the
         // light/dark palette in assets/02_theme.js.
         plotText: isDark ? "#E6E7EC" : "#1A1A2E",
-        // Text colors for mid-gray labels (totals, sub-stats)
-        mutedText: isDark ? "#F3F4F6" : "#4B5563",
+        // Text colors for mid-gray labels (totals, sub-stats). Pure white in
+        // dark mode so the bottom-of-chart stat annotations read clearly
+        // against the dark Paper background.
+        mutedText: isDark ? "#FFFFFF" : "#4B5563",
         // Flow band (bezier connector between stages) — brighter in dark
         bandFillOpacity:   isDark ? 0.40 : 0.20,
         bandStrokeOpacity: isDark ? 0.60 : 0.35,
@@ -1799,6 +1805,13 @@ window.dash_clientside.flowGantt = {
         // Returns an array of traces. Splits into solid (mature) and dashed
         // (immature) segments when completion rate data is available.
         function buildTraces(tData, name, color, overrideStatFunc) {
+            // Line/area: remap brand colors to brighter dark-mode variants so
+            // the trace is legible on the dark Paper bg. Bars: keep the raw
+            // dark-purple — bars provide their own visual mass and the deeper
+            // shade reads better (and matches the dist chart histogram).
+            if (chartType !== "bar") {
+                color = _flowGanttTheme().remapColor(color);
+            }
             var sf = overrideStatFunc || statFunc;
             // When KM toggle is on, use kmMedians (filter out nulls at edges)
             var baseVals = (sf === "mean" && tData.means) ? tData.means : tData.medians;
@@ -2195,6 +2208,34 @@ window.dash_clientside.flowGantt = {
         return [{data: traces, layout: layout}, title];
     }
 };
+
+// ─── Theme observer ──────────────────────────────────────────────────────
+// The flow gantt SVG bakes theme-aware colors at render time (band fills,
+// stage labels, duration pill text). Without this observer, a pure
+// light↔dark toggle would leave stale colors until the next filter change.
+// On theme flip, re-fire the renderer with the cached __fgData on each
+// known flow-gantt container.
+(function() {
+    if (typeof MutationObserver !== "function") return;
+    // Only the workflow flow-gantt — medonc does its own post-render click
+    // handler patching that wouldn't be reapplied through renderFlowGantt.
+    var obs = new MutationObserver(function(muts) {
+        for (var i = 0; i < muts.length; i++) {
+            if (muts[i].attributeName !== "data-theme") continue;
+            var el = document.getElementById("wf-flow-gantt");
+            if (!el || !el.__fgData) return;
+            try {
+                window.dash_clientside.flowGantt.renderFlowGantt(
+                    el.__fgData, el.__fgLoopbacks,
+                    el.__fgDataB, el.__fgLoopbacksB,
+                    el.__fgCompare
+                );
+            } catch (e) { console.error("flow gantt theme re-render:", e); }
+            return;
+        }
+    });
+    obs.observe(document.documentElement, {attributes: true});
+})();
 
 // ─── Date Slider Helpers ─────────────────────────────────────────────────
 (function() {

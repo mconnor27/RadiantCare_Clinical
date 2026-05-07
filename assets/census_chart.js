@@ -57,6 +57,16 @@ window.dash_clientside.census = {
         }
 
         chartType = chartType || "area";
+        // Theme-aware palette so home trend cards (and any other consumer
+        // of smoothChartWithType) render with subtle gridlines and readable
+        // axis text in dark mode at first paint. Mirrors the same block in
+        // the cumulative renderer below.
+        var _isDarkSC = (typeof document !== 'undefined') &&
+            document.documentElement.getAttribute('data-theme') === 'dark';
+        var GRID_COL_SC  = _isDarkSC ? "#2D3039" : "#E5E7EB";
+        var FONT_COL_SC  = _isDarkSC ? "#E6E7EC" : "#374151";
+        var HOVER_BG_SC  = _isDarkSC ? "#25282F" : "white";
+        var HOVER_BRD_SC = _isDarkSC ? "#2D3039" : "#E5E7EB";
         var dates = rawData.dates;
         var futureDates = rawData.futureDates || [];
         var yTitle = rawData.yTitle || "Unique Patients";
@@ -473,7 +483,7 @@ window.dash_clientside.census = {
         var layout = {
             template: {},
             xaxis: {showgrid: false, showspikes: false, nticks: 12},
-            yaxis: {gridcolor: "#E5E7EB"},
+            yaxis: {gridcolor: GRID_COL_SC},
             showlegend: rawData.hideLegend ? false : true,
             legend: {
                 orientation: "h",
@@ -485,13 +495,13 @@ window.dash_clientside.census = {
             margin: {l: stacked ? 28 : 40, r: 8, t: rawData.hideLegend ? 4 : 8, b: 20},
             plot_bgcolor: "rgba(0,0,0,0)",
             paper_bgcolor: "rgba(0,0,0,0)",
-            font: {family: "Inter, system-ui, sans-serif", size: 12, color: "#374151"},
+            font: {family: "Inter, system-ui, sans-serif", size: 12, color: FONT_COL_SC},
             hovermode: chartType === "bar" ? "closest" : "x",
             hoverlabel: {
                 align: "left",
-                bgcolor: "white",
-                bordercolor: "#E5E7EB",
-                font: {color: "#374151", size: 12, family: "Inter, system-ui, sans-serif"}
+                bgcolor: HOVER_BG_SC,
+                bordercolor: HOVER_BRD_SC,
+                font: {color: FONT_COL_SC, size: 12, family: "Inter, system-ui, sans-serif"}
             }
         };
 
@@ -860,7 +870,7 @@ window.dash_clientside.census = {
      * spacing wraps at 4-5 entries. Only used by home — other pages keep the
      * standard entry width.
      */
-    _homeCompactLegend: function(fig) {
+    _homeCompactLegend: function(fig, chartId) {
         if (!fig || fig === window.dash_clientside.no_update) return fig;
         if (!fig.layout) fig.layout = {};
 
@@ -870,6 +880,9 @@ window.dash_clientside.census = {
         // Dept/MD (stacked) — a visible hop when toggling.
         var legendShown = fig.layout.showlegend !== false;
         if (!legendShown) {
+            // Total mode — no legend at all. Tear down any HTML legend left
+            // over from a prior sliced-mode render on this chart.
+            if (chartId) window.dash_clientside.census._removeHtmlLegend(chartId);
             // No legend → reclaim the top space. Plotly.react deep-merges
             // layout.legend across renders, so an `Object.assign({}, lg, {yref:
             // "container", y: 0.99, …})` from a prior sliced render sticks
@@ -905,84 +918,136 @@ window.dash_clientside.census = {
             return fig;
         }
 
-        var lg = fig.layout.legend || {};
-        fig.layout.legend = Object.assign({}, lg, {
-            orientation: "h",
-            // Anchor the legend to the container (fixed CSS height) rather
-            // than the plot area. This avoids the "legend jumps after first
-            // interaction" bug — plot-area coords depend on Plotly measuring
-            // the plot, which isn't finalized on the first render.
-            xanchor: "left", x: 0,
-            yref: "container", yanchor: "top", y: 0.99,
-            entrywidth: 0,
-            entrywidthmode: "pixels",
-            tracegroupgap: 0,
-            itemsizing: "constant",
-            indentation: 0,
-            itemwidth: 15
-        });
-        // Top margin holds the legend comfortably. 46px fits either a single
-        // row (18px) with breathing room or a wrapped 2-row legend (~36px
-        // tall) without clipping row 2 into the plot area.
-        fig.layout.margin = Object.assign({}, fig.layout.margin || {}, {t: 46, l: 36});
-        // Pair with the no-legend uirevision so Plotly re-lays out the plot
-        // area when the user toggles between Total and sliced modes.
-        fig.layout.uirevision = "home-legend";
+        // Sliced mode (Dept/MD) — Plotly's horizontal legend hardcodes a
+        // ~30px swatch column + ~10px inter-item padding that we can't shrink
+        // through layout config, so 5+ entries (e.g. 5 MD surnames) wrap to a
+        // second row in the narrow home card. Replace it with an HTML legend
+        // rendered above the plot, where we have full spacing control.
+        // Click on an item still toggles the corresponding Plotly trace.
+        fig.layout.showlegend = false;
+        // Top margin reserves vertical space for the HTML legend (~30px is
+        // enough for one row at this font size).
+        fig.layout.margin = Object.assign({}, fig.layout.margin || {}, {t: 32, l: 36});
+        fig.layout.uirevision = "home-htmllegend";
 
-        // Home-only: replace the line-segment legend swatch with a small square
-        // color chip. Plotly's built-in `itemwidth` is clamped to ~30px so the
-        // line swatch can't be shortened natively; instead, we hide each line
-        // trace from the legend and add a marker-only proxy trace (symbol:
-        // "square") that shows up as a compact colored square. The proxy shares
-        // `legendgroup` with the real trace so legend clicks still toggle
-        // visibility on the actual line. Bar traces already render a square
-        // swatch natively, so we skip them.
+        // Build legend item metadata from the real (non-projection) traces.
+        // Same filtering rules as before: skip projections (showlegend=false),
+        // skip nameless traces, require a string color.
+        var items = [];
         if (fig.data && fig.data.length) {
-            var proxies = [];
             for (var i = 0; i < fig.data.length; i++) {
                 var t = fig.data[i];
                 if (!t || !t.name) continue;
                 if (t.showlegend === false) continue;
-                if (t.type === "bar") continue;
-                var color = (t.line && t.line.color) ||
+                var color = null;
+                if (t.type === "bar") {
+                    color = t.marker && t.marker.color;
+                } else {
+                    color = (t.line && t.line.color) ||
                             (t.marker && t.marker.color);
-                if (typeof color !== "string") continue;  // skip per-point arrays
-                var group = t.legendgroup || t.name;
-                t.showlegend = false;
-                t.legendgroup = group;
-                // Shorten 4-digit year labels to 2-digit with apostrophe
-                // ("2026" → "'26") so more fit on one row. Leave non-year
-                // names (MD surnames, department names) unchanged.
+                }
+                if (typeof color !== "string") continue;
+                // Shorten 4-digit year labels ("2026" → "'26").
                 var displayName = t.name;
                 var yrMatch = String(displayName).match(/^(\d{4})$/);
                 if (yrMatch) displayName = "'" + yrMatch[1].slice(-2);
-                proxies.push({
-                    type: "scatter",
-                    mode: "markers",
-                    x: [null], y: [null],
+                items.push({
+                    index: i,
                     name: displayName,
-                    marker: {symbol: "square", size: 11, color: color,
-                             line: {width: 0}},
-                    showlegend: true,
-                    legendgroup: group,
-                    legendrank: t.legendrank,
-                    hoverinfo: "skip"
+                    color: color,
+                    visible: !(t.visible === "legendonly" || t.visible === false)
                 });
             }
-            if (proxies.length) fig.data = fig.data.concat(proxies);
+        }
+
+        // Attach the legend update as a post-render hook on the figure.
+        // chartDeferred drain() runs it via queueMicrotask immediately after
+        // Plotly.react completes, so chart + legend repaint together in the
+        // same browser frame (avoids a chart-then-legend double-flash).
+        if (chartId && items.length) {
+            fig._postRender = function () {
+                window.dash_clientside.census._injectHtmlLegend(chartId, items);
+            };
+        } else if (chartId) {
+            fig._postRender = function () {
+                window.dash_clientside.census._removeHtmlLegend(chartId);
+            };
         }
         return fig;
+    },
+
+    /**
+     * HTML legend renderer — replaces Plotly's native horizontal legend on
+     * home trend cards. Lazily creates a `.home-html-legend` div inside the
+     * dcc.Graph wrapper, populates it with one button per legend item, and
+     * delegates click events to Plotly.restyle for the underlying trace.
+     */
+    _injectHtmlLegend: function (chartId, items) {
+        var el = document.getElementById(chartId);
+        if (!el) return;
+        var pos = window.getComputedStyle(el).position;
+        if (pos === "static" || !pos) el.style.position = "relative";
+
+        var legend = el.querySelector(":scope > .home-html-legend");
+        if (!legend) {
+            legend = document.createElement("div");
+            legend.className = "home-html-legend";
+            el.appendChild(legend);
+            // One-time click delegation — toggles trace visibility via Plotly.
+            legend.addEventListener("click", function (ev) {
+                var btn = ev.target.closest(".hhl-item");
+                if (!btn) return;
+                var idx = parseInt(btn.dataset.traceIndex, 10);
+                if (isNaN(idx)) return;
+                var plotEl = el.querySelector(".js-plotly-plot");
+                if (!plotEl || !window.Plotly || !plotEl.data) return;
+                var trace = plotEl.data[idx];
+                if (!trace) return;
+                var newVis = (trace.visible === "legendonly") ? true : "legendonly";
+                window.Plotly.restyle(plotEl, {visible: newVis}, [idx]);
+                // restyle alone doesn't recompute axes — without this the y
+                // range stays pinned to the original (all-traces) max, leaving
+                // a tiny remaining bar floating at the bottom of an empty
+                // chart. Match Plotly's native legend behavior by re-firing
+                // y-axis autorange after every toggle.
+                window.Plotly.relayout(plotEl, {"yaxis.autorange": true});
+                btn.classList.toggle("hhl-hidden", newVis === "legendonly");
+            });
+        }
+        // Render items. textContent (via separate label spans) avoids any
+        // chance of HTML injection from trace names.
+        var html = items.map(function (it) {
+            return '<button type="button" class="hhl-item' +
+                   (it.visible ? '' : ' hhl-hidden') + '" ' +
+                   'data-trace-index="' + it.index + '">' +
+                   '<span class="hhl-swatch" style="background-color:' +
+                   it.color + '"></span>' +
+                   '<span class="hhl-label"></span>' +
+                   '</button>';
+        }).join("");
+        legend.innerHTML = html;
+        var labels = legend.querySelectorAll(".hhl-label");
+        for (var li = 0; li < items.length && li < labels.length; li++) {
+            labels[li].textContent = items[li].name;
+        }
+    },
+
+    _removeHtmlLegend: function (chartId) {
+        var el = document.getElementById(chartId);
+        if (!el) return;
+        var legend = el.querySelector(":scope > .home-html-legend");
+        if (legend) legend.remove();
     },
 
     /**
      * Home trend wrapper — runs the standard `smoothChartNoRange` and then
      * tightens the legend so 5-6 MDs (or other dimension values) fit on one row.
      */
-    homeTrend: function(rawData, smoothPct, chartType, stackOverride, currentFig) {
+    homeTrend: function(rawData, smoothPct, chartType, stackOverride, currentFig, chartId) {
         var fig = window.dash_clientside.census.smoothChartNoRange(
             rawData, smoothPct, chartType, stackOverride, currentFig
         );
-        fig = window.dash_clientside.census._homeCompactLegend(fig);
+        fig = window.dash_clientside.census._homeCompactLegend(fig, chartId);
 
         // Home-scoped x-axis override:
         //  - Line/area: Plotly's date axis auto-adds a "year" parent label
@@ -1054,7 +1119,10 @@ window.dash_clientside.census = {
             // the legend changes, producing visibly uneven plot heights in a
             // side-by-side row of home cards.
             fig.layout.xaxis.automargin = false;
-            fig.layout.margin = Object.assign({}, fig.layout.margin || {}, {b: 24});
+            // Bump right margin so the last tick label (e.g. "May 4") doesn't
+            // clip — the rightmost tick sits on the final data point and the
+            // default 8px right margin only fits ~3 chars past the plot edge.
+            fig.layout.margin = Object.assign({}, fig.layout.margin || {}, {b: 24, r: 20});
             if (chartType !== "bar") {
                 fig.layout.xaxis.type = "category";
                 fig.layout.xaxis.categoryorder = "array";
@@ -1498,16 +1566,40 @@ window.dash_clientside.efficiency = {
             }
         }
 
-        // 6. Post-process: replace per-trace hover with unified summary tooltip
+        // 6. Single combined hover tooltip with all visible machines'
+        //    values for the cursor's x. We do this with a hidden summary
+        //    trace whose y is set to the *max* of the post-smoothed
+        //    values shown on the chart at each x \u2014 so under hovermode:"x"
+        //    the tooltip box anchors right at the topmost visible line
+        //    (matches the rendered curve when smoothing is active, where
+        //    the raw max would float above the actual line).
         var monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
-        // Suppress hover on data traces
+        // Map trace name \u2192 { dateKey: smoothedY } (what's actually drawn).
+        // _buildWithRange already applied LOESS/rolling smoothing AND trimmed
+        // leading/trailing nulls on line/area traces, so fig.data[t].y is a
+        // shorter array than filtered.series[t].values \u2014 we can't index into
+        // it with the original date index `di`. Look up by date string
+        // instead so tooltip placement stays aligned with the visible curve.
+        var smoothedByName = {};
+        for (var t0 = 0; t0 < fig.data.length; t0++) {
+            var tr = fig.data[t0];
+            if (tr && tr.name && Array.isArray(tr.y) && Array.isArray(tr.x)) {
+                var byDate = {};
+                for (var xi = 0; xi < tr.x.length; xi++) {
+                    var dk = String(tr.x[xi]).split('T')[0];
+                    byDate[dk] = tr.y[xi];
+                }
+                smoothedByName[tr.name] = byDate;
+            }
+        }
+
+        // Suppress hover on data traces \u2014 only the summary contributes.
         for (var t = 0; t < fig.data.length; t++) {
             fig.data[t].hoverinfo = "skip";
             fig.data[t].hovertemplate = undefined;
         }
 
-        // Build summary hover entries per date
         var dates = filtered.dates || [];
         var summaryX = [];
         var summaryY = [];
@@ -1523,11 +1615,22 @@ window.dash_clientside.efficiency = {
             var maxVal = 0;
             for (var si = 0; si < filtered.series.length; si++) {
                 var s = filtered.series[si];
-                var val = s.values[di];
-                if (val === null || val === undefined) continue;
-                var displayVal = isPercent ? val.toFixed(1) + "%" : Math.round(val) + " min";
-                parts.push("<span style='color:" + s.color + "'>\u25A0</span> " + s.name + ": " + displayVal);
-                if (val > maxVal) maxVal = val;
+                var rawVal = s.values[di];                // raw \u2014 for display
+                if (rawVal === null || rawVal === undefined) continue;
+
+                var displayVal = isPercent ? rawVal.toFixed(1) + "%" : Math.round(rawVal) + " min";
+                parts.push("<span style='color:" + s.color + "'>\u25a0</span> " + s.name + ": " + displayVal);
+
+                // Anchor uses the smoothed value (the line's actual y on
+                // the chart), looked up by date so trimming/downsampling
+                // in the trace doesn't desynchronize the index.
+                var dateKey = String(dates[di]).split('T')[0];
+                var smMap = smoothedByName[s.name];
+                var smVal = smMap ? smMap[dateKey] : null;
+                var posVal = (smVal !== null && smVal !== undefined)
+                    ? smVal
+                    : rawVal;
+                if (posVal > maxVal) maxVal = posVal;
             }
             summaryX.push(dates[di]);
             summaryY.push(maxVal);
@@ -1542,8 +1645,16 @@ window.dash_clientside.efficiency = {
             mode: "lines",
             line: {color: "transparent", width: 0},
             hovertemplate: "%{customdata}<extra></extra>",
-            showlegend: false
+            showlegend: false,
+            hoverinfo: "text"
         });
+
+        // Combined tooltip mode (anchors to the closest visible trace \u2014
+        // here the summary trace at the topmost y), fires from anywhere
+        // over the chart instead of only when the cursor lands near a
+        // specific data point.
+        fig.layout.hovermode = "x";
+        fig.layout.hoverdistance = -1;
 
         return fig;
     },
@@ -1750,8 +1861,10 @@ window.dash_clientside.cumulative = {
             var current = rawData.current || {};
             var prior = rawData.prior || [];
 
-            // Limit prior periods to slider value
-            if (maxPrior && maxPrior > 0 && prior.length > maxPrior) {
+            // Limit prior periods to slider value. Use explicit null-check so
+            // maxPrior === 0 ("no priors") still trims; the old `&&` form
+            // short-circuited on 0 and rendered every available prior.
+            if (maxPrior != null && prior.length > maxPrior) {
                 prior = prior.slice(0, maxPrior);
             }
 
@@ -1762,9 +1875,10 @@ window.dash_clientside.cumulative = {
                 var bd = rawData.sliceBreakdown || {};
                 var periods = bd.periods || [];
                 var slices = bd.slices || [];
-                // Trim bar breakdown to maxPrior + 1 (current + N priors)
+                // Trim bar breakdown to maxPrior + 1 (current + N priors).
+                // Null-check so maxPrior === 0 trims to just the current bar.
                 // Periods are oldest-first, so keep the LAST maxBars entries (most recent)
-                var maxBars = (maxPrior && maxPrior > 0) ? maxPrior + 1 : periods.length;
+                var maxBars = (maxPrior != null) ? maxPrior + 1 : periods.length;
                 var trimStart = 0;
                 if (periods.length > maxBars) {
                     trimStart = periods.length - maxBars;
@@ -2156,8 +2270,9 @@ window.dash_clientside.cumulative = {
                 var bd = rawData.sliceBreakdown || {};
                 var periods = bd.periods || [];
                 var slices = bd.slices || [];
-                // Trim to maxPrior + 1 (current + N priors), keeping most recent
-                var maxBars2 = (maxPrior && maxPrior > 0) ? maxPrior + 1 : periods.length;
+                // Trim to maxPrior + 1 (current + N priors), keeping most recent.
+                // Null-check so maxPrior === 0 trims to just the current bar.
+                var maxBars2 = (maxPrior != null) ? maxPrior + 1 : periods.length;
                 if (periods.length > maxBars2) {
                     var trimStart2 = periods.length - maxBars2;
                     periods = periods.slice(trimStart2);
@@ -2405,9 +2520,9 @@ window.dash_clientside.cumulative = {
         // --- Prior-periods slider ---
         // If no full priors but a partial exists, allow 1 (the partial)
         var sliderMax = (maxAvail > 0) ? maxAvail : (hasPartial ? 1 : 1);
-        if (sliderMax > 10) sliderMax = 10;
+        if (sliderMax > 5) sliderMax = 5;
         var marks = [];
-        for (var i = 1; i <= sliderMax; i++) {
+        for (var i = 0; i <= sliderMax; i++) {
             marks.push({value: i, label: String(i)});
         }
 

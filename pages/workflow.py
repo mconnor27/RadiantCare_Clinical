@@ -2105,7 +2105,10 @@ def _update_wf_table_and_filters(*args):
     *_WF_FILTER_INPUTS,
     Input("wf-agg-toggle", "value"),
     Input("wf-table-filter-rows", "data"),
-    running=[(Output("wf-sankey-loading", "visible"), True, False)],
+    # Keep overlay visible after the server returns — the clientside SVG
+    # renderer below hides it once the chart is actually committed to DOM,
+    # so the user doesn't see a blank gap between server completion and render.
+    running=[(Output("wf-sankey-loading", "visible", allow_duplicate=True), True, True)],
 )
 def _update_wf_sankey(*args):
     ctx = _unpack_wf_filter_args(args)
@@ -2252,7 +2255,7 @@ def _update_wfb_filters(*args):
     Output("wf-b-store-sankey", "data"),
     *_WF_B_FILTER_INPUTS,
     Input(_id("wf-b", "agg-toggle"), "value"),
-    running=[(Output("wf-sankey-loading", "visible"), True, False)],
+    running=[(Output("wf-sankey-loading", "visible", allow_duplicate=True), True, True)],
 )
 def _update_wfb_sankey(*args):
     ctx = _unpack_wf_b_filter_args(args)
@@ -2315,15 +2318,27 @@ def _update_wfb_trend(*args):
 # Clientside callbacks for charts (compare-aware)
 # ---------------------------------------------------------------------------
 
-# Flow-Gantt — passes both A and B data + compare mode
+# Flow-Gantt — passes both A and B data + compare mode.
+# Wrapper hides the loading overlay only after the SVG is committed, so the
+# overlay covers both the server compute and the (sometimes 100s of ms) SVG
+# render. The renderer's return value is unused; we always pass no_update.
 clientside_callback(
-    ClientsideFunction(namespace="flowGantt", function_name="renderFlowGantt"),
+    """function(rawData, showLoopbacks, rawDataB, showLoopbacksB, compareMode) {
+        try {
+            window.dash_clientside.flowGantt.renderFlowGantt(
+                rawData, showLoopbacks, rawDataB, showLoopbacksB, compareMode
+            );
+        } catch (e) { console.error("renderFlowGantt error:", e); }
+        return [window.dash_clientside.no_update, false];
+    }""",
     Output("wf-flow-gantt-trigger", "data"),
+    Output("wf-sankey-loading", "visible", allow_duplicate=True),
     Input("wf-store-sankey", "data"),
     Input("wf-sankey-loopback-switch", "checked"),
     Input("wf-b-store-sankey", "data"),
     Input(_id("wf-b", "loopback-switch"), "checked"),
     Input("wf-compare-mode", "data"),
+    prevent_initial_call=True,
 )
 
 # Distribution chart — compare-aware

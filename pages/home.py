@@ -1891,7 +1891,9 @@ def _register_metric_callbacks(metric_id, row, is_cumulative):
         )
     else:
         clientside_callback(f"""function() {{
-        var fig = window.dash_clientside.census.homeTrend.apply(null, arguments);
+        var args = Array.prototype.slice.call(arguments);
+        args.push("{cid}");
+        var fig = window.dash_clientside.census.homeTrend.apply(null, args);
         return window.dash_clientside.chartDeferred.wrap("{cid}", fig);
     }}""",
             Output(cid, "figure"),

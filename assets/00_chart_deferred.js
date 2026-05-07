@@ -37,6 +37,53 @@
     var pending = {};      // chartId → figure (latest wins)
     var running = false;
 
+    /* ---- per-chart loading overlay ------------------------------------
+     * Plotly.react clears and redraws the canvas for figures whose trace
+     * count or axis range changed, briefly exposing an empty cartesian
+     * grid. We mask that moment with the same dot-loader visual the page
+     * shows on first load. Overlay is injected lazily, reused across
+     * updates, and removed shortly after Plotly.react completes.
+     */
+    var overlayHideTimers = {};
+
+    function ensureOverlay(el) {
+        var overlay = el.querySelector(":scope > .chart-loading-overlay");
+        if (overlay) return overlay;
+        // Force position so the absolute overlay anchors correctly.
+        var pos = window.getComputedStyle(el).position;
+        if (pos === "static" || !pos) el.style.position = "relative";
+        overlay = document.createElement("div");
+        overlay.className = "chart-loading-overlay";
+        overlay.innerHTML =
+            '<div class="chart-loading-dots" aria-hidden="true">' +
+            '<span></span><span></span><span></span></div>';
+        el.appendChild(overlay);
+        return overlay;
+    }
+
+    function showOverlay(chartId) {
+        var el = document.getElementById(chartId);
+        if (!el) return;
+        var overlay = ensureOverlay(el);
+        overlay.classList.add("visible");
+        if (overlayHideTimers[chartId]) {
+            clearTimeout(overlayHideTimers[chartId]);
+            delete overlayHideTimers[chartId];
+        }
+    }
+
+    function scheduleOverlayHide(chartId) {
+        if (overlayHideTimers[chartId]) clearTimeout(overlayHideTimers[chartId]);
+        overlayHideTimers[chartId] = setTimeout(function () {
+            var el = document.getElementById(chartId);
+            if (el) {
+                var overlay = el.querySelector(":scope > .chart-loading-overlay");
+                if (overlay) overlay.classList.remove("visible");
+            }
+            delete overlayHideTimers[chartId];
+        }, 120);  // keep visible briefly after react to absorb redraw flash
+    }
+
     function drain() {
         var ids = Object.keys(pending);
         if (ids.length === 0) { running = false; return; }
@@ -48,17 +95,28 @@
         var el = document.getElementById(id);
         if (el && typeof Plotly !== "undefined") {
             var plotEl = el.querySelector(".js-plotly-plot");
-            if (plotEl) {
+            // First render after the empty placeholder: use newPlot so the
+            // SVG is committed in one shot. Plotly.react would do an in-place
+            // update from 0 traces → N traces, which causes area fills
+            // (fill: "tozeroy") to animate up from the baseline.
+            var isPlaceholder = plotEl && plotEl.data && plotEl.data.length === 0;
+            if (plotEl && !isPlaceholder) {
                 Plotly.react(plotEl, fig.data, fig.layout, {displayModeBar: false});
             } else {
-                var target = el.querySelector(".dash-graph") || el;
+                var target = plotEl || el.querySelector(".dash-graph") || el;
                 Plotly.newPlot(target, fig.data, fig.layout, {displayModeBar: false, responsive: true});
             }
+            scheduleOverlayHide(id);
         }
         requestAnimationFrame(drain);
     }
 
     function enqueue(chartId, fig) {
+        // First render returns a placeholder via Dash; the global page-load
+        // overlay (or lack of prior plot) covers that. Only show our own
+        // overlay for subsequent updates, which is when the empty-grid
+        // flash actually occurs.
+        if (hasExistingPlot(chartId)) showOverlay(chartId);
         pending[chartId] = fig;
         if (!running) {
             running = true;

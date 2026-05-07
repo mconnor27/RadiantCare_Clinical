@@ -36,8 +36,13 @@
 
     // Metric colors that are too dark to read on dark bg when used as
     // annotation font colors. Bidirectional swap lets us restore on theme flip.
+    // Purple was previously '#E4A7EA' (pastel) — bumped to '#CD8AD0' so the
+    // brand purple is uniformly brighter across UI, charts, and annotations
+    // in dark mode (matches the bumped CSS --color-primary). The brighter
+    // dark-mode value is also used for trace line/marker/fill colors
+    // (see remapTraceColor below).
     var METRIC_COLOR_LIGHT_TO_DARK = {
-        '#7c2a83': '#E4A7EA',  // PRIMARY (purple)
+        '#7c2a83': '#CD8AD0',  // PRIMARY (purple)
         '#2196f3': '#64B5F6',  // blue
         '#f44336': '#EF9A9A',  // red
         '#4caf50': '#81C784',  // green
@@ -47,12 +52,89 @@
     Object.keys(METRIC_COLOR_LIGHT_TO_DARK).forEach(function(k) {
         METRIC_COLOR_DARK_TO_LIGHT[METRIC_COLOR_LIGHT_TO_DARK[k].toLowerCase()] = k;
     });
+    // Neutral muted-text annotation pair. Applied ONLY to annotation font
+    // colors (not to traces, hoverlabel borders, or other places where
+    // #4B5563 has independent meaning — e.g. p.hoverBord in dark mode).
+    // Lets chart annotations like "n=… Mean: …" appear pure white on the
+    // dark Paper background and mid-gray on light, with both directions
+    // round-tripping cleanly across theme toggles.
+    var ANNOTATION_NEUTRAL_LIGHT_TO_DARK = {'#4b5563': '#ffffff'};
+    var ANNOTATION_NEUTRAL_DARK_TO_LIGHT = {'#ffffff': '#4b5563'};
+    // RGB triplets of the source colors so we can remap rgba/rgb strings in
+    // trace fillcolors and gradient stops — those bake an alpha channel into
+    // the CSS-style color string and so don't match the hex map directly.
+    var METRIC_RGB = {
+        '124,42,131': {dark: '205,138,208', hex: '#7c2a83'},   // PRIMARY
+        '33,150,243': {dark: '100,181,246', hex: '#2196f3'},
+        '244,67,54':  {dark: '239,154,154', hex: '#f44336'},
+        '76,175,80':  {dark: '129,199,132', hex: '#4caf50'},
+        '255,152,0':  {dark: '255,183,77',  hex: '#ff9800'},
+    };
+    var METRIC_RGB_DARK_TO_LIGHT = {};
+    Object.keys(METRIC_RGB).forEach(function(rgb) {
+        METRIC_RGB_DARK_TO_LIGHT[METRIC_RGB[rgb].dark] = {light: rgb, hex: METRIC_RGB[rgb].hex};
+    });
     function remapAnnotationColor(color, theme) {
         if (!color) return null;
         var key = String(color).toLowerCase();
-        return theme === 'dark'
-            ? (METRIC_COLOR_LIGHT_TO_DARK[key] || null)
-            : (METRIC_COLOR_DARK_TO_LIGHT[key] || null);
+        if (theme === 'dark') {
+            return METRIC_COLOR_LIGHT_TO_DARK[key]
+                || ANNOTATION_NEUTRAL_LIGHT_TO_DARK[key]
+                || null;
+        }
+        return METRIC_COLOR_DARK_TO_LIGHT[key]
+            || ANNOTATION_NEUTRAL_DARK_TO_LIGHT[key]
+            || null;
+    }
+    // Remap a color value that may be either a single string or a per-point
+    // array (Plotly accepts both for marker.color, sankey link/node.color,
+    // marker.line.color, etc.). Returns the new value (string or array) if
+    // any element changed, null otherwise — callers do `if (r) x = r;`.
+    function remapTraceColorOrArray(value, theme) {
+        if (typeof value === 'string') {
+            return remapTraceColor(value, theme);
+        }
+        if (Array.isArray(value)) {
+            var changed = false;
+            var out = value.map(function(c) {
+                if (typeof c !== 'string') return c;
+                var r = remapTraceColor(c, theme);
+                if (r) { changed = true; return r; }
+                return c;
+            });
+            return changed ? out : null;
+        }
+        return null;
+    }
+
+    // Remap trace colors (line.color, marker.color, fillcolor, gradient
+    // stops). Accepts both hex (#7C2A83) and rgba/rgb strings — fill colors
+    // bake the swatch alpha into the string so we can't just hex-swap.
+    // Returns null when the color isn't one of our known brand colors.
+    function remapTraceColor(color, theme) {
+        if (!color || typeof color !== 'string') return null;
+        var hex = color.toLowerCase();
+        // Hex form
+        if (hex.charAt(0) === '#') {
+            return theme === 'dark'
+                ? (METRIC_COLOR_LIGHT_TO_DARK[hex] || null)
+                : (METRIC_COLOR_DARK_TO_LIGHT[hex] || null);
+        }
+        // rgba(r,g,b,a) / rgb(r,g,b) — extract triplet, swap, preserve alpha.
+        var m = color.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\s*\)$/i);
+        if (!m) return null;
+        var triplet = m[1] + ',' + m[2] + ',' + m[3];
+        var alpha = m[4];
+        var swap = null;
+        if (theme === 'dark' && METRIC_RGB[triplet]) {
+            swap = METRIC_RGB[triplet].dark;
+        } else if (theme === 'light' && METRIC_RGB_DARK_TO_LIGHT[triplet]) {
+            swap = METRIC_RGB_DARK_TO_LIGHT[triplet].light;
+        }
+        if (!swap) return null;
+        return alpha != null
+            ? 'rgba(' + swap + ', ' + alpha + ')'
+            : 'rgb(' + swap + ')';
     }
     function collectAnnotationUpdates(layout, theme) {
         var anns = (layout && layout.annotations) || [];
@@ -119,15 +201,124 @@
                 }
             });
 
-            // Remap any annotation font colors from our metric palette
-            // (e.g. PRIMARY #7C2A83 stays dark on dark bg — use brighter #B866BE).
+            // Remap any annotation font/bg/border colors from our metric
+            // palette (e.g. PRIMARY #7C2A83 stays dark on dark bg — use
+            // brighter dark-mode variant).
+            var theme = currentTheme();
             var anns = L.annotations || [];
             for (var i = 0; i < anns.length; i++) {
                 var ann = anns[i];
-                if (!ann || !ann.font || !ann.font.color) continue;
-                var remapped = remapAnnotationColor(ann.font.color, currentTheme());
-                if (remapped) ann.font.color = remapped;
+                if (!ann) continue;
+                if (ann.font && ann.font.color) {
+                    var fr = remapAnnotationColor(ann.font.color, theme);
+                    if (fr) ann.font.color = fr;
+                }
+                if (typeof ann.bgcolor === 'string') {
+                    var br = remapTraceColor(ann.bgcolor, theme);
+                    if (br) ann.bgcolor = br;
+                }
+                if (typeof ann.bordercolor === 'string') {
+                    var bdr = remapTraceColor(ann.bordercolor, theme);
+                    if (bdr) ann.bordercolor = bdr;
+                }
             }
+            // Layout shapes — reference lines, fill regions, etc. Many pages
+            // draw a brand-purple shape to indicate a benchmark or threshold.
+            // Skip the hours-calendar / ops-heatmap shapes whose colors are
+            // already managed by their own restyle helpers below.
+            var shapes = L.shapes || [];
+            for (var si = 0; si < shapes.length; si++) {
+                var sh = shapes[si];
+                if (!sh) continue;
+                if (sh.line && typeof sh.line.color === 'string') {
+                    var sr = remapTraceColor(sh.line.color, theme);
+                    if (sr) sh.line.color = sr;
+                }
+                if (typeof sh.fillcolor === 'string') {
+                    var sfr = remapTraceColor(sh.fillcolor, theme);
+                    if (sfr) sh.fillcolor = sfr;
+                }
+            }
+        }
+
+        // Walk a chart's traces and remap any of our brand colors (purple,
+        // blue, red, green, orange) to their theme-aware variants. Handles
+        // hex-string colors (line.color, marker.color) and rgba strings
+        // (fillcolor, fillgradient.colorscale entries) — fill colors bake an
+        // alpha into the string so a hex-only swap would miss them.
+        function applyThemeToTraces(data, theme) {
+            if (!Array.isArray(data)) return;
+            data.forEach(function(trace) {
+                if (!trace || typeof trace !== 'object') return;
+                // Bars/histograms keep their raw brand color in dark mode —
+                // the deep purple/red/etc. reads as a richer "filled" bar
+                // against the dark Paper bg, while the bumped pastel
+                // variants washed bars out and lost their brand association.
+                // Line/area still get remapped so the trace stays legible.
+                var isBar = trace.type === 'bar' || trace.type === 'histogram';
+                // Single-color props: line.color, fillcolor (always strings).
+                if (trace.line && typeof trace.line.color === 'string') {
+                    var r = remapTraceColor(trace.line.color, theme);
+                    if (r) trace.line.color = r;
+                }
+                if (typeof trace.fillcolor === 'string') {
+                    var r = remapTraceColor(trace.fillcolor, theme);
+                    if (r) trace.fillcolor = r;
+                }
+                // Marker color — string OR per-point array (e.g. one bar
+                // per dimension where each bar has its own brand color).
+                if (trace.marker && !isBar) {
+                    var mr = remapTraceColorOrArray(trace.marker.color, theme);
+                    if (mr) trace.marker.color = mr;
+                    if (trace.marker.line) {
+                        var mlr = remapTraceColorOrArray(trace.marker.line.color, theme);
+                        if (mlr) trace.marker.line.color = mlr;
+                    }
+                }
+                // Sankey link colors — almost always per-link arrays.
+                if (trace.link) {
+                    var lkr = remapTraceColorOrArray(trace.link.color, theme);
+                    if (lkr) trace.link.color = lkr;
+                    // Hover bg can be string or array
+                    var lhr = remapTraceColorOrArray(trace.link.hovercolor, theme);
+                    if (lhr) trace.link.hovercolor = lhr;
+                    if (trace.link.line) {
+                        var llr = remapTraceColorOrArray(trace.link.line.color, theme);
+                        if (llr) trace.link.line.color = llr;
+                    }
+                }
+                // Sankey node colors — also typically per-node arrays.
+                if (trace.node) {
+                    var ndr = remapTraceColorOrArray(trace.node.color, theme);
+                    if (ndr) trace.node.color = ndr;
+                    if (trace.node.line) {
+                        var nlr = remapTraceColorOrArray(trace.node.line.color, theme);
+                        if (nlr) trace.node.line.color = nlr;
+                    }
+                }
+                if (trace.fillgradient && Array.isArray(trace.fillgradient.colorscale)) {
+                    trace.fillgradient.colorscale.forEach(function(stop) {
+                        if (Array.isArray(stop) && typeof stop[1] === 'string') {
+                            var r = remapTraceColor(stop[1], theme);
+                            if (r) stop[1] = r;
+                        }
+                    });
+                }
+                if (trace.textfont && typeof trace.textfont.color === 'string') {
+                    var r = remapTraceColor(trace.textfont.color, theme);
+                    if (r) trace.textfont.color = r;
+                }
+                if (trace.hoverlabel) {
+                    if (typeof trace.hoverlabel.bgcolor === 'string') {
+                        var r = remapTraceColor(trace.hoverlabel.bgcolor, theme);
+                        if (r) trace.hoverlabel.bgcolor = r;
+                    }
+                    if (typeof trace.hoverlabel.bordercolor === 'string') {
+                        var r = remapTraceColor(trace.hoverlabel.bordercolor, theme);
+                        if (r) trace.hoverlabel.bordercolor = r;
+                    }
+                }
+            });
         }
 
         var charts = document.querySelectorAll('.js-plotly-plot');
@@ -138,6 +329,7 @@
                 // redundant redraws from the 2s interval sweeper).
                 if (el._rcThemeApplied === theme) return;
                 applyThemeToLayout(el.layout);
+                applyThemeToTraces(el.data, theme);
                 Plotly.redraw(el);
                 el._rcThemeApplied = theme;
             } catch(e) {}

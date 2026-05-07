@@ -74,11 +74,12 @@
     --text-muted: #8A8F9B;
     --text-faint: #5C6070;
 
-    /* Brand — lifted for contrast on dark */
-    --color-primary: #B866BE;
-    --color-primary-dark: #9B40A9;
-    --color-primary-hover: #C77ACC;
-    --color-primary-light: #D59ADB;
+    /* Brand — lifted for contrast on dark. Brightened a tier so the brand
+       purple stays legible against dark-card surfaces (lines, fonts, fills). */
+    --color-primary: #CD8AD0;
+    --color-primary-dark: #B866BE;
+    --color-primary-hover: #DDA8E1;
+    --color-primary-light: #E5BCE9;
     --color-primary-tint: #2A1B30;
 
     /* Shadows */
@@ -101,6 +102,22 @@
     --mantine-color-default-color:   var(--text-primary);
     --mantine-color-placeholder:     var(--text-muted);   /* bumped from faint — more visible */
     --mantine-color-anchor:          var(--color-primary-light);
+
+    /* DMC components (Slider track, default Buttons, focus rings, etc.)
+       resolve their primary color from the Mantine palette set in
+       config/settings.py (violet[6] = #7C2A83). That palette is baked
+       into MantineProvider at startup and doesn't follow data-theme.
+       Override the violet shade index used as primary, plus the derived
+       primary-color tokens, so DMC components inherit the brightened
+       dark-mode purple just like Plotly traces and CSS-styled elements. */
+    --mantine-color-violet-6:        var(--color-primary);
+    --mantine-color-violet-7:        var(--color-primary-dark);
+    --mantine-color-violet-5:        var(--color-primary-hover);
+    --mantine-color-violet-filled:        var(--color-primary);
+    --mantine-color-violet-filled-hover:  var(--color-primary-hover);
+    --mantine-primary-color-filled:       var(--color-primary);
+    --mantine-primary-color-filled-hover: var(--color-primary-hover);
+    --mantine-primary-color-contrast:     #FFFFFF;
 
     /* Grey scale used by many DMC surfaces. gray-0 is slightly lighter
        than card bg so SegmentedControl tracks and similar surfaces read
@@ -134,6 +151,19 @@
 [data-theme="dark"] .mantine-AppShell-navbar img[src*="radiantcare"],
 html[data-mobile-view="true"][data-theme="dark"] img[src*="radiantcare"] {
     filter: brightness(1.25) contrast(1.05) saturate(1.15);
+}
+
+/* Dark mode: Mantine's Slider sets --slider-color per-instance from the
+   primary palette baked into MantineProvider, so overriding palette tokens
+   alone doesn't reach the bar element. Directly repaint the filled track
+   and thumb border with the brightened brand purple. ID-scoped slider
+   rules below (date sliders, etc.) win on specificity and keep their own
+   styling. */
+[data-theme="dark"] .mantine-Slider-bar {
+    background-color: var(--color-primary);
+}
+[data-theme="dark"] .mantine-Slider-thumb {
+    border-color: var(--color-primary);
 }
 
 /* Dark mode: SegmentedControl needs explicit contrast because Mantine's
@@ -462,6 +492,93 @@ html[data-theme="dark"] .ag-theme-alpine-dark {
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(-4px); }
     to { opacity: 1; transform: translateY(0); }
+}
+
+/* --- home trend HTML legend ----------------------------------------------
+ * Replaces Plotly's horizontal legend on home trend cards (sliced Dept/MD
+ * mode) so we control inter-item spacing directly — Plotly's hardcoded
+ * ~30px swatch column + ~10px gap forced 5 MDs to wrap. Injected by
+ * `_injectHtmlLegend` in census_chart.js and pinned to the chart top.
+ * Plot top margin is reduced to 32px to make room. */
+.home-html-legend {
+    position: absolute;
+    top: 12px;           /* breathing room below the title/toggle row */
+    left: 36px;          /* match plot left margin so swatches line up */
+    right: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 10px;       /* row-gap, column-gap — column gap is the "between items" spacing */
+    z-index: 4;
+    pointer-events: auto;
+}
+.home-html-legend .hhl-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    color: var(--text-primary, #374151);
+    font-size: 12px;
+    font-family: inherit;
+    line-height: 1;
+}
+.home-html-legend .hhl-item:hover {
+    color: var(--color-primary, #7C2A83);
+}
+.home-html-legend .hhl-item.hhl-hidden {
+    opacity: 0.4;
+    text-decoration: line-through;
+}
+.home-html-legend .hhl-swatch {
+    display: inline-block;
+    width: 11px;
+    height: 11px;
+    border-radius: 2px;
+    flex-shrink: 0;
+}
+
+/* --- per-chart loading overlay -------------------------------------------
+ * Injected by 00_chart_deferred.js around each Plotly.react swap so the
+ * brief empty-grid frame Plotly draws between figures is masked behind
+ * the same dot-loader look the page shows on first load. The overlay
+ * sits inside the dcc.Graph wrapper (position: relative is forced if the
+ * wrapper is otherwise static). */
+.chart-loading-overlay {
+    position: absolute;
+    inset: 0;
+    background-color: var(--bg-card);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 5;
+    transition: opacity 0.12s ease-out;
+    border-radius: inherit;
+}
+.chart-loading-overlay.visible {
+    opacity: 0.92;
+}
+.chart-loading-dots {
+    display: flex;
+    gap: 6px;
+}
+.chart-loading-dots > span {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background-color: #7C2A83;
+    display: inline-block;
+    animation: chartLoadingDot 1s ease-in-out infinite;
+}
+.chart-loading-dots > span:nth-child(2) { animation-delay: 0.16s; }
+.chart-loading-dots > span:nth-child(3) { animation-delay: 0.32s; }
+@keyframes chartLoadingDot {
+    0%, 80%, 100% { opacity: 0.25; transform: scale(0.7); }
+    40%           { opacity: 1;    transform: scale(1); }
 }
 
 .chart-settings-panel--left {

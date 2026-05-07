@@ -1420,6 +1420,7 @@ def update_volume_smooth_slider(range_days, current_value):
     Output("ops-chart-heatmap", "figure"),
     *_OPS_FILTER_INPUTS,
     Input("ops-heatmap-scope", "value"),
+    Input("global-theme-store", "data"),
     running=[(Output("ops-chart-heatmap-loading", "visible"), True, False)],
 )
 def update_heatmap(*args):
@@ -1428,6 +1429,8 @@ def update_heatmap(*args):
 
     ctx = _unpack_ops_filter_args(args)
     scope = args[3]
+    theme = args[4] if len(args) > 4 else "light"
+    is_dark = (theme or "light") == "dark"
     departments = ctx["departments"]
     machines = ctx["machines"]
     consults_only = scope != "all"
@@ -1594,10 +1597,38 @@ def update_heatmap(*args):
             row_heights=[n_machines, max(n_exams, 1), n_sim],
         )
 
-        # Machines: purple heatmap
-        purple_cs = [[0, "#F3E8F5"], [1, "#7C2A83"]]
+        # Machines: purple heatmap. Theme-aware so the visual hierarchy
+        # reads "more = louder" in both modes:
+        #   light: near-white tint → deep brand purple (low cells recede).
+        #   dark : dim purple-charcoal → bright brand purple (low cells
+        #          blend with the dark card; high cells pop).
+        # Without this swap the light-mode scale leaves zero-value cells
+        # blazing white in dark mode while busy cells go dark and disappear.
+        if is_dark:
+            purple_cs = [[0, "#3A2540"], [1, "#CD8AD0"]]
+            high_text = "#1F1226"   # near-black-purple, readable on bright cells
+            low_text  = "#E5BCE9"   # bright tint, readable on dim cells
+            text_threshold = 0.65   # cells stay dark longer in this gradient
+        else:
+            purple_cs = [[0, "#F3E8F5"], [1, "#7C2A83"]]
+            high_text = "white"
+            low_text  = "#4A1F50"
+            text_threshold = 0.45
         machine_zmax = float(z_machines.max()) if z_machines.max() > 0 else 1
         text_machines = np.where(np.isnan(z_machines), "", z_machines.astype(int).astype(str))
+        # Per-cell text color array. Plotly.js accepts a 2D array for
+        # heatmap.textfont.color (one entry per cell), but Plotly Python's
+        # validator rejects arrays at trace-construction time. Workaround:
+        # build the trace with a single color so it validates, then patch
+        # the figure dict before returning so the array reaches the browser.
+        norm_machines = (
+            z_machines / machine_zmax if machine_zmax > 0 else z_machines * 0
+        )
+        # Light cells get dark text, darker cells stay light. NaN cells
+        # render no text so their color is moot.
+        machine_text_colors = np.where(
+            norm_machines >= text_threshold, high_text, low_text
+        ).tolist()
         hover_cd = np.tile(x_hover_labels, (n_machines, 1))
         fig.add_trace(go.Heatmap(
             z=z_machines,
@@ -1612,6 +1643,10 @@ def update_heatmap(*args):
             hovertemplate="<b>%{y}</b><br>%{customdata}: %{z:.0f} appts<extra></extra>",
             showscale=False,
         ), row=1, col=1)
+        # Track the machine trace index so the dict patch below knows which
+        # entry to mutate. It's the first trace added, but compute it
+        # explicitly in case the layout above changes.
+        machines_trace_idx = len(fig.data) - 1
 
         # Exams + Sims: green→red heatmap (% booked)
         avail_cs = [
@@ -1650,7 +1685,13 @@ def update_heatmap(*args):
             showscale=False,
         ), row=3, col=1)
 
-        # Day-of-week annotations below the bottom subplot
+        # Day-of-week annotations below the bottom subplot. Theme-aware
+        # font color so the letters (and the month/day labels above) stay
+        # legible in dark mode — the hardcoded light-mode greys (#6B7280
+        # / #9CA3AF) aren't in the theme sweeper's remap table, so they'd
+        # otherwise render as dim grey on the dark card.
+        day_label_color = "#C8CAD2" if is_dark else "#6B7280"
+        week_label_color = "#AAADB7" if is_dark else "#9CA3AF"
         annotations = []
         num_cols = len(x_day_labels)
         for i, day_label in enumerate(x_day_labels):
@@ -1662,7 +1703,7 @@ def update_heatmap(*args):
                 xref="x domain",
                 yref="paper",
                 showarrow=False,
-                font=dict(size=9, color="#6B7280"),
+                font=dict(size=9, color=day_label_color),
                 xanchor="center",
                 yanchor="top",
             ))
@@ -1678,7 +1719,7 @@ def update_heatmap(*args):
                     xref="x domain",
                     yref="paper",
                     showarrow=False,
-                    font=dict(size=9, color="#9CA3AF", weight="bold"),
+                    font=dict(size=9, color=week_label_color, weight="bold"),
                     xanchor="center",
                     yanchor="bottom",
                 ))
@@ -1738,7 +1779,17 @@ def update_heatmap(*args):
             if row_i > 1:
                 fig.update_xaxes(showticklabels=False, row=row_i, col=1)
 
-        return fig
+        # Patch per-cell text color into the machines heatmap. We do this on
+        # the dict (not the Figure) because Plotly Python's validator rejects
+        # arrays for heatmap.textfont.color even though Plotly.js accepts
+        # them. Returning a plain dict from the callback bypasses revalidation
+        # — Dash serializes it directly to the browser.
+        fig_dict = fig.to_dict()
+        try:
+            fig_dict["data"][machines_trace_idx]["textfont"]["color"] = machine_text_colors
+        except (KeyError, IndexError):
+            pass
+        return fig_dict
 
     except Exception:
         return empty_figure("Unable to load schedule data")
