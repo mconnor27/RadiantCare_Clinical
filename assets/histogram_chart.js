@@ -4,6 +4,16 @@
 
 window.dash_clientside = window.dash_clientside || {};
 
+function _histogramTheme() {
+    var isDark = document.documentElement.getAttribute("data-theme") === "dark";
+    return {
+        isDark: isDark,
+        font: isDark ? "#E6E7EC" : "#374151",
+        grid: isDark ? "#262932" : "#F0F0F0",
+        muted: isDark ? "#FFFFFF" : "#4B5563",
+    };
+}
+
 window.dash_clientside.histogram = {
 
     /**
@@ -85,23 +95,29 @@ window.dash_clientside.histogram = {
         var xSpan = xMax - xMin;
         var dtick = xSpan <= 15 ? 1 : (xSpan <= 30 ? 2 : undefined);
 
+        var theme = _histogramTheme();
+
         var layout = {
+            font: {color: theme.font},
             xaxis: {
                 showgrid: false, autorange: true,
                 dtick: dtick, tickangle: 0,
                 ticksuffix: stats.tickSuffix,
+                tickfont: {color: theme.font},
                 spikemode: "across", spikethickness: 1
             },
-            yaxis: {gridcolor: "#F0F0F0", gridwidth: 1},
+            yaxis: {
+                gridcolor: theme.grid, gridwidth: 1,
+                tickfont: {color: theme.font},
+            },
             paper_bgcolor: "rgba(0,0,0,0)",
             plot_bgcolor: "rgba(0,0,0,0)",
             margin: {l: 32, r: 12, t: 28, b: 34},
             barmode: "overlay",
-            height: 330,
             showlegend: sliced && series.length > 1,
             legend: {
                 orientation: "h", y: 1.02, x: 0, xanchor: "left", yanchor: "bottom",
-                font: {size: 11}, tracegroupgap: 0, itemwidth: 30
+                font: {size: 11, color: theme.font}, tracegroupgap: 0, itemwidth: 30
             },
             hovermode: "closest",
             shapes: [{
@@ -123,7 +139,7 @@ window.dash_clientside.histogram = {
                     xref: "paper", yref: "paper",
                     x: 0.5, y: 0, xanchor: "center", yanchor: "top",
                     yshift: -18, showarrow: false,
-                    font: {size: 12, color: "#9CA3AF"}
+                    font: {size: 12, color: theme.muted}
                 }
             ]
         };

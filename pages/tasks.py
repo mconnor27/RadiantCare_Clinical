@@ -857,10 +857,7 @@ layout = dmc.Stack(
                     "tasks-chart-histogram",
                     "Time Distribution",
                     settings_id="tasks-histogram",
-                    chart_types=[
-                        {"value": "histogram", "label": "Histogram"},
-                        {"value": "density", "label": "Density"},
-                    ],
+                    chart_types=[],
                     show_smooth=False,
                     paper_padding="md",
                     extra_controls_left=[
@@ -873,6 +870,17 @@ layout = dmc.Stack(
                                 {"value": "planner", "label": "Planner"},
                             ],
                             value="",
+                            size="xs",
+                        ),
+                    ],
+                    extra_controls=[
+                        dmc.SegmentedControl(
+                            id="tasks-histogram-settings-type",
+                            data=[
+                                {"value": "histogram", "label": "Histogram"},
+                                {"value": "density", "label": "Density"},
+                            ],
+                            value="histogram",
                             size="xs",
                         ),
                     ],
@@ -2691,8 +2699,7 @@ def _build_day_index_ticks(start_norm, n_days, max_ticks=12):
 # Clientside callbacks for charts with smoothing
 # ---------------------------------------------------------------------------
 clientside_callback("""function() {
-        var fig = window.dash_clientside.census.smoothChartWithType.apply(null, arguments);
-        return window.dash_clientside.chartDeferred.wrap("tasks-chart-volume", fig);
+        return window.dash_clientside.census.smoothChartWithType.apply(null, arguments);
     }""",
     Output("tasks-chart-volume", "figure"),
     Input("tasks-store-volume", "data"),
@@ -2704,7 +2711,7 @@ clientside_callback("""function() {
 
 clientside_callback("""function() {
         var fig = window.dash_clientside.cumulative.renderWithProjectToggle.apply(null, arguments);
-        return window.dash_clientside.chartDeferred.wrap("tasks-chart-cumulative", fig);
+        return window.dash_clientside.chartDeferred.wrap("tasks-chart-cumulative", fig, true);
     }""",
     Output("tasks-chart-cumulative", "figure"),
     Input("tasks-store-cumulative", "data"),
@@ -2719,8 +2726,7 @@ clientside_callback("""function() {
 )
 
 clientside_callback("""function() {
-        var fig = window.dash_clientside.census.smoothChartWithType.apply(null, arguments);
-        return window.dash_clientside.chartDeferred.wrap("tasks-chart-time-trend", fig);
+        return window.dash_clientside.census.smoothChartWithType.apply(null, arguments);
     }""",
     Output("tasks-chart-time-trend", "figure"),
     Input("tasks-store-time-trend", "data"),
@@ -2731,8 +2737,7 @@ clientside_callback("""function() {
 )
 
 clientside_callback("""function() {
-        var fig = window.dash_clientside.census.smoothChartWithType.apply(null, arguments);
-        return window.dash_clientside.chartDeferred.wrap("tasks-chart-sla", fig);
+        return window.dash_clientside.census.smoothChartWithType.apply(null, arguments);
     }""",
     Output("tasks-chart-sla", "figure"),
     Input("tasks-store-sla", "data"),
@@ -2742,18 +2747,25 @@ clientside_callback("""function() {
     prevent_initial_call=True,
 )
 
-# Show/hide cumulative sub-controls based on mode
+# Show/hide cumulative sub-controls based on mode + chart-type:
+#   bar           → hide mode toggle, show period-type + slice together
+#   prior + non-bar → show mode + period-type, hide slice
+#   slice + non-bar → show mode + slice, hide period-type
 clientside_callback(
-    """function(mode) {
-        var isSlice = mode === "slice";
-        return [
-            isSlice ? {"display": "flex"} : {"display": "none"},
-            isSlice ? {"display": "none"} : {"display": "flex"}
-        ];
+    """function(mode, chartType) {
+        if (chartType === "bar") {
+            return [{"display": "none"}, {}, {}];
+        }
+        if (mode === "prior") {
+            return [{}, {}, {"display": "none"}];
+        }
+        return [{}, {"display": "none"}, {}];
     }""",
-    Output("tasks-cumulative-slice", "style"),
+    Output("tasks-cumulative-mode", "style"),
     Output("tasks-cumulative-period-type", "style"),
+    Output("tasks-cumulative-slice", "style"),
     Input("tasks-cumulative-mode", "value"),
+    Input("tasks-cumulative-settings-type", "value"),
 )
 
 # Disable Calendar when period > 1 year; cap prior-periods slider to available data
@@ -2823,7 +2835,7 @@ for _kg in _KPI_GROUPS:
 # ---------------------------------------------------------------------------
 register_chart_callbacks([
     ("tasks-volume", "tasks-chart-volume"),
-    {"sid": "tasks-cumulative", "gid": "tasks-chart-cumulative", "show_grouping": False},
+    {"sid": "tasks-cumulative", "gid": "tasks-chart-cumulative", "store_id": "tasks-store-cumulative", "show_grouping": False},
     ("tasks-histogram", "tasks-chart-histogram"),
     ("tasks-time-compare", "tasks-chart-time-compare"),
     ("tasks-time-trend", "tasks-chart-time-trend"),
@@ -2847,7 +2859,7 @@ for _sid in ["tasks-volume-slice", "tasks-hist-slice", "tasks-time-compare-slice
 # Histogram: clientside rendering from store
 clientside_callback("""function() {
         var fig = window.dash_clientside.histogram.render.apply(null, arguments);
-        return window.dash_clientside.chartDeferred.wrap("tasks-chart-histogram", fig);
+        return window.dash_clientside.chartDeferred.wrap("tasks-chart-histogram", fig, true);
     }""",
     Output("tasks-chart-histogram", "figure"),
     Input("tasks-store-histogram", "data"),
@@ -2860,7 +2872,7 @@ clientside_callback("""function() {
 # Time comparison: clientside rendering from store
 clientside_callback("""function() {
         var fig = window.dash_clientside.timeCompare.render.apply(null, arguments);
-        return window.dash_clientside.chartDeferred.wrap("tasks-chart-time-compare", fig);
+        return window.dash_clientside.chartDeferred.wrap("tasks-chart-time-compare", fig, true);
     }""",
     Output("tasks-chart-time-compare", "figure"),
     Input("tasks-store-time-compare", "data"),

@@ -5,6 +5,16 @@
 
 window.dash_clientside = window.dash_clientside || {};
 
+function _timeCompareTheme() {
+    var isDark = document.documentElement.getAttribute("data-theme") === "dark";
+    return {
+        isDark: isDark,
+        font: isDark ? "#E6E7EC" : "#374151",
+        grid: isDark ? "#262932" : "#F0F0F0",
+        axisTitle: isDark ? "#FFFFFF" : "#9CA3AF",
+    };
+}
+
 window.dash_clientside.timeCompare = {
 
     /**
@@ -78,31 +88,36 @@ window.dash_clientside.timeCompare = {
             hoverlabel: {bgcolor: rowColors, font: {color: "white"}}
         });
 
-        // Dynamic height based on row count
-        var barHeight = nRows === 1 ? 80 : 38;
-        var chartHeight = Math.max(200, nRows * barHeight + 80);
+        // Single-row mode tightens bargap so a lone "All Tasks" pair doesn't
+        // stretch into one giant slab when the figure autosizes to fill the
+        // card. Multi-row uses the standard spacing.
+        var bargap = nRows === 1 ? 0.55 : 0.25;
+
+        var theme = _timeCompareTheme();
 
         var layout = {
+            font: {color: theme.font},
             xaxis: {
                 showgrid: true,
-                gridcolor: "#F0F0F0",
+                gridcolor: theme.grid,
                 gridwidth: 1,
                 zeroline: false,
                 ticksuffix: tickSuffix,
-                title: {text: "Median Time", font: {size: 11, color: "#9CA3AF"}}
+                tickfont: {color: theme.font},
+                title: {text: "Median Time", font: {size: 11, color: theme.axisTitle}}
             },
             yaxis: {
                 autorange: true,
                 showgrid: false,
-                automargin: true
+                automargin: true,
+                tickfont: {color: theme.font}
             },
             barmode: "group",
-            bargap: 0.25,
+            bargap: bargap,
             bargroupgap: 0.15,
             paper_bgcolor: "rgba(0,0,0,0)",
             plot_bgcolor: "rgba(0,0,0,0)",
             margin: {l: 10, r: 16, t: 28, b: 40},
-            height: chartHeight,
             showlegend: hasAnyAllowed,
             legend: {
                 orientation: "h",
@@ -110,7 +125,7 @@ window.dash_clientside.timeCompare = {
                 x: 0,
                 xanchor: "left",
                 yanchor: "bottom",
-                font: {size: 11},
+                font: {size: 11, color: theme.font},
                 tracegroupgap: 0,
                 itemwidth: 30
             },

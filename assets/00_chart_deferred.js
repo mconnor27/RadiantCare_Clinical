@@ -111,12 +111,14 @@
         requestAnimationFrame(drain);
     }
 
-    function enqueue(chartId, fig) {
+    function enqueue(chartId, fig, skipOverlay) {
         // First render returns a placeholder via Dash; the global page-load
         // overlay (or lack of prior plot) covers that. Only show our own
         // overlay for subsequent updates, which is when the empty-grid
         // flash actually occurs.
-        if (hasExistingPlot(chartId)) showOverlay(chartId);
+        // skipOverlay: pages whose chart card already shows a dmc.LoadingOverlay
+        // via `running=[...]` pass true to avoid a double-flash on update.
+        if (!skipOverlay && hasExistingPlot(chartId)) showOverlay(chartId);
         pending[chartId] = fig;
         if (!running) {
             running = true;
@@ -166,13 +168,13 @@
         return plotEl && plotEl.data && plotEl.data.length > 0;
     }
 
-    function scheduleRender(chartId, fig) {
+    function scheduleRender(chartId, fig, skipOverlay) {
         if (!fig || fig === NO) return;
         ensureObserved(chartId);
         if (isVisible[chartId] === false) {
             deferredFigs[chartId] = fig;
         } else {
-            enqueue(chartId, fig);
+            enqueue(chartId, fig, skipOverlay);
         }
     }
 
@@ -191,10 +193,10 @@
         };
     }
 
-    function wrapSingle(chartId, fig) {
+    function wrapSingle(chartId, fig, skipOverlay) {
         if (!fig || fig === NO) return NO;
         var isFirst = !hasExistingPlot(chartId);
-        scheduleRender(chartId, fig);
+        scheduleRender(chartId, fig, skipOverlay);
         return isFirst ? placeholder(fig) : NO;
     }
 
@@ -202,22 +204,25 @@
     window.dash_clientside.chartDeferred = {
 
         /**
-         * wrap(chartId, figureOrArray) — use at the tail end of any chart
-         * clientside callback that returns a Plotly figure (or an array of
-         * outputs whose first element is the figure).
+         * wrap(chartId, figureOrArray, skipOverlay) — use at the tail end of
+         * any chart clientside callback that returns a Plotly figure (or an
+         * array of outputs whose first element is the figure).
          *
          * Single output: wraps the figure, returns placeholder/no_update.
          * Multi-output: wraps element [0] (the figure), passes through the
          *   rest of the array unchanged.
+         * skipOverlay: pass true on charts whose container already shows a
+         *   dmc.LoadingOverlay via `running=[...]` — avoids the double-flash
+         *   from stacking the chart-deferred dot loader on top.
          */
-        wrap: function (chartId, figOrArr) {
+        wrap: function (chartId, figOrArr, skipOverlay) {
             if (Array.isArray(figOrArr)) {
                 // Multi-output callback — first element is the figure,
                 // subsequent elements are other props (titles, styles, etc.)
-                figOrArr[0] = wrapSingle(chartId, figOrArr[0]);
+                figOrArr[0] = wrapSingle(chartId, figOrArr[0], skipOverlay);
                 return figOrArr;
             }
-            return wrapSingle(chartId, figOrArr);
+            return wrapSingle(chartId, figOrArr, skipOverlay);
         },
 
         // Low-level helpers for pages that want to customize placeholder.

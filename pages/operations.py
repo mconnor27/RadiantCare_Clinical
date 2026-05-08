@@ -1363,8 +1363,7 @@ def update_volume_data(*args):
 
 # Clientside callback for volume chart smoothing with chart type and time window
 clientside_callback("""function() {
-        var fig = window.dash_clientside.census.smoothChartWithTypeAndRange.apply(null, arguments);
-        return window.dash_clientside.chartDeferred.wrap("ops-chart-volume", fig);
+        return window.dash_clientside.census.smoothChartWithTypeAndRange.apply(null, arguments);
     }""",
     Output("ops-chart-volume", "figure"),
     Input("ops-store-volume", "data"),

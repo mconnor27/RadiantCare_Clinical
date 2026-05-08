@@ -2038,7 +2038,7 @@ clientside_callback(
 
 clientside_callback("""function() {
         var fig = window.dash_clientside.cumulative.renderWithProjectToggle.apply(null, arguments);
-        return window.dash_clientside.chartDeferred.wrap("cv-chart-cumulative", fig);
+        return window.dash_clientside.chartDeferred.wrap("cv-chart-cumulative", fig, true);
     }""",
     Output("cv-chart-cumulative", "figure"),
     Input("cv-store-cumulative", "data"),

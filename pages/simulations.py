@@ -606,7 +606,7 @@ layout = dmc.Stack(
             dmc.GridCol(
                 chart_card(
                     "sim-chart-timing",
-                    "Timing Intervals",
+                    "",
                     settings_id="sim-timing",
                     chart_types=[
                         {"value": "line", "label": "Line"},
@@ -626,6 +626,7 @@ layout = dmc.Stack(
                             ],
                             value="lead_time",
                             size="xs",
+                            className="chart-title-toggle",
                         ),
                         dmc.SegmentedControl(
                             id="sim-timing-slice",
@@ -1875,9 +1876,9 @@ def _update_sim_diag_billing(*args):
 # Clientside callbacks for charts
 # ---------------------------------------------------------------------------
 
-clientside_callback("""function() {
-        var fig = window.dash_clientside.census.smoothChartWithType.apply(null, arguments);
-        return window.dash_clientside.chartDeferred.wrap("sim-chart-volume", fig);
+clientside_callback(
+    """function(rawData, smoothPct, chartType, currentFig) {
+        return window.dash_clientside.census.smoothChartWithType(rawData, smoothPct, chartType, currentFig);
     }""",
     Output("sim-chart-volume", "figure"),
     Input("sim-store-volume", "data"),
@@ -1887,9 +1888,9 @@ clientside_callback("""function() {
     prevent_initial_call=True,
 )
 
-clientside_callback("""function() {
-        var fig = window.dash_clientside.census.smoothChartWithType.apply(null, arguments);
-        return window.dash_clientside.chartDeferred.wrap("sim-chart-timing", fig);
+clientside_callback(
+    """function(rawData, smoothPct, chartType, currentFig) {
+        return window.dash_clientside.census.smoothChartWithType(rawData, smoothPct, chartType, currentFig);
     }""",
     Output("sim-chart-timing", "figure"),
     Input("sim-store-timing", "data"),
@@ -1899,9 +1900,9 @@ clientside_callback("""function() {
     prevent_initial_call=True,
 )
 
-clientside_callback("""function() {
-        var fig = window.dash_clientside.hoursRibbon.smoothChartWithType.apply(null, arguments);
-        return window.dash_clientside.chartDeferred.wrap("sim-chart-ribbon", fig);
+clientside_callback(
+    """function() {
+        return window.dash_clientside.hoursRibbon.smoothChartWithType.apply(null, arguments);
     }""",
     Output("sim-chart-ribbon", "figure"),
     Input("sim-store-ribbon", "data"),
@@ -1912,7 +1913,7 @@ clientside_callback("""function() {
 
 clientside_callback("""function() {
         var fig = window.dash_clientside.cumulative.renderWithProjectToggle.apply(null, arguments);
-        return window.dash_clientside.chartDeferred.wrap("sim-chart-cumulative", fig);
+        return window.dash_clientside.chartDeferred.wrap("sim-chart-cumulative", fig, true);
     }""",
     Output("sim-chart-cumulative", "figure"),
     Input("sim-store-cumulative", "data"),
@@ -1926,20 +1927,25 @@ clientside_callback("""function() {
     prevent_initial_call=True,
 )
 
-# Show/hide cumulative sub-controls based on mode:
-# Slice By → show slice selector, hide period-type
-# Prior Periods → hide slice selector, show period-type
+# Show/hide cumulative sub-controls based on mode + chart-type:
+#   bar           → hide mode toggle, show period-type + slice together
+#   prior + non-bar → show mode + period-type, hide slice
+#   slice + non-bar → show mode + slice, hide period-type
 clientside_callback(
-    """function(mode) {
-        var isSlice = mode === "slice";
-        return [
-            isSlice ? {"display": "flex"} : {"display": "none"},
-            isSlice ? {"display": "none"} : {"display": "flex"}
-        ];
+    """function(mode, chartType) {
+        if (chartType === "bar") {
+            return [{"display": "none"}, {}, {}];
+        }
+        if (mode === "prior") {
+            return [{}, {}, {"display": "none"}];
+        }
+        return [{}, {"display": "none"}, {}];
     }""",
-    Output("sim-cumulative-slice", "style"),
+    Output("sim-cumulative-mode", "style"),
     Output("sim-cumulative-period-type", "style"),
+    Output("sim-cumulative-slice", "style"),
     Input("sim-cumulative-mode", "value"),
+    Input("sim-cumulative-settings-type", "value"),
 )
 
 # Disable Calendar when period > 1 year; cap prior-periods slider to available data
@@ -1985,9 +1991,9 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
-clientside_callback("""function() {
-        var fig = window.dash_clientside.census.smoothChartWithType.apply(null, arguments);
-        return window.dash_clientside.chartDeferred.wrap("sim-chart-cancel-rate", fig);
+clientside_callback(
+    """function(rawData, smoothPct, chartType, currentFig) {
+        return window.dash_clientside.census.smoothChartWithType(rawData, smoothPct, chartType, currentFig);
     }""",
     Output("sim-chart-cancel-rate", "figure"),
     Input("sim-store-cancel", "data"),
@@ -2000,7 +2006,7 @@ clientside_callback("""function() {
 # Register chart_card settings callbacks
 register_chart_callbacks([
     ("sim-volume", "sim-chart-volume"),
-    {"sid": "sim-cumulative", "gid": "sim-chart-cumulative", "show_grouping": False},
+    {"sid": "sim-cumulative", "gid": "sim-chart-cumulative", "store_id": "sim-store-cumulative", "show_grouping": False},
     ("sim-timing", "sim-chart-timing"),
     ("sim-cancel", "sim-chart-cancel-rate"),
 ])

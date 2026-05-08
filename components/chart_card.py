@@ -65,9 +65,11 @@ def chart_card(
             chart_id="home-chart-physician", settings_id="home-md").
     """
     # --- Title row ---
-    left_children = [
-        dmc.Text(title, size="sm", fw=500, c=NEUTRAL["text_secondary"]),
-    ]
+    left_children = []
+    if title:
+        left_children.append(
+            dmc.Text(title, size="sm", fw=500, c=NEUTRAL["text_secondary"])
+        )
     if extra_controls_left:
         left_children.extend(extra_controls_left)
 
@@ -96,13 +98,18 @@ def chart_card(
             )
         )
 
+    if len(left_children) > 1:
+        left_slot = dmc.Group(gap="sm", align="center", children=left_children)
+    elif len(left_children) == 1:
+        left_slot = left_children[0]
+    else:
+        left_slot = None
+
     header = dmc.Group(
         justify="space-between",
         mb=8,
         children=[
-            dmc.Group(gap="sm", align="center", children=left_children)
-            if len(left_children) > 1
-            else left_children[0],
+            left_slot,
             dmc.Group(gap="xs", align="center", wrap="nowrap", children=right_children)
             if right_children
             else None,

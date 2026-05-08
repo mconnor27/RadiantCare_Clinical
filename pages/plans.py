@@ -873,7 +873,7 @@ layout = dmc.Stack(
 # ---------------------------------------------------------------------------
 register_chart_callbacks([
     ("plans-volume", "plans-chart-volume"),
-    {"sid": "plans-cumulative", "gid": "plans-chart-cumulative", "show_grouping": False},
+    {"sid": "plans-cumulative", "gid": "plans-chart-cumulative", "store_id": "plans-store-cumulative", "show_grouping": False},
     ("plans-session-trend", "plans-chart-session-trend"),
     {"sid": "plans-complexity", "gid": "plans-chart-complexity", "show_grouping": False},
     ("plans-technique-dist", "plans-chart-technique-dist"),
@@ -936,15 +936,26 @@ clientside_callback(
 
 
 # ---------------------------------------------------------------------------
-# Cumulative mode toggle — show/hide slice selector
+# Cumulative sub-controls based on mode + chart-type:
+#   bar           → hide mode toggle, show period-type + slice together
+#   prior + non-bar → show mode + period-type, hide slice
+#   slice + non-bar → show mode + slice, hide period-type
 # ---------------------------------------------------------------------------
 clientside_callback(
-    """function(mode) {
-        if (mode === "slice") return {};
-        return {display: "none"};
+    """function(mode, chartType) {
+        if (chartType === "bar") {
+            return [{"display": "none"}, {}, {}];
+        }
+        if (mode === "prior") {
+            return [{}, {}, {"display": "none"}];
+        }
+        return [{}, {"display": "none"}, {}];
     }""",
+    Output("plans-cumulative-mode", "style"),
+    Output("plans-cumulative-period-type", "style"),
     Output("plans-cumulative-slice", "style"),
     Input("plans-cumulative-mode", "value"),
+    Input("plans-cumulative-settings-type", "value"),
 )
 
 # Disable Calendar when period > 1 year; cap prior-periods slider to available data
@@ -3403,8 +3414,7 @@ def _update_plans_treatment_site(*args):
 # ---------------------------------------------------------------------------
 
 clientside_callback("""function() {
-        var fig = window.dash_clientside.census.smoothChartWithType.apply(null, arguments);
-        return window.dash_clientside.chartDeferred.wrap("plans-chart-volume", fig);
+        return window.dash_clientside.census.smoothChartWithType.apply(null, arguments);
     }""",
     Output("plans-chart-volume", "figure"),
     Input("plans-store-volume", "data"),
@@ -3417,7 +3427,7 @@ clientside_callback("""function() {
 # Cumulative: prior-periods slider moved from server to clientside input
 clientside_callback("""function() {
         var fig = window.dash_clientside.cumulative.renderWithProjectToggle.apply(null, arguments);
-        return window.dash_clientside.chartDeferred.wrap("plans-chart-cumulative", fig);
+        return window.dash_clientside.chartDeferred.wrap("plans-chart-cumulative", fig, true);
     }""",
     Output("plans-chart-cumulative", "figure"),
     Input("plans-store-cumulative", "data"),

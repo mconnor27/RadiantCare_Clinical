@@ -511,7 +511,7 @@ layout = dmc.Stack(
 # ---------------------------------------------------------------------------
 register_chart_callbacks([
     ("courses-volume", "courses-chart-volume"),
-    {"sid": "courses-cumulative", "gid": "courses-chart-cumulative", "show_grouping": False},
+    {"sid": "courses-cumulative", "gid": "courses-chart-cumulative", "store_id": "courses-store-cumulative", "show_grouping": False},
     ("courses-frac-trend", "courses-chart-frac-trend"),
     ("courses-complexity", "courses-chart-complexity"),
     ("courses-technique-dist", "courses-chart-technique-dist"),
@@ -587,15 +587,26 @@ clientside_callback(
 
 
 # ---------------------------------------------------------------------------
-# Cumulative mode toggle — show/hide slice selector
+# Cumulative sub-controls based on mode + chart-type:
+#   bar           → hide mode toggle, show period-type + slice together
+#   prior + non-bar → show mode + period-type, hide slice
+#   slice + non-bar → show mode + slice, hide period-type
 # ---------------------------------------------------------------------------
 clientside_callback(
-    """function(mode) {
-        if (mode === "slice") return {};
-        return {display: "none"};
+    """function(mode, chartType) {
+        if (chartType === "bar") {
+            return [{"display": "none"}, {}, {}];
+        }
+        if (mode === "prior") {
+            return [{}, {}, {"display": "none"}];
+        }
+        return [{}, {"display": "none"}, {}];
     }""",
+    Output("courses-cumulative-mode", "style"),
+    Output("courses-cumulative-period-type", "style"),
     Output("courses-cumulative-slice", "style"),
     Input("courses-cumulative-mode", "value"),
+    Input("courses-cumulative-settings-type", "value"),
 )
 
 # Disable Calendar when period > 1 year; cap prior-periods slider to available data
@@ -3664,8 +3675,7 @@ def _update_courses_cumulative(*args):
 
 clientside_callback(
     """function(rawData, smoothPct, chartType, stackVal, currentFig) {
-        var __fig = (window.dash_clientside.census.smoothChartWithType(rawData, smoothPct, chartType, currentFig, stackVal));
-        return window.dash_clientside.chartDeferred.wrap("courses-chart-volume", __fig);
+        return window.dash_clientside.census.smoothChartWithType(rawData, smoothPct, chartType, currentFig, stackVal);
     }""",
     Output("courses-chart-volume", "figure"),
     Input("courses-store-volume", "data"),
@@ -3678,7 +3688,7 @@ clientside_callback(
 
 clientside_callback("""function() {
         var fig = window.dash_clientside.cumulative.renderWithProjectToggle.apply(null, arguments);
-        return window.dash_clientside.chartDeferred.wrap("courses-chart-cumulative", fig);
+        return window.dash_clientside.chartDeferred.wrap("courses-chart-cumulative", fig, true);
     }""",
     Output("courses-chart-cumulative", "figure"),
     Input("courses-store-cumulative", "data"),

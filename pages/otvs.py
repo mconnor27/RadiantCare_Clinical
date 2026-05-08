@@ -1194,7 +1194,7 @@ clientside_callback(
 
 clientside_callback(f"""function() {{
         var fig = window.dash_clientside.cumulative.renderWithProjectToggle.apply(null, arguments);
-        return window.dash_clientside.chartDeferred.wrap("{PAGE_ID}-chart-cumulative", fig);
+        return window.dash_clientside.chartDeferred.wrap("{PAGE_ID}-chart-cumulative", fig, true);
     }}""",
     Output(f"{PAGE_ID}-chart-cumulative", "figure"),
     Input(f"{PAGE_ID}-store-cumulative", "data"),
@@ -1208,18 +1208,25 @@ clientside_callback(f"""function() {{
     prevent_initial_call=True,
 )
 
-# Show/hide cumulative sub-controls based on mode
+# Show/hide cumulative sub-controls based on mode + chart-type:
+#   bar           → hide mode toggle, show period-type + slice together
+#   prior + non-bar → show mode + period-type, hide slice
+#   slice + non-bar → show mode + slice, hide period-type
 clientside_callback(
-    """function(mode) {
-        var isSlice = mode === "slice";
-        return [
-            isSlice ? {"display": "flex"} : {"display": "none"},
-            isSlice ? {"display": "none"} : {"display": "flex"}
-        ];
+    """function(mode, chartType) {
+        if (chartType === "bar") {
+            return [{"display": "none"}, {}, {}];
+        }
+        if (mode === "prior") {
+            return [{}, {}, {"display": "none"}];
+        }
+        return [{}, {"display": "none"}, {}];
     }""",
-    Output(f"{PAGE_ID}-cumulative-slice", "style"),
+    Output(f"{PAGE_ID}-cumulative-mode", "style"),
     Output(f"{PAGE_ID}-cumulative-period-type", "style"),
+    Output(f"{PAGE_ID}-cumulative-slice", "style"),
     Input(f"{PAGE_ID}-cumulative-mode", "value"),
+    Input(f"{PAGE_ID}-cumulative-settings-type", "value"),
 )
 
 # Disable Calendar when period > 1 year; cap prior-periods slider to available data
@@ -1265,7 +1272,7 @@ clientside_callback(
 # Register chart_card settings callbacks
 register_chart_callbacks([
     (f"{PAGE_ID}-volume", f"{PAGE_ID}-chart-volume"),
-    {"sid": f"{PAGE_ID}-cumulative", "gid": f"{PAGE_ID}-chart-cumulative", "show_grouping": False},
+    {"sid": f"{PAGE_ID}-cumulative", "gid": f"{PAGE_ID}-chart-cumulative", "store_id": f"{PAGE_ID}-store-cumulative", "show_grouping": False},
     (f"{PAGE_ID}-coverage", f"{PAGE_ID}-chart-coverage"),
     (f"{PAGE_ID}-billing", f"{PAGE_ID}-chart-billing"),
 ])

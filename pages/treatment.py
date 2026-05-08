@@ -841,7 +841,7 @@ layout = dmc.Stack(
 # ---------------------------------------------------------------------------
 register_chart_callbacks([
     {"sid": "tx-elapsed", "gid": "tx-chart-elapsed", "show_smooth": False, "show_grouping": False},
-    {"sid": "tx-cumulative", "gid": "tx-chart-cumulative", "show_grouping": False},
+    {"sid": "tx-cumulative", "gid": "tx-chart-cumulative", "store_id": "tx-store-cumulative", "show_grouping": False},
     ("tx-volume", "tx-chart-volume", "tx-chart-volume-store"),
     ("tx-technique", "tx-chart-technique", "tx-chart-technique-store"),
     ("tx-fieldtype", "tx-chart-fieldtype", "tx-chart-fieldtype-store"),
@@ -2783,7 +2783,7 @@ clientside_callback(
 
 clientside_callback("""function() {
         var fig = window.dash_clientside.cumulative.renderWithProjectToggle.apply(null, arguments);
-        return window.dash_clientside.chartDeferred.wrap("tx-chart-cumulative", fig);
+        return window.dash_clientside.chartDeferred.wrap("tx-chart-cumulative", fig, true);
     }""",
     Output("tx-chart-cumulative", "figure"),
     Input("tx-store-cumulative", "data"),
@@ -2797,18 +2797,25 @@ clientside_callback("""function() {
     prevent_initial_call=True,
 )
 
-# Cumulative: show/hide slice selector vs period-type based on mode
+# Cumulative sub-controls based on mode + chart-type:
+#   bar           → hide mode toggle, show period-type + slice together
+#   prior + non-bar → show mode + period-type, hide slice
+#   slice + non-bar → show mode + slice, hide period-type
 clientside_callback(
-    """function(mode) {
-        var isSlice = mode === "slice";
-        return [
-            isSlice ? {"display": "flex"} : {"display": "none"},
-            isSlice ? {"display": "none"} : {"display": "flex"}
-        ];
+    """function(mode, chartType) {
+        if (chartType === "bar") {
+            return [{"display": "none"}, {}, {}];
+        }
+        if (mode === "prior") {
+            return [{}, {}, {"display": "none"}];
+        }
+        return [{}, {"display": "none"}, {}];
     }""",
-    Output("tx-cumulative-slice", "style"),
+    Output("tx-cumulative-mode", "style"),
     Output("tx-cumulative-period-type", "style"),
+    Output("tx-cumulative-slice", "style"),
     Input("tx-cumulative-mode", "value"),
+    Input("tx-cumulative-settings-type", "value"),
 )
 
 # Cumulative: cap prior-periods slider to available data

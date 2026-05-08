@@ -643,6 +643,55 @@ html[data-theme="dark"] .ag-theme-alpine-dark {
     box-shadow: var(--shadow-sm);
 }
 
+/* Chart-title toggle — strips the SegmentedControl track so the control
+   reads as a chart-card title. The native indicator is kept but softened
+   to a subtle purple wash, giving the active option a balanced pill that
+   wraps it fully (no one-sided underline). */
+.chart-title-toggle.mantine-SegmentedControl-root {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    padding: 0;
+    --sc-padding: 0;
+    min-height: 0;
+}
+
+.chart-title-toggle .mantine-SegmentedControl-indicator {
+    background: rgba(124, 42, 131, 0.10);
+    box-shadow: none;
+    border-radius: 6px;
+}
+
+.chart-title-toggle .mantine-SegmentedControl-control {
+    border-color: transparent !important;
+    background: transparent !important;
+}
+
+.chart-title-toggle .mantine-SegmentedControl-label {
+    color: var(--text-muted);
+    font-weight: 500;
+    font-size: 14px;
+    padding: 3px 12px;
+    transition: color 0.15s ease;
+    cursor: pointer;
+}
+
+.chart-title-toggle .mantine-SegmentedControl-label:hover {
+    background: transparent;
+    color: var(--text-primary);
+}
+
+.chart-title-toggle .mantine-SegmentedControl-input:checked + .mantine-SegmentedControl-label,
+.chart-title-toggle .mantine-SegmentedControl-label[data-active] {
+    color: var(--text-primary);
+    font-weight: 600;
+    cursor: default;
+}
+
+[data-theme="dark"] .chart-title-toggle .mantine-SegmentedControl-indicator {
+    background: rgba(168, 85, 247, 0.18);
+}
+
 /* Compact KPI-card toggle (smaller than xs) */
 #home-sims-scope.mantine-SegmentedControl-root {
     --sc-font-size: 10px;

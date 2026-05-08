@@ -2702,6 +2702,8 @@ def _prepare_ref_cumulative_data(df_all, start, end, mode="prior",
         sub = df.loc[mask]
         if sub.empty:
             return {}
+        if sb == "total":
+            return {"Total": len(sub)}
         if sb == "department" and "Referred by Department" in sub.columns:
             return sub.groupby("Referred by Department").size().to_dict()
         elif sb == "institution" and "DoctorInstitution" in sub.columns:
@@ -4343,7 +4345,7 @@ clientside_callback(
 
 clientside_callback(f"""function() {{
         var fig = window.dash_clientside.cumulative.renderWithProjectToggle.apply(null, arguments);
-        return window.dash_clientside.chartDeferred.wrap("{PAGE_ID}-chart-cumulative", fig);
+        return window.dash_clientside.chartDeferred.wrap("{PAGE_ID}-chart-cumulative", fig, true);
     }}""",
     Output(f"{PAGE_ID}-chart-cumulative", "figure"),
     Input(f"{PAGE_ID}-store-cumulative", "data"),
@@ -4356,21 +4358,69 @@ clientside_callback(f"""function() {{
     prevent_initial_call=True,
 )
 
-# Toggle cumulative slice selector and stack visibility based on mode
+# Cumulative sub-controls based on mode + chart-type:
+#   bar           → hide mode toggle, show period-type + slice together
+#   prior + non-bar → show mode + period-type, hide slice
+#   slice + non-bar → show mode + slice, hide period-type
+clientside_callback(
+    """function(mode, chartType) {
+        if (chartType === "bar") {
+            return [{"display": "none"}, {}, {}];
+        }
+        if (mode === "prior") {
+            return [{}, {}, {"display": "none"}];
+        }
+        return [{}, {"display": "none"}, {}];
+    }""",
+    Output(f"{PAGE_ID}-cumulative-mode", "style"),
+    Output(f"{PAGE_ID}-cumulative-period-type", "style"),
+    Output(f"{PAGE_ID}-cumulative-slice", "style"),
+    Input(f"{PAGE_ID}-cumulative-mode", "value"),
+    Input(f"{PAGE_ID}-cumulative-settings-type", "value"),
+)
+
+# Cumulative chart: hide grouping in single-dim, line, or non-bar prior mode
 clientside_callback(
     """function(mode, sliceVal, chartType) {
-        var showSlice = mode === "slice" ? {} : {"display": "none"};
-        var showStack = (mode === "slice" && chartType !== "line") || (mode === "prior" && chartType === "bar")
-            ? {} : {"display": "none"};
-        var newSlice = window.dash_clientside.no_update;
-        return [showSlice, showStack, newSlice];
+        var single = !sliceVal || sliceVal === "total" || sliceVal === "";
+        if (single) return {"display": "none"};
+        if (chartType === "bar") return {};
+        var isPrior = mode === "prior";
+        var noStack = chartType === "line";
+        return (isPrior || noStack) ? {"display": "none"} : {};
     }""",
-    Output(f"{PAGE_ID}-cumulative-slice", "style"),
     Output(f"{PAGE_ID}-cumulative-settings-stack-wrap", "style"),
-    Output(f"{PAGE_ID}-cumulative-slice", "value"),
     Input(f"{PAGE_ID}-cumulative-mode", "value"),
     Input(f"{PAGE_ID}-cumulative-slice", "value"),
     Input(f"{PAGE_ID}-cumulative-settings-type", "value"),
+)
+
+# Hide "Total" slice option in line/area mode (only useful for bar)
+_REF_CUMUL_SLICE_ALL = [
+    {"value": "total", "label": "Total"},
+    {"value": "department", "label": "Ref Dept"},
+    {"value": "institution", "label": "Institution"},
+    {"value": "specialty", "label": "Specialty"},
+    {"value": "diagnosis", "label": "Dx"},
+    {"value": "site", "label": "Site"},
+]
+_REF_CUMUL_SLICE_NO_TOTAL = [o for o in _REF_CUMUL_SLICE_ALL if o["value"] != "total"]
+
+clientside_callback(
+    """function(chartType, sliceVal) {
+        var all = %s;
+        var noTotal = %s;
+        if (chartType === "bar") {
+            return [all, window.dash_clientside.no_update];
+        }
+        var newVal = (sliceVal === "total") ? "department" : window.dash_clientside.no_update;
+        return [noTotal, newVal];
+    }""" % (str(_REF_CUMUL_SLICE_ALL).replace("'", '"'), str(_REF_CUMUL_SLICE_NO_TOTAL).replace("'", '"')),
+    Output(f"{PAGE_ID}-cumulative-slice", "data"),
+    Output(f"{PAGE_ID}-cumulative-slice", "value", allow_duplicate=True),
+    Input(f"{PAGE_ID}-cumulative-settings-type", "value"),
+    State(f"{PAGE_ID}-cumulative-slice", "value"),
+    prevent_initial_call=True,
 )
 
 
