@@ -20,12 +20,19 @@ window.dash_clientside.hoursRibbon = {
      * @param {string} chartType - "ribbon" (band), "line", or "bar"
      */
     smoothChartWithType: function(rawData, smoothVal, chartType) {
-        if (!rawData || !rawData.pastSeries) {
-            // Return empty figure with stable layout to prevent container collapse
+        // Treat both null/undefined and "valid shape but empty arrays" as no
+        // data. The latter happens during rapid filter toggles when an
+        // intermediate render races through with empty dates, and would
+        // otherwise pin a 1970-epoch x-axis range via uirevision.
+        var hasData = rawData && rawData.pastSeries && rawData.pastSeries.some(function(s) {
+            return s && s.dates && s.dates.length > 0;
+        });
+        if (!hasData) {
+            // No uirevision here — pinning state from an empty render would
+            // bleed into the next data render and override its auto-range.
             return {
                 data: [],
                 layout: {
-                    uirevision: "hours-timeseries",
                     plot_bgcolor: "rgba(0,0,0,0)",
                     paper_bgcolor: "rgba(0,0,0,0)",
                     margin: {l: 36, r: 8, t: 8, b: 32, pad: 0},
@@ -523,6 +530,12 @@ window.dash_clientside.hoursRibbon = {
             side: "bottom",
             showgrid: false,
             automargin: true,
+            // visible:true + autorange:true defeats stale state that
+            // uirevision may have pinned from a previous render — e.g. an
+            // intermediate empty-trace render that auto-ranged to epoch, or
+            // an axis hidden by the no-data layout.
+            visible: true,
+            autorange: true,
             tickfont: {color: _tickFont},
             ticklabelposition: "outside bottom",
             tickmode: "auto"

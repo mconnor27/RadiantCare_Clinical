@@ -2845,6 +2845,9 @@ def _prepare_ribbon_data(df):
         latest_end=("EndHour", "max"),
     ).reset_index().sort_values("Date")
 
+    if daily.empty:
+        return None
+
     # Clamp values to the display range
     daily["earliest_start"] = daily["earliest_start"].clip(lower=6, upper=20)
     daily["latest_end"] = daily["latest_end"].clip(lower=6, upper=20)
