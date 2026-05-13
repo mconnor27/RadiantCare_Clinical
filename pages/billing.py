@@ -1918,13 +1918,6 @@ layout = dmc.Stack(
                 dmc.GridCol(
                     dmc.Paper(
                         children=[
-                            dmc.LoadingOverlay(
-                                id=f"{PAGE_ID}-chart-payor-comparison-loading",
-                                visible=False,
-                                loaderProps={"type": "dots", "color": PRIMARY},
-                                overlayProps={"radius": "sm", "blur": 2},
-                                zIndex=10,
-                            ),
                             dmc.Group(
                                 justify="space-between", mb=8,
                                 children=[
@@ -1991,6 +1984,13 @@ layout = dmc.Stack(
                                         style={"position": "absolute", "top": 0, "left": 0,
                                                "right": 0, "bottom": 0},
                                         children=[
+                                            dmc.LoadingOverlay(
+                                                id=f"{PAGE_ID}-chart-payor-comparison-loading",
+                                                visible=False,
+                                                loaderProps={"type": "dots", "color": PRIMARY},
+                                                overlayProps={"radius": "sm", "blur": 2},
+                                                zIndex=10,
+                                            ),
                                             dcc.Graph(
                                                 id=f"{PAGE_ID}-chart-payor-comparison",
                                                 config={"displayModeBar": False},
@@ -4314,7 +4314,7 @@ clientside_callback(
 # Payor trend ridgeline (reuse diagRidge JS renderer)
 clientside_callback(f"""function() {{
         var fig = window.dash_clientside.diagRidge.renderTrend.apply(null, arguments);
-        return window.dash_clientside.chartDeferred.wrap("{PAGE_ID}-chart-payor-trend", fig);
+        return window.dash_clientside.chartDeferred.wrap("{PAGE_ID}-chart-payor-trend", fig, true);
     }}""",
     Output(f"{PAGE_ID}-chart-payor-trend", "figure"),
     Input(f"{PAGE_ID}-chart-payor-trend-store", "data"),

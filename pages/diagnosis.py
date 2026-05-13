@@ -1620,7 +1620,7 @@ clientside_callback(
 # ---------------------------------------------------------------------------
 clientside_callback("""function() {
         var fig = window.dash_clientside.diagRidge.renderTrend.apply(null, arguments);
-        return window.dash_clientside.chartDeferred.wrap("diag-chart-trend", fig);
+        return window.dash_clientside.chartDeferred.wrap("diag-chart-trend", fig, true);
     }""",
     Output("diag-chart-trend", "figure"),
     Input("diag-chart-trend-store", "data"),

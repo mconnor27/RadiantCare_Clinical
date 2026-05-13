@@ -1475,6 +1475,7 @@ def _dedup_rapid_images(df):
     return pd.concat([tx, deduped], ignore_index=True)
 
 
+@_ttl_cache()
 def load_downtime_fields_imaging():
     """Load imaging and treatment records from Machine Downtime - Fields.
 

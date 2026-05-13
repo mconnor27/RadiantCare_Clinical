@@ -1817,8 +1817,26 @@ _register_export_callbacks()
 
 # Trend chart: store + smoothing + chart type → figure
 clientside_callback(f"""function() {{
-        var fig = window.dash_clientside.census.smoothChartWithType.apply(null, arguments);
-        return window.dash_clientside.chartDeferred.wrap("{PAGE_ID}-chart-trend", fig);
+        var args = Array.prototype.slice.call(arguments);
+        var rawData = args[0];
+        var ct = args[2] || "line";
+        var isDark = document.documentElement.getAttribute("data-theme") === "dark";
+        // PRIMARY violet (#7C2A83) is too dark for line/area on the dark
+        // paper background — swap to violet[3] (#C186C9) for any non-bar
+        // chart type in dark mode. Bars stay PRIMARY (filled area is fine).
+        if (isDark && ct !== "bar" && rawData && rawData.series) {{
+            rawData = Object.assign({{}}, rawData, {{
+                series: rawData.series.map(function(s) {{
+                    if (s.color && s.color.toUpperCase() === "#7C2A83") {{
+                        return Object.assign({{}}, s, {{color: "#C186C9"}});
+                    }}
+                    return s;
+                }})
+            }});
+            args[0] = rawData;
+        }}
+        var fig = window.dash_clientside.census.smoothChartWithType.apply(null, args);
+        return window.dash_clientside.chartDeferred.wrap("{PAGE_ID}-chart-trend", fig, true);
     }}""",
     Output(f"{PAGE_ID}-chart-trend", "figure"),
     Input(f"{PAGE_ID}-store-trend", "data"),
@@ -1830,8 +1848,31 @@ clientside_callback(f"""function() {{
 
 # Cumulative chart: store + smoothing + chart type + stack + prior periods → figure
 clientside_callback(f"""function() {{
-        var fig = window.dash_clientside.cumulative.renderWithProjectToggle.apply(null, arguments);
-        return window.dash_clientside.chartDeferred.wrap("{PAGE_ID}-chart-cumul", fig);
+        var args = Array.prototype.slice.call(arguments);
+        var rawData = args[0];
+        var ct = args[2] || "line";
+        var isDark = document.documentElement.getAttribute("data-theme") === "dark";
+        // Same dark-mode purple swap: applies to the current-period line and
+        // any sliced series whose color ended up as PRIMARY (#7C2A83) via
+        // the chart colorway. Bars keep PRIMARY since the filled area gives
+        // plenty of contrast.
+        if (isDark && ct !== "bar" && rawData) {{
+            var newData = Object.assign({{}}, rawData);
+            if (newData.current && newData.current.color && newData.current.color.toUpperCase() === "#7C2A83") {{
+                newData.current = Object.assign({{}}, newData.current, {{color: "#C186C9"}});
+            }}
+            if (newData.series && Array.isArray(newData.series)) {{
+                newData.series = newData.series.map(function(s) {{
+                    if (s.color && s.color.toUpperCase() === "#7C2A83") {{
+                        return Object.assign({{}}, s, {{color: "#C186C9"}});
+                    }}
+                    return s;
+                }});
+            }}
+            args[0] = newData;
+        }}
+        var fig = window.dash_clientside.cumulative.renderWithProjectToggle.apply(null, args);
+        return window.dash_clientside.chartDeferred.wrap("{PAGE_ID}-chart-cumul", fig, true);
     }}""",
     Output(f"{PAGE_ID}-chart-cumul", "figure"),
     Input(f"{PAGE_ID}-store-cumul", "data"),

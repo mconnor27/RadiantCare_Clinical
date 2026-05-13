@@ -25,7 +25,7 @@
                 raw, smoothPct, chartType, null, stackVal
             );
             if (fig && fig.layout && fig.layout.margin) fig.layout.margin.l = 36;
-            return window.dash_clientside.chartDeferred.wrap(chartId, fig);
+            return window.dash_clientside.chartDeferred.wrap(chartId, fig, true);
         },
 
         renderCum: function (chartId, rawData, smoothPct, chartType,
@@ -41,7 +41,7 @@
                 rawData, smoothPct, chartType, null, stackVal, maxPrior
             );
             if (fig && fig.layout && fig.layout.margin) fig.layout.margin.l = 36;
-            return window.dash_clientside.chartDeferred.wrap(chartId, fig);
+            return window.dash_clientside.chartDeferred.wrap(chartId, fig, true);
         }
     };
 })();

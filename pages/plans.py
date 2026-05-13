@@ -569,14 +569,26 @@ layout = dmc.Stack(
                                         ),
                                     ],
                                 ),
-                                dcc.Graph(
-                                    id="plans-chart-session-trend",
-                                    config={"displayModeBar": False},
+                                dmc.Box(
+                                    pos="relative",
                                     style={"flex": "1", "minHeight": 0},
+                                    children=[
+                                        dmc.Box(
+                                            style={"position": "absolute", "top": 0, "left": 0, "right": 0, "bottom": 0},
+                                            children=[
+                                                dcc.Graph(
+                                                    id="plans-chart-session-trend",
+                                                    config={"displayModeBar": False},
+                                                    responsive=True,
+                                                    style={"height": "100%", "width": "100%"},
+                                                ),
+                                            ],
+                                        )
+                                    ],
                                 ),
                             ],
                             p="sm", radius="md", shadow="xs", withBorder=True,
-                            style={"flex": "1 1 0", "display": "flex", "flexDirection": "column"},
+                            style={"flex": "1 1 0", "display": "flex", "flexDirection": "column", "minHeight": 0},
                         ),
                         # Bottom: Sessions Distribution (histogram/density)
                         dmc.Paper(
@@ -628,14 +640,26 @@ layout = dmc.Stack(
                                         ),
                                     ],
                                 ),
-                                dcc.Graph(
-                                    id="plans-chart-session-dist",
-                                    config={"displayModeBar": False},
+                                dmc.Box(
+                                    pos="relative",
                                     style={"flex": "1", "minHeight": 0},
+                                    children=[
+                                        dmc.Box(
+                                            style={"position": "absolute", "top": 0, "left": 0, "right": 0, "bottom": 0},
+                                            children=[
+                                                dcc.Graph(
+                                                    id="plans-chart-session-dist",
+                                                    config={"displayModeBar": False},
+                                                    responsive=True,
+                                                    style={"height": "100%", "width": "100%"},
+                                                ),
+                                            ],
+                                        )
+                                    ],
                                 ),
                             ],
                             p="sm", radius="md", shadow="xs", withBorder=True,
-                            style={"flex": "1 1 0", "display": "flex", "flexDirection": "column"},
+                            style={"flex": "1 1 0", "display": "flex", "flexDirection": "column", "minHeight": 0},
                         ),
                     ],
                 ),
@@ -741,6 +765,7 @@ layout = dmc.Stack(
                                     "plans-sites",
                                     chart_types=None,
                                     show_smooth=False,
+                                    show_grouping=False,
                                 ),
                             ],
                         ),
@@ -1917,8 +1942,11 @@ def _build_ridgeline_figure(data, bw_factor=0.5, mode="density", theme="light"):
             vertical_spacing=0.01,
         )
 
+        # `years` is sorted newest-first to match density mode's bottom-to-top
+        # baseline ordering. Subplot rows count top-down, so flip the row
+        # assignment to keep the newest year in the bottom row.
         for i, yr in enumerate(years):
-            row = i + 1
+            row = n_years - i
             vals = np.array(per_year[yr])
             counts, _ = np.histogram(vals, bins=bins)
             n_plans = len(vals)
@@ -1959,9 +1987,11 @@ def _build_ridgeline_figure(data, bw_factor=0.5, mode="density", theme="light"):
         )
         # Re-suppress y tick labels after apply_default_layout
         # and add horizontal year annotations
+        _year_label_color = "#E6E7EC" if _is_dark else "#6B7280"
         for i, yr in enumerate(years):
-            axis_name = f"yaxis{i + 1}" if i > 0 else "yaxis"
-            yref = f"y{i + 1} domain" if i > 0 else "y domain"
+            row = n_years - i
+            axis_name = f"yaxis{row}" if row > 1 else "yaxis"
+            yref = f"y{row} domain" if row > 1 else "y domain"
             fig.update_layout(**{axis_name: dict(
                 showticklabels=False, showgrid=False, zeroline=False,
             )})
@@ -1971,7 +2001,7 @@ def _build_ridgeline_figure(data, bw_factor=0.5, mode="density", theme="light"):
                 xanchor="right", yanchor="middle",
                 xshift=-8,
                 showarrow=False,
-                font=dict(size=11, color="#6B7280"),
+                font=dict(family=FONT_FAMILY, size=11, color=_year_label_color),
             )
         return fig
 
@@ -3525,14 +3555,28 @@ clientside_callback(
                 }
             };
         }
+        var ct = chartType || "line";
+        var isDark = document.documentElement.getAttribute("data-theme") === "dark";
+        // PRIMARY violet (#7C2A83) is too dark to read as a line/area on the
+        // dark paper background — swap to violet[3] (#C186C9) for any non-bar
+        // chart type in dark mode. Bars stay PRIMARY (large filled area).
+        var series = combo.series;
+        if (isDark && ct !== "bar") {
+            series = series.map(function(s) {
+                if (s.color && s.color.toUpperCase() === "#7C2A83") {
+                    return Object.assign({}, s, {color: "#C186C9"});
+                }
+                return s;
+            });
+        }
         var data = {
             dates: combo.dates,
-            series: combo.series,
+            series: series,
             yTitle: "Median Fractions",
-            hideLegend: combo.series.length <= 1,
+            hideLegend: series.length <= 1,
             stacked: false
         };
-        var __fig = (window.dash_clientside.census.smoothChartWithType(data, smoothVal, chartType || "line", currentFig));
+        var __fig = (window.dash_clientside.census.smoothChartWithType(data, smoothVal, ct, currentFig));
         return window.dash_clientside.chartDeferred.wrap("plans-chart-session-trend", __fig);
     }""",
     Output("plans-chart-session-trend", "figure"),
@@ -3569,14 +3613,28 @@ clientside_callback(
                 }
             };
         }
+        var ct = chartType || "line";
+        var isDark = document.documentElement.getAttribute("data-theme") === "dark";
+        // Same swap as the Session Trend: PRIMARY violet (#7C2A83) is too
+        // dark for line/area on the dark paper background. Bars stay
+        // PRIMARY because the filled area gives plenty of contrast.
+        var series = combo.series;
+        if (isDark && ct !== "bar") {
+            series = series.map(function(s) {
+                if (s.color && s.color.toUpperCase() === "#7C2A83") {
+                    return Object.assign({}, s, {color: "#C186C9"});
+                }
+                return s;
+            });
+        }
         var data = {
             dates: combo.dates,
-            series: combo.series,
+            series: series,
             yTitle: "Quit Rate (%)",
-            hideLegend: combo.series.length <= 1,
+            hideLegend: series.length <= 1,
             stacked: false
         };
-        var __fig = (window.dash_clientside.census.smoothChartWithType(data, smoothVal, chartType || "line", currentFig));
+        var __fig = (window.dash_clientside.census.smoothChartWithType(data, smoothVal, ct, currentFig));
         return window.dash_clientside.chartDeferred.wrap("plans-chart-quit-trend", __fig);
     }""",
     Output("plans-chart-quit-trend", "figure"),
@@ -3599,12 +3657,18 @@ clientside_callback(
     Input("plans-store-session-dist", "data"),
     Input("plans-session-dist-mode", "value"),
     Input("plans-session-dist-bw", "value"),
+    Input("global-theme-store", "data"),
 )
-def _update_session_dist(data, mode, bw):
+def _update_session_dist(data, mode, bw, theme):
     if not data:
         fig = empty_figure("No fractions data")
         fig.update_layout(height=310)
         return fig
+
+    _is_dark = (theme or "light") == "dark"
+    # Brighter violet in dark mode for adequate contrast against the dark
+    # paper background; PRIMARY is fine on light backgrounds.
+    _accent = "#C186C9" if _is_dark else PRIMARY
 
     mode = mode or "histogram"
     bw = bw or 0.15
@@ -3634,7 +3698,8 @@ def _update_session_dist(data, mode, bw):
     else:
         fig.add_trace(go.Histogram(
             x=data["values"],
-            nbinsx=30,
+            xbins=dict(start=0, size=1),
+            autobinx=False,
             marker_color=PRIMARY,
             hovertemplate="Fractions: %{x}<br>Count: %{y}<extra></extra>",
         ))
@@ -3642,11 +3707,11 @@ def _update_session_dist(data, mode, bw):
 
     # Median vertical line
     med = data["median"]
-    fig.add_vline(x=med, line_dash="dash", line_color="#6B7280")
+    fig.add_vline(x=med, line_dash="dash", line_color=_accent)
     fig.add_annotation(
         x=med, y=1.0, yref="paper", yshift=2,
         text=f"Median: {med:.0f}", showarrow=False,
-        font=dict(size=11, color="#6B7280"),
+        font=dict(family=FONT_FAMILY, size=11, color=_accent),
         yanchor="bottom", xanchor="center",
     )
 
@@ -3742,9 +3807,14 @@ def _update_complexity_facets(data, agg, mode, smooth, chart_type, theme):
             fig.update_layout(**{yaxis_key: dict(range=[0, ceiling])})
 
     apply_default_layout(fig)
-    # Re-apply subplot title styling after default layout
+    # Re-apply subplot title styling after default layout. Plotly's
+    # subplot_titles annotations don't inherit the figure's font.family,
+    # so set it explicitly — otherwise the SVG falls back to a thinner
+    # default sans-serif (most visible against the dark paper background).
+    _is_dark = (theme or "light") == "dark"
+    _title_color = "#9CA3AF" if _is_dark else "#6B7280"
     for ann in fig.layout.annotations:
-        ann.update(font=dict(size=12, color="#6B7280"))
+        ann.update(font=dict(family=FONT_FAMILY, size=12, color=_title_color))
     fig.update_layout(
         height=380,
         showlegend=False,

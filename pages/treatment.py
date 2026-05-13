@@ -2050,7 +2050,6 @@ def _update_cumulative(*args):
     Input("tx-elapsed-slice", "value"),
     Input("tx-elapsed-metric", "value"),
     Input("tx-table-filter-rows", "data"),
-    running=[(Output("tx-chart-elapsed-loading", "visible"), True, False)],
 )
 def _update_elapsed_store(*args):
     elapsed_slice, elapsed_metric, grid_rows = args[-3], args[-2], args[-1]
@@ -2576,6 +2575,9 @@ clientside_callback(
         if (!storeData || !storeData.groups || storeData.groups.length === 0) {
             return window.dash_clientside.no_update;
         }
+        var ctx = window.dash_clientside.callback_context;
+        var trig = (ctx.triggered && ctx.triggered[0]) ? ctx.triggered[0].prop_id : "";
+        var isBwDrag = trig.indexOf("tx-elapsed-bw") === 0;
         var groups = storeData.groups;
         var yUpper = storeData.yUpper || 30;
         var isDensity = storeData.mode === "density";
@@ -2645,7 +2647,7 @@ clientside_callback(
         }
 
         var __fig = ({data: traces, layout: layout});
-        return window.dash_clientside.chartDeferred.wrap("tx-chart-elapsed", __fig);
+        return window.dash_clientside.chartDeferred.wrap("tx-chart-elapsed", __fig, isBwDrag);
     }""",
     Output("tx-chart-elapsed", "figure"),
     Input("tx-store-elapsed", "data"),
@@ -2731,7 +2733,7 @@ def _census_render(chart_id):
                 fig.layout.showlegend = false;
             }}
         }}
-        return window.dash_clientside.chartDeferred.wrap("{chart_id}", fig);
+        return window.dash_clientside.chartDeferred.wrap("{chart_id}", fig, true);
     }}"""
 
 

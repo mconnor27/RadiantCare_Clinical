@@ -406,6 +406,28 @@
         restyleOpsHeatmap();
     }
 
+    // Trace-level invalidation guard. Catches the case where a clientside
+    // callback rebuilds the figure with theme-aware layout (font.color,
+    // axis colors) but leaves trace colors as the raw light-mode brand hex
+    // straight from the Store — e.g. census_chart.js smoothChartWithType
+    // passes s.color through unchanged. Returns true if any trace has a
+    // color that maps to the *other* theme, meaning it still needs remap.
+    function tracesNeedRemap(data, theme) {
+        if (!Array.isArray(data)) return false;
+        var unremapped = theme === 'dark'
+            ? METRIC_COLOR_LIGHT_TO_DARK
+            : METRIC_COLOR_DARK_TO_LIGHT;
+        for (var i = 0; i < data.length; i++) {
+            var trace = data[i];
+            if (!trace) continue;
+            if (trace.line && typeof trace.line.color === 'string'
+                && unremapped[trace.line.color.toLowerCase()]) return true;
+            if (trace.marker && typeof trace.marker.color === 'string'
+                && unremapped[trace.marker.color.toLowerCase()]) return true;
+        }
+        return false;
+    }
+
     // --- Per-chart Plotly event hooks -----------------------------
     // Each .js-plotly-plot element exposes an `.on(event, handler)` method
     // (injected by plotly.js). Hooking 'plotly_afterplot' catches every
@@ -420,14 +442,19 @@
         try {
             el.on('plotly_afterplot', function() {
                 try {
-                    var p = paletteFor(currentTheme());
+                    var theme = currentTheme();
+                    var p = paletteFor(theme);
                     var cur = el.layout || {};
                     var curFont = (cur.font && cur.font.color) || '';
                     // If this redraw was produced by a clientside callback
                     // that baked in the wrong theme colors, invalidate the
                     // applied-theme marker so restyleCharts will pick it up
                     // on the next sweep (or mutation-observer firing).
-                    if (curFont !== p.font) {
+                    // The font check catches callbacks that ignore theme
+                    // entirely; the trace check catches callbacks that ARE
+                    // layout-theme-aware but pass through raw brand colors
+                    // for line/marker (e.g. smoothChartWithType).
+                    if (curFont !== p.font || tracesNeedRemap(el.data, theme)) {
                         el._rcThemeApplied = null;
                         // Kick off an immediate restyle so the user doesn't
                         // have to wait for the 2s sweep.

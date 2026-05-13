@@ -549,7 +549,6 @@ for _slice_id, _settings_id in [
     ("courses-volume-slice", "courses-volume"),
     ("courses-frac-trend-slice", "courses-frac-trend"),
     ("courses-quit-trend-slice", "courses-quit-trend"),
-    ("courses-interruption-slice", "courses-interruption"),
 ]:
     clientside_callback(
         _HIDE_STACK_JS,
@@ -558,6 +557,18 @@ for _slice_id, _settings_id in [
         Input(f"{_settings_id}-settings-type", "value"),
         prevent_initial_call="initial_duplicate",
     )
+
+# Course Interruptions: bar-only, so the chart-type selector was removed.
+# Hide the grouping toggle when no slice is selected (single-series view).
+clientside_callback(
+    """function(sliceVal) {
+        var single = !sliceVal || sliceVal === "total" || sliceVal === "";
+        return single ? {"display": "none"} : {};
+    }""",
+    Output("courses-interruption-settings-stack-wrap", "style", allow_duplicate=True),
+    Input("courses-interruption-slice", "value"),
+    prevent_initial_call="initial_duplicate",
+)
 
 # Technique dist: hide grouping in line mode (always multi-series)
 clientside_callback(
@@ -1781,8 +1792,11 @@ def _build_ridgeline_figure(data, bw_factor=0.5, mode="density", theme="light"):
             vertical_spacing=0.01,
         )
 
+        # `years` is sorted newest-first to match density mode's bottom-to-top
+        # baseline ordering. Subplot rows count top-down, so flip the row
+        # assignment to keep the newest year in the bottom row.
         for i, yr in enumerate(years):
-            row = i + 1
+            row = n_years - i
             vals = np.array(per_year[yr])
             counts, _ = np.histogram(vals, bins=bins)
             n_courses = len(vals)
@@ -1823,9 +1837,11 @@ def _build_ridgeline_figure(data, bw_factor=0.5, mode="density", theme="light"):
         )
         # Re-suppress y tick labels after apply_default_layout
         # and add horizontal year annotations
+        _year_label_color = "#E6E7EC" if _is_dark else "#6B7280"
         for i, yr in enumerate(years):
-            axis_name = f"yaxis{i + 1}" if i > 0 else "yaxis"
-            yref = f"y{i + 1} domain" if i > 0 else "y domain"
+            row = n_years - i
+            axis_name = f"yaxis{row}" if row > 1 else "yaxis"
+            yref = f"y{row} domain" if row > 1 else "y domain"
             fig.update_layout(**{axis_name: dict(
                 showticklabels=False, showgrid=False, zeroline=False,
             )})
@@ -1835,7 +1851,7 @@ def _build_ridgeline_figure(data, bw_factor=0.5, mode="density", theme="light"):
                 xanchor="right", yanchor="middle",
                 xshift=-8,
                 showarrow=False,
-                font=dict(size=11, color="#6B7280"),
+                font=dict(family=FONT_FAMILY, size=11, color=_year_label_color),
             )
         return fig
 
@@ -3363,6 +3379,7 @@ def _update_courses_kpis(*args):
                                 "courses-sites",
                                 chart_types=None,
                                 show_smooth=False,
+                                show_grouping=False,
                             ),
                         ],
                     ),
@@ -3483,7 +3500,7 @@ def _update_courses_kpis(*args):
                 "courses-chart-interruption",
                 "Course Interruptions",
                 settings_id="courses-interruption",
-                chart_types=[{"value": "bar", "label": "Bar"}],
+                chart_types=None,
                 show_smooth=False,
                 paper_padding="md",
                 extra_controls_left=[
@@ -3885,14 +3902,28 @@ clientside_callback(
                 }
             };
         }
+        var ct = chartType || "line";
+        var isDark = document.documentElement.getAttribute("data-theme") === "dark";
+        // PRIMARY violet (#7C2A83) is too dark to read as a line/area on the
+        // dark paper background — swap to violet[3] (#C186C9) for any non-bar
+        // chart type in dark mode. Bars stay PRIMARY (large filled area).
+        var series = combo.series;
+        if (isDark && ct !== "bar") {
+            series = series.map(function(s) {
+                if (s.color && s.color.toUpperCase() === "#7C2A83") {
+                    return Object.assign({}, s, {color: "#C186C9"});
+                }
+                return s;
+            });
+        }
         var data = {
             dates: combo.dates,
-            series: combo.series,
+            series: series,
             yTitle: "Median Fractions",
-            hideLegend: combo.series.length <= 1,
+            hideLegend: series.length <= 1,
             stacked: false
         };
-        var __fig = (window.dash_clientside.census.smoothChartWithType(data, smoothVal, chartType || "line", currentFig));
+        var __fig = (window.dash_clientside.census.smoothChartWithType(data, smoothVal, ct, currentFig));
         return window.dash_clientside.chartDeferred.wrap("courses-chart-frac-trend", __fig);
     }""",
     Output("courses-chart-frac-trend", "figure"),
@@ -3929,14 +3960,28 @@ clientside_callback(
                 }
             };
         }
+        var ct = chartType || "line";
+        var isDark = document.documentElement.getAttribute("data-theme") === "dark";
+        // Same swap as the Median Fractions Trend: PRIMARY violet (#7C2A83)
+        // is too dark for line/area on the dark paper background. Bars stay
+        // PRIMARY because the filled area gives plenty of contrast.
+        var series = combo.series;
+        if (isDark && ct !== "bar") {
+            series = series.map(function(s) {
+                if (s.color && s.color.toUpperCase() === "#7C2A83") {
+                    return Object.assign({}, s, {color: "#C186C9"});
+                }
+                return s;
+            });
+        }
         var data = {
             dates: combo.dates,
-            series: combo.series,
+            series: series,
             yTitle: "Quit Rate (%)",
-            hideLegend: combo.series.length <= 1,
+            hideLegend: series.length <= 1,
             stacked: false
         };
-        var __fig = (window.dash_clientside.census.smoothChartWithType(data, smoothVal, chartType || "line", currentFig));
+        var __fig = (window.dash_clientside.census.smoothChartWithType(data, smoothVal, ct, currentFig));
         return window.dash_clientside.chartDeferred.wrap("courses-chart-quit-trend", __fig);
     }""",
     Output("courses-chart-quit-trend", "figure"),
@@ -3960,12 +4005,18 @@ clientside_callback(
     Input("courses-store-frac-dist", "data"),
     Input("courses-frac-dist-mode", "value"),
     Input("courses-frac-dist-bw", "value"),
+    Input("global-theme-store", "data"),
 )
-def _update_frac_dist(data, mode, bw):
+def _update_frac_dist(data, mode, bw, theme):
     if not data:
         fig = empty_figure("No fractions data")
         fig.update_layout(height=310)
         return fig
+
+    _is_dark = (theme or "light") == "dark"
+    # Brighter violet in dark mode for adequate contrast against the dark
+    # paper background; PRIMARY is fine on light backgrounds.
+    _accent = "#C186C9" if _is_dark else PRIMARY
 
     mode = mode or "histogram"
     bw = bw or 0.15
@@ -3995,7 +4046,8 @@ def _update_frac_dist(data, mode, bw):
     else:
         fig.add_trace(go.Histogram(
             x=data["values"],
-            nbinsx=30,
+            xbins=dict(start=0, size=1),
+            autobinx=False,
             marker_color=PRIMARY,
             hovertemplate="Fractions: %{x}<br>Count: %{y}<extra></extra>",
         ))
@@ -4003,11 +4055,11 @@ def _update_frac_dist(data, mode, bw):
 
     # Median vertical line
     med = data["median"]
-    fig.add_vline(x=med, line_dash="dash", line_color="#6B7280")
+    fig.add_vline(x=med, line_dash="dash", line_color=_accent)
     fig.add_annotation(
         x=med, y=1.0, yref="paper", yshift=2,
         text=f"Median: {med:.0f}", showarrow=False,
-        font=dict(size=11, color="#6B7280"),
+        font=dict(family=FONT_FAMILY, size=11, color=_accent),
         yanchor="bottom", xanchor="center",
     )
 
@@ -4138,9 +4190,14 @@ def _update_complexity_facets(data, agg, mode, smooth, chart_type, theme):
             fig.update_layout(**{yaxis_key: dict(range=[0, ceiling])})
 
     apply_default_layout(fig)
-    # Re-apply subplot title styling after default layout
+    # Re-apply subplot title styling after default layout. Plotly's
+    # subplot_titles annotations don't inherit the figure's font.family,
+    # so set it explicitly — otherwise the SVG falls back to a thinner
+    # default sans-serif (most visible against the dark paper background).
+    _is_dark = (theme or "light") == "dark"
+    _title_color = "#9CA3AF" if _is_dark else "#6B7280"
     for ann in fig.layout.annotations:
-        ann.update(font=dict(size=12, color="#6B7280"))
+        ann.update(font=dict(family=FONT_FAMILY, size=12, color=_title_color))
     fig.update_layout(
         height=560,
         showlegend=False,

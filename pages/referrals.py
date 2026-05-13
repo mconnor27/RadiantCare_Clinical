@@ -2109,7 +2109,7 @@ for _spark_id in _KPI_SPARK_IDS:
 # Clientside callback — renders dimension trend ridgeline from store + settings
 clientside_callback(f"""function() {{
         var fig = window.dash_clientside.referralRidge.renderTrend.apply(null, arguments);
-        return window.dash_clientside.chartDeferred.wrap("{PAGE_ID}-chart-dim-trend", fig);
+        return window.dash_clientside.chartDeferred.wrap("{PAGE_ID}-chart-dim-trend", fig, true);
     }}""",
     Output(f"{PAGE_ID}-chart-dim-trend", "figure"),
     Input(f"{PAGE_ID}-chart-dim-trend-store", "data"),

@@ -19,6 +19,12 @@ function buildSparkline(data, smoothPct, key) {
     // opacity so the area under the spark line stays readable.
     var _isDark = document.documentElement.getAttribute("data-theme") === "dark";
     var _fillTop = _isDark ? 0.38 : 0.2;
+    // PRIMARY violet (#7C2A83) is too dark to see against the dark KPI
+    // card background — swap to violet[3] (#C186C9), matching the line/area
+    // chart treatment used on the trend pages.
+    if (_isDark && color && color.toUpperCase() === "#7C2A83") {
+        color = "#C186C9";
+    }
     // Use customdata for raw values so hover always shows actual numbers
     var hoverFmt = spark.hover_fmt
         ? spark.hover_fmt.replace(/%\{y/g, "%{customdata")

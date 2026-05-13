@@ -23,14 +23,35 @@ window.dash_clientside.diagRidge = {
         agg = agg || "M";
         chartType = chartType || "area";
         var combo = storeData.combos[agg];
-        if (!combo || !combo.series || combo.series.length === 0) {
-            return window.dash_clientside.no_update;
+        var height = storeData.height || 720;
+
+        // Empty state — no combo, no series, or no dates for the selected
+        // aggregation. Mirrors utils.charts.empty_figure styling so this pane
+        // matches the comparison pane visually when blank.
+        if (!combo || !combo.series || combo.series.length === 0
+                || !combo.dates || combo.dates.length === 0) {
+            return {
+                data: [],
+                layout: {
+                    height: height,
+                    margin: {l: 0, r: 0, t: 0, b: 0},
+                    plot_bgcolor: "rgba(0,0,0,0)",
+                    paper_bgcolor: "rgba(0,0,0,0)",
+                    xaxis: {visible: false},
+                    yaxis: {visible: false},
+                    annotations: [{
+                        text: "No data for selected filters",
+                        xref: "paper", yref: "paper", x: 0.5, y: 0.5,
+                        showarrow: false,
+                        font: {size: 14, color: "#9CA3AF"},
+                    }],
+                },
+            };
         }
 
         var dates = combo.dates;
         var series = combo.series;  // [{name, values, color}, ...] ordered bottom→top
         var groups = storeData.groups;
-        var height = storeData.height || 720;
         var nDates = dates.length;
         var nGroups = series.length;
         var spacing = 1.0;
@@ -42,8 +63,12 @@ window.dash_clientside.diagRidge = {
         // Use actual dates for a linear time axis
         var xDates = dates.slice();
 
-        // Compute bar width in ms (85% of the minimum gap between dates)
-        var barWidthMs = null;
+        // Bar width in ms — 85% of the minimum gap between dates. With only one
+        // period (e.g. yearly view on <1y of data), fall back to a sensible
+        // per-agg default so the lone bar doesn't render as a sliver.
+        var DAY = 86400000;
+        var defaultBarMs = (agg === "Y" ? 270 : (agg === "M" ? 24 : 6)) * DAY;
+        var barWidthMs = defaultBarMs;
         if (nDates >= 2) {
             var minGap = Infinity;
             for (var k = 1; k < nDates; k++) {
@@ -76,12 +101,18 @@ window.dash_clientside.diagRidge = {
             var color = s.color;
             var fillRgba = hexToRgba(color, 0.35);
 
-            // Build hover data
+            // Build hover data — yearly shows just the year, otherwise "Mon YYYY".
             var hoverDates = [];
             for (var j = 0; j < nDates; j++) {
                 var p = parseIsoDate(dates[j]);
                 var monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-                hoverDates.push(p.valid ? monthNames[p.month] + " " + p.year : dates[j]);
+                if (!p.valid) {
+                    hoverDates.push(dates[j]);
+                } else if (agg === "Y") {
+                    hoverDates.push(String(p.year));
+                } else {
+                    hoverDates.push(monthNames[p.month] + " " + p.year);
+                }
             }
 
             // Hover tooltip always shows the actual raw count, even when
@@ -136,12 +167,15 @@ window.dash_clientside.diagRidge = {
                         showlegend: false,
                     });
                 }
-                // Line on top
-                traces.push({
+                // Line on top. Use lines+markers in yearly view (and any time
+                // there's a single point) so the dot is visible — a 1-point
+                // line trace renders nothing on its own.
+                var useMarkers = agg === "Y" || nDates < 2;
+                var lineTrace = {
                     type: "scatter",
                     x: xDates,
                     y: yScaled,
-                    mode: "lines",
+                    mode: useMarkers ? "lines+markers" : "lines",
                     line: {color: color, width: 1.8},
                     name: s.name,
                     showlegend: false,
@@ -152,7 +186,9 @@ window.dash_clientside.diagRidge = {
                         "<br>%{text}" +
                         "<br>Count: %{customdata[0]}" +
                         "<extra></extra>",
-                });
+                };
+                if (useMarkers) lineTrace.marker = {color: color, size: 6};
+                traces.push(lineTrace);
             }
         }
 
@@ -182,7 +218,7 @@ window.dash_clientside.diagRidge = {
                 showgrid: false,
                 zeroline: false,
                 title: "",
-                tickformat: "%b '%y",
+                tickformat: agg === "Y" ? "%Y" : "%b '%y",
             },
             margin: {l: 0, r: 16, t: 16, b: 20},
             plot_bgcolor: "rgba(0,0,0,0)",
@@ -190,6 +226,7 @@ window.dash_clientside.diagRidge = {
             font: {family: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"},
             hovermode: "closest",
             hoverlabel: {font: {family: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif", size: 12}},
+            barmode: "overlay",
             bargap: 0,
         };
 

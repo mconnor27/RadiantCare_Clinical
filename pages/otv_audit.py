@@ -436,6 +436,7 @@ layout = dmc.Stack(
 
         # Stores
         dcc.Store(id="otv-store-kpi-sparklines"),
+        dcc.Store(id="otv-store-filtered-dff"),
         dcc.Store(id="otv-table-filter-rows"),
         dcc.Interval(id="otv-interval", interval=300_000, n_intervals=0),
     ],
@@ -840,10 +841,6 @@ _PRIOR_MAP = {
     Output("otv-detail-grid", "rowData"),
     Output("otv-detail-grid", "columnDefs"),
     Output("otv-store-kpi-sparklines", "data"),
-    Output("otv-chart-department-loading", "visible"),
-    Output("otv-chart-trend-loading", "visible"),
-    Output("otv-dist-loading", "visible"),
-    Output("otv-hist-loading", "visible"),
     Output("otv-fraction-slider", "min"),
     Output("otv-fraction-slider", "max"),
     Input("otv-interval", "n_intervals"),
@@ -866,6 +863,12 @@ _PRIOR_MAP = {
     Input("otv-fraction-slider", "value"),
     Input("otv-table-filter-rows", "data"),
     State("otv-fraction-engaged", "data"),
+    running=[
+        (Output("otv-chart-department-loading", "visible"), True, False),
+        (Output("otv-chart-trend-loading", "visible"), True, False),
+        (Output("otv-dist-loading", "visible"), True, False),
+        (Output("otv-hist-loading", "visible"), True, False),
+    ],
 )
 def update_otv_audit(_n, slider_val, date_preset, departments, exclude_incomplete,
                      breakdown_slice, breakdown_mode, dept_mode, trend_chart_type, trend_agg, trend_smooth,
@@ -875,9 +878,8 @@ def update_otv_audit(_n, slider_val, date_preset, departments, exclude_incomplet
 
     empty = empty_figure("OTV Audit data unavailable")
     na_kpi = kpi_card("--", "N/A")
-    loading_off = False
 
-    _empty_return = (na_kpi,) * 6 + (empty,) * 4 + ([], []) + (None,) + (loading_off,) * 4 + (0, 50)
+    _empty_return = (na_kpi,) * 6 + (empty,) * 4 + ([], []) + (None,) + (0, 50)
 
     try:
         otv = load_otvs()
@@ -1286,7 +1288,6 @@ def update_otv_audit(_n, slider_val, date_preset, departments, exclude_incomplet
         kpi_total, kpi_compliance, kpi_extra, kpi_toofew, kpi_discrepancy, kpi_missed_rvu,
         fig_dept, fig_trend, fig_dist, fig_hist, table_rows, table_cols,
         sparkline_data,
-        False, False, False, False,
         frac_min_data, frac_max_data,
     )
 

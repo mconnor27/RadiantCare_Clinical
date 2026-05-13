@@ -792,6 +792,47 @@ html[data-theme="dark"] .ag-theme-alpine-dark {
 #tx-date-slider .mantine-Slider-bar {
     background: linear-gradient(90deg, var(--color-primary-light), var(--color-primary));
 }
+/* Dark mode: PRIMARY token resolves to a washed-out lavender, so paint
+   the date-slider bar with the brighter violet[3] used on line/area
+   charts and sparklines. Gradient → solid keeps the saturation visible. */
+[data-theme="dark"] #wf-date-slider .mantine-Slider-bar,
+[data-theme="dark"] #wf-b-date-slider .mantine-Slider-bar,
+[data-theme="dark"] #cv-date-slider .mantine-Slider-bar,
+[data-theme="dark"] #sim-date-slider .mantine-Slider-bar,
+[data-theme="dark"] #tasks-date-slider .mantine-Slider-bar,
+[data-theme="dark"] #otvs-date-slider .mantine-Slider-bar,
+[data-theme="dark"] #courses-date-slider .mantine-Slider-bar,
+[data-theme="dark"] #plans-date-slider .mantine-Slider-bar,
+[data-theme="dark"] #machines-date-slider .mantine-Slider-bar,
+[data-theme="dark"] #proc-date-slider .mantine-Slider-bar,
+[data-theme="dark"] #phys-date-slider .mantine-Slider-bar,
+[data-theme="dark"] #billing-date-slider .mantine-Slider-bar,
+[data-theme="dark"] #cpt-date-slider .mantine-Slider-bar,
+[data-theme="dark"] #patients-date-slider .mantine-Slider-bar,
+[data-theme="dark"] #diag-date-slider .mantine-Slider-bar,
+[data-theme="dark"] #referrals-date-slider .mantine-Slider-bar,
+[data-theme="dark"] #tx-date-slider .mantine-Slider-bar {
+    background: #C186C9;
+}
+[data-theme="dark"] #wf-date-slider .mantine-Slider-thumb,
+[data-theme="dark"] #wf-b-date-slider .mantine-Slider-thumb,
+[data-theme="dark"] #cv-date-slider .mantine-Slider-thumb,
+[data-theme="dark"] #sim-date-slider .mantine-Slider-thumb,
+[data-theme="dark"] #tasks-date-slider .mantine-Slider-thumb,
+[data-theme="dark"] #otvs-date-slider .mantine-Slider-thumb,
+[data-theme="dark"] #courses-date-slider .mantine-Slider-thumb,
+[data-theme="dark"] #plans-date-slider .mantine-Slider-thumb,
+[data-theme="dark"] #machines-date-slider .mantine-Slider-thumb,
+[data-theme="dark"] #proc-date-slider .mantine-Slider-thumb,
+[data-theme="dark"] #phys-date-slider .mantine-Slider-thumb,
+[data-theme="dark"] #billing-date-slider .mantine-Slider-thumb,
+[data-theme="dark"] #cpt-date-slider .mantine-Slider-thumb,
+[data-theme="dark"] #patients-date-slider .mantine-Slider-thumb,
+[data-theme="dark"] #diag-date-slider .mantine-Slider-thumb,
+[data-theme="dark"] #referrals-date-slider .mantine-Slider-thumb,
+[data-theme="dark"] #tx-date-slider .mantine-Slider-thumb {
+    border-color: #C186C9;
+}
 #wf-date-slider .mantine-Slider-markLabel,
 #wf-b-date-slider .mantine-Slider-markLabel,
 #cv-date-slider .mantine-Slider-markLabel,

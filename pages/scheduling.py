@@ -745,7 +745,7 @@ def _filter_bar():
                             f"{PAGE_ID}-filter-appt-type",
                             list(APPT_TYPES.keys()),
                             APPT_TYPES,
-                            color="grape",
+                            color="violet",
                         )),
                     ),
                 ],
