@@ -5,7 +5,7 @@ from pathlib import Path
 import dash
 import dash_mantine_components as dmc
 import dash_ag_grid as dag
-from dash import callback, Input, Output, State, dcc, html, clientside_callback, ClientsideFunction
+from dash import callback, Input, Output, State, dcc, html, clientside_callback, ClientsideFunction, ctx
 from dash_iconify import DashIconify
 import plotly.graph_objects as go
 import pandas as pd
@@ -797,6 +797,12 @@ layout = dmc.Stack(
                                 pos="relative",
                                 style={"flex": "1", "minHeight": 0},
                                 children=[
+                                    dmc.LoadingOverlay(
+                                        id=f"{PAGE_ID}-chart-dim-comparison-loading",
+                                        visible=False,
+                                        loaderProps={"type": "dots", "color": PRIMARY},
+                                        overlayProps={"radius": "sm", "blur": 2},
+                                    ),
                                     dmc.Box(
                                         style={"position": "absolute", "top": 0, "left": 0,
                                                "right": 0, "bottom": 0},
@@ -2329,7 +2335,7 @@ def _format_addr_hover(addr_key, dept, count, arrow_to=None, institution=None):
 
 def _build_referral_map(geo_df, departments_filter, selected_dept="All",
                         show_flows=True, region="pnw", min_referrals=3,
-                        uirevision="referrals-map"):
+                        uirevision="referrals-map", map_style=None):
     """Build Scattermapbox for referring provider origins."""
     fig = go.Figure()
 
@@ -2469,7 +2475,7 @@ def _build_referral_map(geo_df, departments_filter, selected_dept="All",
 
     fig.update_layout(
         mapbox=dict(
-            accesstoken=MAPBOX_TOKEN, style=MAPBOX_STYLE,
+            accesstoken=MAPBOX_TOKEN, style=map_style or MAPBOX_STYLE,
             center=center, zoom=zoom,
         ),
         height=700, margin=dict(l=0, r=0, t=0, b=0),
@@ -3089,8 +3095,9 @@ def _build_ref_comparison_bars(dff_curr, prior_windows, start, end):
             textposition="outside" if outside else "inside",
             insidetextanchor="end" if not outside else None,
             textangle=0,
-            textfont=dict(size=11 if outside else 12,
-                          color="#374151" if outside else "#6B7280"),
+            # #4B5563 is the annotation-neutral pair: mid-gray in light,
+            # white in dark (handled by 02_theme.js).
+            textfont=dict(size=11 if outside else 12, color="#4B5563"),
             hovertemplate=[
                 f"<b>{g}</b><br>{plabel}: {v:,}<extra></extra>"
                 for g, v in zip(all_groups, pvals)
@@ -3107,8 +3114,11 @@ def _build_ref_comparison_bars(dff_curr, prior_windows, start, end):
         textposition="outside" if outside else "inside",
         insidetextanchor="end" if not outside else None,
         textangle=0,
+        # Outside text → annotation-neutral (#4B5563 ↔ white per theme).
+        # Inside text → white (current bars are saturated brand colors, so
+        # white reads in both themes).
         textfont=dict(size=11 if outside else 12,
-                      color="#374151" if outside else "white"),
+                      color="#4B5563" if outside else "white"),
         hovertemplate=[
             f"<b>{g}</b><br>{curr_label}: {v:,}<extra></extra>"
             for g, v in zip(all_groups, curr_vals)
@@ -3770,6 +3780,7 @@ def _prior_range(start, end):
     Input(f"{PAGE_ID}-filter-payor", "value"),
     running=[
         (Output(f"{PAGE_ID}-chart-dim-trend-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-chart-dim-comparison-loading", "visible"), True, False),
     ],
 )
 def update_referrals(_n, start_date, end_date, departments, specialty_filter,
@@ -4112,6 +4123,20 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
         ) if not dim_df.empty else empty_dim
         compare_figs[str(n_prior)] = fig_c
 
+    # If the only thing the user changed was the dim-toggle (or the
+    # current-vs-prior period mode), suppress the outputs that don't depend on
+    # those inputs. Lets the row of 3 (flow-dist / flow-trend / flow-conv) and
+    # the KPI sparklines stay put instead of flashing through a re-render on
+    # every dimension flip. dim_trend_store + compare_figs (and the period
+    # control state) still update so the two charts that DO depend on the
+    # toggle re-render normally with their loading overlays.
+    triggered = ctx.triggered_id
+    _dim_only = {f"{PAGE_ID}-dim-toggle", f"{PAGE_ID}-dim-compare-period"}
+    if triggered in _dim_only:
+        nu = dash.no_update
+        return (nu, nu, nu, nu, nu,
+                dim_trend_store, compare_figs, nu, nu,
+                pt_data, pt_value, slider_max, slider_marks, nu, nu)
     return (kpis, flow_data, flow_details, table_rows, table_cols,
             dim_trend_store, compare_figs, spec_options, inst_options,
             pt_data, pt_value, slider_max, slider_marks, sparkline_store, geo_store)
@@ -4437,17 +4462,22 @@ clientside_callback(
     Input(f"{PAGE_ID}-map-region", "value"),
     Input(f"{PAGE_ID}-map-min-slider", "value"),
     Input(f"{PAGE_ID}-map-reset", "n_clicks"),
+    Input("global-theme-store", "data"),
 )
 def _update_referral_map(geo_data, selected_dept, departments, show_flows,
-                         region, min_referrals, _reset):
+                         region, min_referrals, _reset, theme):
     # Re-fit map when any view control changes; preserve zoom only on
-    # data refresh (interval) and flow line toggle (same bounds).
-    _preserve = {f"{PAGE_ID}-store-map-geo", f"{PAGE_ID}-map-flow-toggle"}
+    # data refresh (interval), flow line toggle (same bounds), and theme
+    # store changes (style swap, bounds unchanged).
+    _preserve = {f"{PAGE_ID}-store-map-geo", f"{PAGE_ID}-map-flow-toggle",
+                 "global-theme-store"}
     triggered = dash.callback_context.triggered_id
     if triggered and triggered not in _preserve:
         ui_rev = f"{region}-{selected_dept}-{departments}-{min_referrals}-{_reset}"
     else:
         ui_rev = "referrals-map"
+
+    map_style = "dark" if theme == "dark" else MAPBOX_STYLE
 
     if not geo_data:
         return _build_referral_map(
@@ -4457,6 +4487,7 @@ def _update_referral_map(geo_data, selected_dept, departments, show_flows,
             region=region,
             min_referrals=min_referrals or 3,
             uirevision=ui_rev,
+            map_style=map_style,
         )
 
     geo_df = pd.DataFrame(geo_data)
@@ -4467,6 +4498,7 @@ def _update_referral_map(geo_data, selected_dept, departments, show_flows,
         region=region,
         min_referrals=min_referrals or 3,
         uirevision=ui_rev,
+        map_style=map_style,
     )
 
 

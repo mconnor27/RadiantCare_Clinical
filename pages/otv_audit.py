@@ -437,6 +437,8 @@ layout = dmc.Stack(
         # Stores
         dcc.Store(id="otv-store-kpi-sparklines"),
         dcc.Store(id="otv-store-filtered-dff"),
+        dcc.Store(id="otv-store-prior-dff"),
+        dcc.Store(id="otv-store-meta"),
         dcc.Store(id="otv-table-filter-rows"),
         dcc.Interval(id="otv-interval", interval=300_000, n_intervals=0),
     ],
@@ -825,22 +827,95 @@ _PRIOR_MAP = {
 
 
 # ---------------------------------------------------------------------------
-# Main Callback
+# RVU helpers (used by KPI callback)
+# ---------------------------------------------------------------------------
+_MEDICARE_CF = 32.35  # 2026 Medicare conversion factor ($/RVU)
+_FALLBACK_WRVU = {"77427": 3.37, "77431": 1.76, "77432": 7.72, "77435": 11.57}
+_FALLBACK_MP = {"77427": 0.26, "77431": 0.14, "77432": 0.61, "77435": 0.92}
+_FALLBACK_FAC_TOTAL = {"77427": 5.85, "77431": 3.19, "77432": 12.70, "77435": 19.20}
+
+
+def _classify_mgmt_cpt(row):
+    """Management CPT for a course based on fractions + technique."""
+    fx = row.get("SessionCount_Delivery", 0) or 0
+    course_id = str(row.get("CourseId", "")).upper()
+    is_srs_sbrt = any(k in course_id for k in ["SRS", "SBRT", "SRT", "STEREO"])
+    if fx <= 2:
+        if is_srs_sbrt and fx == 1 and any(k in course_id for k in ["SRS", "BRAIN", "CRANIAL"]):
+            return "77432"
+        return "77431"
+    if is_srs_sbrt and fx <= 5:
+        return "77435"
+    return "77427"
+
+
+def _load_rvu_lookups():
+    rvu_by_code, mp_by_code = {}, {}
+    try:
+        from data.loader import load_rvu_lookup
+        _rvu_tbl = load_rvu_lookup()
+        for _code in ["77427", "77431", "77432", "77435"]:
+            _sub = _rvu_tbl[_rvu_tbl["HCPCS"] == _code].set_index("Year")
+            rvu_by_code[_code] = _sub["wRVU"]
+            mp_by_code[_code] = _sub["MP_RVU"] if "MP_RVU" in _sub.columns else pd.Series(dtype=float)
+    except Exception:
+        pass
+    return rvu_by_code, mp_by_code
+
+
+def _calc_missed(frame, date_col, rvu_by_code, mp_by_code):
+    """Return (missed_wrvu, missed_dollars) for Too Few courses."""
+    if frame.empty or "AuditResult" not in frame.columns:
+        return 0.0, 0.0
+    tf = frame[frame["AuditResult"] == "Too Few"]
+    if tf.empty or not {"AllowedOTVs", "WeeklyExamActivities", "ManagementCPTs_ExcludingNC"} <= set(tf.columns):
+        return 0.0, 0.0
+    actual = tf[["WeeklyExamActivities", "ManagementCPTs_ExcludingNC"]].max(axis=1)
+    missed = (tf["AllowedOTVs"] - actual).clip(lower=0)
+    cpt_codes = tf.apply(_classify_mgmt_cpt, axis=1)
+    years = tf[date_col].dt.year if date_col in tf.columns else pd.Series(2026, index=tf.index)
+    wrvu_total = 0.0
+    dollar_total = 0.0
+    for code in ["77427", "77431", "77432", "77435"]:
+        mask = cpt_codes == code
+        if not mask.any():
+            continue
+        if code in rvu_by_code and not rvu_by_code[code].empty:
+            row_wrvu = years[mask].map(rvu_by_code[code]).fillna(_FALLBACK_WRVU[code])
+        else:
+            row_wrvu = pd.Series(_FALLBACK_WRVU[code], index=tf.index[mask])
+        wrvu_total += (missed[mask] * row_wrvu).sum()
+
+        if code in rvu_by_code and not rvu_by_code[code].empty:
+            row_mp = years[mask].map(mp_by_code.get(code, pd.Series(dtype=float))).fillna(_FALLBACK_MP[code])
+        else:
+            row_mp = pd.Series(_FALLBACK_MP[code], index=tf.index[mask])
+        dollar_total += (missed[mask] * (row_wrvu + row_mp) * _MEDICARE_CF).sum()
+
+    return wrvu_total, dollar_total
+
+
+_DATE_COLS = ("LastTreatmentDate", "FirstTreatmentDate")
+
+
+def _records_to_df(records):
+    """Reconstruct a DataFrame from store records, parsing date columns."""
+    if not records:
+        return pd.DataFrame()
+    df = pd.DataFrame.from_records(records)
+    for col in _DATE_COLS:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], errors="coerce")
+    return df
+
+
+# ---------------------------------------------------------------------------
+# Data Prep Callback — runs only when a true data filter changes
 # ---------------------------------------------------------------------------
 @callback(
-    Output("otv-kpi-total", "children"),
-    Output("otv-kpi-compliance", "children"),
-    Output("otv-kpi-extra", "children"),
-    Output("otv-kpi-toofew", "children"),
-    Output("otv-kpi-discrepancy", "children"),
-    Output("otv-kpi-missed-rvu", "children"),
-    Output("otv-chart-department", "figure"),
-    Output("otv-chart-trend", "figure"),
-    Output("otv-chart-distribution", "figure"),
-    Output("otv-chart-histogram", "figure"),
-    Output("otv-detail-grid", "rowData"),
-    Output("otv-detail-grid", "columnDefs"),
-    Output("otv-store-kpi-sparklines", "data"),
+    Output("otv-store-filtered-dff", "data"),
+    Output("otv-store-prior-dff", "data"),
+    Output("otv-store-meta", "data"),
     Output("otv-fraction-slider", "min"),
     Output("otv-fraction-slider", "max"),
     Input("otv-interval", "n_intervals"),
@@ -848,20 +923,11 @@ _PRIOR_MAP = {
     Input("otv-filter-date-preset", "value"),
     Input("otv-filter-department", "value"),
     Input("otv-exclude-incomplete", "checked"),
-    Input("otv-breakdown-slice", "value"),
-    Input("otv-breakdown-mode", "value"),
-    Input("otv-dept-mode", "value"),
-    Input("otv-trend-settings-type", "value"),
-    Input("otv-trend-agg", "value"),
-    Input("otv-trend-settings-smooth", "value"),
-    Input("otv-table-result-filter", "value"),
-    Input("otv-table-course-status", "value"),
     Input("otv-filter-physician", "value"),
     Input("otv-physician-role", "value"),
     Input("otv-diag-store", "data"),
     Input("otv-diag-mode", "data"),
     Input("otv-fraction-slider", "value"),
-    Input("otv-table-filter-rows", "data"),
     State("otv-fraction-engaged", "data"),
     running=[
         (Output("otv-chart-department-loading", "visible"), True, False),
@@ -870,24 +936,19 @@ _PRIOR_MAP = {
         (Output("otv-hist-loading", "visible"), True, False),
     ],
 )
-def update_otv_audit(_n, slider_val, date_preset, departments, exclude_incomplete,
-                     breakdown_slice, breakdown_mode, dept_mode, trend_chart_type, trend_agg, trend_smooth,
-                     table_result_filter, table_course_status, physician, physician_role,
-                     diag_cats, diag_mode, frac_range, grid_rows, frac_engaged):
+def _prep_data(_n, slider_val, date_preset, departments, exclude_incomplete,
+               physician, physician_role, diag_cats, diag_mode, frac_range, frac_engaged):
     from data.loader import load_otvs, load_courses, load_diagnosis
 
-    empty = empty_figure("OTV Audit data unavailable")
-    na_kpi = kpi_card("--", "N/A")
-
-    _empty_return = (na_kpi,) * 6 + (empty,) * 4 + ([], []) + (None,) + (0, 50)
+    empty_meta = {"date_col": "LastTreatmentDate", "date_preset": date_preset, "trend_label": None}
+    _empty_return = ([], [], empty_meta, 0, 50)
 
     try:
         otv = load_otvs()
     except Exception:
         return _empty_return
 
-    # Exclude incomplete courses using courses-page completion logic
-    # Joined on PatientId+CourseId (CourseId alone is not patient-unique)
+    # Exclude incomplete courses
     if exclude_incomplete and "PatientId" in otv.columns and "CourseId" in otv.columns:
         try:
             completed_keys = _completed_course_keys()
@@ -897,7 +958,7 @@ def update_otv_audit(_n, slider_val, date_preset, departments, exclude_incomplet
         except Exception:
             pass
 
-    # Join physician from Courses (OTV Audit has no physician columns)
+    # Join physician from Courses
     phys_col = "ConsultPhysician" if physician_role == "consult" else "TreatingPhysician"
     if {"PatientId", "CourseId"}.issubset(otv.columns):
         try:
@@ -914,11 +975,9 @@ def update_otv_audit(_n, slider_val, date_preset, departments, exclude_incomplet
         except Exception:
             pass
 
-    # Apply physician filter
     if physician and phys_col in otv.columns:
         otv = otv[otv[phys_col] == physician]
 
-    # Apply diagnosis filter
     if diag_cats and "DiagnosisCodes" in otv.columns:
         try:
             diag_df = load_diagnosis()
@@ -927,22 +986,12 @@ def update_otv_audit(_n, slider_val, date_preset, departments, exclude_incomplet
         except Exception:
             pass
 
-    # Date column
     date_col = "LastTreatmentDate" if "LastTreatmentDate" in otv.columns else "FirstTreatmentDate"
     if date_col in otv.columns:
         otv[date_col] = pd.to_datetime(otv[date_col], errors="coerce")
 
-    # Optionally recalculate AuditResult to fix courses that straddled the
-    # Aug-2021 billing switchover from "Weekly Chart Check" (77336) to
-    # "Weekly check oncochart" (77427).
-    #
-    # SQL logic (OTV_Audit.sql:697-724):
-    #   Too Few:  CPTs_ExclNC < Allowed  (if billing exists, else WeeklyExams < Allowed)
-    #   Extra:    WeeklyExams > Allowed  (always uses exams, catches NC'd extras)
-    #   OK:       everything else
-    #
-    # Our fix: for "Too Few", use max(CPTs_ExclNC, WeeklyExams) so transition
-    # courses aren't penalised when CPTs are partial but exams are complete.
+    # Recalculate AuditResult: use max(CPTs_ExclNC, WeeklyExams) for "Too Few"
+    # to handle Aug-2021 billing-code switchover (77336 → 77427) correctly.
     if {"WeeklyExamActivities", "ManagementCPTs_ExcludingNC", "AllowedOTVs"} <= set(otv.columns):
         exams = otv["WeeklyExamActivities"]
         cpts = otv["ManagementCPTs_ExcludingNC"]
@@ -952,7 +1001,7 @@ def update_otv_audit(_n, slider_val, date_preset, departments, exclude_incomplet
         otv.loc[exams > allowed, "AuditResult"] = "Extra Visit(s)"
         otv.loc[effective_for_toofew < allowed, "AuditResult"] = "Too Few"
 
-    # Fraction slider range (before date filter so range stays stable)
+    # Fraction slider range (full data range)
     frac_col = "PrescribedFractions"
     frac_min_data, frac_max_data = 0, 50
     if frac_col in otv.columns:
@@ -961,49 +1010,32 @@ def update_otv_audit(_n, slider_val, date_preset, departments, exclude_incomplet
             frac_min_data = int(fvals.min())
             frac_max_data = int(fvals.max())
 
-    # Date range from slider
     start, end = _get_date_range(slider_val, None)
 
-    # Filter by date
     df = otv.copy()
     if date_col in df.columns:
         df = df[df[date_col].notna()]
         df = df[(df[date_col] >= start) & (df[date_col] <= end)]
 
-    # Department filter: when all departments selected (or none), show everything
-    # including records with no department. Only filter when a subset is chosen.
     all_depts = set(DEPARTMENTS)
     if departments and "Department" in df.columns and set(departments) != all_depts:
         df = df[df["Department"].isin(departments)]
 
-    # Fraction range filter (only when engaged)
     active_frac_range = frac_range if frac_engaged else None
     if active_frac_range and frac_col in df.columns:
         fmin, fmax = active_frac_range
         vals = pd.to_numeric(df[frac_col], errors="coerce")
         df = df[((vals >= fmin) & (vals <= fmax)) | vals.isna()]
 
-    if df.empty:
-        return _empty_return
+    if "ManagementCPTs_Total" in df.columns and "AllowedOTVs" in df.columns:
+        df = df.copy()
+        df["Discrepancy"] = df["ManagementCPTs_Total"] - df["AllowedOTVs"]
 
-    # --- Table (built from df before grid row filter) ---
-    triggered_by_grid = (
-        dash.callback_context.triggered
-        and len(dash.callback_context.triggered) == 1
-        and dash.callback_context.triggered[0]["prop_id"] == "otv-table-filter-rows.data"
-    )
-    if triggered_by_grid:
-        table_rows = dash.no_update
-        table_cols = dash.no_update
-    else:
-        table_rows, table_cols = _build_table(df, table_result_filter, table_course_status)
+    df = df.reset_index(drop=True)
 
-    # Apply grid row filter — KPIs, sparklines, and charts use the subset
-    dff = _apply_grid_row_filter(df, grid_rows)
-
-    # --- Prior-period comparison ---
-    trend_label = None
+    # Prior period
     df_prior = pd.DataFrame()
+    trend_label = None
     if date_preset and date_preset in _PRIOR_MAP and date_col in otv.columns:
         trend_label, prior_fn = _PRIOR_MAP[date_preset]
         prior_start, prior_end = prior_fn(start, end)
@@ -1015,8 +1047,63 @@ def update_otv_audit(_n, slider_val, date_preset, departments, exclude_incomplet
             fmin, fmax = active_frac_range
             pvals = pd.to_numeric(df_prior[frac_col], errors="coerce")
             df_prior = df_prior[((pvals >= fmin) & (pvals <= fmax)) | pvals.isna()]
+        if "ManagementCPTs_Total" in df_prior.columns and "AllowedOTVs" in df_prior.columns:
+            df_prior = df_prior.copy()
+            df_prior["Discrepancy"] = df_prior["ManagementCPTs_Total"] - df_prior["AllowedOTVs"]
+        df_prior = df_prior.reset_index(drop=True)
 
-    # --- KPIs (from grid-filtered dff) ---
+    meta = {
+        "date_col": date_col,
+        "date_preset": date_preset,
+        "trend_label": trend_label,
+        "start": start.isoformat() if df is not None and not df.empty else None,
+        "end": end.isoformat() if df is not None and not df.empty else None,
+    }
+
+    return (
+        df.to_dict("records") if not df.empty else [],
+        df_prior.to_dict("records") if not df_prior.empty else [],
+        meta,
+        frac_min_data, frac_max_data,
+    )
+
+
+# ---------------------------------------------------------------------------
+# KPIs + sparklines (depends on data store + grid-row filter)
+# ---------------------------------------------------------------------------
+@callback(
+    Output("otv-kpi-total", "children"),
+    Output("otv-kpi-compliance", "children"),
+    Output("otv-kpi-extra", "children"),
+    Output("otv-kpi-toofew", "children"),
+    Output("otv-kpi-discrepancy", "children"),
+    Output("otv-kpi-missed-rvu", "children"),
+    Output("otv-store-kpi-sparklines", "data"),
+    Input("otv-store-filtered-dff", "data"),
+    Input("otv-store-prior-dff", "data"),
+    Input("otv-store-meta", "data"),
+    Input("otv-table-filter-rows", "data"),
+)
+def _update_kpis(dff_records, prior_records, meta, grid_rows):
+    na_kpi = kpi_card("--", "N/A")
+    if not dff_records:
+        return (na_kpi,) * 6 + (None,)
+
+    df = _records_to_df(dff_records)
+    if df.empty:
+        return (na_kpi,) * 6 + (None,)
+
+    dff = _apply_grid_row_filter(df, grid_rows)
+    if dff.empty:
+        return (na_kpi,) * 6 + (None,)
+
+    df_prior = _records_to_df(prior_records or [])
+    meta = meta or {}
+    date_col = meta.get("date_col", "LastTreatmentDate")
+    trend_label = meta.get("trend_label")
+    start_iso = meta.get("start")
+    end_iso = meta.get("end")
+
     total = len(dff)
     has_result = "AuditResult" in dff.columns
     ok_count = (dff["AuditResult"] != "Too Few").sum() if has_result else 0
@@ -1024,15 +1111,12 @@ def update_otv_audit(_n, slider_val, date_preset, departments, exclude_incomplet
     toofew_count = (dff["AuditResult"] == "Too Few").sum() if has_result else 0
     compliance_rate = (ok_count / total * 100) if total > 0 else 0
 
-    # Discrepancy calculation
-    if "ManagementCPTs_Total" in dff.columns and "AllowedOTVs" in dff.columns:
-        dff["Discrepancy"] = dff["ManagementCPTs_Total"] - dff["AllowedOTVs"]
-        non_ok = dff[dff["AuditResult"] != "OK"] if has_result else dff
+    if "Discrepancy" in dff.columns and has_result:
+        non_ok = dff[dff["AuditResult"] != "OK"]
         avg_discrepancy = non_ok["Discrepancy"].mean() if len(non_ok) > 0 else 0
     else:
         avg_discrepancy = 0
 
-    # Prior-period KPI values for trends
     _t_total = (None, None)
     _t_compliance = (None, None)
     _t_extra = (None, None)
@@ -1049,13 +1133,11 @@ def update_otv_audit(_n, slider_val, date_preset, departments, exclude_incomplet
 
         _t_total = _trend(total, prior_total)
         _t_compliance = _trend(compliance_rate, prior_compliance)
-        _t_extra = _trend(extra_count, prior_extra, invert=True)  # More extras is bad
-        _t_toofew = _trend(toofew_count, prior_toofew, invert=True)  # More too-few is bad
+        _t_extra = _trend(extra_count, prior_extra, invert=True)
+        _t_toofew = _trend(toofew_count, prior_toofew, invert=True)
 
-        if "ManagementCPTs_Total" in df_prior.columns and "AllowedOTVs" in df_prior.columns:
-            df_prior_disc = df_prior.copy()
-            df_prior_disc["Discrepancy"] = df_prior_disc["ManagementCPTs_Total"] - df_prior_disc["AllowedOTVs"]
-            prior_non_ok = df_prior_disc[df_prior_disc["AuditResult"] != "OK"] if prior_has_result else df_prior_disc
+        if "Discrepancy" in df_prior.columns and prior_has_result:
+            prior_non_ok = df_prior[df_prior["AuditResult"] != "OK"]
             prior_avg_disc = prior_non_ok["Discrepancy"].mean() if len(prior_non_ok) > 0 else 0
             _t_discrepancy = _trend(avg_discrepancy, prior_avg_disc, invert=True)
 
@@ -1094,89 +1176,11 @@ def update_otv_audit(_n, slider_val, date_preset, departments, exclude_incomplet
         trend_direction=_t_discrepancy[1],
     )
 
-    # --- Missed wRVU ---
-    # Determine correct management CPT per course based on fractions and technique:
-    #   77431 — 1-2 fx course (once per course)
-    #   77432 — SRS single-fraction cranial (per session)
-    #   77435 — SBRT 3-5 fx (per fraction)
-    #   77427 — Conventional 6+ fx (per 5 fractions)
-    missed_wrvu = 0.0
-    missed_dollars = 0.0
-    _MEDICARE_CF = 32.35  # 2026 Medicare conversion factor ($/RVU)
-
-    # RVU lookup by code and year
-    _rvu_by_code = {}  # code -> {year: wRVU}
-    _mp_by_code = {}   # code -> {year: MP_RVU}
-    _fac_total_by_code = {}  # code -> {year: Fac_Total_RVU}
-    try:
-        from data.loader import load_rvu_lookup
-        _rvu_tbl = load_rvu_lookup()
-        for _code in ["77427", "77431", "77432", "77435"]:
-            _sub = _rvu_tbl[_rvu_tbl["HCPCS"] == _code].set_index("Year")
-            _rvu_by_code[_code] = _sub["wRVU"]
-            _mp_by_code[_code] = _sub["MP_RVU"] if "MP_RVU" in _sub.columns else pd.Series(dtype=float)
-            _fac_total_by_code[_code] = _sub["Fac_Total_RVU"] if "Fac_Total_RVU" in _sub.columns else pd.Series(dtype=float)
-    except Exception:
-        pass
-
-    # Fallback values (2026)
-    _FALLBACK_WRVU = {"77427": 3.37, "77431": 1.76, "77432": 7.72, "77435": 11.57}
-    _FALLBACK_MP = {"77427": 0.26, "77431": 0.14, "77432": 0.61, "77435": 0.92}
-    _FALLBACK_FAC_TOTAL = {"77427": 5.85, "77431": 3.19, "77432": 12.70, "77435": 19.20}
-    # All sites: physician group earns pro fees only (wRVU + MP_RVU)
-
-    def _classify_mgmt_cpt(row):
-        """Determine the management CPT code for a course."""
-        fx = row.get("SessionCount_Delivery", 0) or 0
-        course_id = str(row.get("CourseId", "")).upper()
-        is_srs_sbrt = any(k in course_id for k in ["SRS", "SBRT", "SRT", "STEREO"])
-        if fx <= 2:
-            if is_srs_sbrt and fx == 1 and any(k in course_id for k in ["SRS", "BRAIN", "CRANIAL"]):
-                return "77432"  # SRS management
-            return "77431"  # Short-course management
-        if is_srs_sbrt and fx <= 5:
-            return "77435"  # SBRT management
-        return "77427"  # Conventional management
-
-    def _calc_missed(frame):
-        """Return (missed_wrvu, missed_dollars) for Too Few courses."""
-        if frame.empty or "AuditResult" not in frame.columns:
-            return 0.0, 0.0
-        tf = frame[frame["AuditResult"] == "Too Few"]
-        if tf.empty or not {"AllowedOTVs", "WeeklyExamActivities", "ManagementCPTs_ExcludingNC"} <= set(tf.columns):
-            return 0.0, 0.0
-        actual = tf[["WeeklyExamActivities", "ManagementCPTs_ExcludingNC"]].max(axis=1)
-        missed = (tf["AllowedOTVs"] - actual).clip(lower=0)
-        cpt_codes = tf.apply(_classify_mgmt_cpt, axis=1)
-        years = tf[date_col].dt.year if date_col in tf.columns else pd.Series(2026, index=tf.index)
-        wrvu_total = 0.0
-        dollar_total = 0.0
-        for code in ["77427", "77431", "77432", "77435"]:
-            mask = cpt_codes == code
-            if not mask.any():
-                continue
-            # wRVU (always the work component)
-            if code in _rvu_by_code and not _rvu_by_code[code].empty:
-                row_wrvu = years[mask].map(_rvu_by_code[code]).fillna(_FALLBACK_WRVU[code])
-            else:
-                row_wrvu = pd.Series(_FALLBACK_WRVU[code], index=tf.index[mask])
-            wrvu_total += (missed[mask] * row_wrvu).sum()
-
-            # Dollars: pro fees only at all sites — (wRVU + MP) × CF
-            if code in _rvu_by_code and not _rvu_by_code[code].empty:
-                row_mp = years[mask].map(_mp_by_code.get(code, pd.Series(dtype=float))).fillna(_FALLBACK_MP[code])
-            else:
-                row_mp = pd.Series(_FALLBACK_MP[code], index=tf.index[mask])
-            dollar_total += (missed[mask] * (row_wrvu + row_mp) * _MEDICARE_CF).sum()
-
-        return wrvu_total, dollar_total
-
-    missed_wrvu, missed_dollars = _calc_missed(dff)
-
-    # Prior-period missed wRVU trend
+    rvu_by_code, mp_by_code = _load_rvu_lookups()
+    missed_wrvu, missed_dollars = _calc_missed(dff, date_col, rvu_by_code, mp_by_code)
     _t_missed = (None, None)
     if trend_label and not df_prior.empty:
-        prior_missed_wrvu, _ = _calc_missed(df_prior)
+        prior_missed_wrvu, _ = _calc_missed(df_prior, date_col, rvu_by_code, mp_by_code)
         _t_missed = _trend(missed_wrvu, prior_missed_wrvu, invert=True)
 
     kpi_missed_rvu = kpi_card(
@@ -1188,9 +1192,14 @@ def update_otv_audit(_n, slider_val, date_preset, departments, exclude_incomplet
         trend_direction=_t_missed[1],
     )
 
-    # --- Sparkline data ---
+    # --- Sparklines ---
     sparkline_data = {}
-    range_months = (end.year - start.year) * 12 + (end.month - start.month) + 1
+    start = pd.Timestamp(start_iso) if start_iso else (dff[date_col].min() if date_col in dff.columns else None)
+    end = pd.Timestamp(end_iso) if end_iso else (dff[date_col].max() if date_col in dff.columns else None)
+    if start is not None and end is not None:
+        range_months = (end.year - start.year) * 12 + (end.month - start.month) + 1
+    else:
+        range_months = 12
     _spark_period = "D" if range_months <= 3 else "W"
 
     if date_col in dff.columns and has_result:
@@ -1201,7 +1210,6 @@ def update_otv_audit(_n, slider_val, date_preset, departments, exclude_incomplet
             else:
                 temp["_sp"] = temp[date_col].dt.to_period("W").dt.to_timestamp()
 
-            # Total courses sparkline
             grp_total = temp.groupby("_sp").size()
             if len(grp_total) > 2:
                 sparkline_data["total"] = {
@@ -1210,7 +1218,6 @@ def update_otv_audit(_n, slider_val, date_preset, departments, exclude_incomplet
                     "color": PRIMARY,
                 }
 
-            # Compliance rate sparkline
             grp_comp = temp.groupby("_sp").apply(
                 lambda x: (x["AuditResult"] != "Too Few").sum() / len(x) * 100 if len(x) > 0 else 0
             )
@@ -1222,11 +1229,9 @@ def update_otv_audit(_n, slider_val, date_preset, departments, exclude_incomplet
                     "hover_fmt": "%{x|%b %d}: %{customdata:.1f}%<extra></extra>",
                 }
 
-            # Extra visits sparkline
             extra_temp = temp[temp["AuditResult"] == "Extra Visit(s)"]
             if not extra_temp.empty:
                 grp_extra = extra_temp.groupby("_sp").size()
-                # Reindex to full period range to fill gaps with 0
                 grp_extra = grp_extra.reindex(grp_total.index, fill_value=0)
                 if len(grp_extra) > 2:
                     sparkline_data["extra"] = {
@@ -1235,7 +1240,6 @@ def update_otv_audit(_n, slider_val, date_preset, departments, exclude_incomplet
                         "color": SEMANTIC_COLORS["warning"],
                     }
 
-            # Too few sparkline
             toofew_temp = temp[temp["AuditResult"] == "Too Few"]
             if not toofew_temp.empty:
                 grp_toofew = toofew_temp.groupby("_sp").size()
@@ -1247,7 +1251,6 @@ def update_otv_audit(_n, slider_val, date_preset, departments, exclude_incomplet
                         "color": SEMANTIC_COLORS["error"],
                     }
 
-            # Discrepancy sparkline (mean per period)
             if "Discrepancy" in temp.columns:
                 non_ok_temp = temp[temp["AuditResult"] != "OK"]
                 if not non_ok_temp.empty:
@@ -1260,7 +1263,6 @@ def update_otv_audit(_n, slider_val, date_preset, departments, exclude_incomplet
                             "hover_fmt": "%{x|%b %d}: %{customdata:+.1f}<extra></extra>",
                         }
 
-            # Missed wRVU sparkline (sum per period)
             if not toofew_temp.empty and {"AllowedOTVs", "WeeklyExamActivities", "ManagementCPTs_ExcludingNC"} <= set(temp.columns):
                 tf_sp = toofew_temp.copy()
                 tf_actual = tf_sp[["WeeklyExamActivities", "ManagementCPTs_ExcludingNC"]].max(axis=1)
@@ -1278,18 +1280,95 @@ def update_otv_audit(_n, slider_val, date_preset, departments, exclude_incomplet
                         "hover_fmt": "%{x|%b %d}: %{customdata:.1f} wRVU<extra></extra>",
                     }
 
-    # --- Charts (from grid-filtered dff) ---
-    fig_dept = _build_department_chart(dff, dept_mode or "count")
-    fig_trend = _build_trend_chart(dff, date_col, trend_chart_type or "line", trend_agg or "M", trend_smooth or 0)
-    fig_dist = _build_distribution_chart(dff)
-    fig_hist = _build_failed_breakdown(dff, breakdown_slice or "physician", breakdown_mode or "count")
-
     return (
         kpi_total, kpi_compliance, kpi_extra, kpi_toofew, kpi_discrepancy, kpi_missed_rvu,
-        fig_dept, fig_trend, fig_dist, fig_hist, table_rows, table_cols,
         sparkline_data,
-        frac_min_data, frac_max_data,
     )
+
+
+# ---------------------------------------------------------------------------
+# Per-chart callbacks — each fires only when its own toggles change
+# ---------------------------------------------------------------------------
+@callback(
+    Output("otv-chart-department", "figure"),
+    Input("otv-store-filtered-dff", "data"),
+    Input("otv-table-filter-rows", "data"),
+    Input("otv-dept-mode", "value"),
+    running=[(Output("otv-chart-department-loading", "visible"), True, False)],
+)
+def _update_dept_chart(dff_records, grid_rows, dept_mode):
+    df = _records_to_df(dff_records)
+    if df.empty:
+        return empty_figure("No data")
+    df = _apply_grid_row_filter(df, grid_rows)
+    return _build_department_chart(df, dept_mode or "count")
+
+
+@callback(
+    Output("otv-chart-trend", "figure"),
+    Input("otv-store-filtered-dff", "data"),
+    Input("otv-store-meta", "data"),
+    Input("otv-table-filter-rows", "data"),
+    Input("otv-trend-settings-type", "value"),
+    Input("otv-trend-agg", "value"),
+    Input("otv-trend-settings-smooth", "value"),
+    running=[(Output("otv-chart-trend-loading", "visible"), True, False)],
+)
+def _update_trend_chart(dff_records, meta, grid_rows, chart_type, agg, smooth):
+    df = _records_to_df(dff_records)
+    if df.empty:
+        return empty_figure("No data")
+    date_col = (meta or {}).get("date_col", "LastTreatmentDate")
+    df = _apply_grid_row_filter(df, grid_rows)
+    return _build_trend_chart(df, date_col, chart_type or "line", agg or "M", smooth or 0)
+
+
+@callback(
+    Output("otv-chart-distribution", "figure"),
+    Input("otv-store-filtered-dff", "data"),
+    Input("otv-table-filter-rows", "data"),
+    running=[(Output("otv-dist-loading", "visible"), True, False)],
+)
+def _update_dist_chart(dff_records, grid_rows):
+    df = _records_to_df(dff_records)
+    if df.empty:
+        return empty_figure("No data")
+    df = _apply_grid_row_filter(df, grid_rows)
+    return _build_distribution_chart(df)
+
+
+@callback(
+    Output("otv-chart-histogram", "figure"),
+    Input("otv-store-filtered-dff", "data"),
+    Input("otv-table-filter-rows", "data"),
+    Input("otv-breakdown-slice", "value"),
+    Input("otv-breakdown-mode", "value"),
+    running=[(Output("otv-hist-loading", "visible"), True, False)],
+)
+def _update_breakdown_chart(dff_records, grid_rows, slice_by, mode):
+    df = _records_to_df(dff_records)
+    if df.empty:
+        return empty_figure("No data")
+    df = _apply_grid_row_filter(df, grid_rows)
+    return _build_failed_breakdown(df, slice_by or "physician", mode or "count")
+
+
+# ---------------------------------------------------------------------------
+# Table — depends on data store; ignores grid-row filter so the table itself
+# isn't trimmed by its own column filters.
+# ---------------------------------------------------------------------------
+@callback(
+    Output("otv-detail-grid", "rowData"),
+    Output("otv-detail-grid", "columnDefs"),
+    Input("otv-store-filtered-dff", "data"),
+    Input("otv-table-result-filter", "value"),
+    Input("otv-table-course-status", "value"),
+)
+def _update_table_cb(dff_records, table_result_filter, table_course_status):
+    df = _records_to_df(dff_records)
+    if df.empty:
+        return [], []
+    return _build_table(df, table_result_filter, table_course_status)
 
 
 # ---------------------------------------------------------------------------
@@ -1415,8 +1494,11 @@ def _build_department_chart(df, mode="count"):
                 y=pivot[result],
                 name=result,
                 marker_color=result_colors.get(result, PRIMARY),
-                hovertemplate="%{x}: %{y:.1f}%<extra>" + result + "</extra>" if mode == "pct"
-                    else "%{x}: %{y}<extra>" + result + "</extra>",
+                hovertemplate=(
+                    "%{x} — " + result + ": %{y:.1f}%<extra></extra>"
+                    if mode == "pct"
+                    else "%{x} — " + result + ": %{y}<extra></extra>"
+                ),
             ))
 
     apply_default_layout(fig, barmode="stack")
@@ -1482,6 +1564,7 @@ def _build_trend_chart(df, date_col, chart_type="line", agg="M", smooth=0):
         yaxis_range=[0, 105],
         margin=dict(l=48, r=16, t=12, b=20),
         hovermode="x unified",
+        hoverdistance=-1,
     )
     return fig
 
@@ -1640,8 +1723,9 @@ def _build_failed_breakdown(df, slice_by="department", mode="count"):
         if result not in pivot.columns:
             continue
         hover = (
-            "%{y}: %{x:.1f}%<extra>" + result + "</extra>" if mode == "pct"
-            else "%{y}: %{x}<extra>" + result + "</extra>"
+            "%{y} — " + result + ": %{x:.1f}%<extra></extra>"
+            if mode == "pct"
+            else "%{y} — " + result + ": %{x}<extra></extra>"
         )
         fig.add_trace(go.Bar(
             y=pivot.index,

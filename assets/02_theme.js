@@ -183,7 +183,14 @@
                 if (L.hoverlabel.font) L.hoverlabel.font.color = p.hoverFont;
                 else L.hoverlabel.font = {color: p.hoverFont};
             }
-            if (L.mapbox) L.mapbox.style = p.mapboxStyle;
+            // INTENTIONALLY NOT swapping L.mapbox.style on theme change.
+            // Mapbox-gl reacts to style changes by tearing down the WebGL
+            // canvas, re-downloading the new style + tile set, and re-tiling
+            // synchronously inside Plotly.redraw — this hard-freezes Safari
+            // on the patients page (mapbox layer + many DMC components).
+            // The page bg is transparent so the tile-style mismatch in dark
+            // mode is minor; we accept lighter tiles to keep dark mode usable.
+            // if (L.mapbox) L.mapbox.style = p.mapboxStyle;
 
             Object.keys(L).forEach(function(key) {
                 if (/^(x|y)axis\d*$/.test(key)) {
@@ -305,7 +312,10 @@
                     });
                 }
                 if (trace.textfont && typeof trace.textfont.color === 'string') {
-                    var r = remapTraceColor(trace.textfont.color, theme);
+                    // textfont (bar labels etc.) needs the same swap menu as
+                    // annotations: brand colors AND the neutral mid-gray pair.
+                    var r = remapAnnotationColor(trace.textfont.color, theme);
+                    if (!r) r = remapTraceColor(trace.textfont.color, theme);
                     if (r) trace.textfont.color = r;
                 }
                 if (trace.hoverlabel) {
@@ -325,9 +335,19 @@
         var theme = currentTheme();
         charts.forEach(function(el) {
             try {
-                // Skip if this chart is already on the current theme (avoids
-                // redundant redraws from the 2s interval sweeper).
-                if (el._rcThemeApplied === theme) return;
+                // Skip mapbox-backed charts entirely. Plotly.redraw on a
+                // Scattermapbox/Choroplethmapbox trace triggers a synchronous
+                // mapbox-gl restyle that hard-freezes Safari. The map stays
+                // in its initial light styling in dark mode — acceptable.
+                if (el.layout && el.layout.mapbox) return;
+                // Skip if already on the current theme AND the traces don't
+                // still carry the wrong-theme brand colors. The
+                // tracesNeedRemap guard catches the case where
+                // _rcThemeApplied was set when the chart was still empty
+                // (no data populated yet), so the marker is misleading and
+                // the chart actually needs a fresh remap pass.
+                if (el._rcThemeApplied === theme
+                    && !tracesNeedRemap(el.data, theme)) return;
                 applyThemeToLayout(el.layout);
                 applyThemeToTraces(el.data, theme);
                 Plotly.redraw(el);
@@ -420,9 +440,13 @@
         for (var i = 0; i < data.length; i++) {
             var trace = data[i];
             if (!trace) continue;
+            // Bars/histograms intentionally keep their raw brand color in
+            // dark mode (see applyThemeToTraces). Don't flag them as needing
+            // remap or we get an infinite Plotly.redraw → afterplot loop.
+            var isBar = trace.type === 'bar' || trace.type === 'histogram';
             if (trace.line && typeof trace.line.color === 'string'
                 && unremapped[trace.line.color.toLowerCase()]) return true;
-            if (trace.marker && typeof trace.marker.color === 'string'
+            if (!isBar && trace.marker && typeof trace.marker.color === 'string'
                 && unremapped[trace.marker.color.toLowerCase()]) return true;
         }
         return false;

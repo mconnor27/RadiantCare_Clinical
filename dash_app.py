@@ -2,6 +2,14 @@
 
 import os
 
+# Load .env BEFORE any config import — config/settings.py reads os.environ at
+# import time (e.g. MAPBOX_TOKEN), so dotenv must populate the env first.
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 import dash
 import dash_mantine_components as dmc
 from dash import Dash, html, dcc, page_container, callback, Input, Output, State, ALL, no_update

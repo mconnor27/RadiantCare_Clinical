@@ -349,6 +349,7 @@ layout = dmc.Stack(
                         show_smooth=True,
                         smooth_max=100,
                         smooth_default=50,
+                        show_grouping=False,
                         settings_id="patients-age",
                         extra_controls_left=[
                             dmc.SegmentedControl(
@@ -707,7 +708,9 @@ def _build_top_cities_bar(df, top_n=12):
             ))
         fig.update_layout(barmode="stack")
 
-        # Add total labels at end of each stacked bar
+        # Add total labels at end of each stacked bar.
+        # #4B5563 is registered with 02_theme.js's annotation-neutral remap:
+        # stays mid-gray in light, swaps to #FFFFFF in dark.
         for city in city_order:
             total = int(city_totals[city])
             fig.add_annotation(
@@ -715,7 +718,7 @@ def _build_top_cities_bar(df, top_n=12):
                 text=f" {total:,}",
                 showarrow=False,
                 xanchor="left",
-                font=dict(size=11, color="#6B7280"),
+                font=dict(size=11, color="#4B5563"),
             )
     else:
         city_counts = (
@@ -842,6 +845,7 @@ def _build_patient_map(
     geo_df, departments_filter, selected_dept=None,
     show_flows=True, region="pnw", min_patients=1,
     uirevision="patients-map",
+    map_style=None,
 ):
     """Build Scattermapbox with patient origin bubbles, dept markers, and flow lines.
 
@@ -1080,7 +1084,7 @@ def _build_patient_map(
     fig.update_layout(
         mapbox=dict(
             accesstoken=MAPBOX_TOKEN,
-            style=MAPBOX_STYLE,
+            style=map_style or MAPBOX_STYLE,
             center=center,
             zoom=zoom,
         ),
@@ -1279,7 +1283,7 @@ def _build_gender_fig(data, group="all", scale="count"):
                     marker_color=_GENDER_COLORS[g],
                     hovertemplate=hover,
                     text=text, textposition="outside",
-                    textfont=dict(size=11, color="#6B7280"),
+                    textfont=dict(size=11, color="#4B5563"),
                 ))
             else:
                 fig.add_trace(go.Bar(
@@ -1288,7 +1292,7 @@ def _build_gender_fig(data, group="all", scale="count"):
                     hovertemplate=f"{g}<br>%{{x}}: %{{y:,}} patients<extra></extra>",
                     text=[f"{v:,}" if v else "" for v in counts],
                     textposition="outside",
-                    textfont=dict(size=11, color="#6B7280"),
+                    textfont=dict(size=11, color="#4B5563"),
                 ))
         fig.update_layout(barmode="group")
         xaxis_title = "Department"
@@ -1307,7 +1311,7 @@ def _build_gender_fig(data, group="all", scale="count"):
                 customdata=counts,
                 text=[f"{p:.1f}%" for p in pcts],
                 textposition="outside",
-                textfont=dict(size=11, color="#6B7280"),
+                textfont=dict(size=11, color="#4B5563"),
                 hovertemplate=(
                     "%{y}<br>%{x:.1f}%  (%{customdata:,} patients)<extra></extra>"
                 ),
@@ -1320,7 +1324,7 @@ def _build_gender_fig(data, group="all", scale="count"):
                 marker_color=[_GENDER_COLORS[g] for g in cats],
                 text=[f"{v:,} ({v/grand:.0%})" for v in counts],
                 textposition="outside",
-                textfont=dict(size=11, color="#6B7280"),
+                textfont=dict(size=11, color="#4B5563"),
                 hovertemplate="%{y}<br>%{x:,} patients<extra></extra>",
             ))
             xaxis_title = "Patient Count"
@@ -1459,12 +1463,14 @@ def _update_age_dist(data, metric, mode, group, bandwidth_pct, gender_scale):
     # Median vertical line. Annotation sits INSIDE the plot area (just below
     # the top) so the chart can use the same tight top margin as top-cities /
     # gender and their x-axis baselines stay aligned across the row.
+    # PRIMARY is registered with 02_theme.js's brand-color remap: stays
+    # #7C2A83 in light, swaps to #CD8AD0 (bumped) in dark.
     med = data["median"]
-    fig.add_vline(x=med, line_dash="dash", line_color="#6B7280")
+    fig.add_vline(x=med, line_dash="dash", line_color=PRIMARY)
     fig.add_annotation(
         x=med, y=1.06, yref="paper",
         text=f"Median: {med:.0f}", showarrow=False,
-        font=dict(size=11, color="#6B7280"),
+        font=dict(size=11, color=PRIMARY),
         yanchor="top", xanchor="center",
     )
 
@@ -1504,11 +1510,20 @@ def _update_age_dist(data, metric, mode, group, bandwidth_pct, gender_scale):
     Input("patients-region-toggle", "value"),
     Input("patients-min-slider", "value"),
     Input("patients-map-reset", "n_clicks"),
+    Input("global-theme-store", "data"),
 )
-def update_map(geo_data, selected_dept, departments, show_flows, region, min_patients, _reset):
+def update_map(geo_data, selected_dept, departments, show_flows, region, min_patients, _reset, theme):
     """Build the Mapbox map from geocoded data in the store."""
+    # In PHI mode the map card is hidden via CSS, but the dcc.Graph still
+    # exists in the DOM. Building a Mapbox figure here triggers a Plotly +
+    # Mapbox-GL race ("Style is not done loading") that the React error
+    # boundary catches, freezing the page. Return a bare empty figure (no
+    # mapbox layer) so the Graph stays inert.
+    if PHI_MODE:
+        return go.Figure()
+    map_style = "dark" if theme == "dark" else MAPBOX_STYLE
     # Re-fit when view controls change; preserve zoom on data refresh / flow toggle
-    _preserve = {"patients-store-geo", "patients-flow-toggle"}
+    _preserve = {"patients-store-geo", "patients-flow-toggle", "global-theme-store"}
     triggered = ctx.triggered_id
     if triggered and triggered not in _preserve:
         reset_rev = f"{region}-{selected_dept}-{departments}-{min_patients}-{_reset}"
@@ -1519,7 +1534,7 @@ def update_map(geo_data, selected_dept, departments, show_flows, region, min_pat
         fig = go.Figure()
         fig.update_layout(
             mapbox=dict(
-                accesstoken=MAPBOX_TOKEN, style=MAPBOX_STYLE,
+                accesstoken=MAPBOX_TOKEN, style=map_style,
                 center=MAPBOX_CENTER, zoom=MAPBOX_ZOOM,
             ),
             height=700,
@@ -1538,6 +1553,7 @@ def update_map(geo_data, selected_dept, departments, show_flows, region, min_pat
         region=region,
         min_patients=min_patients or 1,
         uirevision=reset_rev,
+        map_style=map_style,
     )
 
 

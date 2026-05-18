@@ -4,10 +4,44 @@ import plotly.graph_objects as go
 from config.settings import DEFAULT_LAYOUT, DEPARTMENT_COLORS, CHART_COLORWAY
 
 
+# Light-mode default; assets/02_theme.js swaps to a dark slate in dark mode.
+_HOVER_BG_LIGHT = "#FFFFFF"
+
+
+def _trace_color(tr):
+    """Best-effort single color for a trace (used for hover-label font color)."""
+    marker = getattr(tr, "marker", None)
+    if marker is not None:
+        c = getattr(marker, "color", None)
+        if isinstance(c, str):
+            return c
+    line = getattr(tr, "line", None)
+    if line is not None:
+        c = getattr(line, "color", None)
+        if isinstance(c, str):
+            return c
+    return None
+
+
 def apply_default_layout(fig, **overrides):
-    """Apply the default layout to a Plotly figure with optional overrides."""
+    """Apply the default layout to a Plotly figure with optional overrides.
+
+    Each trace's hover-label gets bg=white (light-mode default) with the
+    trace's own bar/line color as font color. assets/02_theme.js swaps the
+    bg to a dark slate in dark mode so the bar-color text stays high-contrast
+    against either theme.
+    """
     layout = {**DEFAULT_LAYOUT, **overrides}
     fig.update_layout(**layout)
+    for tr in fig.data:
+        existing = getattr(tr, "hoverlabel", None)
+        if existing is not None and getattr(existing, "bgcolor", None):
+            continue
+        color = _trace_color(tr)
+        if color:
+            tr.hoverlabel = dict(bgcolor=_HOVER_BG_LIGHT, font=dict(color=color))
+        else:
+            tr.hoverlabel = dict(bgcolor=_HOVER_BG_LIGHT)
     return fig
 
 

@@ -1814,3 +1814,15 @@ html[data-mobile-view="true"] .mantine-Select-dropdown {
 .sched-slot:hover .sched-slot-tooltip {
     display: block;
 }
+
+/* Plotly pie slice labels (label + percent): track theme so they stay
+   visible in BOTH modes. Plotly bakes inline fills into the SVG which its
+   own theme remap doesn't touch — override at the CSS level. Targets every
+   <text> + <tspan> Plotly emits inside a slicetext group. */
+.js-plotly-plot .slicetext text,
+.js-plotly-plot .slicetext tspan,
+.js-plotly-plot .slicetext text tspan {
+    fill: var(--text-primary) !important;
+    fill-opacity: 1 !important;
+    opacity: 1 !important;
+}
