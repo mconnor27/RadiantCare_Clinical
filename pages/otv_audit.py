@@ -440,7 +440,7 @@ layout = dmc.Stack(
         dcc.Store(id="otv-store-prior-dff"),
         dcc.Store(id="otv-store-meta"),
         dcc.Store(id="otv-table-filter-rows"),
-        dcc.Interval(id="otv-interval", interval=300_000, n_intervals=0),
+        dcc.Interval(id="otv-interval", interval=300_000, n_intervals=0, max_intervals=0),  # fires once on mount; no background refresh (daily data + global refresh button)
     ],
 )
 

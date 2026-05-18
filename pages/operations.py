@@ -287,8 +287,9 @@ layout = dmc.Stack(
             ],
         ),
 
-        # Interval for periodic refresh
-        dcc.Interval(id="ops-interval", interval=300_000, n_intervals=0),
+        # Schedule data updates live; rest of operations is daily. 15-min
+        # cadence keeps the live schedule fresh without spamming re-renders.
+        dcc.Interval(id="ops-interval", interval=900_000, n_intervals=0),
 
         # Stores for clientside rendering
         dcc.Store(id="ops-store-volume"),

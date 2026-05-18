@@ -411,7 +411,7 @@ layout = dmc.Stack(
         dcc.Store(id="patients-map-selection", data=None),
 
         # Intervals
-        dcc.Interval(id="patients-interval", interval=300_000, n_intervals=0),
+        dcc.Interval(id="patients-interval", interval=300_000, n_intervals=0, max_intervals=0),  # fires once on mount; no background refresh (daily data + global refresh button)
         dcc.Interval(
             id="patients-geocode-check", interval=5_000,
             n_intervals=0, max_intervals=120,

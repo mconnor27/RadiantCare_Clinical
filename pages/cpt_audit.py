@@ -251,7 +251,7 @@ layout = dmc.Stack(
         dcc.Store(id="cpt-store-filtered-sids", data=[]),
         dcc.Store(id="cpt-store-pending-bulk", data=None),
         dcc.Store(id="cpt-store-review-action", data=None),
-        dcc.Interval(id="cpt-interval", interval=300_000, n_intervals=0),
+        dcc.Interval(id="cpt-interval", interval=300_000, n_intervals=0, max_intervals=0),  # fires once on mount; no background refresh (daily data + global refresh button)
     ],
 )
 

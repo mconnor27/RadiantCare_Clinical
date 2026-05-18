@@ -1203,7 +1203,7 @@ layout = dmc.Stack(
             ],
         ),
 
-        dcc.Interval(id="diag-interval", interval=5 * 60 * 1000, n_intervals=0),
+        dcc.Interval(id="diag-interval", interval=5 * 60 * 1000, n_intervals=0, max_intervals=0),  # fires once on mount; no background refresh (daily data + global refresh button)
     ],
 )
 

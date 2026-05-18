@@ -218,7 +218,7 @@ layout = dmc.Stack(
         ]),
 
         # --- Stores & Interval ---
-        dcc.Interval(id=f"{PAGE_ID}-interval", interval=600_000, n_intervals=0),
+        dcc.Interval(id=f"{PAGE_ID}-interval", interval=600_000, n_intervals=0, max_intervals=0),  # fires once on mount; no background refresh (daily data + global refresh button)
     ],
 )
 

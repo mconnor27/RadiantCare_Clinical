@@ -576,7 +576,7 @@ def layout():
     return dmc.Container(
         size="sm", px="xs", pt=4, pb="md",
         children=[
-            dcc.Interval(id=f"{PAGE_ID}-interval", interval=5 * 60 * 1000, n_intervals=0),
+            dcc.Interval(id=f"{PAGE_ID}-interval", interval=5 * 60 * 1000, n_intervals=0, max_intervals=0),  # fires once on mount; no background refresh (daily data + global refresh button)
             dcc.Store(id=_SETTINGS_STORE_ID, data={"dept": "all", "physician": "all"}),
 
             dmc.Drawer(

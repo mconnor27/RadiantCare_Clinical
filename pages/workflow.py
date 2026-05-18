@@ -880,7 +880,7 @@ layout = dmc.Stack(
             ],
         ),
 
-        dcc.Interval(id="wf-interval", interval=300_000, n_intervals=0),
+        dcc.Interval(id="wf-interval", interval=300_000, n_intervals=0, max_intervals=0),  # fires once on mount; no background refresh (daily data + global refresh button)
 
         # Stores for clientside rendering — Dataset A
         dcc.Store(id="wf-store-sankey"),

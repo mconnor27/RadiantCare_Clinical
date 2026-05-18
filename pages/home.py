@@ -883,8 +883,9 @@ layout = dmc.Stack(
             ],
         ),
 
-        # Interval for periodic refresh
-        dcc.Interval(id="home-interval", interval=300_000, n_intervals=0),
+        # Schedule data updates live; the rest of home is daily. 15-min
+        # cadence keeps the schedule fresh without spamming re-renders.
+        dcc.Interval(id="home-interval", interval=900_000, n_intervals=0),
 
         # Stores for raw metric data (one per card: 4 trend + 4 cumulative)
         *[dcc.Store(id=f"home-{m}-{row}-store")

@@ -501,7 +501,7 @@ layout = dmc.Stack(
         dcc.Store(id="courses-table-filter-rows"),  # filtered row indices from grid
 
         # Interval for periodic refresh
-        dcc.Interval(id="courses-interval", interval=300_000, n_intervals=0),
+        dcc.Interval(id="courses-interval", interval=300_000, n_intervals=0, max_intervals=0),  # fires once on mount; no background refresh (daily data + global refresh button)
     ],
 )
 

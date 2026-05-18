@@ -3158,7 +3158,7 @@ layout = dmc.Stack(
         dcc.Store(id=f"{PAGE_ID}-store-rev-adj", data=get_revenue_adj_settings()),
         dcc.Store(id=f"{PAGE_ID}-table-filter-rows"),
 
-        dcc.Interval(id=f"{PAGE_ID}-interval", interval=300_000, n_intervals=0),
+        dcc.Interval(id=f"{PAGE_ID}-interval", interval=300_000, n_intervals=0, max_intervals=0),  # fires once on mount; no background refresh (daily data + global refresh button)
     ],
 )
 
