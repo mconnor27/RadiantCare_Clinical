@@ -96,6 +96,13 @@ window.dash_clientside.histogram = {
         var dtick = xSpan <= 15 ? 1 : (xSpan <= 30 ? 2 : undefined);
 
         var theme = _histogramTheme();
+        // When the legend is shown, stack legend on top + annotation just
+        // above the chart. Margin is tightened so the plot doesn't get
+        // squashed — pieces sit closely above the chart.
+        var legendShown = sliced && series.length > 1;
+        var medianY = legendShown ? 1.08 : 1.06;
+        var legendY = legendShown ? 1.10 : 1.02;
+        var topMargin = legendShown ? 34 : 28;
 
         var layout = {
             font: {color: theme.font},
@@ -112,11 +119,11 @@ window.dash_clientside.histogram = {
             },
             paper_bgcolor: "rgba(0,0,0,0)",
             plot_bgcolor: "rgba(0,0,0,0)",
-            margin: {l: 32, r: 12, t: 28, b: 34},
+            margin: {l: 32, r: 12, t: topMargin, b: 34},
             barmode: "overlay",
-            showlegend: sliced && series.length > 1,
+            showlegend: legendShown,
             legend: {
-                orientation: "h", y: 1.02, x: 0, xanchor: "left", yanchor: "bottom",
+                orientation: "h", y: legendY, x: 0, xanchor: "left", yanchor: "bottom",
                 font: {size: 11, color: theme.font}, tracegroupgap: 0, itemwidth: 30
             },
             hovermode: "closest",
@@ -128,7 +135,7 @@ window.dash_clientside.histogram = {
             }],
             annotations: [
                 {
-                    x: stats.median, y: 1.06, yref: "paper", xref: "x",
+                    x: stats.median, y: medianY, yref: "paper", xref: "x",
                     text: "Median: " + fmtVal(stats.median) + stats.suffix,
                     showarrow: false,
                     font: {size: 11, color: stats.accentColor}
