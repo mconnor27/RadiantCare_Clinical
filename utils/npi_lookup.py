@@ -1,142 +1,13 @@
-"""NPPES NPI Registry API client for referring physician specialty lookup."""
+"""NPPES NPI Registry API client for referring physician specialty lookup.
+
+Taxonomy normalization is delegated to ``config.specialties.normalize_specialty``
+so this module stays in lockstep with loader-side and RPM-side mapping.
+"""
 
 import time
 import requests
 
-# NPPES taxonomy description → normalized ABMS-aligned specialty name
-# Covers the most common taxonomies returned by the NPI Registry.
-_TAXONOMY_MAP = {
-    # Primary Care
-    "Family Medicine": "Primary Care",
-    "Family Practice": "Primary Care",
-    "General Practice": "Primary Care",
-    "Adolescent Medicine (Family Medicine)": "Primary Care",
-    # Internal Medicine
-    "Internal Medicine": "Internal Medicine",
-    "Geriatric Medicine (Internal Medicine)": "Internal Medicine",
-    "Hospitalist": "Hospital Medicine",
-    "Hospital Medicine": "Hospital Medicine",
-    # Medical Oncology / Hematology
-    "Medical Oncology": "Medical Oncology",
-    "Hematology & Oncology": "Medical Oncology",
-    "Hematology (Internal Medicine)": "Medical Oncology",
-    "Hematology/Oncology": "Medical Oncology",
-    # Radiation Oncology
-    "Radiation Oncology": "Radiation Oncology",
-    # Surgical Oncology
-    "Surgical Oncology": "Surgical Oncology",
-    # Gynecologic Oncology
-    "Gynecologic Oncology": "Gynecologic Oncology",
-    "Gynecological Oncology": "Gynecologic Oncology",
-    # Urology
-    "Urology": "Urology",
-    "Urologist": "Urology",
-    # Pulmonary
-    "Pulmonary Disease": "Pulmonary Medicine",
-    "Pulmonary Disease (Internal Medicine)": "Pulmonary Medicine",
-    "Interventional Pulmonology": "Pulmonary Medicine",
-    "Pulmonary Critical Care Medicine": "Pulmonary Medicine",
-    # Neurology
-    "Neurology": "Neurology",
-    "Neurology with Special Qualifications in Child Neurology": "Neurology",
-    "Neuromuscular Medicine": "Neurology",
-    # Neurosurgery
-    "Neurological Surgery": "Neurosurgery",
-    "Neurosurgery": "Neurosurgery",
-    # Cardiology
-    "Cardiovascular Disease": "Cardiology",
-    "Cardiovascular Disease (Internal Medicine)": "Cardiology",
-    "Interventional Cardiology": "Cardiology",
-    "Clinical Cardiac Electrophysiology": "Cardiology",
-    "Cardiology": "Cardiology",
-    # Gastroenterology
-    "Gastroenterology": "Gastroenterology",
-    "Gastroenterology (Internal Medicine)": "Gastroenterology",
-    # Surgery
-    "General Surgery": "General Surgery",
-    "Surgery": "General Surgery",
-    "Surgical Critical Care": "General Surgery",
-    "Vascular Surgery": "Vascular Surgery",
-    "Thoracic Surgery (Cardiothoracic Vascular Surgery)": "Thoracic Surgery",
-    "Thoracic Surgery": "Thoracic Surgery",
-    # Colorectal
-    "Colon & Rectal Surgery": "Colorectal Surgery",
-    "Colorectal Surgery": "Colorectal Surgery",
-    # Orthopedics
-    "Orthopaedic Surgery": "Orthopedics",
-    "Orthopedic Surgery": "Orthopedics",
-    "Sports Medicine (Orthopedic Surgery)": "Orthopedics",
-    # ENT
-    "Otolaryngology": "Otolaryngology",
-    "Otolaryngology/Facial Plastic Surgery": "Otolaryngology",
-    "Otolaryngic Allergy": "Otolaryngology",
-    # OB/GYN
-    "Obstetrics & Gynecology": "OB/GYN",
-    "Obstetrics": "OB/GYN",
-    "Gynecology": "OB/GYN",
-    # Ophthalmology
-    "Ophthalmology": "Ophthalmology",
-    # Dermatology
-    "Dermatology": "Dermatology",
-    "Dermatopathology": "Dermatology",
-    # Radiology
-    "Diagnostic Radiology": "Radiology",
-    "Interventional Radiology": "Radiology",
-    "Neuroradiology": "Radiology",
-    "Radiation Oncology": "Radiation Oncology",
-    # Pathology
-    "Pathology": "Pathology",
-    "Anatomic Pathology": "Pathology",
-    "Clinical Pathology": "Pathology",
-    "Anatomic Pathology & Clinical Pathology": "Pathology",
-    # Emergency
-    "Emergency Medicine": "Emergency Medicine",
-    # Nephrology
-    "Nephrology": "Nephrology",
-    "Nephrology (Internal Medicine)": "Nephrology",
-    # Endocrinology
-    "Endocrinology, Diabetes & Metabolism": "Endocrinology",
-    "Endocrinology": "Endocrinology",
-    # Rheumatology
-    "Rheumatology": "Rheumatology",
-    # Infectious Disease
-    "Infectious Disease": "Infectious Disease",
-    "Infectious Disease (Internal Medicine)": "Infectious Disease",
-    # PM&R
-    "Physical Medicine & Rehabilitation": "PM&R",
-    "Physical Medicine and Rehabilitation": "PM&R",
-    # Psychiatry
-    "Psychiatry": "Psychiatry",
-    "Psychiatry & Neurology": "Psychiatry",
-    # Palliative
-    "Hospice and Palliative Medicine": "Palliative Care",
-    "Hospice and Palliative Medicine (Internal Medicine)": "Palliative Care",
-    # Pediatrics
-    "Pediatrics": "Pediatrics",
-    "Pediatric Hematology-Oncology": "Pediatric Oncology",
-    "Pediatric Medicine": "Pediatrics",
-    # PA / NP
-    "Physician Assistant": "PA/NP",
-    "Nurse Practitioner": "PA/NP",
-    "Family Nurse Practitioner": "PA/NP",
-    "Adult Health": "PA/NP",
-    # Plastic Surgery
-    "Plastic Surgery": "Plastic Surgery",
-    "Plastic and Reconstructive Surgery": "Plastic Surgery",
-    "Plastic Surgery Within the Head and Neck": "Plastic Surgery",
-    # Oral Surgery
-    "Oral and Maxillofacial Surgery": "Oral Surgery",
-    "Dentist": "Oral Surgery",
-    # Breast Surgery
-    "Breast Surgery": "Breast Surgery",
-    # Hepatology
-    "Transplant Hepatology": "Hepatology",
-    "Hepatology": "Hepatology",
-    # Neuro-Oncology
-    "Neuro-Oncology": "Neuro-Oncology",
-    # Allergy / Immunology
-    "Allergy & Immunology": "Allergy & Immunology",
-}
+from config.specialties import normalize_specialty
 
 _NPPES_URL = "https://npiregistry.cms.hhs.gov/api/"
 
@@ -172,7 +43,8 @@ def lookup_npi(npi: str) -> dict | None:
     if tax:
         desc = tax.get("desc", "")
         raw_taxonomy = desc
-        specialty = _TAXONOMY_MAP.get(desc, desc)  # Fall back to raw description
+        # Normalize via shared specialty module; falls back to raw desc if unmapped.
+        specialty = normalize_specialty(desc) or desc
 
     # --- Organization from basic info ---
     basic = result.get("basic", {})

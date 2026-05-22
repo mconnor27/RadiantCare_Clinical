@@ -200,6 +200,52 @@ html[data-mobile-view="true"][data-theme="dark"] img[src*="radiantcare"] {
     opacity: 1;
 }
 
+/* ─── Compact MultiSelect (Referrals Provider filter) ────────────────
+   Layout structure:
+     html.Div.rc-compact-multi-wrap (relative-positioned)
+       ├── dmc.MultiSelect with styles={"input": ...} for single-row clamp
+       └── html.Span.rc-count-badge (driven by clientside callback)
+
+   When 2+ are selected, a clientside callback appends ".many" to the
+   wrapper's class. That state triggers the pill-hider below; the badge
+   becomes visible via its own clientside callback that writes its style.
+*/
+/* When ANY value is picked, hide the search field's placeholder text so it
+   doesn't sit next to the pill ("Aaron J Beck × All Providers"). Search
+   field stays usable — user can still click + type to filter. */
+.rc-compact-multi-wrap.has-selection input::placeholder,
+.rc-compact-multi-wrap.has-selection [class*="PillsInput-field"]::placeholder,
+.rc-compact-multi-wrap.has-selection [class*="PillsInputField"]::placeholder {
+    color: transparent !important;
+    opacity: 0 !important;
+}
+.rc-compact-multi-wrap.many .mantine-Pill-root {
+    display: none !important;
+}
+/* When in .many state, also hide the search input field's text/placeholder
+   so it doesn't peek through behind the count badge. Multiple selectors
+   because Mantine 7's actual class name varies; we hit every plausible
+   target plus the raw <input> by tag. */
+.rc-compact-multi-wrap.many input,
+.rc-compact-multi-wrap.many .mantine-PillsInput-field,
+.rc-compact-multi-wrap.many [class*="PillsInput-field"],
+.rc-compact-multi-wrap.many [class*="PillsInputField"] {
+    width: 0 !important;
+    min-width: 0 !important;
+    padding: 0 !important;
+    opacity: 0 !important;
+}
+.rc-compact-multi-wrap.many input::placeholder,
+.rc-compact-multi-wrap.many [class*="PillsInput-field"]::placeholder,
+.rc-compact-multi-wrap.many [class*="PillsInputField"]::placeholder {
+    color: transparent !important;
+    opacity: 0 !important;
+}
+[data-theme="dark"] .rc-count-badge {
+    background: rgba(125, 70, 145, 0.35) !important;
+    color: #d4b3e0 !important;
+}
+
 /* Dark mode scrollbars */
 [data-theme="dark"] ::-webkit-scrollbar {
     width: 10px;

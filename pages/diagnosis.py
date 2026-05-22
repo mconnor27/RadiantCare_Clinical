@@ -470,9 +470,6 @@ def _build_comparison_bars(dff_curr, prior_windows, start, end, sort_order="volu
             ci += 1
 
     curr_vals = [int(curr_counts.get(g, 0)) for g in all_groups]
-    n_periods = 1 + len(prior_data)  # current + priors
-    # When bars are narrow (2-3 periods), put labels outside in black
-    outside = n_periods >= 3
 
     fig = go.Figure()
 
@@ -489,11 +486,13 @@ def _build_comparison_bars(dff_curr, prior_windows, start, end, sort_order="volu
             marker_color=f"rgba(156, 163, 175, {alpha})",
             name=plabel,
             text=[f"{v:,}" for v in pvals],
-            textposition="outside" if outside else "inside",
-            insidetextanchor="end" if not outside else None,
+            # Always outside — keeps text on the high-contrast page bg
+            # rather than the washed-out prior fill.
+            textposition="outside",
             textangle=0,
-            textfont=dict(size=11 if outside else 13,
-                          color="#374151" if outside else "#6B7280"),
+            # #4B5563 swaps to white in dark mode via 02_theme.js.
+            textfont=dict(size=11, color="#4B5563"),
+            cliponaxis=False,
             hovertemplate=[
                 f"<b>{g}</b><br>{plabel}: {v:,}<extra></extra>"
                 for g, v in zip(all_groups, pvals)
@@ -509,11 +508,10 @@ def _build_comparison_bars(dff_curr, prior_windows, start, end, sort_order="volu
         marker_color=bar_colors,
         name=curr_label,
         text=[f"{v:,}" for v in curr_vals],
-        textposition="outside" if outside else "inside",
-        insidetextanchor="end" if not outside else None,
+        textposition="outside",
         textangle=0,
-        textfont=dict(size=11 if outside else 13,
-                      color="#374151" if outside else "white"),
+        textfont=dict(size=11, color="#4B5563"),
+        cliponaxis=False,
         hovertemplate=[
             f"<b>{g}</b><br>{curr_label}: {v:,}<extra></extra>"
             for g, v in zip(all_groups, curr_vals)

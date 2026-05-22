@@ -260,115 +260,14 @@ DEFAULT_GRID_CLASS = "ag-theme-alpine compact"
 # Mapbox
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
-# ABMS-aligned specialty list (canonical names for referring physician manager)
+# Specialty normalization — single source of truth lives in config.specialties.
+# Re-exported here for back-compat with existing import sites.
 # ---------------------------------------------------------------------------
-ABMS_SPECIALTIES = [
-    "Allergy & Immunology",
-    "Alternative Medicine",
-    "Breast Surgery",
-    "Cardiology",
-    "Colorectal Surgery",
-    "Dermatology",
-    "Emergency Medicine",
-    "Endocrinology",
-    "Gastroenterology",
-    "General Surgery",
-    "Gynecologic Oncology",
-    "Hepatology",
-    "Hospital Medicine",
-    "Infectious Disease",
-    "Internal Medicine",
-    "Medical Oncology",
-    "Nephrology",
-    "Neuro-Oncology",
-    "Neurology",
-    "Neurosurgery",
-    "OB/GYN",
-    "Ophthalmology",
-    "Oral Surgery",
-    "Orthopedic Oncology",
-    "Orthopedics",
-    "Otolaryngology",
-    "PA/NP",
-    "Palliative Care",
-    "Pathology",
-    "Pediatric Oncology",
-    "Pediatrics",
-    "Plastic Surgery",
-    "PM&R",
-    "Primary Care",
-    "Psychiatry",
-    "Pulmonary Medicine",
-    "Radiation Oncology",
-    "Radiology",
-    "Resident",
-    "Rheumatology",
-    "Surgical Oncology",
-    "Thoracic Surgery",
-    "Unknown",
-    "Urology",
-    "Vascular Surgery",
-]
-
-# Map NPI Registry taxonomy names → our ABMS_SPECIALTIES
-NPI_SPECIALTY_MAP: dict[str, str] = {
-    # Exact matches (already in list) need no mapping
-    # NPI variations → our canonical name
-    "Cardiovascular Disease":               "Cardiology",
-    "Colon & Rectal Surgery":               "Colorectal Surgery",
-    "Family Medicine":                      "Primary Care",
-    "Family Practice":                      "Primary Care",
-    "General Practice":                     "Primary Care",
-    "General Surgeon":                      "General Surgery",
-    "Hematology & Medical Oncology":        "Medical Oncology",
-    "Hematology & Oncology":                "Medical Oncology",
-    "Hematology/Oncology":                  "Medical Oncology",
-    "Internal Medicine, Hematology & Oncology": "Medical Oncology",
-    "Oncology/Hematology":                  "Medical Oncology",
-    "Hospice & Palliative Medicine":        "Palliative Care",
-    "Hospice and Palliative Medicine":      "Palliative Care",
-    "Internal Medicine, Pulmonary Disease": "Pulmonary Medicine",
-    "Pulmonary Disease":                    "Pulmonary Medicine",
-    "Neurological Surgery":                 "Neurosurgery",
-    "Obstetrics & Gynecology":              "OB/GYN",
-    "Obstetrics and Gynecology":            "OB/GYN",
-    "Gynecology":                           "OB/GYN",
-    "Opthamology":                          "Ophthalmology",
-    "Optometry":                            "Ophthalmology",
-    "Orthopaedic Surgery":                  "Orthopedics",
-    "Orthopedic Surgery":                   "Orthopedics",
-    "Physical Medicine & Rehabilitation":   "PM&R",
-    "Physical Medicine and Rehabilitation": "PM&R",
-    "Physiatry":                            "PM&R",
-    "Thoracic & Cardiac Surgery":           "Thoracic Surgery",
-    "Thoracic Surgery (Cardiothoracic Vascular Surgery)": "Thoracic Surgery",
-    "Nurse Practitioner":                   "PA/NP",
-    "Physician Assistant":                  "PA/NP",
-    "Other":                                "Unknown",
-}
-
-
-def normalize_specialty(raw: str) -> str:
-    """Map an NPI taxonomy specialty name to our canonical ABMS list."""
-    if not raw:
-        return ""
-    raw = raw.strip()
-    # Already in our list?
-    if raw in ABMS_SPECIALTIES:
-        return raw
-    # Check mapping
-    mapped = NPI_SPECIALTY_MAP.get(raw)
-    if mapped:
-        return mapped
-    # Case-insensitive check
-    raw_lower = raw.lower()
-    for spec in ABMS_SPECIALTIES:
-        if spec.lower() == raw_lower:
-            return spec
-    for key, val in NPI_SPECIALTY_MAP.items():
-        if key.lower() == raw_lower:
-            return val
-    return raw  # Return as-is if no mapping found
+from config.specialties import (  # noqa: E402
+    ABMS_SPECIALTIES,
+    NPI_SPECIALTY_MAP,
+    normalize_specialty,
+)
 
 # ---------------------------------------------------------------------------
 # Mapbox

@@ -399,6 +399,7 @@ def upsert_referring(
              address or "", city or "", state or "", zip_code or "",
              address_source or "", source, now, updated_by),
         )
+    _invalidate_referrals_cache()
 
 
 def bulk_upsert_referring(records: list[dict]) -> None:
@@ -420,6 +421,7 @@ def bulk_upsert_referring(records: list[dict]) -> None:
                 (str(rec["npi"]), rec.get("address_key", ""), rec.get("specialty"),
                  rec.get("institution"), rec.get("source", "manual"), now),
             )
+    _invalidate_referrals_cache()
 
 
 def get_all_referring_overrides() -> dict[str, dict]:
@@ -457,6 +459,8 @@ def set_reviewed_bulk(keys: list[tuple[str, str]], reviewed: bool = True) -> int
                 (val, now, npi, addr_key),
             )
             count += cur.rowcount
+    if count:
+        _invalidate_referrals_cache()
     return count
 
 
@@ -490,6 +494,7 @@ def delete_referring(npi: str, address_key: str = "") -> None:
             "DELETE FROM referring_physicians WHERE npi = ? AND address_key = ?",
             (str(npi), address_key),
         )
+    _invalidate_referrals_cache()
 
 
 def referring_table_is_empty() -> bool:
@@ -497,6 +502,37 @@ def referring_table_is_empty() -> bool:
     with _connect() as conn:
         row = conn.execute("SELECT COUNT(*) AS cnt FROM referring_physicians").fetchone()
     return row["cnt"] == 0
+
+
+def get_referring_overrides_fingerprint() -> str:
+    """Stable fingerprint of the referring_physicians table state.
+
+    Used by the Referrals parquet cache to invalidate when overrides change.
+    Backend-agnostic — works with both SQLite and Postgres.
+    """
+    try:
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n, MAX(updated_at) AS ts FROM referring_physicians"
+            ).fetchone()
+    except Exception:
+        return ""
+    if not row or not row["n"]:
+        return "0|"
+    return f"{row['n']}|{row['ts'] or ''}"
+
+
+def _invalidate_referrals_cache() -> None:
+    """Drop the in-memory Referrals TTL cache so the next load sees fresh overrides.
+
+    The on-disk parquet cache is invalidated separately via the override
+    fingerprint baked into its signature (see loader._source_signature).
+    """
+    try:
+        from data.loader import load_referrals
+        load_referrals.cache_clear()
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------

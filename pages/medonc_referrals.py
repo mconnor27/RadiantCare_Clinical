@@ -843,14 +843,26 @@ layout = dmc.Stack(
             children=[
                 dmc.Text("Med-Onc → Rad-Onc Pathway", size="sm", fw=500,
                          c=NEUTRAL["text_secondary"], mb="sm"),
-                html.Div(
-                    id=f"{PAGE_ID}-flow-gantt",
-                    style={
-                        "width": "100%",
-                        "aspectRatio": "2.45 / 1",
-                        "minHeight": "340px",
-                        "maxHeight": "480px",
-                    },
+                dmc.Box(
+                    pos="relative",
+                    children=[
+                        dmc.LoadingOverlay(
+                            id=f"{PAGE_ID}-flow-gantt-loading",
+                            visible=False,
+                            loaderProps={"type": "dots", "color": PRIMARY},
+                            overlayProps={"radius": "sm", "blur": 2},
+                            zIndex=100,
+                        ),
+                        html.Div(
+                            id=f"{PAGE_ID}-flow-gantt",
+                            style={
+                                "width": "100%",
+                                "aspectRatio": "2.45 / 1",
+                                "minHeight": "340px",
+                                "maxHeight": "480px",
+                            },
+                        ),
+                    ],
                 ),
             ],
             p="md", radius="md", shadow="xs", withBorder=True,
@@ -889,10 +901,22 @@ layout = dmc.Stack(
                                 ),
                             ]),
                         ]),
-                        dcc.Graph(
-                            id=f"{PAGE_ID}-flow-dist",
-                            config={"displayModeBar": False, "responsive": True},
+                        dmc.Box(
+                            pos="relative",
                             style={"height": "340px"},
+                            children=[
+                                dmc.LoadingOverlay(
+                                    id=f"{PAGE_ID}-flow-dist-loading",
+                                    visible=False,
+                                    loaderProps={"type": "dots", "color": PRIMARY},
+                                    overlayProps={"radius": "sm", "blur": 2},
+                                ),
+                                dcc.Graph(
+                                    id=f"{PAGE_ID}-flow-dist",
+                                    config={"displayModeBar": False, "responsive": True},
+                                    style={"height": "100%"},
+                                ),
+                            ],
                         ),
                     ],
                 ),
@@ -932,10 +956,22 @@ layout = dmc.Stack(
                                 ),
                             ]),
                         ]),
-                        dcc.Graph(
-                            id=f"{PAGE_ID}-flow-trend",
-                            config={"displayModeBar": False, "responsive": True},
+                        dmc.Box(
+                            pos="relative",
                             style={"height": "340px"},
+                            children=[
+                                dmc.LoadingOverlay(
+                                    id=f"{PAGE_ID}-flow-trend-loading",
+                                    visible=False,
+                                    loaderProps={"type": "dots", "color": PRIMARY},
+                                    overlayProps={"radius": "sm", "blur": 2},
+                                ),
+                                dcc.Graph(
+                                    id=f"{PAGE_ID}-flow-trend",
+                                    config={"displayModeBar": False, "responsive": True},
+                                    style={"height": "100%"},
+                                ),
+                            ],
                         ),
                     ],
                 ),
@@ -975,10 +1011,22 @@ layout = dmc.Stack(
                                 ),
                             ]),
                         ]),
-                        dcc.Graph(
-                            id=f"{PAGE_ID}-flow-conv",
-                            config={"displayModeBar": False, "responsive": True},
+                        dmc.Box(
+                            pos="relative",
                             style={"height": "340px"},
+                            children=[
+                                dmc.LoadingOverlay(
+                                    id=f"{PAGE_ID}-flow-conv-loading",
+                                    visible=False,
+                                    loaderProps={"type": "dots", "color": PRIMARY},
+                                    overlayProps={"radius": "sm", "blur": 2},
+                                ),
+                                dcc.Graph(
+                                    id=f"{PAGE_ID}-flow-conv",
+                                    config={"displayModeBar": False, "responsive": True},
+                                    style={"height": "100%"},
+                                ),
+                            ],
                         ),
                     ],
                 ),
@@ -1005,8 +1053,20 @@ layout = dmc.Stack(
                         # Graph height = 2 × right-side graph (400px) + 16px
                         # stack gutter + one-card-chrome delta so the Dx
                         # chart visually spans both right-column cards.
-                        dcc.Graph(id=f"{PAGE_ID}-dx-conversion", config=DEFAULT_GRAPH_CONFIG,
-                                  style={"height": "852px"}),
+                        dmc.Box(
+                            pos="relative",
+                            style={"height": "852px"},
+                            children=[
+                                dmc.LoadingOverlay(
+                                    id=f"{PAGE_ID}-dx-conversion-loading",
+                                    visible=False,
+                                    loaderProps={"type": "dots", "color": PRIMARY},
+                                    overlayProps={"radius": "sm", "blur": 2},
+                                ),
+                                dcc.Graph(id=f"{PAGE_ID}-dx-conversion", config=DEFAULT_GRAPH_CONFIG,
+                                          style={"height": "100%"}),
+                            ],
+                        ),
                     ],
                     pt="sm", px="md", pb=4, radius="md", shadow="xs", withBorder=True,
                     style={"height": "896px"},
@@ -1025,8 +1085,20 @@ layout = dmc.Stack(
                                     chart_types=None, show_smooth=False, show_grouping=False,
                                 ),
                             ]),
-                            dcc.Graph(id=f"{PAGE_ID}-site-conversion", config=DEFAULT_GRAPH_CONFIG,
-                                      style={"flex": 1, "minHeight": 0}),
+                            dmc.Box(
+                                pos="relative",
+                                style={"flex": 1, "minHeight": 0},
+                                children=[
+                                    dmc.LoadingOverlay(
+                                        id=f"{PAGE_ID}-site-conversion-loading",
+                                        visible=False,
+                                        loaderProps={"type": "dots", "color": PRIMARY},
+                                        overlayProps={"radius": "sm", "blur": 2},
+                                    ),
+                                    dcc.Graph(id=f"{PAGE_ID}-site-conversion", config=DEFAULT_GRAPH_CONFIG,
+                                              style={"height": "100%"}),
+                                ],
+                            ),
                         ],
                         pt="sm", px="md", pb=4, radius="md", shadow="xs", withBorder=True,
                         style={"height": "440px", "display": "flex", "flexDirection": "column"},
@@ -1053,8 +1125,20 @@ layout = dmc.Stack(
                                     ),
                                 ]),
                             ]),
-                            dcc.Graph(id=f"{PAGE_ID}-km-curve", config=DEFAULT_GRAPH_CONFIG,
-                                      style={"flex": 1, "minHeight": 0}),
+                            dmc.Box(
+                                pos="relative",
+                                style={"flex": 1, "minHeight": 0},
+                                children=[
+                                    dmc.LoadingOverlay(
+                                        id=f"{PAGE_ID}-km-curve-loading",
+                                        visible=False,
+                                        loaderProps={"type": "dots", "color": PRIMARY},
+                                        overlayProps={"radius": "sm", "blur": 2},
+                                    ),
+                                    dcc.Graph(id=f"{PAGE_ID}-km-curve", config=DEFAULT_GRAPH_CONFIG,
+                                              style={"height": "100%"}),
+                                ],
+                            ),
                         ],
                         pt="sm", px="md", pb=8, radius="md", shadow="xs", withBorder=True,
                         style={"height": "440px", "display": "flex", "flexDirection": "column"},
@@ -1346,6 +1430,15 @@ def _update_linkwin_button(pre, post):
     Input(f"{PAGE_ID}-outlier-enabled", "data"),
     Input(f"{PAGE_ID}-filter-linkmode", "value"),
     Input(f"{PAGE_ID}-table-filter-rows", "data"),
+    running=[
+        (Output(f"{PAGE_ID}-flow-dist-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-flow-trend-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-flow-conv-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-flow-gantt-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-dx-conversion-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-site-conversion-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-km-curve-loading", "visible"), True, False),
+    ],
 )
 def _update_all(date_preset, site_filter, diag_cats, diag_mode, pre_days, post_days,
                 cap_0, cap_1, outliers_enabled, link_mode, grid_rows):

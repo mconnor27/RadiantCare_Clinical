@@ -328,27 +328,120 @@ def _build_filter_bar():
             dmc.Group(
                 children=[
                     department_chips(PAGE_ID),
-                    dmc.Select(
-                        id=f"{PAGE_ID}-filter-specialty",
-                        data=[],  # populated by callback
-                        placeholder="All Specialties",
-                        clearable=True,
-                        searchable=True,
-                        size="sm",
-                        w=220,
-                        maxDropdownHeight=800,
-                        comboboxProps={"zIndex": 500},
+                    html.Div(
+                        id=f"{PAGE_ID}-specialty-wrap",
+                        className="rc-compact-multi-wrap",
+                        style={"position": "relative",
+                               "display": "inline-block",
+                               "width": 220},
+                        children=[
+                            dmc.MultiSelect(
+                                id=f"{PAGE_ID}-filter-specialty",
+                                data=[],
+                                placeholder="All Specialties",
+                                clearable=True,
+                                searchable=True,
+                                hidePickedOptions=False,
+                                size="sm",
+                                maxDropdownHeight=300,
+                                comboboxProps={"zIndex": 500},
+                                styles={
+                                    "pillsList": {
+                                        "flexWrap": "nowrap",
+                                        "overflow": "hidden",
+                                        "alignItems": "center",
+                                        "maxWidth": "100%",
+                                    },
+                                },
+                            ),
+                            html.Span(
+                                id=f"{PAGE_ID}-specialty-count-badge",
+                                className="rc-count-badge",
+                                children="",
+                                style={"display": "none"},
+                            ),
+                        ],
                     ),
-                    dmc.Select(
-                        id=f"{PAGE_ID}-filter-institution",
-                        data=[],  # populated by callback
-                        placeholder="All Institutions",
-                        clearable=True,
-                        searchable=True,
-                        size="sm",
-                        w=240,
-                        maxDropdownHeight=800,
-                        comboboxProps={"zIndex": 500},
+                    html.Div(
+                        id=f"{PAGE_ID}-institution-wrap",
+                        className="rc-compact-multi-wrap",
+                        style={"position": "relative",
+                               "display": "inline-block",
+                               "width": 240},
+                        children=[
+                            dmc.MultiSelect(
+                                id=f"{PAGE_ID}-filter-institution",
+                                data=[],
+                                placeholder="All Institutions",
+                                clearable=True,
+                                searchable=True,
+                                hidePickedOptions=False,
+                                size="sm",
+                                maxDropdownHeight=300,
+                                comboboxProps={"zIndex": 500},
+                                styles={
+                                    "pillsList": {
+                                        "flexWrap": "nowrap",
+                                        "overflow": "hidden",
+                                        "alignItems": "center",
+                                        "maxWidth": "100%",
+                                    },
+                                },
+                            ),
+                            html.Span(
+                                id=f"{PAGE_ID}-institution-count-badge",
+                                className="rc-count-badge",
+                                children="",
+                                style={"display": "none"},
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        id=f"{PAGE_ID}-provider-wrap",
+                        className="rc-compact-multi-wrap",
+                        style={"position": "relative",
+                               "display": "inline-block",
+                               "width": 260},
+                        children=[
+                            dmc.MultiSelect(
+                                id=f"{PAGE_ID}-filter-provider",
+                                data=[],  # populated by callback
+                                placeholder="All Providers",
+                                clearable=True,
+                                searchable=True,
+                                # Show picked options in dropdown so users
+                                # can untick them; callback sorts selected
+                                # providers to the top of the list.
+                                hidePickedOptions=False,
+                                size="sm",
+                                maxDropdownHeight=300,
+                                comboboxProps={"zIndex": 500},
+                                # Mantine 7 MultiSelect: pills live inside
+                                # the `pillsList` slot (a flex container).
+                                # Forcing nowrap + clipping on THAT slot
+                                # keeps everything on one row; targeting the
+                                # outer `input` slot used to clip the lone
+                                # pill out of view because pillsList sits
+                                # inside it with its own padding.
+                                styles={
+                                    "pillsList": {
+                                        "flexWrap": "nowrap",
+                                        "overflow": "hidden",
+                                        "alignItems": "center",
+                                        "maxWidth": "100%",
+                                    },
+                                },
+                            ),
+                            # Badge appears only when >=2 providers picked;
+                            # text + visibility driven by a clientside
+                            # callback (see _provider_compact_callbacks).
+                            html.Span(
+                                id=f"{PAGE_ID}-provider-count-badge",
+                                className="rc-count-badge",
+                                children="",
+                                style={"display": "none"},
+                            ),
+                        ],
                     ),
                     diagnosis_accordion(PAGE_ID),
                     _chip_dropdown("Payor", "payor-filter", children=[
@@ -539,14 +632,26 @@ layout = dmc.Stack(
         dmc.Paper(
             children=[
                 dmc.Text("Referral Pathway", size="sm", fw=500, c=NEUTRAL["text_secondary"], mb="sm"),
-                html.Div(
-                    id=f"{PAGE_ID}-flow-gantt",
-                    style={
-                        "width": "100%",
-                        "aspectRatio": "2.45 / 1",
-                        "minHeight": "340px",
-                        "maxHeight": "480px",
-                    },
+                dmc.Box(
+                    pos="relative",
+                    children=[
+                        dmc.LoadingOverlay(
+                            id=f"{PAGE_ID}-flow-gantt-loading",
+                            visible=False,
+                            loaderProps={"type": "dots", "color": PRIMARY},
+                            overlayProps={"radius": "sm", "blur": 2},
+                            zIndex=100,
+                        ),
+                        html.Div(
+                            id=f"{PAGE_ID}-flow-gantt",
+                            style={
+                                "width": "100%",
+                                "aspectRatio": "2.45 / 1",
+                                "minHeight": "340px",
+                                "maxHeight": "480px",
+                            },
+                        ),
+                    ],
                 ),
             ],
             p="md", radius="md", shadow="xs", withBorder=True,
@@ -594,10 +699,22 @@ layout = dmc.Stack(
                                     ),
                                 ],
                             ),
-                            dcc.Graph(
-                                id=f"{PAGE_ID}-flow-dist",
-                                config={"displayModeBar": False, "responsive": True},
+                            dmc.Box(
+                                pos="relative",
                                 style={"height": "340px"},
+                                children=[
+                                    dmc.LoadingOverlay(
+                                        id=f"{PAGE_ID}-flow-dist-loading",
+                                        visible=False,
+                                        loaderProps={"type": "dots", "color": PRIMARY},
+                                        overlayProps={"radius": "sm", "blur": 2},
+                                    ),
+                                    dcc.Graph(
+                                        id=f"{PAGE_ID}-flow-dist",
+                                        config={"displayModeBar": False, "responsive": True},
+                                        style={"height": "100%"},
+                                    ),
+                                ],
                             ),
                         ],
                         p="sm", radius="md", shadow="xs", withBorder=True,
@@ -645,10 +762,22 @@ layout = dmc.Stack(
                                     ),
                                 ],
                             ),
-                            dcc.Graph(
-                                id=f"{PAGE_ID}-flow-trend",
-                                config={"displayModeBar": False, "responsive": True},
+                            dmc.Box(
+                                pos="relative",
                                 style={"height": "340px"},
+                                children=[
+                                    dmc.LoadingOverlay(
+                                        id=f"{PAGE_ID}-flow-trend-loading",
+                                        visible=False,
+                                        loaderProps={"type": "dots", "color": PRIMARY},
+                                        overlayProps={"radius": "sm", "blur": 2},
+                                    ),
+                                    dcc.Graph(
+                                        id=f"{PAGE_ID}-flow-trend",
+                                        config={"displayModeBar": False, "responsive": True},
+                                        style={"height": "100%"},
+                                    ),
+                                ],
                             ),
                         ],
                         p="sm", radius="md", shadow="xs", withBorder=True,
@@ -696,10 +825,22 @@ layout = dmc.Stack(
                                     ),
                                 ],
                             ),
-                            dcc.Graph(
-                                id=f"{PAGE_ID}-flow-conv",
-                                config={"displayModeBar": False, "responsive": True},
+                            dmc.Box(
+                                pos="relative",
                                 style={"height": "340px"},
+                                children=[
+                                    dmc.LoadingOverlay(
+                                        id=f"{PAGE_ID}-flow-conv-loading",
+                                        visible=False,
+                                        loaderProps={"type": "dots", "color": PRIMARY},
+                                        overlayProps={"radius": "sm", "blur": 2},
+                                    ),
+                                    dcc.Graph(
+                                        id=f"{PAGE_ID}-flow-conv",
+                                        config={"displayModeBar": False, "responsive": True},
+                                        style={"height": "100%"},
+                                    ),
+                                ],
                             ),
                         ],
                         p="sm", radius="md", shadow="xs", withBorder=True,
@@ -992,10 +1133,22 @@ layout = dmc.Stack(
                         ),
                     ],
                 ),
-                dcc.Graph(
-                    id=f"{PAGE_ID}-map",
-                    config={"displayModeBar": False, "scrollZoom": True},
+                dmc.Box(
+                    pos="relative",
                     style={"height": "700px"},
+                    children=[
+                        dmc.LoadingOverlay(
+                            id=f"{PAGE_ID}-map-loading",
+                            visible=False,
+                            loaderProps={"type": "dots", "color": PRIMARY},
+                            overlayProps={"radius": "sm", "blur": 2},
+                        ),
+                        dcc.Graph(
+                            id=f"{PAGE_ID}-map",
+                            config={"displayModeBar": False, "scrollZoom": True},
+                            style={"height": "100%"},
+                        ),
+                    ],
                 ),
             ],
             p="sm", radius="md", shadow="xs", withBorder=True,
@@ -2092,6 +2245,47 @@ register_chart_callbacks([
 ])
 register_diagnosis_callbacks(PAGE_ID)
 
+# ---------------------------------------------------------------------------
+# Provider compact-multi: hide pills when 2+ picked, show a "N selected"
+# badge in their place. Functions live in assets/compact_multi.js — the
+# explicit-namespace pattern is more robust than inline string callbacks
+# (which can hit anonymous-namespace lookup errors at dispatch time).
+# ---------------------------------------------------------------------------
+clientside_callback(
+    ClientsideFunction(namespace="providerCompact", function_name="wrapClass"),
+    Output(f"{PAGE_ID}-provider-wrap", "className"),
+    Input(f"{PAGE_ID}-filter-provider", "value"),
+)
+clientside_callback(
+    ClientsideFunction(namespace="providerCompact", function_name="badge"),
+    Output(f"{PAGE_ID}-provider-count-badge", "children"),
+    Output(f"{PAGE_ID}-provider-count-badge", "style"),
+    Input(f"{PAGE_ID}-filter-provider", "value"),
+)
+# Same pattern applied to Specialty + Institution.
+clientside_callback(
+    ClientsideFunction(namespace="providerCompact", function_name="wrapClass"),
+    Output(f"{PAGE_ID}-specialty-wrap", "className"),
+    Input(f"{PAGE_ID}-filter-specialty", "value"),
+)
+clientside_callback(
+    ClientsideFunction(namespace="providerCompact", function_name="badge"),
+    Output(f"{PAGE_ID}-specialty-count-badge", "children"),
+    Output(f"{PAGE_ID}-specialty-count-badge", "style"),
+    Input(f"{PAGE_ID}-filter-specialty", "value"),
+)
+clientside_callback(
+    ClientsideFunction(namespace="providerCompact", function_name="wrapClass"),
+    Output(f"{PAGE_ID}-institution-wrap", "className"),
+    Input(f"{PAGE_ID}-filter-institution", "value"),
+)
+clientside_callback(
+    ClientsideFunction(namespace="providerCompact", function_name="badge"),
+    Output(f"{PAGE_ID}-institution-count-badge", "children"),
+    Output(f"{PAGE_ID}-institution-count-badge", "style"),
+    Input(f"{PAGE_ID}-filter-institution", "value"),
+)
+
 # Clientside callbacks — KPI sparklines via store + smooth slider
 _KPI_SPARK_IDS = [
     f"{PAGE_ID}-spark-total",
@@ -3076,8 +3270,6 @@ def _build_ref_comparison_bars(dff_curr, prior_windows, start, end):
 
     cmap = _dim_color_map(all_groups)
     curr_vals = [int(curr_counts.get(g, 0)) for g in all_groups]
-    n_periods = 1 + len(prior_data)
-    outside = n_periods >= 3
 
     fig = go.Figure()
 
@@ -3092,12 +3284,18 @@ def _build_ref_comparison_bars(dff_curr, prior_windows, start, end):
             marker_color=f"rgba(156, 163, 175, {alpha})",
             name=plabel,
             text=[f"{v:,}" for v in pvals],
-            textposition="outside" if outside else "inside",
-            insidetextanchor="end" if not outside else None,
+            # Always render labels outside the bar — keeps text readable on
+            # the washed-out prior fills and on narrow current bars alike.
+            textposition="outside",
             textangle=0,
+            # #1F2937 (dark slate) is the annotation-strong pair: dark on
+            # light bg, white on dark bg (swapped by 02_theme.js).
             # #4B5563 is the annotation-neutral pair: mid-gray in light,
-            # white in dark (handled by 02_theme.js).
-            textfont=dict(size=11 if outside else 12, color="#4B5563"),
+            # white in dark (swapped by 02_theme.js). Outside the bar puts
+            # the text on the page bg (high contrast) rather than the
+            # washed-out prior fill (low contrast).
+            textfont=dict(size=11, color="#4B5563"),
+            cliponaxis=False,
             hovertemplate=[
                 f"<b>{g}</b><br>{plabel}: {v:,}<extra></extra>"
                 for g, v in zip(all_groups, pvals)
@@ -3111,14 +3309,10 @@ def _build_ref_comparison_bars(dff_curr, prior_windows, start, end):
         marker_color=bar_colors,
         name=curr_label,
         text=[f"{v:,}" for v in curr_vals],
-        textposition="outside" if outside else "inside",
-        insidetextanchor="end" if not outside else None,
+        textposition="outside",
         textangle=0,
-        # Outside text → annotation-neutral (#4B5563 ↔ white per theme).
-        # Inside text → white (current bars are saturated brand colors, so
-        # white reads in both themes).
-        textfont=dict(size=11 if outside else 12,
-                      color="#4B5563" if outside else "white"),
+        textfont=dict(size=11, color="#1F2937"),
+        cliponaxis=False,
         hovertemplate=[
             f"<b>{g}</b><br>{curr_label}: {v:,}<extra></extra>"
             for g, v in zip(all_groups, curr_vals)
@@ -3753,6 +3947,7 @@ def _prior_range(start, end):
     Output(f"{PAGE_ID}-store-dim-compare-figs", "data"),
     Output(f"{PAGE_ID}-filter-specialty", "data"),
     Output(f"{PAGE_ID}-filter-institution", "data"),
+    Output(f"{PAGE_ID}-filter-provider", "data"),
     Output(f"{PAGE_ID}-dim-compare-period", "data"),
     Output(f"{PAGE_ID}-dim-compare-period", "value"),
     Output(f"{PAGE_ID}-dim-compare-settings-prior-periods", "max"),
@@ -3766,6 +3961,7 @@ def _prior_range(start, end):
     Input(f"{PAGE_ID}-filter-department", "value"),
     Input(f"{PAGE_ID}-filter-specialty", "value"),
     Input(f"{PAGE_ID}-filter-institution", "value"),
+    Input(f"{PAGE_ID}-filter-provider", "value"),
     Input(f"{PAGE_ID}-diag-store", "data"),
     Input(f"{PAGE_ID}-diag-mode", "data"),
     Input(f"{PAGE_ID}-diag-subcategory", "value"),
@@ -3781,10 +3977,15 @@ def _prior_range(start, end):
     running=[
         (Output(f"{PAGE_ID}-chart-dim-trend-loading", "visible"), True, False),
         (Output(f"{PAGE_ID}-chart-dim-comparison-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-flow-dist-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-flow-trend-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-flow-conv-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-flow-gantt-loading", "visible"), True, False),
+        (Output(f"{PAGE_ID}-map-loading", "visible"), True, False),
     ],
 )
 def update_referrals(_n, start_date, end_date, departments, specialty_filter,
-                     institution_filter, diag_cats, diag_mode, diag_subs,
+                     institution_filter, provider_filter, diag_cats, diag_mode, diag_subs,
                      outlier_enabled, cap_0, cap_1,
                      pipeline_window, dim_toggle, dim_compare_period, grid_rows,
                      payor_mode, payor_selected):
@@ -3805,9 +4006,10 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
     empty_dim.update_layout(height=_DIM_RIDGE_HEIGHT)
     no_spec = []
     no_inst = []
+    no_prov = []
     no_ctrl = (dash.no_update, dash.no_update, dash.no_update, dash.no_update)
     empty_out = (empty_kpis, None, None,
-                 [], [], None, {}, no_spec, no_inst) + no_ctrl + ({}, None)
+                 [], [], None, {}, no_spec, no_inst, no_prov) + no_ctrl + ({}, None)
 
     try:
         df = load_referrals()
@@ -3837,20 +4039,57 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
     spec_options = []
     if "DeptSpecialty" in df.columns:
         spec_options = sorted(df["DeptSpecialty"].dropna().unique().tolist())
+        if specialty_filter:
+            sel = list(specialty_filter)
+            sel_set = set(sel)
+            opt_set = set(spec_options)
+            extras = [s for s in sel if s not in opt_set]
+            others = [s for s in spec_options if s not in sel_set]
+            spec_options = [s for s in sel if s in opt_set] + extras + others
 
     # --- Specialty filter ---
     if specialty_filter and "DeptSpecialty" in df.columns:
-        df = df[df["DeptSpecialty"] == specialty_filter]
+        df = df[df["DeptSpecialty"].isin(specialty_filter)]
 
     # --- Build institution options (after dept+specialty, before inst filter) ---
     inst_options = []
     if "DoctorInstitution" in df.columns:
         inst_options = sorted(df["DoctorInstitution"].dropna().astype(str).str.strip()
                               .loc[lambda s: s != ""].unique().tolist())
+        if institution_filter:
+            sel = list(institution_filter)
+            sel_set = set(sel)
+            opt_set = set(inst_options)
+            extras = [s for s in sel if s not in opt_set]
+            others = [s for s in inst_options if s not in sel_set]
+            inst_options = [s for s in sel if s in opt_set] + extras + others
 
     # --- Institution filter ---
     if institution_filter and "DoctorInstitution" in df.columns:
-        df = df[df["DoctorInstitution"] == institution_filter]
+        df = df[df["DoctorInstitution"].isin(institution_filter)]
+
+    # --- Build provider options (after dept+spec+inst, before provider filter) ---
+    prov_options = []
+    if "Referred by Provider" in df.columns:
+        prov_options = sorted(
+            df["Referred by Provider"].dropna().astype(str).str.strip()
+            .loc[lambda s: s != ""].unique().tolist()
+        )
+        # Float currently-selected providers to the top of the list so the
+        # user can see/untick them without scrolling. Selected providers
+        # outside the current cohort (e.g. picked before tightening dept
+        # filter) are also surfaced.
+        if provider_filter:
+            sel = list(provider_filter)
+            sel_set = set(sel)
+            others = [p for p in prov_options if p not in sel_set]
+            # Include any selected that aren't in the current option set
+            extras = [p for p in sel if p not in prov_options]
+            prov_options = [p for p in sel if p in set(prov_options)] + extras + others
+
+    # --- Provider filter (multi-select) ---
+    if provider_filter and "Referred by Provider" in df.columns:
+        df = df[df["Referred by Provider"].isin(provider_filter)]
 
     # --- Diagnosis filter (accordion: categories + optional subcategories) ---
     if diag_cats:
@@ -4060,9 +4299,11 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
             p_dept = prior_all["Referred to Department"].apply(_map_to_our_dept)
             prior_all = prior_all[p_dept.isin(departments)]
         if specialty_filter and "DeptSpecialty" in prior_all.columns:
-            prior_all = prior_all[prior_all["DeptSpecialty"] == specialty_filter]
+            prior_all = prior_all[prior_all["DeptSpecialty"].isin(specialty_filter)]
         if institution_filter and "DoctorInstitution" in prior_all.columns:
-            prior_all = prior_all[prior_all["DoctorInstitution"] == institution_filter]
+            prior_all = prior_all[prior_all["DoctorInstitution"].isin(institution_filter)]
+        if provider_filter and "Referred by Provider" in prior_all.columns:
+            prior_all = prior_all[prior_all["Referred by Provider"].isin(provider_filter)]
         if diag_cats:
             prior_all["_diag_filt"] = prior_all.apply(
                 lambda r: _categorise_diagnosis(
@@ -4135,10 +4376,10 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
     if triggered in _dim_only:
         nu = dash.no_update
         return (nu, nu, nu, nu, nu,
-                dim_trend_store, compare_figs, nu, nu,
+                dim_trend_store, compare_figs, nu, nu, nu,
                 pt_data, pt_value, slider_max, slider_marks, nu, nu)
     return (kpis, flow_data, flow_details, table_rows, table_cols,
-            dim_trend_store, compare_figs, spec_options, inst_options,
+            dim_trend_store, compare_figs, spec_options, inst_options, prov_options,
             pt_data, pt_value, slider_max, slider_marks, sparkline_store, geo_store)
 
 
@@ -4154,6 +4395,7 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
     Input(f"{PAGE_ID}-filter-department", "value"),
     Input(f"{PAGE_ID}-filter-specialty", "value"),
     Input(f"{PAGE_ID}-filter-institution", "value"),
+    Input(f"{PAGE_ID}-filter-provider", "value"),
     Input(f"{PAGE_ID}-diag-store", "data"),
     Input(f"{PAGE_ID}-diag-mode", "data"),
     Input(f"{PAGE_ID}-diag-subcategory", "value"),
@@ -4164,7 +4406,7 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
     running=[(Output(f"{PAGE_ID}-chart-vol-loading", "visible"), True, False)],
 )
 def _update_ref_volume(_n, start_date, end_date, departments, specialty_filter,
-                       institution_filter, diag_cats, diag_mode, diag_subs,
+                       institution_filter, provider_filter, diag_cats, diag_mode, diag_subs,
                        vol_slice, vol_agg, payor_mode, payor_selected):
     """Build census-format store data for referral volume trend."""
     from data.loader import load_referrals
@@ -4185,9 +4427,11 @@ def _update_ref_volume(_n, start_date, end_date, departments, specialty_filter,
         our_dept = df["Referred to Department"].apply(_map_to_our_dept)
         df = df[our_dept.isin(departments)]
     if specialty_filter and "DeptSpecialty" in df.columns:
-        df = df[df["DeptSpecialty"] == specialty_filter]
+        df = df[df["DeptSpecialty"].isin(specialty_filter)]
     if institution_filter and "DoctorInstitution" in df.columns:
-        df = df[df["DoctorInstitution"] == institution_filter]
+        df = df[df["DoctorInstitution"].isin(institution_filter)]
+    if provider_filter and "Referred by Provider" in df.columns:
+        df = df[df["Referred by Provider"].isin(provider_filter)]
     if diag_cats:
         df["_diag_filt"] = df.apply(
             lambda r: _categorise_diagnosis(
@@ -4222,6 +4466,7 @@ def _update_ref_volume(_n, start_date, end_date, departments, specialty_filter,
     Input(f"{PAGE_ID}-filter-department", "value"),
     Input(f"{PAGE_ID}-filter-specialty", "value"),
     Input(f"{PAGE_ID}-filter-institution", "value"),
+    Input(f"{PAGE_ID}-filter-provider", "value"),
     Input(f"{PAGE_ID}-diag-store", "data"),
     Input(f"{PAGE_ID}-diag-mode", "data"),
     Input(f"{PAGE_ID}-diag-subcategory", "value"),
@@ -4234,7 +4479,7 @@ def _update_ref_volume(_n, start_date, end_date, departments, specialty_filter,
     running=[(Output(f"{PAGE_ID}-chart-cumulative-loading", "visible"), True, False)],
 )
 def _update_ref_cumulative(_n, start_date, end_date, departments, specialty_filter,
-                           institution_filter, diag_cats, diag_mode, diag_subs,
+                           institution_filter, provider_filter, diag_cats, diag_mode, diag_subs,
                            cum_mode, period_type, slice_by, date_preset,
                            payor_mode, payor_selected):
     """Build cumulative referral volume store data."""
@@ -4255,9 +4500,11 @@ def _update_ref_cumulative(_n, start_date, end_date, departments, specialty_filt
         our_dept = df_all["Referred to Department"].apply(_map_to_our_dept)
         df_all = df_all[our_dept.isin(departments)]
     if specialty_filter and "DeptSpecialty" in df_all.columns:
-        df_all = df_all[df_all["DeptSpecialty"] == specialty_filter]
+        df_all = df_all[df_all["DeptSpecialty"].isin(specialty_filter)]
     if institution_filter and "DoctorInstitution" in df_all.columns:
-        df_all = df_all[df_all["DoctorInstitution"] == institution_filter]
+        df_all = df_all[df_all["DoctorInstitution"].isin(institution_filter)]
+    if provider_filter and "Referred by Provider" in df_all.columns:
+        df_all = df_all[df_all["Referred by Provider"].isin(provider_filter)]
     if diag_cats:
         df_all["_diag_filt"] = df_all.apply(
             lambda r: _categorise_diagnosis(

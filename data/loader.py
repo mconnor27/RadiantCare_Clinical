@@ -249,8 +249,13 @@ def _parquet_cache_path(name):
 _PARQUET_FORMAT_VERSION = "v4-no-categorical"
 
 
-def _source_signature(source_paths):
-    """A stable fingerprint of the source files (size + ns mtime)."""
+def _source_signature(source_paths, extra=""):
+    """A stable fingerprint of the source files (size + ns mtime).
+
+    ``extra`` lets callers fold non-file state into the signature (e.g. a
+    DB-backed override fingerprint), so the cache invalidates when that
+    state changes even though the underlying CSV/xlsx hasn't.
+    """
     parts = [f"fmt={_PARQUET_FORMAT_VERSION}"]
     for p in sorted(source_paths or [], key=lambda x: str(x)):
         if p.exists():
@@ -258,10 +263,12 @@ def _source_signature(source_paths):
             parts.append(f"{p.name}|{st.st_size}|{st.st_mtime_ns}")
         else:
             parts.append(f"{p.name}|missing")
+    if extra:
+        parts.append(f"extra={extra}")
     return "|".join(parts)
 
 
-def _read_parquet_cache(name, source_paths):
+def _read_parquet_cache(name, source_paths, extra=""):
     """Return the cached DataFrame iff its sidecar matches the live sources.
 
     The mtime of the parquet file itself is unreliable: docker layer COPYs
@@ -274,14 +281,14 @@ def _read_parquet_cache(name, source_paths):
     if not pq.exists() or not sig_file.exists():
         return None
     try:
-        if sig_file.read_text() == _source_signature(source_paths):
+        if sig_file.read_text() == _source_signature(source_paths, extra):
             return pd.read_parquet(pq, engine="pyarrow")
     except Exception:
         pass
     return None
 
 
-def _write_parquet_cache(name, df, source_paths=None):
+def _write_parquet_cache(name, df, source_paths=None, extra=""):
     """Write a DataFrame to the parquet cache and stamp a signature sidecar."""
     if df.empty:
         return
@@ -290,7 +297,7 @@ def _write_parquet_cache(name, df, source_paths=None):
         df.to_parquet(pq, engine="pyarrow", compression="zstd")
         sig_file = pq.with_suffix(".sig")
         if source_paths is not None:
-            sig_file.write_text(_source_signature(source_paths))
+            sig_file.write_text(_source_signature(source_paths, extra))
         elif sig_file.exists():
             sig_file.unlink()
     except Exception:
@@ -1634,7 +1641,15 @@ def load_referrals():
         return pd.DataFrame()
 
     src_paths = [Path(m) for m in matches]
-    cached = _read_parquet_cache("Referrals", src_paths)
+    # Fold the referring-overrides table fingerprint into the cache signature
+    # so saving an override (which doesn't touch the source xlsx) still busts
+    # the parquet cache on the next load.
+    try:
+        from data.reviews_db import get_referring_overrides_fingerprint
+        _overrides_fp = get_referring_overrides_fingerprint()
+    except Exception:
+        _overrides_fp = ""
+    cached = _read_parquet_cache("Referrals", src_paths, extra=_overrides_fp)
     if cached is not None:
         return cached
 
@@ -1729,284 +1744,32 @@ def load_referrals():
             df = df.merge(_lk, on="_prov_key", how="left")
             df = df.drop(columns=["_prov_key"])
 
-            # Normalise specialty: fix typos, merge variants
-            _SPEC_MAP = {
-                # Medical Oncology
-                "Medical Onoclogy": "Medical Oncology",
-                "Medical Oncologist": "Medical Oncology",
-                "Hematology/Oncology": "Medical Oncology",
-                "Hematology-Oncogology": "Medical Oncology",
-                "Hematology/ Medical Oncology": "Medical Oncology",
-                "Hematology/Medical Oncology": "Medical Oncology",
-                "Hematology and Oncology": "Medical Oncology",
-                "Internal Medicine Hematology & Oncology": "Medical Oncology",
-                "Oncology and Hematology": "Medical Oncology",
-                "Hematology": "Medical Oncology",
-                "Oncologist": "Medical Oncology",
-                "Medical oncology": "Medical Oncology",
-                "Medical  Oncology": "Medical Oncology",
-                "Med Onc": "Medical Oncology",
-                "Neuro Oncology": "Neuro-Oncology",
-                "Neuro-Oncology": "Neuro-Oncology",
-                "Ophthalomology Oncology": "Medical Oncology",
-                "Prostate Oncology": "Urology",
-                "Urologic Oncology": "Urology",
-                "Orthopaedic Oncology": "Orthopedic Oncology",
-                "Orthopeadic Oncology": "Orthopedic Oncology",
-                # Radiation Oncology
-                "Radiation Onocology": "Radiation Oncology",
-                "Resident-Radiation Onc": "Radiation Oncology",
-                # Pulmonary
-                "Pulmonary Disease": "Pulmonary Medicine",
-                "Pulmonary": "Pulmonary Medicine",
-                "Interventional Pulmonology": "Pulmonary Medicine",
-                "Infectious Disease & Pulmonary Disease": "Pulmonary Medicine",
-                # Primary Care / Family Medicine
-                "Family Practice": "Primary Care",
-                "family Medicine": "Primary Care",
-                "Family medicine": "Primary Care",
-                "Family Practie": "Primary Care",
-                "FAMILY PRACTICE": "Primary Care",
-                "Family Medicine w/ OB": "Primary Care",
-                "Family Practice/Palliative Care": "Primary Care",
-                "General Practice": "Primary Care",
-                "PCP": "Primary Care",
-                "Sports Medicine (Family Practice)": "Primary Care",
-                # Internal Medicine
-                "Family Practice/Internal Medicine": "Internal Medicine",
-                "Endocrinology/Internal Medicine": "Internal Medicine",
-                "Internal Medicine/Pulmonology": "Pulmonary Medicine",
-                "Internal Medicine/Nephrology": "Nephrology",
-                "Endocrinology, Diabetes, and Metabolism": "Endocrinology",
-                # Surgery variants
-                "Gerneral Surgery": "General Surgery",
-                "Surgery": "General Surgery",
-                "Surgeon": "General Surgery",
-                "Surgery- Surgical Oncology": "Surgical Oncology",
-                # ENT
-                "Otolaryngology, Facial plastic reconstructive surgery": "Otolaryngology",
-                "ENT/Otolaryngology": "Otolaryngology",
-                "ENT/Aberdeen": "Otolaryngology",
-                "ENT- Group Health": "Otolaryngology",
-                "Otology/Neurotology": "Otolaryngology",
-                "Head and Neck Surgery": "Otolaryngology",
-                # GYN
-                "GYN Oncologist": "Gynecologic Oncology",
-                "Gynecological Oncology": "Gynecologic Oncology",
-                "Gyn Onc": "Gynecologic Oncology",
-                "Gynecologic Oncology, Obstetrics and Gynecology": "Gynecologic Oncology",
-                "General/GYN": "OB/GYN",
-                # Colorectal
-                "Colon & rectal surgery": "Colorectal Surgery",
-                "Colon Rectal Surgeon": "Colorectal Surgery",
-                "Colorectal surgery": "Colorectal Surgery",
-                # Dermatology
-                "Derm": "Dermatology",
-                "Dermatopathology (Pathology)": "Dermatology",
-                # Neurology
-                "Nuerology": "Neurology",
-                # Neurosurgery
-                "Neurosurgery (UWMC)": "Neurosurgery",
-                # Cardiology
-                "cardiology": "Cardiology",
-                "Cardiologist": "Cardiology",
-                "Interventional Cardiology": "Cardiology",
-                "Cardiovascular Disease": "Cardiology",
-                # Orthopedics
-                "Orthopeadic": "Orthopedics",
-                "Orthopedic Surgery": "Orthopedics",
-                "Orthopaedic Surgery": "Orthopedics",
-                # Ophthalmology
-                "Ophthalmoogy": "Ophthalmology",
-                # PA / NP / Resident
-                "physician Assistant": "PA/NP",
-                "Physician assistant": "PA/NP",
-                "Physician Assitant": "PA/NP",
-                "PA": "PA/NP",
-                "PA-C": "PA/NP",
-                "Nurse Practioner": "PA/NP",
-                "ARNP": "PA/NP",
-                "D.O": "Primary Care",
-                # Other
-                "Pediatric Hematology Oncology": "Pediatric Oncology",
-                "Emergency": "Emergency Medicine",
-                "Emergency medicine": "Emergency Medicine",
-                "Palliative Medicine": "Palliative Care",
-                "Hospitalist": "Hospital Medicine",
-                "GASTROENTEROLOGY": "Gastroenterology",
-                "Unspecified": "Unknown",
-                "Acute Care": "Hospital Medicine",
-                "Physical Medicine and Rehabilitation": "PM&R",
-                "Spinal Cord Injury Medicine (Physical Medicine and Rehab.)": "PM&R",
-                "Transplant Hepatology": "Hepatology",
-                "Plastic and Reconstructive Surgery": "Plastic Surgery",
-                "Interventional Radiology": "Radiology",
-                "Summit Pacific Mark Reed Healthcare Clinic": "Primary Care",
-                "Military Health Care": "Primary Care",
-                # More variants found in data
-                "Otalaryngology": "Otolaryngology",
-                "Otolaryngology/Facial Plastic Surgery": "Otolaryngology",
-                "General and Minimally Invasive Surgery": "General Surgery",
-                "Pulmonary Disease and Critical Care Medicine": "Pulmonary Medicine",
-                "Family Nurse Practitioner": "PA/NP",
-                "Medical Oncology/Hemotology": "Medical Oncology",
-                "Medical Oncology & Hematology": "Medical Oncology",
-                "Oncology Hematology": "Medical Oncology",
-                "Rad Oncology": "Radiation Oncology",
-                "Dermatology and Skin Oncology": "Dermatology",
-                "Internal Medicine/Pediatrics": "Internal Medicine",
-                "GYN": "OB/GYN",
-                "GYN Oncology": "Gynecologic Oncology",
-                "Ophthalomology": "Ophthalmology",
-                "DO": "Primary Care",
-                "Neuroradiology": "Radiology",
-                "Orthopeadic Surgeon": "Orthopedics",
-                "Orthopaedics": "Orthopedics",
-                "Neurolosurgery": "Neurosurgery",
-                "Resident": "Resident",
-                "Oral and Maxillofacial Surgery": "Oral Surgery",
-                "Dentistry and Maxillofacial Surgery": "Oral Surgery",
-                "Dentistry (Periodontics)": "Oral Surgery",
-                "Oral Surgeon": "Oral Surgery",
-                "Surgery, Surgical Oncology": "Surgical Oncology",
-                "Vascular and interventional Radiology": "Radiology",
-                "Acupuncture": "Alternative Medicine",
-                "Occupational Therapy": "Other",
-                "Critical Care Medicine": "Hospital Medicine",
-                "Anesthesiology": "Other",
-                "Geriatric Medicine": "Internal Medicine",
-                "Urologist": "Urology",
-                "Breast Cancer Surgeon": "Breast Surgery",
-                "Hematology & Oncology": "Medical Oncology",
-                "Hematology oncology": "Medical Oncology",
-                "MD": "Unknown",
-                "Oncology": "Medical Oncology",
-                "Neuro-oncology": "Neuro-Oncology",
-                "Gynecology": "OB/GYN",
-                "Pediatric Medicine": "Pediatrics",
-                "Med Onc/Hematology": "Medical Oncology",
-                "Family Medicine": "Primary Care",
-                "Pulmonology": "Pulmonary Medicine",
-                "Colon and Rectal Surgery": "Colorectal Surgery",
-                "Physician Assistant": "PA/NP",
-            }
+            # Normalize DoctorSpecialty via the shared specialty module.
+            # All canonicalization (variants, regex fallback, DEPT_BUCKETS
+            # roll-ups) lives in config/specialties.py — single source of
+            # truth shared with utils/npi_lookup.py and the RPM grid.
+            from config.specialties import (
+                normalize_specialty as _norm_spec,
+                infer_from_department as _infer_dept_spec,
+                bucket_to_dept as _bucket_to_dept,
+            )
             if "DoctorSpecialty" in df.columns:
-                df["DoctorSpecialty"] = df["DoctorSpecialty"].replace(_SPEC_MAP)
-                # Case-insensitive regex pass for remaining variants
-                _SPEC_REGEX = [
-                    (r"(?i)^medical\s*onc", "Medical Oncology"),
-                    (r"(?i)^radiation\s*onc", "Radiation Oncology"),
-                    (r"(?i)^urol", "Urology"),
-                    (r"(?i)^gynecol.*onc", "Gynecologic Oncology"),
-                    (r"(?i)^obstetrics|^ob/?gyn", "Obstetrics & Gynecology"),
-                    (r"(?i)^neuro.*surg|^neurological\s*surg", "Neurological Surgery"),
-                    (r"(?i)^cardiothoracic", "Thoracic & Cardiac Surgery"),
-                    (r"(?i)^vascular\s*surg", "General Surgery"),
-                ]
-                import re as _re3
-                for pat, repl in _SPEC_REGEX:
-                    mask = df["DoctorSpecialty"].str.match(pat, na=False)
-                    df.loc[mask, "DoctorSpecialty"] = repl
+                df["DoctorSpecialty"] = (
+                    df["DoctorSpecialty"]
+                    .map(lambda v: _norm_spec(v) if isinstance(v, str) else v)
+                    .map(lambda v: _bucket_to_dept(v) if isinstance(v, str) else v)
+                )
 
-                # Final normalisation: map DoctorSpecialty to DeptSpecialty
-                # categories (ABMS-aligned) so both columns use the same set
-                _DOC_TO_DEPT = {
-                    # Direct renames to ABMS categories
-                    "Primary Care": "Family Medicine",
-                    "Pulmonary Medicine": "Pulmonary Disease",
-                    "Neurosurgery": "Neurological Surgery",
-                    "Colorectal Surgery": "Colon & Rectal Surgery",
-                    "Thoracic Surgery": "Thoracic & Cardiac Surgery",
-                    "Cardiac Surgery": "Thoracic & Cardiac Surgery",
-                    "Cardiology": "Cardiovascular Disease",
-                    "Palliative Care": "Hospice & Palliative Medicine",
-                    "OB/GYN": "Obstetrics & Gynecology",
-                    "Orthopedics": "Orthopaedic Surgery",
-                    "Orthopedic Oncology": "Orthopaedic Surgery",
-                    "PM&R": "Physical Medicine & Rehabilitation",
-                    "ENT": "Otolaryngology",
-                    "Vascular Surgery": "General Surgery",
-                    "Surgical Oncology": "General Surgery",
-                    "Plastic Surgery": "General Surgery",
-                    # Merge small categories
-                    "PA/NP": "Unknown",
-                    "Nurse Practitioner": "Unknown",
-                    "Resident": "Unknown",
-                    "Neuro-Oncology": "Neurology",
-                    "Hematalogy & Oncology": "Medical Oncology",
-                    "Nephrology": "Internal Medicine",
-                    "Hepatology": "Internal Medicine",
-                    "Ophthalmology": "Ophthalmology",  # keep
-                    "Dermatology": "Dermatology",      # keep
-                    "Gynecologic Oncology": "Gynecologic Oncology",  # keep (onc)
-                    "Oral Surgery": "Otolaryngology",
-                    "Radiology": "Radiology",
-                    "Pain Management": "Physical Medicine & Rehabilitation",
-                    "Podiatry": "Other",
-                    "Hospital Medicine": "Hospital Medicine",
-                }
-                if "DoctorSpecialty" in df.columns:
-                    df["DoctorSpecialty"] = df["DoctorSpecialty"].replace(_DOC_TO_DEPT)
-
-            # Infer specialty from department name when lookup missed.
-            # Also build DeptSpecialty for ALL rows (dept-derived, independent
-            # of provider lookup) since dept specialty is often more accurate
-            # than provider specialty for referral source analysis.
-            #
-            # Categories based on ABMS member boards, kept sparse with
-            # oncology-relevant subspecialties preserved.
-            _DEPT_SPEC = [
-                # Oncology subspecialties (keep granular)
-                (r"MED(?:ICAL)?\s*ONC|PROVIDER ONCOLOGY|ONCOLOGY(?!.*RADIAT)", "Medical Oncology"),
-                (r"RADIATION|RADIOSURGERY|RADIANTCARE", "Radiation Oncology"),
-                (r"PRCS\s+(?:LACEY|CENTRALIA|ABERDEEN)\b", "Medical Oncology"),
-                (r"GYN ONCOLOGY", "Gynecologic Oncology"),
-                (r"BREAST SURGERY", "Breast Surgery"),
-                # Surgical specialties
-                (r"GEN SURG", "General Surgery"),
-                (r"CARDIAC SURGERY", "Thoracic & Cardiac Surgery"),
-                (r"THORACIC", "Thoracic & Cardiac Surgery"),
-                (r"COLORECTAL|COLON AND RECTAL", "Colon & Rectal Surgery"),
-                (r"NEUROSURGERY", "Neurological Surgery"),
-                (r"PROVIDER SURGICAL|INTRA OP", "General Surgery"),
-                # Medical specialties
-                (r"UROLOGY", "Urology"),
-                (r"PULMONARY|LUNG NODULE|PULMONOLOGY", "Pulmonary Disease"),
-                (r"NEUROLOGY|NEURO TRAUMA", "Neurology"),
-                (r"GASTROENTEROLOGY", "Gastroenterology"),
-                (r"ENDOCRINE", "Endocrinology"),
-                (r"CARDIO(?!.*SURG)", "Cardiovascular Disease"),
-                (r"ORTHOPEDICS", "Orthopaedic Surgery"),
-                (r"OPHTHALMOLOGY", "Ophthalmology"),
-                (r"HEAD AND NECK", "Otolaryngology"),
-                # OB/GYN
-                (r"OBGYN|WOMEN CTR", "Obstetrics & Gynecology"),
-                # Primary Care / FM / IM
-                (r"FAM MED|FAMILY MED|FAMILY MEDICINE", "Family Medicine"),
-                (r"PRIMARY CARE|WELLNESS CLINIC", "Family Medicine"),
-                (r"PRCS\s", "Family Medicine"),
-                (r"INT MED", "Internal Medicine"),
-                (r"65 PLUS", "Internal Medicine"),
-                # Hospital-based
-                (r"EMERGENCY", "Emergency Medicine"),
-                (r"IMMEDIATE CARE", "Emergency Medicine"),
-                (r"PALLIATIVE", "Hospice & Palliative Medicine"),
-                (r"PROGRESSIVE CARE|MEDICAL TELEMETRY|ICU", "Hospital Medicine"),
-                (r"INFUSION", "Infusion Services"),
-                (r"CENTRALIZED CARE", "Internal Medicine"),
-                (r"RADIOLOGY", "Radiology"),
-                (r"PROVIDER MED SURG", "Hospital Medicine"),
-                (r"HAWKS PRAIRIE", "Family Medicine"),
-                (r"PANORAMA", "Internal Medicine"),
-                (r"PHY MED", "Physical Medicine & Rehabilitation"),
-            ]
-            # Build DeptSpecialty for all rows
+            # Build DeptSpecialty for all rows from "Referred by Department".
+            # Dept-derived specialty is often more accurate than provider
+            # specialty for referral-source analysis.
             if "Referred by Department" in df.columns:
-                df["DeptSpecialty"] = None
-                dept_all = df["Referred by Department"].fillna("")
-                for pattern, spec in _DEPT_SPEC:
-                    mask = dept_all.str.contains(pattern, case=False, na=False) & df["DeptSpecialty"].isna()
-                    df.loc[mask, "DeptSpecialty"] = spec
+                df["DeptSpecialty"] = (
+                    df["Referred by Department"]
+                    .fillna("")
+                    .map(_infer_dept_spec)
+                    .map(lambda v: _bucket_to_dept(v) if isinstance(v, str) else v)
+                )
 
             # Cross-fill: DoctorSpecialty ↔ DeptSpecialty where one is missing
             if "DoctorSpecialty" in df.columns and "DeptSpecialty" in df.columns:
@@ -2046,6 +1809,10 @@ def load_referrals():
                     index=df.index,
                 )
                 _row_key = _npi_col + "|" + _ak
+                from config.specialties import (
+                    normalize_specialty as _norm_ov_spec,
+                    bucket_to_dept as _bucket_ov_spec,
+                )
                 for key, vals in _overrides.items():
                     mask = _row_key == key
                     if not mask.any():
@@ -2057,9 +1824,13 @@ def load_referrals():
                         continue
                     idx = mask[mask].index
                     if vals.get("specialty"):
-                        df.loc[idx, "DoctorSpecialty"] = vals["specialty"]
+                        # Normalize stored override value through the same pipeline
+                        # used for raw data — protects against legacy loader-canonical
+                        # values lingering in the DB before migration.
+                        _spec = _bucket_ov_spec(_norm_ov_spec(vals["specialty"]))
+                        df.loc[idx, "DoctorSpecialty"] = _spec
                         if "DeptSpecialty" in df.columns:
-                            df.loc[idx, "DeptSpecialty"] = vals["specialty"]
+                            df.loc[idx, "DeptSpecialty"] = _spec
                     if vals.get("institution"):
                         df.loc[idx, "DoctorInstitution"] = vals["institution"]
         except Exception:
@@ -2083,7 +1854,7 @@ def load_referrals():
             .str.strip()
         )
 
-    _write_parquet_cache("Referrals", df, src_paths)
+    _write_parquet_cache("Referrals", df, src_paths, extra=_overrides_fp)
     return df
 
 

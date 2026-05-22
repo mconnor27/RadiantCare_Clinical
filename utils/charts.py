@@ -1,5 +1,7 @@
 """Plotly chart helpers and default layout."""
 
+import re
+
 import plotly.graph_objects as go
 from config.settings import DEFAULT_LAYOUT, DEPARTMENT_COLORS, CHART_COLORWAY
 
@@ -7,18 +9,44 @@ from config.settings import DEFAULT_LAYOUT, DEPARTMENT_COLORS, CHART_COLORWAY
 # Light-mode default; assets/02_theme.js swaps to a dark slate in dark mode.
 _HOVER_BG_LIGHT = "#FFFFFF"
 
+# Washed-out fills (rgba with low alpha — e.g. ghost/prior bars) produce
+# unreadable hover text when used verbatim as the hover font color. Below
+# this alpha, fall back to the theme-neutral text color instead.
+_LOW_ALPHA_THRESHOLD = 0.7
+_RGBA_RE = re.compile(
+    r"^\s*rgba\s*\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([\d.]+)\s*\)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _is_low_alpha(color_str):
+    """True iff color_str is an rgba(...) string with alpha below threshold."""
+    if not isinstance(color_str, str):
+        return False
+    m = _RGBA_RE.match(color_str)
+    if not m:
+        return False
+    try:
+        return float(m.group(1)) < _LOW_ALPHA_THRESHOLD
+    except ValueError:
+        return False
+
 
 def _trace_color(tr):
-    """Best-effort single color for a trace (used for hover-label font color)."""
+    """Best-effort single color for a trace (used for hover-label font color).
+
+    Returns None for low-alpha rgba fills so the caller can fall back to a
+    high-contrast neutral instead of writing tooltips in washed-out gray.
+    """
     marker = getattr(tr, "marker", None)
     if marker is not None:
         c = getattr(marker, "color", None)
-        if isinstance(c, str):
+        if isinstance(c, str) and not _is_low_alpha(c):
             return c
     line = getattr(tr, "line", None)
     if line is not None:
         c = getattr(line, "color", None)
-        if isinstance(c, str):
+        if isinstance(c, str) and not _is_low_alpha(c):
             return c
     return None
 
