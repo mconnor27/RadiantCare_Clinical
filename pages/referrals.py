@@ -1326,6 +1326,12 @@ layout = dmc.Stack(
                                             variant="light", color="violet", size="xs",
                                         ),
                                         dmc.Button(
+                                            "Merge Selected",
+                                            id=f"{PAGE_ID}-rpm-merge-btn",
+                                            leftSection=DashIconify(icon="tabler:arrows-join", width=14),
+                                            variant="light", color="teal", size="xs",
+                                        ),
+                                        dmc.Button(
                                             "Delete Selected",
                                             id=f"{PAGE_ID}-rpm-delete-btn",
                                             leftSection=DashIconify(icon="tabler:trash", width=14),
@@ -1807,6 +1813,45 @@ layout = dmc.Stack(
                         dmc.Button(
                             id=f"{PAGE_ID}-rpm-inst-confirm-all",
                             variant="filled", color="violet", size="sm",
+                        ),
+                    ],
+                ),
+            ],
+        ),
+        dcc.Store(id=f"{PAGE_ID}-rpm-merge-pending", data=None),
+        dmc.Modal(
+            id=f"{PAGE_ID}-rpm-merge-confirm",
+            opened=False,
+            title=dmc.Group(
+                children=[
+                    DashIconify(icon="tabler:arrows-join", width=20, color=PRIMARY),
+                    dmc.Text("Merge Provider Rows", fw=600, size="md"),
+                ],
+                gap="xs",
+            ),
+            centered=True,
+            zIndex=2000,
+            size="lg",
+            children=[
+                dmc.Text(id=f"{PAGE_ID}-rpm-merge-confirm-text", size="sm", mb="sm"),
+                dmc.Paper(
+                    id=f"{PAGE_ID}-rpm-merge-confirm-detail",
+                    p="sm", radius="sm", withBorder=True, mb="md",
+                ),
+                dmc.Group(
+                    justify="flex-end",
+                    gap="sm",
+                    children=[
+                        dmc.Button(
+                            "Cancel",
+                            id=f"{PAGE_ID}-rpm-merge-confirm-cancel",
+                            variant="subtle", color="gray", size="sm",
+                        ),
+                        dmc.Button(
+                            "Merge",
+                            id=f"{PAGE_ID}-rpm-merge-confirm-apply",
+                            leftSection=DashIconify(icon="tabler:arrows-join", width=14),
+                            variant="filled", color="teal", size="sm",
                         ),
                     ],
                 ),
@@ -5384,6 +5429,170 @@ def _rpm_delete_rows(n, full_data, selected_rows, unreviewed_only):
     )
     visible = [r for r in row_data if not r.get("reviewed")] if unreviewed_only else row_data
     return visible, row_data, stats, str(total)
+
+
+# --- Merge selected provider rows (same NPI, different address_key) ---
+
+def _pick_merge_survivor(rows: list[dict]) -> dict:
+    """Survivor: highest patient_count, ties broken by reviewed=True then first."""
+    return max(rows, key=lambda r: (
+        int(r.get("patient_count") or 0),
+        1 if r.get("reviewed") else 0,
+    ))
+
+
+@callback(
+    Output(f"{PAGE_ID}-rpm-merge-confirm", "opened", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-merge-confirm-text", "children"),
+    Output(f"{PAGE_ID}-rpm-merge-confirm-detail", "children"),
+    Output(f"{PAGE_ID}-rpm-merge-pending", "data"),
+    Input(f"{PAGE_ID}-rpm-merge-btn", "n_clicks"),
+    State(f"{PAGE_ID}-rpm-grid", "selectedRows"),
+    prevent_initial_call=True,
+)
+def _rpm_merge_open(n, selected_rows):
+    """Validate selection and open the merge confirmation modal."""
+    if not n or not selected_rows or len(selected_rows) < 2:
+        return False, "Select at least two rows with the same NPI to merge.", "", None
+
+    npis = {r.get("npi", "") for r in selected_rows}
+    if len(npis) != 1 or not next(iter(npis)):
+        return (False,
+                "All selected rows must share the same NPI. Merging across "
+                "different physicians isn't supported.", "", None)
+
+    survivor = _pick_merge_survivor(selected_rows)
+    survivor_key = survivor.get("row_key", "")
+    losers = [r for r in selected_rows if r.get("row_key") != survivor_key]
+
+    npi = next(iter(npis))
+    total_referrals = sum(int(r.get("patient_count") or 0) for r in selected_rows)
+    name = survivor.get("name", "")
+
+    # Show survivor vs loser addresses + which blank fields will be filled in.
+    fields = [("specialty", "Specialty"), ("institution", "Institution"),
+              ("full_address", "Address")]
+    fill_lines = []
+    for key, label in fields:
+        surv_val = (survivor.get(key) or "").strip()
+        if surv_val:
+            continue
+        donor = next((l for l in losers if (l.get(key) or "").strip()), None)
+        if donor:
+            fill_lines.append(
+                dmc.Text([f"{label}: ", dmc.Text("blank → ", span=True,
+                                                  c=NEUTRAL["text_muted"]),
+                          dmc.Text(donor.get(key, ""), span=True, fw=500)],
+                         size="xs"))
+
+    def _addr_line(r, role):
+        addr = (r.get("full_address") or "").strip() or "(no address)"
+        cnt = int(r.get("patient_count") or 0)
+        color = "teal" if role == "Survivor" else NEUTRAL["text_muted"]
+        return dmc.Group(
+            gap="xs",
+            children=[
+                dmc.Badge(role, color=color, variant="light", size="xs"),
+                dmc.Text(addr, size="xs"),
+                dmc.Text(f"({cnt} referrals)", size="xs",
+                         c=NEUTRAL["text_muted"]),
+            ],
+        )
+
+    detail_children = [_addr_line(survivor, "Survivor")]
+    detail_children.extend(_addr_line(l, "Merging") for l in losers)
+    if fill_lines:
+        detail_children.append(dmc.Divider(my="xs"))
+        detail_children.append(dmc.Text("Survivor will gain:", size="xs",
+                                        fw=500, c=NEUTRAL["text_muted"]))
+        detail_children.extend(fill_lines)
+
+    text = (
+        f"Merge {len(selected_rows)} rows for NPI {npi} ({name}) into one. "
+        f"Loser rows will be deleted; {total_referrals} total referrals will "
+        f"appear under the surviving address."
+    )
+
+    pending = {
+        "npi": npi,
+        "survivor_row_key": survivor_key,
+        "survivor_address_key": survivor.get("address_key", ""),
+        "loser_address_keys": [l.get("address_key", "") for l in losers],
+        "loser_row_keys": [l.get("row_key", "") for l in losers],
+    }
+    return True, text, detail_children, pending
+
+
+@callback(
+    Output(f"{PAGE_ID}-rpm-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-grid-full-store", "data", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-stats", "children", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-prov-count", "children", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-inst-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-inst-count", "children", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-merge-confirm", "opened", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-merge-pending", "data", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rpm-merge-confirm-apply", "n_clicks"),
+    Input(f"{PAGE_ID}-rpm-merge-confirm-cancel", "n_clicks"),
+    State(f"{PAGE_ID}-rpm-merge-pending", "data"),
+    State(f"{PAGE_ID}-rpm-grid-full-store", "data"),
+    State(f"{PAGE_ID}-rpm-unreviewed-toggle", "checked"),
+    prevent_initial_call=True,
+)
+def _rpm_merge_resolve(n_apply, n_cancel, pending, full_data, unreviewed_only):
+    from dash import ctx
+    no = dash.no_update
+    triggered = ctx.triggered_id
+
+    if triggered == f"{PAGE_ID}-rpm-merge-confirm-cancel" or not pending or not full_data:
+        return no, no, no, no, no, no, False, None
+
+    from data.reviews_db import merge_referring
+
+    npi = pending["npi"]
+    surv_addr = pending["survivor_address_key"]
+    surv_key = pending["survivor_row_key"]
+    loser_addr = pending["loser_address_keys"]
+    loser_keys = set(pending["loser_row_keys"])
+
+    deleted = merge_referring(npi, surv_addr, loser_addr)
+    if not deleted:
+        return no, no, no, no, no, no, False, None
+
+    # In-memory grid update: gather loser values, merge into survivor where blank,
+    # add their patient_counts, then drop loser rows.
+    losers = [r for r in full_data if r.get("row_key") in loser_keys]
+    survivor = next((r for r in full_data if r.get("row_key") == surv_key), None)
+    if survivor is not None:
+        for key in ("specialty", "institution", "address", "city",
+                    "state", "zip", "full_address"):
+            if not (survivor.get(key) or "").strip():
+                donor = next((l for l in losers if (l.get(key) or "").strip()), None)
+                if donor:
+                    survivor[key] = donor.get(key, "")
+        survivor["patient_count"] = sum(
+            int(r.get("patient_count") or 0) for r in losers + [survivor]
+        )
+        if any(l.get("reviewed") for l in losers):
+            survivor["reviewed"] = True
+        if any((l.get("address_source") or "") == "manual" for l in losers) \
+                and not (survivor.get("address_source") or ""):
+            survivor["address_source"] = "manual"
+
+    row_data = [r for r in full_data if r.get("row_key") not in loser_keys]
+
+    total = len(row_data)
+    with_spec = sum(1 for r in row_data if r.get("specialty"))
+    with_inst = sum(1 for r in row_data if r.get("institution"))
+    reviewed_n = sum(1 for r in row_data if r.get("reviewed"))
+    stats = (
+        f"{total:,} providers  |  "
+        f"{reviewed_n:,} reviewed  |  {total - reviewed_n:,} unreviewed  |  "
+        f"{with_spec:,} specialty  |  {with_inst:,} institution"
+    )
+    visible = [r for r in row_data if not r.get("reviewed")] if unreviewed_only else row_data
+    inst_rows, inst_count = _build_inst_grid_data(row_data)
+    return visible, row_data, stats, str(total), inst_rows, inst_count, False, None
 
 
 @callback(

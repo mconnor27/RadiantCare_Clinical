@@ -497,6 +497,79 @@ def delete_referring(npi: str, address_key: str = "") -> None:
     _invalidate_referrals_cache()
 
 
+def merge_referring(
+    npi: str,
+    survivor_address_key: str,
+    loser_address_keys: list[str],
+) -> int:
+    """Merge multiple (npi, address_key) rows into the survivor row, then delete the losers.
+
+    For each editable field on the survivor that is blank, the first non-blank
+    value from any loser fills it. The survivor's address_key is preserved; the
+    loser rows are removed. Same NPI is required — this does not merge across
+    physicians.
+
+    Returns the number of loser rows deleted.
+    """
+    npi = str(npi)
+    losers = [k for k in loser_address_keys if k != survivor_address_key]
+    if not losers:
+        return 0
+
+    fields = ["specialty", "institution", "address", "city", "state", "zip_code"]
+    placeholders = ",".join("?" for _ in losers)
+
+    with _connect() as conn:
+        survivor = conn.execute(
+            "SELECT specialty, institution, address, city, state, zip_code, "
+            "address_source, source, reviewed "
+            "FROM referring_physicians WHERE npi = ? AND address_key = ?",
+            (npi, survivor_address_key),
+        ).fetchone()
+        if not survivor:
+            return 0
+
+        loser_rows = conn.execute(
+            f"SELECT address_key, specialty, institution, address, city, state, "
+            f"zip_code, address_source, reviewed "
+            f"FROM referring_physicians WHERE npi = ? AND address_key IN ({placeholders})",
+            (npi, *losers),
+        ).fetchall()
+
+        merged = {f: (survivor[f] or "") for f in fields}
+        addr_source = survivor["address_source"] or ""
+        reviewed = bool(survivor["reviewed"])
+        for lr in loser_rows:
+            for f in fields:
+                if not merged[f] and (lr[f] or ""):
+                    merged[f] = lr[f]
+                    if f in ("address", "city", "state", "zip_code") and not addr_source:
+                        addr_source = lr["address_source"] or "manual"
+            if not reviewed and lr["reviewed"]:
+                reviewed = True
+
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            "UPDATE referring_physicians SET "
+            "specialty = ?, institution = ?, address = ?, city = ?, state = ?, "
+            "zip_code = ?, address_source = ?, reviewed = ?, updated_at = ? "
+            "WHERE npi = ? AND address_key = ?",
+            (merged["specialty"] or None, merged["institution"] or None,
+             merged["address"], merged["city"], merged["state"], merged["zip_code"],
+             addr_source, 1 if reviewed else 0, now,
+             npi, survivor_address_key),
+        )
+
+        cur = conn.execute(
+            f"DELETE FROM referring_physicians WHERE npi = ? AND address_key IN ({placeholders})",
+            (npi, *losers),
+        )
+        deleted = cur.rowcount
+
+    _invalidate_referrals_cache()
+    return deleted
+
+
 def referring_table_is_empty() -> bool:
     """Check if the referring_physicians table has any rows."""
     with _connect() as conn:
