@@ -4823,7 +4823,7 @@ def _build_rpm_grid_data() -> tuple[list[dict], str]:
     from data.reviews_db import (
         get_all_referring_overrides, referring_table_is_empty,
         bulk_upsert_referring, sync_institutions_from_physicians,
-        _addr_key,
+        get_referring_merge_map, _addr_key,
     )
 
     ref = load_referrals()
@@ -4845,6 +4845,15 @@ def _build_rpm_grid_data() -> tuple[list[dict], str]:
         lambda r: _addr_key(r["Referring Provider City"], r["Referring Provider State"], r["Referring Provider Zip Code"]),
         axis=1,
     )
+
+    # Apply merge tombstones from DB: redirect any (npi, loser_addr_key) to
+    # its survivor before aggregating. Keeps merged rows from reappearing
+    # after a reload (the underlying CSV still has both address_keys).
+    merge_map = get_referring_merge_map()
+    if merge_map:
+        def _redirect(row):
+            return merge_map.get((row["_npi"], row["_addr_key"]), row["_addr_key"])
+        ref["_addr_key"] = ref.apply(_redirect, axis=1)
     ref["_row_key"] = ref["_npi"] + "|" + ref["_addr_key"]
 
     # Aggregate per NPI+address: pick most common name/dept, count referrals
@@ -5547,14 +5556,34 @@ def _rpm_merge_resolve(n_apply, n_cancel, pending, full_data, unreviewed_only):
     loser_addr = pending["loser_address_keys"]
     loser_keys = set(pending["loser_row_keys"])
 
-    deleted = merge_referring(npi, surv_addr, loser_addr)
-    if not deleted:
-        return no, no, no, no, no, no, False, None
+    # Gather grid-side values so merge_referring can persist correctly even
+    # when neither side has a DB override row yet (source="lookup" case).
+    survivor = next((r for r in full_data if r.get("row_key") == surv_key), None)
+    losers = [r for r in full_data if r.get("row_key") in loser_keys]
+
+    def _grid_fields(r):
+        if not r:
+            return {}
+        return {
+            "address_key": r.get("address_key", ""),
+            "specialty": (r.get("specialty") or "").strip(),
+            "institution": (r.get("institution") or "").strip(),
+            "address": (r.get("address") or "").strip(),
+            "city": (r.get("city") or "").strip(),
+            "state": (r.get("state") or "").strip(),
+            "zip_code": (r.get("zip") or "").strip(),
+            "address_source": (r.get("address_source") or "").strip(),
+            "reviewed": bool(r.get("reviewed")),
+        }
+
+    merge_referring(
+        npi, surv_addr, loser_addr,
+        survivor_defaults=_grid_fields(survivor),
+        loser_defaults=[_grid_fields(l) for l in losers],
+    )
 
     # In-memory grid update: gather loser values, merge into survivor where blank,
     # add their patient_counts, then drop loser rows.
-    losers = [r for r in full_data if r.get("row_key") in loser_keys]
-    survivor = next((r for r in full_data if r.get("row_key") == surv_key), None)
     if survivor is not None:
         for key in ("specialty", "institution", "address", "city",
                     "state", "zip", "full_address"):

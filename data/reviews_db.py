@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS referring_physicians (
     address_source TEXT NOT NULL DEFAULT '',
     source        TEXT NOT NULL DEFAULT 'manual',
     reviewed      INTEGER NOT NULL DEFAULT 0,
+    merged_into_address_key TEXT NOT NULL DEFAULT '',
     updated_at    TEXT NOT NULL,
     updated_by    TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (npi, address_key)
@@ -244,6 +245,10 @@ def _ensure_table():
                 "ALTER TABLE payor_mappings ADD COLUMN IF NOT EXISTS "
                 "ai_explanation TEXT NOT NULL DEFAULT ''"
             )
+            conn.execute(
+                "ALTER TABLE referring_physicians ADD COLUMN IF NOT EXISTS "
+                "merged_into_address_key TEXT NOT NULL DEFAULT ''"
+            )
         return
 
     # SQLite path (unchanged behaviour)
@@ -253,7 +258,7 @@ def _ensure_table():
         if "reviewed" not in cols:
             conn.execute("ALTER TABLE diagnosis_overrides ADD COLUMN reviewed INTEGER NOT NULL DEFAULT 0")
         rp_cols = [r[1] for r in conn.execute("PRAGMA table_info(referring_physicians)").fetchall()]
-        for col, default in [("address", ""), ("city", ""), ("state", ""), ("zip_code", ""), ("address_source", "")]:
+        for col, default in [("address", ""), ("city", ""), ("state", ""), ("zip_code", ""), ("address_source", ""), ("merged_into_address_key", "")]:
             if col not in rp_cols:
                 conn.execute(f"ALTER TABLE referring_physicians ADD COLUMN {col} TEXT NOT NULL DEFAULT '{default}'")
         pm_cols = [r[1] for r in conn.execute("PRAGMA table_info(payor_mappings)").fetchall()]
@@ -425,12 +430,17 @@ def bulk_upsert_referring(records: list[dict]) -> None:
 
 
 def get_all_referring_overrides() -> dict[str, dict]:
-    """Return {npi|address_key: {specialty, institution, address fields, source, reviewed}}."""
+    """Return {npi|address_key: {specialty, institution, address fields, source, reviewed}}.
+
+    Excludes merge tombstones (rows with merged_into_address_key set) — those
+    aren't real overrides, they're redirect pointers handled separately.
+    """
     with _connect() as conn:
         rows = conn.execute(
             "SELECT npi, address_key, specialty, institution, "
             "address, city, state, zip_code, address_source, source, reviewed "
-            "FROM referring_physicians"
+            "FROM referring_physicians "
+            "WHERE merged_into_address_key IS NULL OR merged_into_address_key = ''"
         ).fetchall()
     return {
         f"{r['npi']}|{r['address_key']}": {
@@ -501,15 +511,27 @@ def merge_referring(
     npi: str,
     survivor_address_key: str,
     loser_address_keys: list[str],
+    survivor_defaults: dict | None = None,
+    loser_defaults: list[dict] | None = None,
 ) -> int:
-    """Merge multiple (npi, address_key) rows into the survivor row, then delete the losers.
+    """Merge multiple (npi, address_key) rows into the survivor.
 
-    For each editable field on the survivor that is blank, the first non-blank
-    value from any loser fills it. The survivor's address_key is preserved; the
-    loser rows are removed. Same NPI is required — this does not merge across
-    physicians.
+    - The survivor row is upserted with merged values: its own non-blank fields
+      win; blanks are filled by the first non-blank value from any loser. Works
+      even when no DB row exists for the survivor yet — pass survivor_defaults
+      with the grid's in-memory values so we have something to seed from.
+    - Each loser gets a TOMBSTONE row with ``merged_into_address_key = survivor``
+      rather than a DELETE. The grid builder uses this map to redirect referral
+      aggregation away from the loser address_key, so the merge survives reload.
 
-    Returns the number of loser rows deleted.
+    Args:
+        survivor_defaults: optional {field: value} from the grid row for the
+            survivor. Used for fields where no DB row exists.
+        loser_defaults: optional list of grid-row dicts for losers (must include
+            ``address_key``). Used to source field values when a loser has no
+            DB row.
+
+    Returns the number of loser tombstones written.
     """
     npi = str(npi)
     losers = [k for k in loser_address_keys if k != survivor_address_key]
@@ -518,16 +540,17 @@ def merge_referring(
 
     fields = ["specialty", "institution", "address", "city", "state", "zip_code"]
     placeholders = ",".join("?" for _ in losers)
+    sd = survivor_defaults or {}
+    ld_by_key = {l.get("address_key", ""): l for l in (loser_defaults or [])}
 
     with _connect() as conn:
-        survivor = conn.execute(
+        # Read survivor + losers from DB (may not exist for lookup-only rows).
+        survivor_row = conn.execute(
             "SELECT specialty, institution, address, city, state, zip_code, "
             "address_source, source, reviewed "
             "FROM referring_physicians WHERE npi = ? AND address_key = ?",
             (npi, survivor_address_key),
         ).fetchone()
-        if not survivor:
-            return 0
 
         loser_rows = conn.execute(
             f"SELECT address_key, specialty, institution, address, city, state, "
@@ -535,39 +558,99 @@ def merge_referring(
             f"FROM referring_physicians WHERE npi = ? AND address_key IN ({placeholders})",
             (npi, *losers),
         ).fetchall()
+        db_loser_by_key = {lr["address_key"]: lr for lr in loser_rows}
 
-        merged = {f: (survivor[f] or "") for f in fields}
-        addr_source = survivor["address_source"] or ""
-        reviewed = bool(survivor["reviewed"])
-        for lr in loser_rows:
+        # Seed survivor's working values from DB first, fall back to grid defaults.
+        def _seed(field: str) -> str:
+            if survivor_row is not None and survivor_row[field]:
+                return survivor_row[field]
+            return sd.get(field, "") or ""
+
+        merged = {f: _seed(f) for f in fields}
+        addr_source = _seed("address_source")
+        reviewed = bool(
+            (survivor_row and survivor_row["reviewed"]) or sd.get("reviewed")
+        )
+
+        # Fill blanks from each loser (DB row preferred, grid default fallback).
+        for lk in losers:
+            db_l = db_loser_by_key.get(lk)
+            grid_l = ld_by_key.get(lk, {})
+
+            def _lv(field: str) -> str:
+                if db_l is not None and db_l[field]:
+                    return db_l[field]
+                return grid_l.get(field) or ""
+
             for f in fields:
-                if not merged[f] and (lr[f] or ""):
-                    merged[f] = lr[f]
+                if not merged[f] and _lv(f):
+                    merged[f] = _lv(f)
                     if f in ("address", "city", "state", "zip_code") and not addr_source:
-                        addr_source = lr["address_source"] or "manual"
-            if not reviewed and lr["reviewed"]:
-                reviewed = True
+                        addr_source = (
+                            (db_l["address_source"] if db_l else None)
+                            or grid_l.get("address_source")
+                            or "manual"
+                        )
+            if not reviewed:
+                if (db_l and db_l["reviewed"]) or grid_l.get("reviewed"):
+                    reviewed = True
 
         now = datetime.now(timezone.utc).isoformat()
+
+        # Upsert survivor with merged fields. INSERT path is required because
+        # lookup-only rows have no override row yet.
         conn.execute(
-            "UPDATE referring_physicians SET "
-            "specialty = ?, institution = ?, address = ?, city = ?, state = ?, "
-            "zip_code = ?, address_source = ?, reviewed = ?, updated_at = ? "
-            "WHERE npi = ? AND address_key = ?",
-            (merged["specialty"] or None, merged["institution"] or None,
-             merged["address"], merged["city"], merged["state"], merged["zip_code"],
-             addr_source, 1 if reviewed else 0, now,
-             npi, survivor_address_key),
+            """INSERT INTO referring_physicians
+               (npi, address_key, specialty, institution, address, city, state,
+                zip_code, address_source, source, reviewed, updated_at, updated_by)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '')
+               ON CONFLICT(npi, address_key) DO UPDATE SET
+                   specialty      = excluded.specialty,
+                   institution    = excluded.institution,
+                   address        = excluded.address,
+                   city           = excluded.city,
+                   state          = excluded.state,
+                   zip_code       = excluded.zip_code,
+                   address_source = excluded.address_source,
+                   reviewed       = excluded.reviewed,
+                   updated_at     = excluded.updated_at""",
+            (npi, survivor_address_key,
+             merged["specialty"] or None, merged["institution"] or None,
+             merged["address"] or "", merged["city"] or "",
+             merged["state"] or "", merged["zip_code"] or "",
+             addr_source or "", "manual", 1 if reviewed else 0, now),
         )
 
-        cur = conn.execute(
-            f"DELETE FROM referring_physicians WHERE npi = ? AND address_key IN ({placeholders})",
-            (npi, *losers),
-        )
-        deleted = cur.rowcount
+        # Tombstone each loser. Keep any existing fields so an unmerge is
+        # possible later; only flip merged_into_address_key.
+        count = 0
+        for lk in losers:
+            conn.execute(
+                """INSERT INTO referring_physicians
+                   (npi, address_key, merged_into_address_key, source, updated_at, updated_by)
+                   VALUES (?, ?, ?, 'merge', ?, '')
+                   ON CONFLICT(npi, address_key) DO UPDATE SET
+                       merged_into_address_key = excluded.merged_into_address_key,
+                       updated_at = excluded.updated_at""",
+                (npi, lk, survivor_address_key, now),
+            )
+            count += 1
 
     _invalidate_referrals_cache()
-    return deleted
+    return count
+
+
+def get_referring_merge_map() -> dict[tuple[str, str], str]:
+    """Return {(npi, loser_address_key): survivor_address_key} for all
+    merge tombstones. Used by the grid builder to redirect aggregation."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT npi, address_key, merged_into_address_key "
+            "FROM referring_physicians "
+            "WHERE merged_into_address_key IS NOT NULL "
+            "AND merged_into_address_key != ''"
+        ).fetchall()
+    return {(r["npi"], r["address_key"]): r["merged_into_address_key"] for r in rows}
 
 
 def referring_table_is_empty() -> bool:
