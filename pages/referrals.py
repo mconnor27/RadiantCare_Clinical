@@ -1306,13 +1306,6 @@ layout = dmc.Stack(
                                             leftSection=DashIconify(icon="tabler:brain", width=14),
                                             variant="light", color="grape", size="xs",
                                         ),
-                                        dmc.Switch(
-                                            id=f"{PAGE_ID}-rpm-ai-review-toggle",
-                                            label="Review before applying",
-                                            size="xs",
-                                            checked=False,
-                                            color="grape",
-                                        ),
                                         dmc.Button(
                                             "Mark Reviewed",
                                             id=f"{PAGE_ID}-rpm-reviewed-btn",
@@ -4809,8 +4802,7 @@ def _update_referral_map(geo_data, selected_dept, departments, show_flows,
 import threading
 
 # Module-level progress state for background NPI/AI operations
-_rpm_progress = {"done": 0, "total": 0, "running": False, "message": "",
-                 "mode": "auto"}  # mode = "auto" (write through) or "review"
+_rpm_progress = {"done": 0, "total": 0, "running": False, "message": ""}
 _rpm_npi_results = []  # Pending NPI lookup results for review
 _rpm_ai_review_results = []  # Pending provider-AI results awaiting user review
 _rpm_lock = threading.Lock()
@@ -5705,20 +5697,18 @@ def _rpm_poll_progress(n, unreviewed_only):
     """Poll background task progress.
 
     Three terminal cases when running flips to False:
+      * Provider AI finished with results → open the rpm-ai-review modal;
+        do NOT refresh the rpm-grid (writes happen only after Apply Selected).
       * NPI lookup finished with results → open the NPI review side-panel.
-      * Provider AI in REVIEW mode → open the rpm-ai-review modal,
-        populate its grid; do NOT refresh the rpm-grid (writes happen
-        only after Apply Selected).
-      * Provider AI in AUTO mode (or any flow that wrote through) →
-        rebuild rpm-grid rowData (full store) AND filtered subset (so
-        the "Unreviewed only" toggle is preserved across the refresh).
+      * Otherwise (no results to review) → rebuild rpm-grid rowData (full
+        store) AND filtered subset (so the "Unreviewed only" toggle is
+        preserved across the refresh).
     """
     with _rpm_lock:
         done = _rpm_progress["done"]
         total = _rpm_progress["total"]
         running = _rpm_progress["running"]
         msg = _rpm_progress["message"]
-        mode = _rpm_progress.get("mode", "auto")
 
     pct = int(done / total * 100) if total > 0 else 0
     no = dash.no_update
@@ -5731,8 +5721,8 @@ def _rpm_poll_progress(n, unreviewed_only):
         npi_review_data = list(_rpm_npi_results)
         ai_review_data = list(_rpm_ai_review_results)
 
-    # Review mode: open the modal, don't touch the grid yet.
-    if ai_review_data and mode == "review":
+    # AI review modal: open it, don't touch the grid yet.
+    if ai_review_data:
         return (
             True, 100, {"display": "none"}, msg, {"display": "block"},
             no, no, no, no, True, ai_review_data,
@@ -5756,7 +5746,7 @@ def _rpm_poll_progress(n, unreviewed_only):
             {"display": "block"}, npi_review_data, visible, fresh, no, no,
         )
 
-    # Auto-mode AI completion: refresh both stores, respect filter.
+    # Fallthrough (e.g. AI returned no rows): refresh both stores, respect filter.
     visible, fresh = _refresh_with_filter()
     return (True, 100, {"display": "none"}, msg, {"display": "block"},
             no, no, visible, fresh, no, no)
@@ -5771,11 +5761,11 @@ def _rpm_poll_progress(n, unreviewed_only):
     Input(f"{PAGE_ID}-rpm-ai-btn", "n_clicks"),
     State(f"{PAGE_ID}-rpm-grid", "rowData"),
     State(f"{PAGE_ID}-rpm-grid", "selectedRows"),
-    State(f"{PAGE_ID}-rpm-ai-review-toggle", "checked"),
     prevent_initial_call=True,
 )
-def _rpm_start_ai_lookup(n, row_data, selected_rows, review_mode):
-    """Start background Claude AI institution research. Uses selected rows if any, else unreviewed blanks."""
+def _rpm_start_ai_lookup(n, row_data, selected_rows):
+    """Start background Claude AI institution research. Results always go to
+    the review modal; the user must Apply Selected to write to the DB."""
     if not n or not row_data:
         return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
 
@@ -5821,18 +5811,14 @@ def _rpm_start_ai_lookup(n, row_data, selected_rows, review_mode):
         for r in targets
     ]
 
-    mode = "review" if review_mode else "auto"
     with _rpm_lock:
         _rpm_progress.update(done=0, total=len(physicians), running=True,
-                             message="Starting AI research...", mode=mode)
+                             message="Starting AI research...")
         _rpm_ai_review_results.clear()
 
     def _bg():
         from utils.institution_inference import infer_institutions
-        from data.reviews_db import (
-            bulk_upsert_referring, get_referring_institutions,
-            add_institution, upsert_referring,
-        )
+        from data.reviews_db import get_referring_institutions
 
         existing = get_referring_institutions()
 
@@ -5852,110 +5838,55 @@ def _rpm_start_ai_lookup(n, row_data, selected_rows, review_mode):
                 _rpm_progress["done"] = min(i + chunk_size, len(physicians))
                 _rpm_progress["message"] = f"Researching institutions... {_rpm_progress['done']}/{len(physicians)}"
 
-        # ----------------- REVIEW MODE: stash, don't write -----------------
         # Build review rows for the modal grid; user inspects and edits
         # before any DB writes happen.
-        if mode == "review":
-            review_rows = []
-            for p in physicians:
-                res = all_results.get(p["row_key"]) or {}
-                # Look up the source row to show current values
-                src = next((r for r in targets if r.get("row_key") == p["row_key"]), {})
-                cur_addr_full = ", ".join(
-                    s for s in (
-                        (src.get("address") or "").strip(),
-                        (src.get("city") or "").strip(),
-                        (src.get("state") or "").strip(),
-                        (src.get("zip") or "").strip(),
-                    ) if s
-                )
-                ai_addr_full = ", ".join(
-                    s for s in (
-                        (res.get("address") or "").strip(),
-                        (res.get("city") or "").strip(),
-                        (res.get("state") or "").strip(),
-                        (res.get("zip_code") or "").strip(),
-                    ) if s
-                )
-                inst = (res.get("institution") or "").strip()
-                spec = (res.get("specialty") or "").strip()
-                review_rows.append({
-                    "row_key": p["row_key"],
-                    "npi": p["npi"],
-                    "address_key": p["address_key"],
-                    "name": src.get("name", ""),
-                    "current_institution": src.get("institution", "") or "",
-                    "ai_institution": inst,
-                    "current_specialty": src.get("specialty", "") or "",
-                    "ai_specialty": spec,
-                    "current_address": cur_addr_full,
-                    "ai_address": ai_addr_full,
-                    "window": (res.get("effective_date_range") or "").strip(),
-                    "_addr_blank": p.get("_addr_blank", False),
-                    "_spec_blank": p.get("_spec_blank", False),
-                    "accept": bool(inst),  # default-check rows the AI succeeded on
-                })
-            with _rpm_lock:
-                _rpm_ai_review_results.clear()
-                _rpm_ai_review_results.extend(review_rows)
-                _rpm_progress["running"] = False
-                got = sum(1 for r in review_rows if r["ai_institution"])
-                _rpm_progress["message"] = (
-                    f"AI returned proposals for {got} of {len(physicians)} — "
-                    f"review and Apply."
-                )
-            return  # done — modal will pick up via poll callback
-
-        # ----------------- AUTO MODE: write through (current behaviour) -----
-        records = []
-        addr_filled = 0
-        spec_filled = 0
+        review_rows = []
         for p in physicians:
-            res = all_results.get(p["row_key"])
-            if not res:
-                continue
-            inst = res.get("institution") or ""
-            if not inst:
-                continue
-
+            res = all_results.get(p["row_key"]) or {}
+            # Look up the source row to show current values
+            src = next((r for r in targets if r.get("row_key") == p["row_key"]), {})
+            cur_addr_full = ", ".join(
+                s for s in (
+                    (src.get("address") or "").strip(),
+                    (src.get("city") or "").strip(),
+                    (src.get("state") or "").strip(),
+                    (src.get("zip") or "").strip(),
+                ) if s
+            )
+            ai_addr_full = ", ".join(
+                s for s in (
+                    (res.get("address") or "").strip(),
+                    (res.get("city") or "").strip(),
+                    (res.get("state") or "").strip(),
+                    (res.get("zip_code") or "").strip(),
+                ) if s
+            )
+            inst = (res.get("institution") or "").strip()
             spec = (res.get("specialty") or "").strip()
-            spec_to_write = spec if (p.get("_spec_blank") and spec) else None
-            if spec_to_write:
-                spec_filled += 1
-
-            records.append({
-                "npi": p["npi"], "address_key": p["address_key"],
-                "institution": inst,
-                "specialty": spec_to_write,
-                "source": "claude_ai",
+            review_rows.append({
+                "row_key": p["row_key"],
+                "npi": p["npi"],
+                "address_key": p["address_key"],
+                "name": src.get("name", ""),
+                "current_institution": src.get("institution", "") or "",
+                "ai_institution": inst,
+                "current_specialty": src.get("specialty", "") or "",
+                "ai_specialty": spec,
+                "current_address": cur_addr_full,
+                "ai_address": ai_addr_full,
+                "window": (res.get("effective_date_range") or "").strip(),
+                "_addr_blank": p.get("_addr_blank", False),
+                "_spec_blank": p.get("_spec_blank", False),
+                "accept": bool(inst),  # default-check rows the AI succeeded on
             })
-            add_institution(inst)
-
-            if p.get("_addr_blank") and (
-                res.get("address") or res.get("city") or res.get("state") or res.get("zip_code")
-            ):
-                try:
-                    upsert_referring(
-                        npi=p["npi"], address_key=p["address_key"],
-                        address=res.get("address") or None,
-                        city=res.get("city") or None,
-                        state=res.get("state") or None,
-                        zip_code=res.get("zip_code") or None,
-                        address_source="claude_ai",
-                        source="claude_ai",
-                    )
-                    addr_filled += 1
-                except Exception:
-                    pass
-
-        if records:
-            bulk_upsert_referring(records)
-
         with _rpm_lock:
+            _rpm_ai_review_results.clear()
+            _rpm_ai_review_results.extend(review_rows)
             _rpm_progress["running"] = False
+            got = sum(1 for r in review_rows if r["ai_institution"])
             _rpm_progress["message"] = (
-                f"Done. {len(records)} institutions, {spec_filled} specialties, "
-                f"{addr_filled} addresses filled ({len(physicians)} researched)."
+                f"AI returned proposals for {got} of {len(physicians)} — "
+                f"review and Apply."
             )
 
     t = threading.Thread(target=_bg, daemon=True)

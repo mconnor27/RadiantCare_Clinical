@@ -44,9 +44,30 @@ except ImportError:
 
 # Optional Supabase-Auth gating. Set AUTH_ENABLED=true in production
 # (and provide FLASK_SECRET, SUPABASE_URL, SUPABASE_ANON_KEY).
-if os.environ.get("AUTH_ENABLED", "").lower() in ("1", "true", "yes", "on"):
+_AUTH_ENABLED = os.environ.get("AUTH_ENABLED", "").lower() in ("1", "true", "yes", "on")
+if _AUTH_ENABLED:
     from auth import register_auth
     register_auth(server)
+
+# Clerk session keep-alive: load Clerk JS in the background on app pages so
+# the __session cookie gets continuously rotated (~every 50s by Clerk's
+# client). Without this, the cookie expires after ~10 min and the next Dash
+# callback 401s, forcing a full /login reload mid-workflow.
+_CLERK_KEEPALIVE = ""
+if _AUTH_ENABLED:
+    _clerk_pub = os.environ.get("CLERK_PUBLISHABLE_KEY", "").strip()
+    if _clerk_pub:
+        from auth import _clerk_frontend_host
+        _clerk_host = (os.environ.get("CLERK_FRONTEND_HOST", "").strip()
+                       or _clerk_frontend_host(_clerk_pub))
+        _CLERK_KEEPALIVE = (
+            '<script async crossorigin="anonymous" '
+            f'data-clerk-publishable-key="{_clerk_pub}" '
+            f'src="https://{_clerk_host}/npm/@clerk/clerk-js@5/dist/clerk.browser.js" '
+            'type="text/javascript"></script>\n'
+            '<script>(function(){function go(){if(!window.Clerk)return setTimeout(go,100);'
+            'window.Clerk.load().catch(function(){});}go();})();</script>'
+        )
 
 # Inject theme-init script into <head> so data-theme is applied BEFORE render
 # (prevents flash of light content when dark mode is the user's saved preference).
@@ -68,6 +89,7 @@ app.index_string = """<!DOCTYPE html>
                 } catch(e) {}
             })();
         </script>
+        __CLERK_KEEPALIVE__
     </head>
     <body>
         {%app_entry%}
@@ -77,7 +99,7 @@ app.index_string = """<!DOCTYPE html>
             {%renderer%}
         </footer>
     </body>
-</html>"""
+</html>""".replace("__CLERK_KEEPALIVE__", _CLERK_KEEPALIVE)
 
 
 # Long-cache static assets so Fastly (Railway's CDN) and the browser can
