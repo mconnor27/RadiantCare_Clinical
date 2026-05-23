@@ -419,7 +419,9 @@ layout = dmc.Stack(
                                     style={"position": "absolute", "top": 0, "left": 0, "right": 0, "bottom": 0},
                                     children=[
                                         dmc.LoadingOverlay(id=f"{PAGE_ID}-coverage-loading", visible=False,
-                                                           loaderProps={"type": "dots", "color": PRIMARY}),
+                                                           loaderProps={"type": "dots", "color": PRIMARY},
+                                                               transitionProps={"duration": 600, "exitDuration": 80},
+                                                           ),
                                         dcc.Graph(id=f"{PAGE_ID}-chart-coverage",
                                                   config={"displayModeBar": False},
                                                   style={"height": "100%"}),
@@ -479,7 +481,9 @@ layout = dmc.Stack(
                                     style={"position": "absolute", "top": 0, "left": 0, "right": 0, "bottom": 0},
                                     children=[
                                         dmc.LoadingOverlay(id=f"{PAGE_ID}-billing-loading", visible=False,
-                                                           loaderProps={"type": "dots", "color": PRIMARY}),
+                                                           loaderProps={"type": "dots", "color": PRIMARY},
+                                                               transitionProps={"duration": 600, "exitDuration": 80},
+                                                           ),
                                         dcc.Graph(id=f"{PAGE_ID}-chart-billing",
                                                   config={"displayModeBar": False},
                                                   style={"height": "100%"}),

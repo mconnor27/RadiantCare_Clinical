@@ -678,6 +678,7 @@ layout = dmc.Stack(
                             loaderProps={"type": "dots", "color": "#7C2A83"},
                             overlayProps={"radius": "sm", "blur": 2},
                             zIndex=100,
+                            transitionProps={"duration": 600, "exitDuration": 80},
                         ),
                         html.Div(
                             id="wf-flow-gantt",
@@ -750,6 +751,7 @@ layout = dmc.Stack(
                                     loaderProps={"type": "dots", "color": "#7C2A83"},
                                     overlayProps={"radius": "sm", "blur": 2},
                             zIndex=100,
+                                    transitionProps={"duration": 600, "exitDuration": 80},
                                 ),
                                 dcc.Graph(id="wf-chart-dist", config={**DEFAULT_GRAPH_CONFIG, "responsive": True}, style={"height": "100%"}),
                             ],
@@ -844,6 +846,7 @@ layout = dmc.Stack(
                                     loaderProps={"type": "dots", "color": "#7C2A83"},
                                     overlayProps={"radius": "sm", "blur": 2},
                             zIndex=100,
+                                    transitionProps={"duration": 600, "exitDuration": 80},
                                 ),
                                 dcc.Graph(id="wf-chart-trend", config={**DEFAULT_GRAPH_CONFIG, "responsive": True}, style={"height": "100%"}),
                             ],

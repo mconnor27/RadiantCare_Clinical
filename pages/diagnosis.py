@@ -893,6 +893,7 @@ layout = dmc.Stack(
                                 loaderProps={"type": "dots", "color": PRIMARY},
                                 overlayProps={"radius": "sm", "blur": 2},
                                 zIndex=10,
+                                transitionProps={"duration": 600, "exitDuration": 80},
                             ),
                             dmc.Group(
                                 justify="space-between",

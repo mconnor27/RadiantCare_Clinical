@@ -789,7 +789,7 @@ layout = dmc.Stack(
                                 dmc.Box(
                                     style={"position": "absolute", "top": 0, "left": 0, "right": 0, "bottom": 0},
                                     children=[
-                                        dmc.LoadingOverlay(id="cv-diagnosis-loading", visible=False, loaderProps={"type": "dots", "color": "#7C2A83"}),
+                                        dmc.LoadingOverlay(id="cv-diagnosis-loading", visible=False, loaderProps={"type": "dots", "color": "#7C2A83"}, transitionProps={"duration": 600, "exitDuration": 80}),
                                         dcc.Graph(id="cv-chart-diagnosis", config={"displayModeBar": False}, style={"height": "100%"}),
                                     ],
                                 ),
@@ -856,7 +856,7 @@ layout = dmc.Stack(
                                 dmc.Box(
                                     style={"position": "absolute", "top": 0, "left": 0, "right": 0, "bottom": 0},
                                     children=[
-                                        dmc.LoadingOverlay(id="cv-billing-loading", visible=False, loaderProps={"type": "dots", "color": "#7C2A83"}),
+                                        dmc.LoadingOverlay(id="cv-billing-loading", visible=False, loaderProps={"type": "dots", "color": "#7C2A83"}, transitionProps={"duration": 600, "exitDuration": 80}),
                                         dcc.Graph(id="cv-chart-billing", config={"displayModeBar": False}, style={"height": "100%"}),
                                     ],
                                 ),

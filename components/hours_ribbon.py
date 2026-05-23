@@ -104,6 +104,7 @@ def hours_ribbon_card(prefix, *, card_height="100%", chart_height=None):
                                 visible=False,
                                 loaderProps={"type": "dots", "color": "#7C2A83"},
                                 overlayProps={"radius": "sm", "blur": 2},
+                                transitionProps={"duration": 600, "exitDuration": 80},
                             ),
                             dcc.Graph(
                                 id=f"{prefix}-chart-hours",

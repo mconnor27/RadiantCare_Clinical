@@ -132,6 +132,10 @@ def chart_card(
                 visible=False,
                 loaderProps={"type": "dots", "color": PRIMARY},
                 overlayProps={"radius": "sm", "blur": 2},
+                # Slow fade-in + fast fade-out suppresses the visible flash
+                # for sub-200ms callbacks (e.g. smoothing-slider drags).
+                # Real data refreshes (>1s) reach full opacity normally.
+                transitionProps={"duration": 600, "exitDuration": 80},
             )
         )
     inner_children.append(

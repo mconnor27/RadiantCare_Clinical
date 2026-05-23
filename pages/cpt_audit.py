@@ -159,7 +159,7 @@ layout = dmc.Stack(
                 dmc.Box(
                     pos="relative",
                     children=[
-                        dmc.LoadingOverlay(id="cpt-trend-loading", visible=False, loaderProps={"type": "dots", "color": PRIMARY}),
+                        dmc.LoadingOverlay(id="cpt-trend-loading", visible=False, loaderProps={"type": "dots", "color": PRIMARY}, transitionProps={"duration": 600, "exitDuration": 80}),
                         dcc.Graph(id="cpt-chart-trend", config={"displayModeBar": False}, style={"height": "180px"}),
                     ],
                 ),

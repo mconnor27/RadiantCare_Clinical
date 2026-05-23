@@ -852,6 +852,7 @@ layout = dmc.Stack(
                             loaderProps={"type": "dots", "color": PRIMARY},
                             overlayProps={"radius": "sm", "blur": 2},
                             zIndex=100,
+                            transitionProps={"duration": 600, "exitDuration": 80},
                         ),
                         html.Div(
                             id=f"{PAGE_ID}-flow-gantt",
@@ -910,6 +911,7 @@ layout = dmc.Stack(
                                     visible=False,
                                     loaderProps={"type": "dots", "color": PRIMARY},
                                     overlayProps={"radius": "sm", "blur": 2},
+                                    transitionProps={"duration": 600, "exitDuration": 80},
                                 ),
                                 dcc.Graph(
                                     id=f"{PAGE_ID}-flow-dist",
@@ -965,6 +967,7 @@ layout = dmc.Stack(
                                     visible=False,
                                     loaderProps={"type": "dots", "color": PRIMARY},
                                     overlayProps={"radius": "sm", "blur": 2},
+                                    transitionProps={"duration": 600, "exitDuration": 80},
                                 ),
                                 dcc.Graph(
                                     id=f"{PAGE_ID}-flow-trend",
@@ -1020,6 +1023,7 @@ layout = dmc.Stack(
                                     visible=False,
                                     loaderProps={"type": "dots", "color": PRIMARY},
                                     overlayProps={"radius": "sm", "blur": 2},
+                                    transitionProps={"duration": 600, "exitDuration": 80},
                                 ),
                                 dcc.Graph(
                                     id=f"{PAGE_ID}-flow-conv",
@@ -1062,6 +1066,7 @@ layout = dmc.Stack(
                                     visible=False,
                                     loaderProps={"type": "dots", "color": PRIMARY},
                                     overlayProps={"radius": "sm", "blur": 2},
+                                    transitionProps={"duration": 600, "exitDuration": 80},
                                 ),
                                 dcc.Graph(id=f"{PAGE_ID}-dx-conversion", config=DEFAULT_GRAPH_CONFIG,
                                           style={"height": "100%"}),
@@ -1094,6 +1099,7 @@ layout = dmc.Stack(
                                         visible=False,
                                         loaderProps={"type": "dots", "color": PRIMARY},
                                         overlayProps={"radius": "sm", "blur": 2},
+                                        transitionProps={"duration": 600, "exitDuration": 80},
                                     ),
                                     dcc.Graph(id=f"{PAGE_ID}-site-conversion", config=DEFAULT_GRAPH_CONFIG,
                                               style={"height": "100%"}),
@@ -1134,6 +1140,7 @@ layout = dmc.Stack(
                                         visible=False,
                                         loaderProps={"type": "dots", "color": PRIMARY},
                                         overlayProps={"radius": "sm", "blur": 2},
+                                        transitionProps={"duration": 600, "exitDuration": 80},
                                     ),
                                     dcc.Graph(id=f"{PAGE_ID}-km-curve", config=DEFAULT_GRAPH_CONFIG,
                                               style={"height": "100%"}),

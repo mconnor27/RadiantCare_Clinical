@@ -202,7 +202,7 @@ layout = dmc.Stack(
                                 dmc.Box(
                                     style={"position": "absolute", "inset": 0},
                                     children=[
-                                        dmc.LoadingOverlay(id=f"{PAGE_ID}-manpower-loading", visible=False, loaderProps={"type": "dots", "color": PRIMARY}),
+                                        dmc.LoadingOverlay(id=f"{PAGE_ID}-manpower-loading", visible=False, loaderProps={"type": "dots", "color": PRIMARY}, transitionProps={"duration": 600, "exitDuration": 80}),
                                         dcc.Graph(id=f"{PAGE_ID}-chart-manpower", config={"displayModeBar": False}, style={"height": "100%"}),
                                     ],
                                 ),
@@ -251,7 +251,7 @@ layout = dmc.Stack(
                                 dmc.Box(
                                     style={"position": "absolute", "inset": 0},
                                     children=[
-                                        dmc.LoadingOverlay(id=f"{PAGE_ID}-sites-loading", visible=False, loaderProps={"type": "dots", "color": PRIMARY}),
+                                        dmc.LoadingOverlay(id=f"{PAGE_ID}-sites-loading", visible=False, loaderProps={"type": "dots", "color": PRIMARY}, transitionProps={"duration": 600, "exitDuration": 80}),
                                         dcc.Graph(id=f"{PAGE_ID}-chart-sites", config={"displayModeBar": False}, style={"height": "100%"}),
                                     ],
                                 ),
@@ -393,7 +393,7 @@ layout = dmc.Stack(
                                 dmc.Box(
                                     style={"position": "absolute", "inset": 0},
                                     children=[
-                                        dmc.LoadingOverlay(id=f"{PAGE_ID}-afterhours-loading", visible=False, loaderProps={"type": "dots", "color": PRIMARY}),
+                                        dmc.LoadingOverlay(id=f"{PAGE_ID}-afterhours-loading", visible=False, loaderProps={"type": "dots", "color": PRIMARY}, transitionProps={"duration": 600, "exitDuration": 80}),
                                         dcc.Graph(id=f"{PAGE_ID}-chart-afterhours", config={"displayModeBar": False}, style={"height": "100%"}),
                                     ],
                                 ),
@@ -441,7 +441,7 @@ layout = dmc.Stack(
                                 dmc.Box(
                                     style={"position": "absolute", "inset": 0},
                                     children=[
-                                        dmc.LoadingOverlay(id=f"{PAGE_ID}-crosscov-loading", visible=False, loaderProps={"type": "dots", "color": PRIMARY}),
+                                        dmc.LoadingOverlay(id=f"{PAGE_ID}-crosscov-loading", visible=False, loaderProps={"type": "dots", "color": PRIMARY}, transitionProps={"duration": 600, "exitDuration": 80}),
                                         dcc.Graph(id=f"{PAGE_ID}-chart-crosscoverage", config={"displayModeBar": False}, style={"height": "100%"}),
                                     ],
                                 ),
@@ -463,7 +463,7 @@ layout = dmc.Stack(
                 dmc.Box(
                     pos="relative",
                     children=[
-                        dmc.LoadingOverlay(id=f"{PAGE_ID}-calendar-loading", visible=False, loaderProps={"type": "dots", "color": PRIMARY}),
+                        dmc.LoadingOverlay(id=f"{PAGE_ID}-calendar-loading", visible=False, loaderProps={"type": "dots", "color": PRIMARY}, transitionProps={"duration": 600, "exitDuration": 80}),
                         dcc.Graph(id=f"{PAGE_ID}-chart-calendar", config={"displayModeBar": False}),
                     ],
                 ),

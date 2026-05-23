@@ -343,7 +343,10 @@ def _build_filter_bar():
                                 searchable=True,
                                 hidePickedOptions=False,
                                 size="sm",
-                                maxDropdownHeight=300,
+                                # Specialty list is finite (~25 entries) so
+                                # we make the dropdown tall enough to show
+                                # all without scrolling.
+                                maxDropdownHeight=800,
                                 comboboxProps={"zIndex": 500},
                                 styles={
                                     "pillsList": {
@@ -377,7 +380,7 @@ def _build_filter_bar():
                                 searchable=True,
                                 hidePickedOptions=False,
                                 size="sm",
-                                maxDropdownHeight=300,
+                                maxDropdownHeight=800,
                                 comboboxProps={"zIndex": 500},
                                 styles={
                                     "pillsList": {
@@ -414,7 +417,7 @@ def _build_filter_bar():
                                 # providers to the top of the list.
                                 hidePickedOptions=False,
                                 size="sm",
-                                maxDropdownHeight=300,
+                                maxDropdownHeight=800,
                                 comboboxProps={"zIndex": 500},
                                 # Mantine 7 MultiSelect: pills live inside
                                 # the `pillsList` slot (a flex container).
@@ -641,6 +644,7 @@ layout = dmc.Stack(
                             loaderProps={"type": "dots", "color": PRIMARY},
                             overlayProps={"radius": "sm", "blur": 2},
                             zIndex=100,
+                            transitionProps={"duration": 600, "exitDuration": 80},
                         ),
                         html.Div(
                             id=f"{PAGE_ID}-flow-gantt",
@@ -708,6 +712,7 @@ layout = dmc.Stack(
                                         visible=False,
                                         loaderProps={"type": "dots", "color": PRIMARY},
                                         overlayProps={"radius": "sm", "blur": 2},
+                                        transitionProps={"duration": 600, "exitDuration": 80},
                                     ),
                                     dcc.Graph(
                                         id=f"{PAGE_ID}-flow-dist",
@@ -771,6 +776,7 @@ layout = dmc.Stack(
                                         visible=False,
                                         loaderProps={"type": "dots", "color": PRIMARY},
                                         overlayProps={"radius": "sm", "blur": 2},
+                                        transitionProps={"duration": 600, "exitDuration": 80},
                                     ),
                                     dcc.Graph(
                                         id=f"{PAGE_ID}-flow-trend",
@@ -834,6 +840,7 @@ layout = dmc.Stack(
                                         visible=False,
                                         loaderProps={"type": "dots", "color": PRIMARY},
                                         overlayProps={"radius": "sm", "blur": 2},
+                                        transitionProps={"duration": 600, "exitDuration": 80},
                                     ),
                                     dcc.Graph(
                                         id=f"{PAGE_ID}-flow-conv",
@@ -943,6 +950,7 @@ layout = dmc.Stack(
                                         visible=False,
                                         loaderProps={"type": "dots", "color": PRIMARY},
                                         overlayProps={"radius": "sm", "blur": 2},
+                                        transitionProps={"duration": 600, "exitDuration": 80},
                                     ),
                                     dmc.Box(
                                         style={"position": "absolute", "top": 0, "left": 0,
@@ -1142,6 +1150,7 @@ layout = dmc.Stack(
                             visible=False,
                             loaderProps={"type": "dots", "color": PRIMARY},
                             overlayProps={"radius": "sm", "blur": 2},
+                            transitionProps={"duration": 600, "exitDuration": 80},
                         ),
                         dcc.Graph(
                             id=f"{PAGE_ID}-map",

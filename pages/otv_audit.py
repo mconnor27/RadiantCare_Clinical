@@ -333,7 +333,7 @@ layout = dmc.Stack(
                                 dmc.Box(
                                     style={"position": "absolute", "inset": 0},
                                     children=[
-                                        dmc.LoadingOverlay(id="otv-dist-loading", visible=False, loaderProps={"type": "dots", "color": PRIMARY}),
+                                        dmc.LoadingOverlay(id="otv-dist-loading", visible=False, loaderProps={"type": "dots", "color": PRIMARY}, transitionProps={"duration": 600, "exitDuration": 80}),
                                         dcc.Graph(id="otv-chart-distribution", config={"displayModeBar": False}, style={"height": "100%"}),
                                     ],
                                 ),
@@ -381,7 +381,7 @@ layout = dmc.Stack(
                                 dmc.Box(
                                     style={"position": "absolute", "inset": 0},
                                     children=[
-                                        dmc.LoadingOverlay(id="otv-hist-loading", visible=False, loaderProps={"type": "dots", "color": PRIMARY}),
+                                        dmc.LoadingOverlay(id="otv-hist-loading", visible=False, loaderProps={"type": "dots", "color": PRIMARY}, transitionProps={"duration": 600, "exitDuration": 80}),
                                         dcc.Graph(id="otv-chart-histogram", config={"displayModeBar": False}, style={"height": "100%"}),
                                     ],
                                 ),
