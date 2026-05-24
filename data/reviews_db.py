@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS cpt_course_reviews (
 CREATE TABLE IF NOT EXISTS referring_physicians (
     npi           TEXT NOT NULL,
     address_key   TEXT NOT NULL DEFAULT '',
+    display_name  TEXT,
     specialty     TEXT,
     institution   TEXT,
     address       TEXT,
@@ -249,6 +250,10 @@ def _ensure_table():
                 "ALTER TABLE referring_physicians ADD COLUMN IF NOT EXISTS "
                 "merged_into_address_key TEXT NOT NULL DEFAULT ''"
             )
+            conn.execute(
+                "ALTER TABLE referring_physicians ADD COLUMN IF NOT EXISTS "
+                "display_name TEXT"
+            )
         return
 
     # SQLite path (unchanged behaviour)
@@ -261,6 +266,9 @@ def _ensure_table():
         for col, default in [("address", ""), ("city", ""), ("state", ""), ("zip_code", ""), ("address_source", ""), ("merged_into_address_key", "")]:
             if col not in rp_cols:
                 conn.execute(f"ALTER TABLE referring_physicians ADD COLUMN {col} TEXT NOT NULL DEFAULT '{default}'")
+        # display_name is nullable so it lives outside the default-string loop above
+        if "display_name" not in rp_cols:
+            conn.execute("ALTER TABLE referring_physicians ADD COLUMN display_name TEXT")
         pm_cols = [r[1] for r in conn.execute("PRAGMA table_info(payor_mappings)").fetchall()]
         if "phdsc_category" not in pm_cols:
             conn.execute("ALTER TABLE payor_mappings ADD COLUMN phdsc_category TEXT NOT NULL DEFAULT '9'")
@@ -368,12 +376,13 @@ def upsert_referring(
     address_source: str | None = None,
     source: str = "manual",
     updated_by: str = "",
+    display_name: str | None = None,
 ) -> None:
     """Insert or update a referring physician override."""
     now = datetime.now(timezone.utc).isoformat()
     with _connect() as conn:
         existing = conn.execute(
-            "SELECT specialty, institution, address, city, state, zip_code, address_source "
+            "SELECT specialty, institution, address, city, state, zip_code, address_source, display_name "
             "FROM referring_physicians WHERE npi = ? AND address_key = ?",
             (str(npi), address_key),
         ).fetchone()
@@ -385,10 +394,11 @@ def upsert_referring(
             state = state if state is not None else existing["state"]
             zip_code = zip_code if zip_code is not None else existing["zip_code"]
             address_source = address_source if address_source is not None else existing["address_source"]
+            display_name = display_name if display_name is not None else existing["display_name"]
         conn.execute(
             """INSERT INTO referring_physicians
-               (npi, address_key, specialty, institution, address, city, state, zip_code, address_source, source, updated_at, updated_by)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               (npi, address_key, specialty, institution, address, city, state, zip_code, address_source, source, updated_at, updated_by, display_name)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(npi, address_key) DO UPDATE SET
                    specialty      = excluded.specialty,
                    institution    = excluded.institution,
@@ -399,10 +409,11 @@ def upsert_referring(
                    address_source = excluded.address_source,
                    source         = excluded.source,
                    updated_at     = excluded.updated_at,
-                   updated_by     = excluded.updated_by""",
+                   updated_by     = excluded.updated_by,
+                   display_name   = excluded.display_name""",
             (str(npi), address_key, specialty, institution,
              address or "", city or "", state or "", zip_code or "",
-             address_source or "", source, now, updated_by),
+             address_source or "", source, now, updated_by, display_name),
         )
     _invalidate_referrals_cache()
 
@@ -437,13 +448,14 @@ def get_all_referring_overrides() -> dict[str, dict]:
     """
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT npi, address_key, specialty, institution, "
+            "SELECT npi, address_key, display_name, specialty, institution, "
             "address, city, state, zip_code, address_source, source, reviewed "
             "FROM referring_physicians "
             "WHERE merged_into_address_key IS NULL OR merged_into_address_key = ''"
         ).fetchall()
     return {
         f"{r['npi']}|{r['address_key']}": {
+            "display_name": r["display_name"] or "",
             "specialty": r["specialty"], "institution": r["institution"],
             "address": r["address"], "city": r["city"],
             "state": r["state"], "zip_code": r["zip_code"],

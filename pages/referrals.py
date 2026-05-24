@@ -1294,6 +1294,13 @@ layout = dmc.Stack(
                                             size="xs",
                                             checked=False,
                                         ),
+                                        dmc.Switch(
+                                            id=f"{PAGE_ID}-rpm-dupes-toggle",
+                                            label="Duplicate NPIs only",
+                                            size="xs",
+                                            checked=False,
+                                            color="teal",
+                                        ),
                                         dmc.Button(
                                             "Look Up Specialties (NPI)",
                                             id=f"{PAGE_ID}-rpm-npi-btn",
@@ -1439,14 +1446,16 @@ layout = dmc.Stack(
                                          "cellRenderer": "NpiLink",
                                          "filter": "agTextColumnFilter", "floatingFilter": True},
                                         {"field": "name", "headerName": "Name", "flex": 1.2,
+                                         "editable": True,
                                          "cellRenderer": "NameSearch",
                                          "filter": "agTextColumnFilter", "floatingFilter": True},
                                         {"field": "department", "headerName": "Department", "flex": 1.4,
                                          "filter": "agTextColumnFilter", "floatingFilter": True},
                                         {"field": "full_address", "headerName": "Address", "flex": 1.6,
                                          "editable": True,
-                                         "cellEditor": "agLargeTextCellEditor",
+                                         "cellEditor": "AddressAutocompleteEditor",
                                          "cellEditorPopup": True,
+                                         "cellEditorPopupPosition": "under",
                                          "cellRenderer": "AddressCopy",
                                          "cellStyle": {"function": "params.data && params.data.address_source === 'manual' ? {fontStyle: 'italic', color: '#7C2A83'} : {}"},
                                          "filter": "agTextColumnFilter", "floatingFilter": True},
@@ -4904,20 +4913,25 @@ def _build_rpm_grid_data() -> tuple[list[dict], str]:
         spec = normalize_specialty(r["specialty"] or "")
         inst = r["institution"] or ""
         source = "lookup" if (spec or inst) else ""
+        display_name_override = ""
 
         reviewed = False
-        address_source = ""  # "": source data, "manual": user-edited/added
+        address_source = ""  # "": source data, "manual"/"claude_ai": user/AI override
         if row_key in overrides:
             ov = overrides[row_key]
             if ov.get("specialty"):
                 spec = normalize_specialty(ov["specialty"])
             if ov.get("institution"):
                 inst = ov["institution"]
+            if ov.get("display_name"):
+                display_name_override = ov["display_name"]
             source = ov.get("source", source)
             reviewed = ov.get("reviewed", False)
-            # Use DB address if it was manually set
-            if ov.get("address_source") == "manual":
-                address_source = "manual"
+            # Use DB address if it was set by anything (manual edit, AI research,
+            # etc.) — anything in address_source means "DB overrides the CSV".
+            ov_addr_src = ov.get("address_source") or ""
+            if ov_addr_src:
+                address_source = ov_addr_src
                 if ov.get("address"):
                     r = r.copy()
                     r["address"] = ov["address"]
@@ -4940,7 +4954,7 @@ def _build_rpm_grid_data() -> tuple[list[dict], str]:
             "npi": npi,
             "address_key": addr_k,
             "row_key": row_key,
-            "name": r["name"],
+            "name": display_name_override or r["name"],
             "name_raw": r.get("name_raw") or r["name"],
             "department": r["department"],
             "address": addr,
@@ -4980,7 +4994,7 @@ def _build_rpm_grid_data() -> tuple[list[dict], str]:
             "npi": npi,
             "address_key": addr_k,
             "row_key": ov_key,
-            "name": name,
+            "name": ov.get("display_name") or name,
             "name_raw": name,
             "department": dept,
             "address": ov.get("address", ""),
@@ -5021,6 +5035,22 @@ def _build_inst_grid_data(phys_rows: list[dict]) -> tuple[list[dict], str]:
         for name, cnt in sorted(counts.items())
     ]
     return inst_rows, str(len(inst_rows))
+
+
+def _rpm_visible(rows: list[dict], unreviewed_only: bool, dupes_only: bool) -> list[dict]:
+    """Apply the RPM grid's toolbar filters (Unreviewed only, Duplicate NPIs only)
+    to the full row data. Centralized so every callback that produces visible
+    rowData uses the same logic."""
+    if not rows:
+        return rows
+    out = rows
+    if unreviewed_only:
+        out = [r for r in out if not r.get("reviewed")]
+    if dupes_only:
+        from collections import Counter
+        npi_counts = Counter(r.get("npi", "") for r in rows if r.get("npi"))
+        out = [r for r in out if npi_counts.get(r.get("npi", ""), 0) > 1]
+    return out
 
 
 clientside_callback(
@@ -5129,9 +5159,10 @@ def _rpm_diag_tab_load(tab):
     Input(f"{PAGE_ID}-rpm-grid", "cellValueChanged"),
     State(f"{PAGE_ID}-rpm-grid-full-store", "data"),
     State(f"{PAGE_ID}-rpm-unreviewed-toggle", "checked"),
+    State(f"{PAGE_ID}-rpm-dupes-toggle", "checked"),
     prevent_initial_call=True,
 )
-def _rpm_save_edit(changed, full_data, unreviewed_only):
+def _rpm_save_edit(changed, full_data, unreviewed_only, dupes_only):
     """Save a manual cell edit. For institution edits where the old value
     is shared by multiple rows, show a confirmation instead of saving."""
     if not changed:
@@ -5170,7 +5201,7 @@ def _rpm_save_edit(changed, full_data, unreviewed_only):
                 if r.get("row_key") == row_key:
                     r["institution"] = old_value
                     break
-            visible = [r for r in row_data if not r.get("reviewed")] if unreviewed_only else row_data
+            visible = _rpm_visible(row_data, unreviewed_only, dupes_only)
             return visible, row_data, dash.no_update, True, confirm_text, all_btn, pending
 
     if col == "reviewed":
@@ -5229,6 +5260,16 @@ def _rpm_save_edit(changed, full_data, unreviewed_only):
                     r["institution"] = inst
                     r["source"] = "manual"
                     break
+    elif col == "name":
+        new_name = (row.get("name") or "").strip()
+        upsert_referring(npi, address_key=addr_k,
+                         display_name=(new_name or None), source="manual")
+        if row_data:
+            for r in row_data:
+                if r.get("row_key") == row_key:
+                    r["name"] = new_name
+                    r["source"] = "manual"
+                    break
     else:
         spec = row.get("specialty") if col == "specialty" else None
         upsert_referring(npi, address_key=addr_k, specialty=spec, source="manual")
@@ -5249,7 +5290,7 @@ def _rpm_save_edit(changed, full_data, unreviewed_only):
         f"{reviewed_n:,} reviewed  |  {total - reviewed_n:,} unreviewed  |  "
         f"{with_spec:,} specialty  |  {with_inst:,} institution"
     )
-    visible = [r for r in row_data if not r.get("reviewed")] if unreviewed_only else row_data
+    visible = _rpm_visible(row_data, unreviewed_only, dupes_only)
     return visible, row_data, stats, False, "", "", None
 
 
@@ -5267,9 +5308,10 @@ def _rpm_save_edit(changed, full_data, unreviewed_only):
     State(f"{PAGE_ID}-rpm-inst-pending", "data"),
     State(f"{PAGE_ID}-rpm-grid-full-store", "data"),
     State(f"{PAGE_ID}-rpm-unreviewed-toggle", "checked"),
+    State(f"{PAGE_ID}-rpm-dupes-toggle", "checked"),
     prevent_initial_call=True,
 )
-def _rpm_inst_confirm_action(n_one, n_all, n_cancel, pending, full_data, unreviewed_only):
+def _rpm_inst_confirm_action(n_one, n_all, n_cancel, pending, full_data, unreviewed_only, dupes_only):
     from dash import ctx
     hide = False
     if not pending or not full_data:
@@ -5286,7 +5328,7 @@ def _rpm_inst_confirm_action(n_one, n_all, n_cancel, pending, full_data, unrevie
 
     if triggered == f"{PAGE_ID}-rpm-inst-confirm-cancel":
         # Cancel — just hide, data already reverted
-        visible = [r for r in row_data if not r.get("reviewed")] if unreviewed_only else row_data
+        visible = _rpm_visible(row_data, unreviewed_only, dupes_only)
         return visible, row_data, dash.no_update, hide, dash.no_update, dash.no_update
 
     from data.reviews_db import upsert_referring, add_institution, rename_institution
@@ -5321,7 +5363,7 @@ def _rpm_inst_confirm_action(n_one, n_all, n_cancel, pending, full_data, unrevie
         f"{reviewed_n:,} reviewed  |  {total - reviewed_n:,} unreviewed  |  "
         f"{with_spec:,} specialty  |  {with_inst:,} institution"
     )
-    visible = [r for r in row_data if not r.get("reviewed")] if unreviewed_only else row_data
+    visible = _rpm_visible(row_data, unreviewed_only, dupes_only)
 
     # Rebuild institution grid
     inst_rows, inst_count = _build_inst_grid_data(row_data)
@@ -5399,9 +5441,10 @@ def _rpm_add_address(n, row_data, selected_rows):
     State(f"{PAGE_ID}-rpm-grid-full-store", "data"),
     State(f"{PAGE_ID}-rpm-grid", "selectedRows"),
     State(f"{PAGE_ID}-rpm-unreviewed-toggle", "checked"),
+    State(f"{PAGE_ID}-rpm-dupes-toggle", "checked"),
     prevent_initial_call=True,
 )
-def _rpm_delete_rows(n, full_data, selected_rows, unreviewed_only):
+def _rpm_delete_rows(n, full_data, selected_rows, unreviewed_only, dupes_only):
     """Delete selected rows from the grid and DB."""
     if not n or not full_data or not selected_rows:
         return (dash.no_update,) * 4
@@ -5428,7 +5471,7 @@ def _rpm_delete_rows(n, full_data, selected_rows, unreviewed_only):
         f"{reviewed_n:,} reviewed  |  {total - reviewed_n:,} unreviewed  |  "
         f"{with_spec:,} specialty  |  {with_inst:,} institution"
     )
-    visible = [r for r in row_data if not r.get("reviewed")] if unreviewed_only else row_data
+    visible = _rpm_visible(row_data, unreviewed_only, dupes_only)
     return visible, row_data, stats, str(total)
 
 
@@ -5538,9 +5581,10 @@ def _rpm_merge_open(n, selected_rows):
     State(f"{PAGE_ID}-rpm-merge-pending", "data"),
     State(f"{PAGE_ID}-rpm-grid-full-store", "data"),
     State(f"{PAGE_ID}-rpm-unreviewed-toggle", "checked"),
+    State(f"{PAGE_ID}-rpm-dupes-toggle", "checked"),
     prevent_initial_call=True,
 )
-def _rpm_merge_resolve(n_apply, n_cancel, pending, full_data, unreviewed_only):
+def _rpm_merge_resolve(n_apply, n_cancel, pending, full_data, unreviewed_only, dupes_only):
     from dash import ctx
     no = dash.no_update
     triggered = ctx.triggered_id
@@ -5611,7 +5655,7 @@ def _rpm_merge_resolve(n_apply, n_cancel, pending, full_data, unreviewed_only):
         f"{reviewed_n:,} reviewed  |  {total - reviewed_n:,} unreviewed  |  "
         f"{with_spec:,} specialty  |  {with_inst:,} institution"
     )
-    visible = [r for r in row_data if not r.get("reviewed")] if unreviewed_only else row_data
+    visible = _rpm_visible(row_data, unreviewed_only, dupes_only)
     inst_rows, inst_count = _build_inst_grid_data(row_data)
     return visible, row_data, stats, str(total), inst_rows, inst_count, False, None
 
@@ -5720,9 +5764,10 @@ def _rpm_start_npi_lookup(n, row_data, selected_rows):
     Output(f"{PAGE_ID}-rpm-ai-review-grid", "rowData"),
     Input(f"{PAGE_ID}-rpm-poll", "n_intervals"),
     State(f"{PAGE_ID}-rpm-unreviewed-toggle", "checked"),
+    State(f"{PAGE_ID}-rpm-dupes-toggle", "checked"),
     prevent_initial_call=True,
 )
-def _rpm_poll_progress(n, unreviewed_only):
+def _rpm_poll_progress(n, unreviewed_only, dupes_only):
     """Poll background task progress.
 
     Three terminal cases when running flips to False:
@@ -5763,8 +5808,7 @@ def _rpm_poll_progress(n, unreviewed_only):
         except Exception as e:
             print(f"[rpm-poll] grid refresh failed: {e}", flush=True)
             return no, no
-        visible = ([r for r in fresh if not r.get("reviewed")]
-                   if unreviewed_only else fresh)
+        visible = _rpm_visible(fresh, unreviewed_only, dupes_only)
         return visible, fresh
 
     # NPI lookup completion: show the NPI review panel.
@@ -5971,9 +6015,10 @@ def _rpm_ai_reject_all(n):
     Input(f"{PAGE_ID}-rpm-ai-apply", "n_clicks"),
     State(f"{PAGE_ID}-rpm-ai-review-grid", "rowData"),
     State(f"{PAGE_ID}-rpm-unreviewed-toggle", "checked"),
+    State(f"{PAGE_ID}-rpm-dupes-toggle", "checked"),
     prevent_initial_call=True,
 )
-def _rpm_ai_apply(n, review_data, unreviewed_only):
+def _rpm_ai_apply(n, review_data, unreviewed_only, dupes_only):
     """Persist accepted rows. Edits to ai_institution/ai_specialty/ai_address
     in the grid are honored — if the user corrected the AI's value before
     accepting, that corrected value is what gets written.
@@ -6078,8 +6123,7 @@ def _rpm_ai_apply(n, review_data, unreviewed_only):
            f"{addr_filled} addresses.")
     if fresh_rows is None:
         return dash.no_update, dash.no_update, False, msg
-    visible = ([r for r in fresh_rows if not r.get("reviewed")]
-               if unreviewed_only else fresh_rows)
+    visible = _rpm_visible(fresh_rows, unreviewed_only, dupes_only)
     return visible, fresh_rows, False, msg
 
 
@@ -6253,9 +6297,10 @@ def _rpm_inst_export(n, inst_data):
     State(f"{PAGE_ID}-rpm-grid-full-store", "data"),
     State(f"{PAGE_ID}-rpm-grid", "selectedRows"),
     State(f"{PAGE_ID}-rpm-unreviewed-toggle", "checked"),
+    State(f"{PAGE_ID}-rpm-dupes-toggle", "checked"),
     prevent_initial_call=True,
 )
-def _rpm_mark_reviewed(n, full_data, selected_rows, unreviewed_only):
+def _rpm_mark_reviewed(n, full_data, selected_rows, unreviewed_only, dupes_only):
     """Mark selected rows as reviewed."""
     if not n or not full_data:
         return dash.no_update, dash.no_update, dash.no_update
@@ -6290,7 +6335,7 @@ def _rpm_mark_reviewed(n, full_data, selected_rows, unreviewed_only):
         f"{reviewed_n:,} reviewed  |  {total - reviewed_n:,} unreviewed  |  "
         f"{with_spec:,} specialty  |  {with_inst:,} institution"
     )
-    visible = [r for r in row_data if not r.get("reviewed")] if unreviewed_only else row_data
+    visible = _rpm_visible(row_data, unreviewed_only, dupes_only)
     return visible, row_data, stats
 
 
@@ -6313,15 +6358,24 @@ def _rpm_toggle_action_btns(tab):
 # When the grid rowData changes (edits), we update the store too.
 
 clientside_callback(
-    """function(checked, fullData) {
+    """function(unreviewedOnly, dupesOnly, fullData) {
         if (!fullData) return window.dash_clientside.no_update;
-        if (checked) {
-            return fullData.filter(function(r) { return !r.reviewed; });
+        var out = fullData;
+        if (unreviewedOnly) {
+            out = out.filter(function(r) { return !r.reviewed; });
         }
-        return fullData;
+        if (dupesOnly) {
+            var counts = {};
+            fullData.forEach(function(r) {
+                if (r && r.npi) counts[r.npi] = (counts[r.npi] || 0) + 1;
+            });
+            out = out.filter(function(r) { return counts[r.npi] > 1; });
+        }
+        return out;
     }""",
     Output(f"{PAGE_ID}-rpm-grid", "rowData", allow_duplicate=True),
     Input(f"{PAGE_ID}-rpm-unreviewed-toggle", "checked"),
+    Input(f"{PAGE_ID}-rpm-dupes-toggle", "checked"),
     State(f"{PAGE_ID}-rpm-grid-full-store", "data"),
     prevent_initial_call=True,
 )

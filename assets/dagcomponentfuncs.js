@@ -336,48 +336,165 @@ dagcomponentfuncs.AddressCopy = function (props) {
     if (!value) {
         return React.createElement("span", {style: {color: "#9CA3AF"}}, "\u2014");
     }
-
-    var _React = React;
-    var copied = _React.useState(false);
-    var isCopied = copied[0];
-    var setCopied = copied[1];
-
-    function handleCopy(e) {
-        e.stopPropagation();
-        navigator.clipboard.writeText(value).then(function () {
-            setCopied(true);
-            setTimeout(function () { setCopied(false); }, 1500);
-        });
-    }
-
     var searchUrl = "https://www.google.com/search?q=" + encodeURIComponent(value);
 
-    return _React.createElement(
+    return React.createElement(
         "div",
         {style: {display: "flex", alignItems: "center", height: "100%", gap: "3px", overflow: "hidden"}},
-        _React.createElement(
+        React.createElement(
             "span",
             {
-                onClick: handleCopy,
-                title: isCopied ? "Copied!" : "Click to copy",
                 style: {
                     fontSize: "12px",
                     overflow: "hidden",
                     textOverflow: "ellipsis",
                     whiteSpace: "nowrap",
                     flex: 1,
-                    cursor: "pointer",
                 },
             },
-            isCopied ? "\u2705 Copied" : value
+            value
         ),
-        _React.createElement(
+        React.createElement(
             "a",
             {href: searchUrl, target: "_blank", rel: "noopener",
+             onClick: function (e) { e.stopPropagation(); },
              style: {color: "#6B7280", textDecoration: "none", fontSize: "13px"},
              title: "Google Search"},
             "\ud83d\udd0d"
         )
+    );
+};
+
+
+/**
+ * AddressAutocompleteEditor \u2014 popup editor for the Address column.
+ * Mirrors the mobile pattern: free-text input with a ranked dropdown of
+ * existing addresses (same NPI first, then any other provider). Pick one
+ * to fill the cell; type a fresh address and Enter/Tab commits it.
+ */
+dagcomponentfuncs.AddressAutocompleteEditor = function (props) {
+    var ref = React.useRef(null);
+    var _s = React.useState(props.value || "");
+    var value = _s[0], setValue = _s[1];
+    var _o = React.useState(true);
+    var open = _o[0], setOpen = _o[1];
+
+    var npi = (props.data && props.data.npi) || "";
+    var rowKey = (props.data && props.data.row_key) || "";
+
+    // Gather all unique addresses from the grid, ranked: same-NPI first
+    // (alternative addresses for this provider), then everything else.
+    var allAddresses = React.useMemo(function () {
+        var sameNpi = [];
+        var other = [];
+        var seen = {};
+        if (props.api) {
+            props.api.forEachNode(function (node) {
+                var d = node.data;
+                if (!d) return;
+                var a = (d.full_address || "").trim();
+                if (!a || seen[a]) return;
+                if (d.row_key === rowKey) return;  // skip the row we're editing
+                seen[a] = true;
+                if (d.npi === npi) sameNpi.push(a);
+                else other.push(a);
+            });
+        }
+        sameNpi.sort();
+        other.sort();
+        return sameNpi.concat(other);
+    }, []);
+
+    var filtered = allAddresses.filter(function (a) {
+        return value === "" || a.toLowerCase().indexOf(value.toLowerCase()) !== -1;
+    });
+
+    React.useEffect(function () {
+        if (ref.current) { ref.current.focus(); ref.current.select(); }
+    }, []);
+
+    function commitValue(val) {
+        setValue(val);
+        setOpen(false);
+        if (props.onValueChange) props.onValueChange(val);
+        if (props.stopEditing) setTimeout(function () { props.stopEditing(); }, 50);
+    }
+
+    var containerStyle = {position: "relative", width: "100%", minWidth: "320px"};
+    var inputStyle = {
+        width: "100%", height: "36px",
+        border: "2px solid #7C2A83", borderRadius: "4px",
+        padding: "0 8px", fontSize: "13px",
+        boxSizing: "border-box", outline: "none",
+    };
+    var dropdownStyle = {
+        position: "absolute", top: "100%", left: 0, right: 0,
+        maxHeight: "240px", overflowY: "auto",
+        background: "#fff", border: "1px solid #dee2e6",
+        borderRadius: "0 0 6px 6px",
+        boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+        zIndex: 9999,
+        display: open && filtered.length > 0 ? "block" : "none",
+    };
+    var itemStyle = {padding: "6px 10px", cursor: "pointer", fontSize: "13px"};
+    var groupHeaderStyle = {
+        padding: "4px 10px", fontSize: "11px", fontWeight: 600,
+        color: "#6B7280", background: "#F9FAFB", textTransform: "uppercase",
+    };
+
+    function handleChange(e) {
+        setValue(e.target.value);
+        setOpen(true);
+        if (props.onValueChange) props.onValueChange(e.target.value);
+    }
+
+    var sameNpiSet = {};
+    allAddresses.slice(0, 9999).forEach(function () {});  // no-op for clarity
+    // Re-derive grouping by checking against the rendered nodes again.
+    if (props.api) {
+        props.api.forEachNode(function (node) {
+            if (node.data && node.data.npi === npi && node.data.full_address) {
+                sameNpiSet[node.data.full_address] = true;
+            }
+        });
+    }
+
+    var items = [];
+    var renderedSameNpiHeader = false;
+    var renderedOtherHeader = false;
+    filtered.forEach(function (a) {
+        var isSame = sameNpiSet[a];
+        if (isSame && !renderedSameNpiHeader) {
+            items.push(React.createElement("div",
+                {key: "_h_same", style: groupHeaderStyle}, "Same NPI"));
+            renderedSameNpiHeader = true;
+        }
+        if (!isSame && !renderedOtherHeader) {
+            items.push(React.createElement("div",
+                {key: "_h_other", style: groupHeaderStyle}, "Other providers"));
+            renderedOtherHeader = true;
+        }
+        items.push(React.createElement("div", {
+            key: a,
+            onMouseDown: function (e) { e.preventDefault(); commitValue(a); },
+            onMouseEnter: function (e) { e.target.style.background = "#f0e6f6"; },
+            onMouseLeave: function (e) { e.target.style.background = "#fff"; },
+            style: itemStyle,
+        }, a));
+    });
+
+    return React.createElement("div", {style: containerStyle},
+        React.createElement("input", {
+            ref: ref, value: value, onChange: handleChange,
+            placeholder: "Pick an existing address or type a new one\u2026",
+            onKeyDown: function (e) {
+                if (e.key === "Enter") commitValue(value);
+                else if (e.key === "Escape") props.stopEditing(true);
+                else if (e.key === "Tab") commitValue(value);
+            },
+            style: inputStyle,
+        }),
+        React.createElement("div", {style: dropdownStyle}, items)
     );
 };
 

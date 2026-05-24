@@ -392,11 +392,32 @@ def _provider_card(row: dict):
 
     npi_url = f"https://npiregistry.cms.hhs.gov/provider-view/{npi}" if npi else ""
     addr_search = "https://www.google.com/search?q=" + addr.replace(" ", "+") if addr else ""
+    # Tap the provider name → Google search for "<name> <city> <state>" so
+    # results land on the right physician quickly. Falls back to name alone.
+    name_query_parts = [name, row.get("city", ""), row.get("state", "")]
+    name_query = " ".join(p for p in name_query_parts if p).strip()
+    name_search = ("https://www.google.com/search?q="
+                   + name_query.replace(" ", "+")) if name_query else ""
+
+    if name_search:
+        name_el = html.A(
+            name or "(no name)",
+            href=name_search, target="_blank", rel="noopener",
+            title=f"Google: {name_query}",
+            style={
+                "flex": 1, "lineHeight": 1.25, "fontSize": "var(--mantine-font-size-sm)",
+                "fontWeight": 600, "color": "inherit", "textDecoration": "none",
+                "display": "-webkit-box", "WebkitLineClamp": 2,
+                "WebkitBoxOrient": "vertical", "overflow": "hidden",
+            },
+        )
+    else:
+        name_el = dmc.Text(name or "(no name)", size="sm", fw=600, lineClamp=2,
+                           style={"flex": 1, "lineHeight": 1.25})
 
     children = [
         dmc.Group(justify="space-between", wrap="nowrap", gap=6, children=[
-            dmc.Text(name or "(no name)", size="sm", fw=600, lineClamp=2,
-                     style={"flex": 1, "lineHeight": 1.25}),
+            name_el,
             _reviewed_dot(reviewed),
         ]),
         dmc.Group(gap=6, mt=4, children=[
@@ -1123,13 +1144,15 @@ def _drawer_form_provider(row: dict):
             value=cur_spec if cur_spec in ABMS_SPECIALTIES else "",
             searchable=True, clearable=True, size="sm",
         ),
-        dmc.Select(
+        dmc.Autocomplete(
             id=_id("drawer-prov-inst"),
             label="Institution",
-            data=[{"value": "", "label": "— none —"}]
-                 + [{"value": n, "label": n} for n in inst_options],
+            placeholder="Pick existing or type a new one…",
+            data=inst_options,
             value=cur_inst,
-            searchable=True, clearable=True, size="sm",
+            size="sm",
+            limit=200,
+            leftSection=DashIconify(icon="tabler:building-hospital", width=12),
         ),
         dmc.Text("Address", size="xs", fw=500, c="dimmed", mt=4),
         # Single combined input: dropdown of existing provider addresses
@@ -1617,11 +1640,12 @@ def _save_provider(n, edit, rows, spec, inst, addr, city, state_, zip_, reviewed
     full_addr = ", ".join(p for p in [addr or "", city or "", state_ or "", zip_ or ""] if p)
     addr_changed_manually = bool((addr or "").strip() or (city or "").strip()
                                  or (state_ or "").strip() or (zip_ or "").strip())
+    inst_clean = (inst or "").strip()
     try:
         upsert_referring(
             npi=npi, address_key=addr_key,
             specialty=spec_norm or None,
-            institution=(inst or None),
+            institution=(inst_clean or None),
             address=(addr or None),
             city=(city or None),
             state=(state_ or None),
@@ -1629,6 +1653,10 @@ def _save_provider(n, edit, rows, spec, inst, addr, city, state_, zip_, reviewed
             address_source=("manual" if addr_changed_manually else None),
             source="manual",
         )
+        # Register newly typed institutions so they show up in the autocomplete
+        # next time. add_institution is a no-op if the name already exists.
+        if inst_clean:
+            add_institution(inst_clean)
         set_reviewed_bulk([(npi, addr_key)], reviewed=bool(reviewed))
     except Exception as e:
         return no_update, no_update, no_update, f"Save failed: {e}"
