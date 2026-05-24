@@ -1502,6 +1502,10 @@ layout = dmc.Stack(
                                         "headerHeight": 36,
                                         "floatingFiltersHeight": 32,
                                         "rowSelection": {"mode": "multiRow", "selectAll": "filtered"},
+                                        # Stable row identity lets AG Grid do diff-based updates
+                                        # when rowData changes (instead of full re-render), so
+                                        # scroll position is preserved after a save/review.
+                                        "getRowId": {"function": "params.data.row_key"},
                                     },
                                     style={"flex": 1, "minHeight": 0},
                                     className="ag-theme-alpine",
@@ -6045,9 +6049,11 @@ def _rpm_ai_apply(n, review_data, unreviewed_only, dupes_only):
         if not npi or not inst:
             continue
 
-        # Specialty: write if existing was blank AND user kept a value.
+        # Specialty: in review mode the user explicitly chose to accept
+        # this row, so write whatever they kept (or edited) regardless of
+        # whether the original was blank. Empty string → leave existing.
         spec = (r.get("ai_specialty") or "").strip()
-        spec_to_write = spec if (r.get("_spec_blank") and spec) else None
+        spec_to_write = spec or None
         if spec_to_write:
             spec_filled += 1
 
@@ -6059,9 +6065,10 @@ def _rpm_ai_apply(n, review_data, unreviewed_only, dupes_only):
         })
         add_institution(inst)
 
-        # Address: only write when row was blank AND user kept an address.
+        # Address: same rule as specialty — accept means accept. Write
+        # whenever the user kept an address, regardless of prior state.
         ai_addr = (r.get("ai_address") or "").strip()
-        if r.get("_addr_blank") and ai_addr:
+        if ai_addr:
             # Parse the user-edited combined address back into components.
             # Same heuristic as the mobile drawer's clientside parser:
             # strip USA, pull 5-digit ZIP from end, then 2-letter state,

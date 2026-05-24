@@ -1110,10 +1110,17 @@ def _drawer_form_provider(row: dict):
     inst_options = sorted(get_all_institutions())
     if cur_inst and cur_inst not in inst_options:
         inst_options = sorted(set(inst_options + [cur_inst]))
+    name_query = " ".join(p for p in [name, row.get("city", ""), row.get("state", "")] if p).strip()
+    name_search = ("https://www.google.com/search?q="
+                   + name_query.replace(" ", "+")) if name_query else ""
+    if name_search:
+        name_el = dmc.Anchor(name, href=name_search, target="_blank",
+                             size="sm", fw=600, c="inherit",
+                             style={"textDecoration": "none"})
+    else:
+        name_el = dmc.Text(name, size="sm", fw=600)
     return dmc.Stack(gap="sm", children=[
-        dmc.Group(gap=6, children=[
-            dmc.Text(name, size="sm", fw=600),
-        ]),
+        dmc.Group(gap=6, children=[name_el]),
         dmc.Group(gap=8, children=[
             (dmc.Anchor(f"NPPES {npi}",
                         href=f"https://npiregistry.cms.hhs.gov/provider-view/{npi}",
