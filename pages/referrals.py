@@ -5561,12 +5561,15 @@ def _rpm_merge_open(n, selected_rows):
         f"appear under the surviving address."
     )
 
+    # Use `or ""` (not the .get default) — Dash JSON serialization can hand back
+    # explicit None for empty strings, which then propagates into merge_referring
+    # and writes merged_into=NULL on the tombstone, breaking the redirect.
     pending = {
         "npi": npi,
         "survivor_row_key": survivor_key,
-        "survivor_address_key": survivor.get("address_key", ""),
-        "loser_address_keys": [l.get("address_key", "") for l in losers],
-        "loser_row_keys": [l.get("row_key", "") for l in losers],
+        "survivor_address_key": survivor.get("address_key") or "",
+        "loser_address_keys": [(l.get("address_key") or "") for l in losers],
+        "loser_row_keys": [(l.get("row_key") or "") for l in losers],
     }
     return True, text, detail_children, pending
 

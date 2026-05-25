@@ -265,6 +265,15 @@ def _ensure_table():
                 "UPDATE referring_physicians SET merged_into_address_key = NULL "
                 "WHERE merged_into_address_key = ''"
             )
+            # Recover orphan tombstones: rows with source='merge' but
+            # merged_into=NULL are from a pre-fix code path where the survivor's
+            # address_key arrived as None. Set merged_into='' so they redirect
+            # to the empty-addr_key survivor (which was the actual survivor for
+            # all observed cases). Idempotent — only touches NULLs.
+            conn.execute(
+                "UPDATE referring_physicians SET merged_into_address_key = '' "
+                "WHERE source = 'merge' AND merged_into_address_key IS NULL"
+            )
             conn.execute(
                 "ALTER TABLE referring_physicians ADD COLUMN IF NOT EXISTS "
                 "display_name TEXT"
@@ -294,6 +303,13 @@ def _ensure_table():
                 conn.execute(
                     "UPDATE referring_physicians SET merged_into_address_key = NULL "
                     "WHERE merged_into_address_key = ''"
+                )
+            except Exception:
+                pass
+            try:
+                conn.execute(
+                    "UPDATE referring_physicians SET merged_into_address_key = '' "
+                    "WHERE source = 'merge' AND merged_into_address_key IS NULL"
                 )
             except Exception:
                 pass
@@ -576,6 +592,12 @@ def merge_referring(
     Returns the number of loser tombstones written.
     """
     npi = str(npi)
+    # Coerce None → '' for address keys. Grid rows can carry None when a
+    # row's address_key was nullified through Dash JSON serialization; if we
+    # let that through, the tombstone INSERT writes merged_into=NULL and the
+    # row stops looking like a tombstone (it gets filtered out of the merge map).
+    survivor_address_key = survivor_address_key or ""
+    loser_address_keys = [k or "" for k in loser_address_keys]
     losers = [k for k in loser_address_keys if k != survivor_address_key]
     if not losers:
         return 0
@@ -583,7 +605,7 @@ def merge_referring(
     fields = ["specialty", "institution", "address", "city", "state", "zip_code"]
     placeholders = ",".join("?" for _ in losers)
     sd = survivor_defaults or {}
-    ld_by_key = {l.get("address_key", ""): l for l in (loser_defaults or [])}
+    ld_by_key = {(l.get("address_key") or ""): l for l in (loser_defaults or [])}
 
     with _connect() as conn:
         # Read survivor + losers from DB (may not exist for lookup-only rows).
