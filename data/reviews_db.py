@@ -64,7 +64,9 @@ CREATE TABLE IF NOT EXISTS referring_physicians (
     address_source TEXT NOT NULL DEFAULT '',
     source        TEXT NOT NULL DEFAULT 'manual',
     reviewed      INTEGER NOT NULL DEFAULT 0,
-    merged_into_address_key TEXT NOT NULL DEFAULT '',
+    -- NULL = not a tombstone; any value (incl. '') = merged into that survivor.
+    -- The empty-string distinction matters when a survivor's address_key is ''.
+    merged_into_address_key TEXT,
     updated_at    TEXT NOT NULL,
     updated_by    TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (npi, address_key)
@@ -248,7 +250,22 @@ def _ensure_table():
             )
             conn.execute(
                 "ALTER TABLE referring_physicians ADD COLUMN IF NOT EXISTS "
-                "merged_into_address_key TEXT NOT NULL DEFAULT ''"
+                "merged_into_address_key TEXT"
+            )
+            # Earlier migration made this NOT NULL DEFAULT '' which collided with
+            # the empty-string sentinel — make nullable + backfill blanks to NULL
+            # so non-tombstones become distinguishable from empty-survivor tombstones.
+            conn.execute(
+                "ALTER TABLE referring_physicians ALTER COLUMN "
+                "merged_into_address_key DROP NOT NULL"
+            )
+            conn.execute(
+                "ALTER TABLE referring_physicians ALTER COLUMN "
+                "merged_into_address_key DROP DEFAULT"
+            )
+            conn.execute(
+                "UPDATE referring_physicians SET merged_into_address_key = NULL "
+                "WHERE merged_into_address_key = ''"
             )
             conn.execute(
                 "ALTER TABLE referring_physicians ADD COLUMN IF NOT EXISTS "
@@ -263,10 +280,18 @@ def _ensure_table():
         if "reviewed" not in cols:
             conn.execute("ALTER TABLE diagnosis_overrides ADD COLUMN reviewed INTEGER NOT NULL DEFAULT 0")
         rp_cols = [r[1] for r in conn.execute("PRAGMA table_info(referring_physicians)").fetchall()]
-        for col, default in [("address", ""), ("city", ""), ("state", ""), ("zip_code", ""), ("address_source", ""), ("merged_into_address_key", "")]:
+        for col, default in [("address", ""), ("city", ""), ("state", ""), ("zip_code", ""), ("address_source", "")]:
             if col not in rp_cols:
                 conn.execute(f"ALTER TABLE referring_physicians ADD COLUMN {col} TEXT NOT NULL DEFAULT '{default}'")
-        # display_name is nullable so it lives outside the default-string loop above
+        # Nullable columns — see Postgres branch above for why merged_into needs NULL semantics.
+        if "merged_into_address_key" not in rp_cols:
+            conn.execute("ALTER TABLE referring_physicians ADD COLUMN merged_into_address_key TEXT")
+        else:
+            # Backfill any '' sentinel to NULL on existing local DBs.
+            conn.execute(
+                "UPDATE referring_physicians SET merged_into_address_key = NULL "
+                "WHERE merged_into_address_key = ''"
+            )
         if "display_name" not in rp_cols:
             conn.execute("ALTER TABLE referring_physicians ADD COLUMN display_name TEXT")
         pm_cols = [r[1] for r in conn.execute("PRAGMA table_info(payor_mappings)").fetchall()]
@@ -451,7 +476,7 @@ def get_all_referring_overrides() -> dict[str, dict]:
             "SELECT npi, address_key, display_name, specialty, institution, "
             "address, city, state, zip_code, address_source, source, reviewed "
             "FROM referring_physicians "
-            "WHERE merged_into_address_key IS NULL OR merged_into_address_key = ''"
+            "WHERE merged_into_address_key IS NULL"
         ).fetchall()
     return {
         f"{r['npi']}|{r['address_key']}": {
@@ -654,13 +679,16 @@ def merge_referring(
 
 def get_referring_merge_map() -> dict[tuple[str, str], str]:
     """Return {(npi, loser_address_key): survivor_address_key} for all
-    merge tombstones. Used by the grid builder to redirect aggregation."""
+    merge tombstones. Used by the grid builder to redirect aggregation.
+
+    A tombstone row has merged_into_address_key IS NOT NULL. The survivor
+    value itself may be '' (when the survivor has no city/state/zip in source).
+    """
     with _connect() as conn:
         rows = conn.execute(
             "SELECT npi, address_key, merged_into_address_key "
             "FROM referring_physicians "
-            "WHERE merged_into_address_key IS NOT NULL "
-            "AND merged_into_address_key != ''"
+            "WHERE merged_into_address_key IS NOT NULL"
         ).fetchall()
     return {(r["npi"], r["address_key"]): r["merged_into_address_key"] for r in rows}
 
