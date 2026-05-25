@@ -64,8 +64,6 @@ CREATE TABLE IF NOT EXISTS referring_physicians (
     address_source TEXT NOT NULL DEFAULT '',
     source        TEXT NOT NULL DEFAULT 'manual',
     reviewed      INTEGER NOT NULL DEFAULT 0,
-    -- NULL = not a tombstone; any value (incl. '') = merged into that survivor.
-    -- The empty-string distinction matters when a survivor's address_key is ''.
     merged_into_address_key TEXT,
     updated_at    TEXT NOT NULL,
     updated_by    TEXT NOT NULL DEFAULT '',
@@ -287,11 +285,18 @@ def _ensure_table():
         if "merged_into_address_key" not in rp_cols:
             conn.execute("ALTER TABLE referring_physicians ADD COLUMN merged_into_address_key TEXT")
         else:
-            # Backfill any '' sentinel to NULL on existing local DBs.
-            conn.execute(
-                "UPDATE referring_physicians SET merged_into_address_key = NULL "
-                "WHERE merged_into_address_key = ''"
-            )
+            # Backfill any '' sentinel to NULL on existing local DBs. SQLite
+            # can't drop a NOT NULL constraint without a full table rebuild;
+            # if the column is still NOT NULL from the old shape, the UPDATE
+            # errors — swallow it so local dev keeps booting. Prod (Postgres)
+            # handled the constraint drop above.
+            try:
+                conn.execute(
+                    "UPDATE referring_physicians SET merged_into_address_key = NULL "
+                    "WHERE merged_into_address_key = ''"
+                )
+            except Exception:
+                pass
         if "display_name" not in rp_cols:
             conn.execute("ALTER TABLE referring_physicians ADD COLUMN display_name TEXT")
         pm_cols = [r[1] for r in conn.execute("PRAGMA table_info(payor_mappings)").fetchall()]
