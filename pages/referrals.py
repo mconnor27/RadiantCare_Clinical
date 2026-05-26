@@ -2082,6 +2082,11 @@ layout = dmc.Stack(
         dcc.Store(id=f"{PAGE_ID}-store-dim-compare-figs"),
 
         dcc.Store(id=f"{PAGE_ID}-table-filter-rows"),
+        # Bumped (timestamp) when the RPM manager modal closes so the master
+        # callback re-fires and the trend chart picks up any institution/
+        # specialty renames the user just made. The loader cache is already
+        # invalidated on writes; this just nudges the chart pipeline.
+        dcc.Store(id=f"{PAGE_ID}-overrides-bump", data=0),
         dcc.Interval(id=f"{PAGE_ID}-interval", interval=300_000, n_intervals=0, max_intervals=0),  # fires once on mount; no background refresh (daily data + global refresh button)
     ],
 )
@@ -4034,6 +4039,7 @@ def _prior_range(start, end):
     Input(f"{PAGE_ID}-table-filter-rows", "data"),
     Input(f"{PAGE_ID}-filter-payor-mode", "value"),
     Input(f"{PAGE_ID}-filter-payor", "value"),
+    Input(f"{PAGE_ID}-overrides-bump", "data"),
     running=[
         (Output(f"{PAGE_ID}-chart-dim-trend-loading", "visible"), True, False),
         (Output(f"{PAGE_ID}-chart-dim-comparison-loading", "visible"), True, False),
@@ -4048,7 +4054,7 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
                      institution_filter, provider_filter, diag_cats, diag_mode, diag_subs,
                      outlier_enabled, cap_0, cap_1,
                      pipeline_window, dim_toggle, dim_compare_period, grid_rows,
-                     payor_mode, payor_selected):
+                     payor_mode, payor_selected, _overrides_bump):
     """Master callback: KPIs + all charts."""
     from data.loader import load_referrals, load_referring
 
@@ -5095,6 +5101,20 @@ clientside_callback(
         return window.dash_clientside.no_update;
     }""",
     Output(f"{PAGE_ID}-rpm-overlay", "className", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rpm-modal", "opened"),
+    prevent_initial_call=True,
+)
+
+
+# When the manager modal closes, bump overrides-bump so update_referrals
+# re-fires and the trend chart picks up institution/specialty renames the user
+# made while the modal was open. Cheap when nothing changed (loader cache hit).
+clientside_callback(
+    """function(opened) {
+        if (opened === false) return Date.now();
+        return window.dash_clientside.no_update;
+    }""",
+    Output(f"{PAGE_ID}-overrides-bump", "data"),
     Input(f"{PAGE_ID}-rpm-modal", "opened"),
     prevent_initial_call=True,
 )
@@ -6366,14 +6386,14 @@ def _rpm_toggle_action_btns(tab):
 # pill instantly. AG Grid keeps its own local cell state via getRowId diffing.
 
 clientside_callback(
-    """function(cellChange, fullData) {
+    """function(cellChange, fullData, unreviewedOnly, dupesOnly) {
         var no = window.dash_clientside.no_update;
-        if (!cellChange || !fullData) return [no, no];
+        if (!cellChange || !fullData) return [no, no, no];
         var ch = Array.isArray(cellChange) ? cellChange[0] : cellChange;
-        if (!ch || !ch.data) return [no, no];
+        if (!ch || !ch.data) return [no, no, no];
         var rowKey = ch.data.row_key;
         var colId = ch.colId || "";
-        if (!rowKey || !colId) return [no, no];
+        if (!rowKey || !colId) return [no, no, no];
         var newVal = ch.data[colId];
 
         var updated = fullData.map(function(r) {
@@ -6403,12 +6423,28 @@ clientside_callback(
                     fmt(total - reviewed_n) + " unreviewed  |  " +
                     fmt(with_spec) + " specialty  |  " +
                     fmt(with_inst) + " institution";
-        return [updated, stats];
+
+        // Re-apply the active toolbar filters so e.g. a row marked reviewed
+        // immediately disappears when "Unreviewed only" is on. Uses getRowId
+        // diffing in the grid so other rows keep their selection + scroll.
+        var visible = updated;
+        if (unreviewedOnly) visible = visible.filter(function(r) { return !r.reviewed; });
+        if (dupesOnly) {
+            var counts = {};
+            updated.forEach(function(r) {
+                if (r && r.npi) counts[r.npi] = (counts[r.npi] || 0) + 1;
+            });
+            visible = visible.filter(function(r) { return counts[r.npi] > 1; });
+        }
+        return [visible, updated, stats];
     }""",
+    Output(f"{PAGE_ID}-rpm-grid", "rowData", allow_duplicate=True),
     Output(f"{PAGE_ID}-rpm-grid-full-store", "data", allow_duplicate=True),
     Output(f"{PAGE_ID}-rpm-stats", "children", allow_duplicate=True),
     Input(f"{PAGE_ID}-rpm-grid", "cellValueChanged"),
     State(f"{PAGE_ID}-rpm-grid-full-store", "data"),
+    State(f"{PAGE_ID}-rpm-unreviewed-toggle", "checked"),
+    State(f"{PAGE_ID}-rpm-dupes-toggle", "checked"),
     prevent_initial_call=True,
 )
 
