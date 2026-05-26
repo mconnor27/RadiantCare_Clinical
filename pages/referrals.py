@@ -5153,24 +5153,24 @@ def _rpm_diag_tab_load(tab):
 
 
 @callback(
-    Output(f"{PAGE_ID}-rpm-grid", "rowData", allow_duplicate=True),
-    Output(f"{PAGE_ID}-rpm-grid-full-store", "data", allow_duplicate=True),
-    Output(f"{PAGE_ID}-rpm-stats", "children", allow_duplicate=True),
     Output(f"{PAGE_ID}-rpm-inst-confirm", "opened"),
     Output(f"{PAGE_ID}-rpm-inst-confirm-text", "children"),
     Output(f"{PAGE_ID}-rpm-inst-confirm-all", "children"),
     Output(f"{PAGE_ID}-rpm-inst-pending", "data"),
     Input(f"{PAGE_ID}-rpm-grid", "cellValueChanged"),
     State(f"{PAGE_ID}-rpm-grid-full-store", "data"),
-    State(f"{PAGE_ID}-rpm-unreviewed-toggle", "checked"),
-    State(f"{PAGE_ID}-rpm-dupes-toggle", "checked"),
     prevent_initial_call=True,
 )
-def _rpm_save_edit(changed, full_data, unreviewed_only, dupes_only):
-    """Save a manual cell edit. For institution edits where the old value
-    is shared by multiple rows, show a confirmation instead of saving."""
+def _rpm_save_edit(changed, full_data):
+    """Persist a cell edit to the DB. The clientside cellValueChanged mirror
+    (further down) handles all UI/store updates instantly. This callback
+    runs in the background to write to Postgres and to open the
+    institution-rename confirmation modal when needed.
+
+    Outputs are intentionally limited to the modal so this can't race with
+    the clientside mirror over the grid's rowData / full_store / stats."""
     if not changed:
-        return (dash.no_update,) * 7
+        return (dash.no_update,) * 4
     from data.reviews_db import upsert_referring, add_institution, set_reviewed_bulk
 
     row_data = full_data or []
@@ -5180,7 +5180,7 @@ def _rpm_save_edit(changed, full_data, unreviewed_only, dupes_only):
     npi = row.get("npi", "")
     addr_k = row.get("address_key", "")
     if not npi:
-        return (dash.no_update,) * 7
+        return (dash.no_update,) * 4
 
     col = changed[0].get("colId", "") if isinstance(changed, list) else changed.get("colId", "")
     old_value = changed[0].get("oldValue", "") if isinstance(changed, list) else changed.get("oldValue", "")
@@ -5190,7 +5190,9 @@ def _rpm_save_edit(changed, full_data, unreviewed_only, dupes_only):
         # Count how many rows share the old institution name
         shared_count = sum(1 for r in row_data if r.get("institution") == old_value and r.get("row_key") != row_key)
         if shared_count > 0:
-            # Show confirmation — don't save yet
+            # Open the confirmation modal. The cell's new value stays
+            # visible (clientside already applied it). If the user picks
+            # Cancel, the cancel branch in _rpm_inst_confirm_action reverts.
             pending = {
                 "row_key": row_key, "npi": npi, "address_key": addr_k,
                 "old_institution": old_value, "new_institution": new_inst,
@@ -5200,13 +5202,7 @@ def _rpm_save_edit(changed, full_data, unreviewed_only, dupes_only):
                 f'{shared_count + 1} providers currently have "{old_value}".'
             )
             all_btn = f"Rename all {shared_count + 1} providers"
-            # Revert the cell value in row_data (will be applied after confirmation)
-            for r in row_data:
-                if r.get("row_key") == row_key:
-                    r["institution"] = old_value
-                    break
-            visible = _rpm_visible(row_data, unreviewed_only, dupes_only)
-            return visible, row_data, dash.no_update, True, confirm_text, all_btn, pending
+            return True, confirm_text, all_btn, pending
 
     if col == "reviewed":
         reviewed = bool(row.get("reviewed", False))
@@ -5285,11 +5281,9 @@ def _rpm_save_edit(changed, full_data, unreviewed_only, dupes_only):
                         r["specialty"] = spec
                     break
 
-    # Non-modal branches: clientside mirror callback already updated the visible
-    # grid, full_store, and stats counter optimistically. Skipping the server
-    # echo here eliminates the race that was reverting rapid successive edits
-    # (server response from edit #1 was overwriting edit #2's local UI state).
-    return dash.no_update, dash.no_update, dash.no_update, False, "", "", None
+    # Non-modal branches: DB write already happened above. The clientside
+    # cellValueChanged mirror handles the UI/store. Modal stays closed.
+    return False, "", "", None
 
 
 # --- Institution rename confirmation actions ---
@@ -5325,7 +5319,14 @@ def _rpm_inst_confirm_action(n_one, n_all, n_cancel, pending, full_data, unrevie
     triggered = ctx.triggered_id
 
     if triggered == f"{PAGE_ID}-rpm-inst-confirm-cancel":
-        # Cancel — just hide, data already reverted
+        # Revert the cell: the clientside cellValueChanged mirror already
+        # wrote the new institution into full_store optimistically. Roll it
+        # back to old_inst here and push the corrected rowData so AG Grid
+        # also reverts the visual cell.
+        for r in row_data:
+            if r.get("row_key") == row_key:
+                r["institution"] = old_inst
+                break
         visible = _rpm_visible(row_data, unreviewed_only, dupes_only)
         return visible, row_data, dash.no_update, hide, dash.no_update, dash.no_update
 
