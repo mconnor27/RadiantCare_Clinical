@@ -5611,7 +5611,14 @@ def _rpm_merge_resolve(n_apply, n_cancel, pending, full_data, unreviewed_only, d
     no = dash.no_update
     triggered = ctx.triggered_id
 
-    if triggered == f"{PAGE_ID}-rpm-merge-confirm-cancel" or not pending or not full_data:
+    if triggered == f"{PAGE_ID}-rpm-merge-confirm-cancel":
+        print(f"[merge] cancelled by user", flush=True)
+        return no, no, no, no, no, no, False, None
+    if not pending:
+        print(f"[merge] APPLY clicked but pending is None — modal opened without _rpm_merge_open populating it", flush=True)
+        return no, no, no, no, no, no, False, None
+    if not full_data:
+        print(f"[merge] APPLY clicked but full_data is empty — manager grid hasn't loaded yet", flush=True)
         return no, no, no, no, no, no, False, None
 
     from data.reviews_db import merge_referring
@@ -5621,6 +5628,7 @@ def _rpm_merge_resolve(n_apply, n_cancel, pending, full_data, unreviewed_only, d
     surv_key = pending["survivor_row_key"]
     loser_addr = pending["loser_address_keys"]
     loser_keys = set(pending["loser_row_keys"])
+    print(f"[merge] APPLY: npi={npi} survivor_addr={surv_addr!r} losers={loser_addr!r}", flush=True)
 
     # Gather grid-side values so merge_referring can persist correctly even
     # when neither side has a DB override row yet (source="lookup" case).
@@ -5642,11 +5650,16 @@ def _rpm_merge_resolve(n_apply, n_cancel, pending, full_data, unreviewed_only, d
             "reviewed": bool(r.get("reviewed")),
         }
 
-    merge_referring(
-        npi, surv_addr, loser_addr,
-        survivor_defaults=_grid_fields(survivor),
-        loser_defaults=[_grid_fields(l) for l in losers],
-    )
+    try:
+        _ret = merge_referring(
+            npi, surv_addr, loser_addr,
+            survivor_defaults=_grid_fields(survivor),
+            loser_defaults=[_grid_fields(l) for l in losers],
+        )
+        print(f"[merge] merge_referring returned {_ret} tombstones for npi={npi}", flush=True)
+    except Exception as _e:
+        print(f"[merge] merge_referring FAILED for npi={npi}: {_e}", flush=True)
+        raise
 
     # In-memory grid update: gather loser values, merge into survivor where blank,
     # add their patient_counts, then drop loser rows.

@@ -75,6 +75,12 @@ CREATE TABLE IF NOT EXISTS institutions (
     created_at    TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS institution_aliases (
+    alias         TEXT PRIMARY KEY,
+    canonical     TEXT NOT NULL,
+    created_at    TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS diagnosis_taxonomy (
     category      TEXT NOT NULL,
     subcategory   TEXT NOT NULL,
@@ -780,27 +786,72 @@ def add_institution(name: str) -> None:
 
 
 def rename_institution(old_name: str, new_name: str) -> int:
-    """Rename an institution — propagates to all referring_physicians rows.
+    """Rename an institution — propagates to all referring_physicians rows
+    AND records a global alias so raw-CSV referrals showing the old name
+    get remapped to the new name on the next loader pass.
 
     Returns the number of physician rows updated.
     """
     new_name = new_name.strip()
     now = datetime.now(timezone.utc).isoformat()
     with _connect() as conn:
-        # Update all physician rows
+        # Update all physician override rows that explicitly carry the old name.
         cur = conn.execute(
             "UPDATE referring_physicians SET institution = ?, updated_at = ? WHERE institution = ?",
             (new_name, now, old_name),
         )
         count = cur.rowcount
-        # Rename the institution record
+        # Refresh the institution catalog row.
         conn.execute("DELETE FROM institutions WHERE name = ?", (old_name,))
         conn.execute(
             "INSERT OR IGNORE INTO institutions (name, created_at) VALUES (?, ?)",
             (new_name, now),
         )
+        # Alias bookkeeping:
+        # - Chain existing aliases: any alias whose canonical was the old
+        #   name now points to the new name.
+        # - Record the rename itself as an alias (old → new) so raw-CSV
+        #   referrals showing the old string get remapped on load.
+        # - Drop any self-alias that would result (alias == canonical) or
+        #   any pre-existing alias whose key is the new name (no longer stale).
+        conn.execute(
+            "UPDATE institution_aliases SET canonical = ? WHERE canonical = ?",
+            (new_name, old_name),
+        )
+        conn.execute(
+            """INSERT INTO institution_aliases (alias, canonical, created_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(alias) DO UPDATE SET
+                   canonical = excluded.canonical,
+                   created_at = excluded.created_at""",
+            (old_name, new_name, now),
+        )
+        conn.execute(
+            "DELETE FROM institution_aliases WHERE alias = canonical"
+        )
+        conn.execute(
+            "DELETE FROM institution_aliases WHERE alias = ?",
+            (new_name,),
+        )
     _invalidate_referrals_cache()
     return count
+
+
+def get_institution_alias_map() -> dict[str, str]:
+    """Return {alias: canonical} for all recorded institution renames.
+
+    Used by the referrals loader to remap raw `DoctorInstitution` strings
+    so the trend chart reflects user renames even for referrals whose
+    (npi, address_key) doesn't match a stored override row.
+    """
+    try:
+        with _connect() as conn:
+            rows = conn.execute(
+                "SELECT alias, canonical FROM institution_aliases"
+            ).fetchall()
+    except Exception:
+        return {}
+    return {r["alias"]: r["canonical"] for r in rows if r["alias"] and r["canonical"]}
 
 
 def delete_institution(name: str) -> int:

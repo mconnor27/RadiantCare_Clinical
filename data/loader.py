@@ -1836,6 +1836,25 @@ def load_referrals():
         except Exception:
             pass
 
+    # --- Apply institution aliases (global string remap) ---
+    # When the user renames an institution in the manager, we record the
+    # mapping in `institution_aliases`. Applying it here rewrites every raw
+    # CSV `DoctorInstitution` value that matches a stale alias so the trend
+    # chart and other consumers see the canonical name, regardless of whether
+    # an exact-key override exists for each referral.
+    if "DoctorInstitution" in df.columns:
+        try:
+            from data.reviews_db import get_institution_alias_map
+            _alias_map = get_institution_alias_map()
+            if _alias_map:
+                df["DoctorInstitution"] = (
+                    df["DoctorInstitution"].astype(object).map(
+                        lambda v: _alias_map.get(v, v) if isinstance(v, str) else v
+                    )
+                )
+        except Exception:
+            pass
+
     # --- Normalise referring provider names (strip credential suffixes) ---
     if "Referred by Provider" in df.columns:
         # Preserve original name with credentials for search/display
