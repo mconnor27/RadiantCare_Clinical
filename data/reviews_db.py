@@ -799,6 +799,7 @@ def rename_institution(old_name: str, new_name: str) -> int:
             "INSERT OR IGNORE INTO institutions (name, created_at) VALUES (?, ?)",
             (new_name, now),
         )
+    _invalidate_referrals_cache()
     return count
 
 
@@ -815,6 +816,7 @@ def delete_institution(name: str) -> int:
         )
         count = cur.rowcount
         conn.execute("DELETE FROM institutions WHERE name = ?", (name,))
+    _invalidate_referrals_cache()
     return count
 
 
