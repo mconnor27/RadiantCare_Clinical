@@ -5285,17 +5285,11 @@ def _rpm_save_edit(changed, full_data, unreviewed_only, dupes_only):
                         r["specialty"] = spec
                     break
 
-    total = len(row_data) if row_data else 0
-    with_spec = sum(1 for r in row_data if r.get("specialty")) if row_data else 0
-    with_inst = sum(1 for r in row_data if r.get("institution")) if row_data else 0
-    reviewed_n = sum(1 for r in row_data if r.get("reviewed")) if row_data else 0
-    stats = (
-        f"{total:,} providers  |  "
-        f"{reviewed_n:,} reviewed  |  {total - reviewed_n:,} unreviewed  |  "
-        f"{with_spec:,} specialty  |  {with_inst:,} institution"
-    )
-    visible = _rpm_visible(row_data, unreviewed_only, dupes_only)
-    return visible, row_data, stats, False, "", "", None
+    # Non-modal branches: clientside mirror callback already updated the visible
+    # grid, full_store, and stats counter optimistically. Skipping the server
+    # echo here eliminates the race that was reverting rapid successive edits
+    # (server response from edit #1 was overwriting edit #2's local UI state).
+    return dash.no_update, dash.no_update, dash.no_update, False, "", "", None
 
 
 # --- Institution rename confirmation actions ---
@@ -6361,6 +6355,61 @@ def _rpm_toggle_action_btns(tab):
     if tab == "providers":
         return {"display": "flex"}
     return {"display": "none"}
+
+
+# --- Clientside mirror of cell edits to full_store + stats ---
+# Server callback (_rpm_save_edit) handles DB persistence but no longer echoes
+# rowData/full_store/stats back, because that round-trip was slow AND racy with
+# rapid edits (a stale server response would revert in-flight UI changes).
+# Here we apply the edit to the in-memory full_store and recompute the stats
+# pill instantly. AG Grid keeps its own local cell state via getRowId diffing.
+
+clientside_callback(
+    """function(cellChange, fullData) {
+        var no = window.dash_clientside.no_update;
+        if (!cellChange || !fullData) return [no, no];
+        var ch = Array.isArray(cellChange) ? cellChange[0] : cellChange;
+        if (!ch || !ch.data) return [no, no];
+        var rowKey = ch.data.row_key;
+        var colId = ch.colId || "";
+        if (!rowKey || !colId) return [no, no];
+        var newVal = ch.data[colId];
+
+        var updated = fullData.map(function(r) {
+            if (r && r.row_key === rowKey) {
+                var nr = Object.assign({}, r);
+                nr[colId] = newVal;
+                // Mirror server-side behavior: content edits flip source to manual.
+                // Pure reviewed-flag toggles preserve the original source.
+                if (colId !== "reviewed") nr.source = "manual";
+                if (colId === "full_address") nr.address_source = "manual";
+                return nr;
+            }
+            return r;
+        });
+
+        var total = updated.length;
+        var reviewed_n = 0, with_spec = 0, with_inst = 0;
+        for (var i = 0; i < updated.length; i++) {
+            var r = updated[i];
+            if (r.reviewed) reviewed_n++;
+            if ((r.specialty || "").trim()) with_spec++;
+            if ((r.institution || "").trim()) with_inst++;
+        }
+        var fmt = function(n) { return n.toLocaleString(); };
+        var stats = fmt(total) + " providers  |  " +
+                    fmt(reviewed_n) + " reviewed  |  " +
+                    fmt(total - reviewed_n) + " unreviewed  |  " +
+                    fmt(with_spec) + " specialty  |  " +
+                    fmt(with_inst) + " institution";
+        return [updated, stats];
+    }""",
+    Output(f"{PAGE_ID}-rpm-grid-full-store", "data", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-stats", "children", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rpm-grid", "cellValueChanged"),
+    State(f"{PAGE_ID}-rpm-grid-full-store", "data"),
+    prevent_initial_call=True,
+)
 
 
 # --- Unreviewed-only toggles ---
