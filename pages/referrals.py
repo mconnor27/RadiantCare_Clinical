@@ -4040,14 +4040,16 @@ def _prior_range(start, end):
     Input(f"{PAGE_ID}-filter-payor-mode", "value"),
     Input(f"{PAGE_ID}-filter-payor", "value"),
     Input(f"{PAGE_ID}-overrides-bump", "data"),
+    # Only show loading overlays for the two charts that ALWAYS update when
+    # this callback fires (dim-trend + comparison). The flow + map overlays
+    # were lying — they flashed on every dim-toggle flip even though those
+    # charts didn't actually re-render (the callback returns no_update for
+    # them in the dim-only branch below). On a real filter change the flow +
+    # map charts still update from their data stores; they just won't show a
+    # loading spinner during the brief recompute.
     running=[
         (Output(f"{PAGE_ID}-chart-dim-trend-loading", "visible"), True, False),
         (Output(f"{PAGE_ID}-chart-dim-comparison-loading", "visible"), True, False),
-        (Output(f"{PAGE_ID}-flow-dist-loading", "visible"), True, False),
-        (Output(f"{PAGE_ID}-flow-trend-loading", "visible"), True, False),
-        (Output(f"{PAGE_ID}-flow-conv-loading", "visible"), True, False),
-        (Output(f"{PAGE_ID}-flow-gantt-loading", "visible"), True, False),
-        (Output(f"{PAGE_ID}-map-loading", "visible"), True, False),
     ],
 )
 def update_referrals(_n, start_date, end_date, departments, specialty_filter,
@@ -4847,13 +4849,24 @@ def _build_rpm_grid_data() -> tuple[list[dict], str]:
 
     ref = load_referrals()
 
-    # Only rows with a valid 10-digit NPI
-    ref = ref[ref["Referred By Prov NPI"].notna()].copy()
-    ref["_npi"] = ref["Referred By Prov NPI"].astype(float).astype(int).astype(str)
-    ref = ref[ref["_npi"].str.match(r"^\d{10}$")]
+    # Build the provider ID: prefer the clean numeric NPI from
+    # "Referred By Prov NPI", fall back to the cleaned DoctorId prefix for
+    # providers identified by state license (e.g. "A02637", "H96096") or
+    # other non-NPI identifiers. Keeps the manager grid inclusive — any
+    # provider with a stable ID is curatable, not just 10-digit NPIs.
+    ref = ref.copy()
+    _npi_from_col = ref["Referred By Prov NPI"].apply(
+        lambda v: str(int(v)) if pd.notna(v) and float(v).is_integer() else ""
+    )
+    _npi_from_did = (ref.get("DoctorId", pd.Series("", index=ref.index))
+                     .astype(str).str.strip().str.split("/", n=1).str[0].str.strip())
+    # Drop the NaN literal and obviously-bad placeholders.
+    _npi_from_did = _npi_from_did.where(_npi_from_did.str.lower() != "nan", "")
+    ref["_npi"] = _npi_from_col.where(_npi_from_col != "", _npi_from_did)
+    ref = ref[ref["_npi"].astype(str).str.len() > 0]
 
     if ref.empty:
-        return [], "No referral data with valid NPIs"
+        return [], "No referral data with valid provider IDs"
 
     # Normalize address fields for grouping
     for col in ["Referring Provider City", "Referring Provider State", "Referring Provider Zip Code"]:

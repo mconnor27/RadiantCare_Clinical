@@ -1644,11 +1644,15 @@ def load_referrals():
     # Fold the referring-overrides table fingerprint into the cache signature
     # so saving an override (which doesn't touch the source xlsx) still busts
     # the parquet cache on the next load.
+    # The v2 suffix forces a one-time rebuild on deploy: prior to this version
+    # the override-apply pass silently swallowed a ValueError on malformed
+    # DoctorIds (e.g. "1234567890/Kaise"), so the cached parquets shipped from
+    # disk had institution renames missing.
     try:
         from data.reviews_db import get_referring_overrides_fingerprint
-        _overrides_fp = get_referring_overrides_fingerprint()
+        _overrides_fp = "v2|" + get_referring_overrides_fingerprint()
     except Exception:
-        _overrides_fp = ""
+        _overrides_fp = "v2|"
     cached = _read_parquet_cache("Referrals", src_paths, extra=_overrides_fp)
     if cached is not None:
         return cached
@@ -1799,8 +1803,28 @@ def load_referrals():
             from data.reviews_db import get_all_referring_overrides, _addr_key
             _overrides = get_all_referring_overrides()
             if _overrides:
-                # Build composite key in the dataframe to match overrides
-                _npi_col = df["DoctorId"].dropna().astype(int).astype(str)
+                # Build composite key in the dataframe to match overrides.
+                # Prefer the proper 10-digit NPI from "Referred By Prov NPI"
+                # (the float column ARIA gives us); fall back to a cleaned
+                # DoctorId prefix for providers with only a state license or
+                # other non-NPI ID. Mirrors _build_rpm_grid_data so override
+                # rows the user creates in the manager (keyed on the NPI shown
+                # there) actually match here.
+                # The old code did .astype(int) on DoctorId, which raised
+                # ValueError on values like "1234567890/Kaise" and was caught
+                # by the broad except → ALL overrides silently skipped for the
+                # whole dataframe.
+                _npi_from_col = df.get(
+                    "Referred By Prov NPI", pd.Series(pd.NA, index=df.index)
+                ).apply(
+                    lambda v: str(int(v)) if pd.notna(v) and float(v).is_integer() else ""
+                )
+                _npi_from_did = (df["DoctorId"].astype(str).str.strip()
+                                 .str.split("/", n=1).str[0].str.strip())
+                _npi_from_did = _npi_from_did.where(
+                    _npi_from_did.str.lower() != "nan", ""
+                )
+                _npi_col = _npi_from_col.where(_npi_from_col != "", _npi_from_did)
                 _city = df.get("Referring Provider City", pd.Series("", index=df.index)).fillna("").astype(str)
                 _state = df.get("Referring Provider State", pd.Series("", index=df.index)).fillna("").astype(str)
                 _zip = df.get("Referring Provider Zip Code", pd.Series("", index=df.index)).fillna("").astype(str)
