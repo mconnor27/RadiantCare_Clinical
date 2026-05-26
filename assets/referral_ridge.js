@@ -120,6 +120,10 @@ window.dash_clientside.referralRidge = {
                     showlegend: false,
                     customdata: customdata,
                     text: hoverDates,
+                    // Hide the per-bar text label — keep it only as hover data.
+                    // Without this, Plotly's default "auto" textposition prints
+                    // a date on every bar in every row.
+                    textposition: "none",
                     hovertemplate:
                         "<b>%{customdata[1]}</b>" +
                         "<br>%{text}" +
