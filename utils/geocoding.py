@@ -378,16 +378,44 @@ def load_geocode_cache():
 # Address geocoding (for referral provider locations)
 # ---------------------------------------------------------------------------
 
+def _infer_addr_source(addr_key, lat, lon):
+    """Classify a cached coordinate's precision for legacy rows lacking a
+    `source` column. If the point sits on the ZIP's ZCTA centroid it was a
+    ZIP fallback ("zip"); otherwise assume street-level ("street").
+    """
+    parts = str(addr_key).split("|")
+    if len(parts) < 4:
+        return "street"
+    z = normalize_zip(parts[3])
+    if not z:
+        return "street"
+    zc = _zcta_lookup(z)
+    if zc and abs(zc[0] - lat) < 0.0005 and abs(zc[1] - lon) < 0.0005:
+        return "zip"
+    return "street"
+
+
 def _load_addr_cache():
-    """Read address geocode cache if it exists."""
+    """Read address geocode cache if it exists.
+
+    Ensures a `source` column exists ("street" | "city" | "zip"). Legacy
+    caches written before quality tracking get their source inferred so the
+    coarse ZIP-centroid fallbacks can be re-geocoded for street precision.
+    """
+    cols = ["addr_key", "lat", "lon", "geocoded_at", "source"]
     if not ADDR_CACHE_PATH.exists():
-        return pd.DataFrame(columns=["addr_key", "lat", "lon", "geocoded_at"])
+        return pd.DataFrame(columns=cols)
     try:
         df = pd.read_csv(ADDR_CACHE_PATH, dtype={"addr_key": str})
         df = df.dropna(subset=["lat", "lon"])
+        if "source" not in df.columns:
+            df["source"] = df.apply(
+                lambda r: _infer_addr_source(r["addr_key"], r["lat"], r["lon"]),
+                axis=1,
+            )
         return df
     except Exception:
-        return pd.DataFrame(columns=["addr_key", "lat", "lon", "geocoded_at"])
+        return pd.DataFrame(columns=cols)
 
 
 def _save_addr_cache(df):
@@ -427,7 +455,9 @@ def geocode_addresses(addr_records, max_nominatim=20):
         return pd.DataFrame(columns=["addr_key", "lat", "lon"])
 
     cache = _load_addr_cache()
-    cached_keys = set(cache["addr_key"].values) if not cache.empty else set()
+    cached_source = {}
+    if not cache.empty:
+        cached_source = dict(zip(cache["addr_key"], cache["source"].fillna("")))
 
     # Deduplicate by key
     key_to_record = {}
@@ -436,14 +466,23 @@ def geocode_addresses(addr_records, max_nominatim=20):
         if key not in key_to_record:
             key_to_record[key] = rec
 
-    needed = {k: v for k, v in key_to_record.items() if k not in cached_keys}
+    # Geocode if: never cached, OR cached only at coarse ZIP-centroid quality
+    # while a street address is available to retry for street-level precision.
+    # (Once an entry reaches "street" or "city" we leave it alone.)
+    needed = {}
+    for k, v in key_to_record.items():
+        src = cached_source.get(k)
+        if k not in cached_source:
+            needed[k] = v
+        elif src in ("zip", "", None) and (v.get("address") or "").strip():
+            needed[k] = v
 
     if not needed:
         return cache
 
-    # Geocode via Nominatim (city + state + zip — skip street for reliability)
     geocode = _get_geocoder()
-    new_rows = []
+    new_rows = []          # keys not previously cached
+    updates = {}           # addr_key -> (lat, lon, source) for cached upgrades
     zip_cache = geocode_zips([normalize_zip(r["zip_code"]) for r in needed.values()
                               if normalize_zip(r.get("zip_code"))])
     zip_lookup = {}
@@ -457,6 +496,7 @@ def geocode_addresses(addr_records, max_nominatim=20):
         state = (rec.get("state") or "").strip()
         zip5 = normalize_zip(rec.get("zip_code"))
         lat = lon = None
+        source = None
 
         # Only hit Nominatim if under the batch limit
         if nominatim_calls < max_nominatim:
@@ -470,6 +510,7 @@ def geocode_addresses(addr_records, max_nominatim=20):
                     nominatim_calls += 1
                     if location and _is_valid_us_coord(location.latitude, location.longitude):
                         lat, lon = location.latitude, location.longitude
+                        source = "street"
                 except Exception as exc:
                     logger.debug("Full address geocode failed for %s: %s", key, exc)
 
@@ -483,32 +524,45 @@ def geocode_addresses(addr_records, max_nominatim=20):
                     nominatim_calls += 1
                     if location and _is_valid_us_coord(location.latitude, location.longitude):
                         lat, lon = location.latitude, location.longitude
+                        source = "city"
                 except Exception as exc:
                     logger.debug("City geocode failed for %s: %s", key, exc)
 
         # Fall back to ZIP centroid
         if lat is None and zip5 and zip5 in zip_lookup:
             lat, lon = zip_lookup[zip5]
+            source = "zip"
 
         if lat is not None and lon is not None:
-            new_rows.append({
-                "addr_key": key,
-                "lat": round(lat, 6),
-                "lon": round(lon, 6),
-                "geocoded_at": datetime.now().isoformat(),
-            })
+            if key in cached_source:
+                updates[key] = (round(lat, 6), round(lon, 6), source)
+            else:
+                new_rows.append({
+                    "addr_key": key,
+                    "lat": round(lat, 6),
+                    "lon": round(lon, 6),
+                    "geocoded_at": datetime.now().isoformat(),
+                    "source": source,
+                })
 
     if nominatim_calls >= max_nominatim and len(needed) > max_nominatim:
         logger.info(
-            "Address geocoding: capped at %d Nominatim calls (%d remaining will use ZIP fallback this pass)",
+            "Address geocoding: capped at %d Nominatim calls (%d remaining will retry next pass)",
             nominatim_calls, len(needed) - max_nominatim,
         )
 
-    if new_rows:
-        new_df = pd.DataFrame(new_rows)
-        cache = pd.concat([cache, new_df], ignore_index=True)
+    if updates or new_rows:
+        if "source" not in cache.columns and not cache.empty:
+            cache["source"] = ""
+        for key, (lat, lon, src) in updates.items():
+            m = cache["addr_key"] == key
+            cache.loc[m, ["lat", "lon", "source"]] = [lat, lon, src]
+        if new_rows:
+            cache = pd.concat([cache, pd.DataFrame(new_rows)], ignore_index=True)
         _save_addr_cache(cache)
-        logger.info("Address geocoding: %d new entries added", len(new_rows))
+        logger.info(
+            "Address geocoding: %d new, %d upgraded", len(new_rows), len(updates),
+        )
 
     return cache
 

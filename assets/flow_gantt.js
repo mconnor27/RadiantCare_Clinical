@@ -1608,7 +1608,7 @@ window.dash_clientside.flowGantt = {
             var _tXMax = Math.ceil((tu.scale === 1 ? _tP95 : _tP95 * tu.scale) * 1.08);
             var tLay = {
                 font: {family: font, size: 12, color: _flowGanttTheme().plotText},
-                margin: {l: 48, r: 16, t: 32, b: 42},
+                margin: {l: 48, r: 16, t: 32, b: 50},
                 plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
                 xaxis: {showgrid: false, title: tu.axisTitle, range: [0, _tXMax]},
                 yaxis: {gridcolor: _flowGanttTheme().grid, gridwidth: 1},
@@ -1699,7 +1699,7 @@ window.dash_clientside.flowGantt = {
         var _sXMax = Math.ceil((u.scale === 1 ? _sP95 : _sP95 * u.scale) * 1.08);
         var baseLay = {
             font: {family: font, size: 12, color: _flowGanttTheme().plotText},
-            margin: {l: 48, r: 16, t: 32, b: 42},
+            margin: {l: 48, r: 16, t: 32, b: 50},
             plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
             xaxis: {showgrid: false, title: u.axisTitle, range: [0, _sXMax]},
             yaxis: {gridcolor: _flowGanttTheme().grid, gridwidth: 1},

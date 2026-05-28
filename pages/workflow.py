@@ -2346,9 +2346,14 @@ clientside_callback(
 
 # Distribution chart — compare-aware
 # A/B agg toggles passed directly so median↔mean switches are instant (no server round-trip)
+# Density-smoothing slider drags only re-shape an existing trace (no trace/axis
+# change), so skip the deferred dot-loader overlay for those — it would just flash.
 clientside_callback("""function() {
+        var ctx = window.dash_clientside.callback_context;
+        var trig = (ctx && ctx.triggered && ctx.triggered[0]) ? ctx.triggered[0].prop_id : "";
+        var skipOverlay = trig.split(".")[0] === "wf-dist-settings-smooth";
         var fig = window.dash_clientside.flowGantt.renderFlowDistribution.apply(null, arguments);
-        return window.dash_clientside.chartDeferred.wrap("wf-chart-dist", fig);
+        return window.dash_clientside.chartDeferred.wrap("wf-chart-dist", fig, skipOverlay);
     }""",
     Output("wf-chart-dist", "figure"),
     Output("wf-dist-title", "children"),
@@ -2365,9 +2370,14 @@ clientside_callback("""function() {
 )
 
 # Trend chart — compare-aware
+# Smoothing slider drags only re-shape the existing line (no trace/axis change),
+# so skip the deferred dot-loader overlay for those — it would just flash.
 clientside_callback("""function() {
+        var ctx = window.dash_clientside.callback_context;
+        var trig = (ctx && ctx.triggered && ctx.triggered[0]) ? ctx.triggered[0].prop_id : "";
+        var skipOverlay = trig.split(".")[0] === "wf-trend-settings-smooth";
         var fig = window.dash_clientside.flowGantt.renderFlowTrend.apply(null, arguments);
-        return window.dash_clientside.chartDeferred.wrap("wf-chart-trend", fig);
+        return window.dash_clientside.chartDeferred.wrap("wf-chart-trend", fig, skipOverlay);
     }""",
     Output("wf-chart-trend", "figure"),
     Output("wf-trend-title", "children"),
