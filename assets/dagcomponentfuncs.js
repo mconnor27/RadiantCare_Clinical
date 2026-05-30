@@ -265,20 +265,33 @@ dagcomponentfuncs.NameSearchFull = function (props) {
  * NPI link — renders NPI as a link to the NPPES registry page.
  */
 dagcomponentfuncs.NpiLink = function (props) {
-    var npi = props.value || "";
-    if (!npi) {
+    var npi = (props.value || "").toString();
+    // Synthetic name-based key (no ID in source) — render the row as dash so
+    // the NPI cell isn't shouting a non-clickable internal key at the user.
+    // The Name column carries the actual identity.
+    if (!npi || npi.indexOf("name:") === 0) {
         return React.createElement("span", {style: {color: "#9CA3AF"}}, "—");
     }
-    var url = "https://npiregistry.cms.hhs.gov/provider-view/" + npi;
+    // Real 10-digit NPI → NPPES link.
+    if (/^\d{10}$/.test(npi)) {
+        var url = "https://npiregistry.cms.hhs.gov/provider-view/" + npi;
+        return React.createElement(
+            "a",
+            {
+                href: url,
+                target: "_blank",
+                rel: "noopener",
+                style: {color: "#2196F3", textDecoration: "none", fontSize: "12px"},
+                title: "View on NPI Registry",
+            },
+            npi
+        );
+    }
+    // Other stable IDs (state license like A02637 etc.) — show as plain text
+    // so the user can still see/edit the identifier, but no broken NPPES link.
     return React.createElement(
-        "a",
-        {
-            href: url,
-            target: "_blank",
-            rel: "noopener",
-            style: {color: "#2196F3", textDecoration: "none", fontSize: "12px"},
-            title: "View on NPI Registry",
-        },
+        "span",
+        {style: {fontSize: "12px"}, title: "Non-NPI provider ID"},
         npi
     );
 };

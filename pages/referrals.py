@@ -4861,9 +4861,24 @@ def _build_rpm_grid_data() -> tuple[list[dict], str]:
     _npi_from_did = (ref.get("DoctorId", pd.Series("", index=ref.index))
                      .astype(str).str.strip().str.split("/", n=1).str[0].str.strip())
     # Drop the NaN literal and obviously-bad placeholders.
-    _npi_from_did = _npi_from_did.where(_npi_from_did.str.lower() != "nan", "")
-    ref["_npi"] = _npi_from_col.where(_npi_from_col != "", _npi_from_did)
-    ref = ref[ref["_npi"].astype(str).str.len() > 0]
+    # Filter out non-ID placeholder strings ARIA sometimes writes into DoctorId
+    # (literal "None"/"NaN"/"NULL"/"Unknown" etc.). These aren't real IDs so we
+    # drop them as ID candidates and fall back to a name-derived synthetic key.
+    _npi_from_did = _npi_from_did.where(
+        ~_npi_from_did.str.lower().isin({"nan", "none", "null", "", "unknown"}),
+        "",
+    )
+    _npi_base = _npi_from_col.where(_npi_from_col != "", _npi_from_did)
+
+    # Name fallback: when there's no usable NPI or DoctorId, key the row by
+    # the provider name. Lets named-but-ID-less providers (~15 in current
+    # data: Xiang Xie, Lora Sherman, Practitioner Unknown, etc.) stay visible
+    # and curatable instead of collapsing into one phantom row, and gives a
+    # single explicit bucket for truly anonymous referrals ("name:_anonymous").
+    _name_norm = (ref["Referred by Provider"].fillna("").astype(str).str.strip()
+                  .str.lower().str.replace(r"\s+", "_", regex=True))
+    _synthetic = "name:" + _name_norm.where(_name_norm != "", "_anonymous")
+    ref["_npi"] = _npi_base.where(_npi_base != "", _synthetic)
 
     if ref.empty:
         return [], "No referral data with valid provider IDs"

@@ -1822,9 +1822,22 @@ def load_referrals():
                 _npi_from_did = (df["DoctorId"].astype(str).str.strip()
                                  .str.split("/", n=1).str[0].str.strip())
                 _npi_from_did = _npi_from_did.where(
-                    _npi_from_did.str.lower() != "nan", ""
+                    ~_npi_from_did.str.lower().isin(
+                        {"nan", "none", "null", "", "unknown"}
+                    ),
+                    "",
                 )
-                _npi_col = _npi_from_col.where(_npi_from_col != "", _npi_from_did)
+                _npi_base = _npi_from_col.where(_npi_from_col != "", _npi_from_did)
+                # Name fallback for ID-less providers — mirrors the manager
+                # grid's _build_rpm_grid_data so an override keyed on
+                # "name:practitioner_unknown" actually finds its CSV rows here.
+                _name_norm = (
+                    df.get("Referred by Provider", pd.Series("", index=df.index))
+                      .fillna("").astype(str).str.strip()
+                      .str.lower().str.replace(r"\s+", "_", regex=True)
+                )
+                _synthetic = "name:" + _name_norm.where(_name_norm != "", "_anonymous")
+                _npi_col = _npi_base.where(_npi_base != "", _synthetic)
                 _city = df.get("Referring Provider City", pd.Series("", index=df.index)).fillna("").astype(str)
                 _state = df.get("Referring Provider State", pd.Series("", index=df.index)).fillna("").astype(str)
                 _zip = df.get("Referring Provider Zip Code", pd.Series("", index=df.index)).fillna("").astype(str)

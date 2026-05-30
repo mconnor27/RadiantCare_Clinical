@@ -970,7 +970,7 @@ def _drawer_form_diag(row: dict):
                  + [{"value": c, "label": c} for c in CATEGORIES]
                  + [{"value": "Unknown", "label": "Unknown"}],
             value=cur_cat,
-            searchable=True, clearable=False, size="sm",
+            searchable=False, clearable=False, size="sm",
         ),
         dmc.Select(
             id=_id("drawer-diag-sub"),
@@ -978,7 +978,7 @@ def _drawer_form_diag(row: dict):
             data=[{"value": "", "label": "— none —"}]
                  + [{"value": s, "label": s} for s in sub_options],
             value=cur_sub if cur_sub in sub_options else "",
-            searchable=True, clearable=True, size="sm",
+            searchable=False, clearable=True, size="sm",
         ),
         dmc.Switch(
             id=_id("drawer-diag-reviewed"),
