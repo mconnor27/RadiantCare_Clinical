@@ -1725,6 +1725,12 @@ layout = dmc.Stack(
                                         "headerHeight": 36,
                                         "floatingFiltersHeight": 32,
                                         "rowSelection": {"mode": "multiRow", "selectAll": "filtered"},
+                                        # Stable per-row ID lets AG Grid diff incoming rowData
+                                        # instead of re-rendering the entire grid. Without it,
+                                        # editing category → server returns rowData → grid
+                                        # repaints from scratch → scroll/selection lost mid-edit.
+                                        "getRowId": {"function":
+                                            "params.data.icd_code || params.data.description"},
                                     },
                                     style={"flex": 1, "minHeight": 0},
                                     className="ag-theme-alpine",
@@ -6561,6 +6567,65 @@ clientside_callback(
 )
 
 
+# --- Clientside mirror of diag cell edits to full_store + stats ---
+# Server `_rpm_diag_save_edit` writes to the DB but returns no UI outputs.
+# This callback updates the in-memory full_store + the stats pill instantly
+# so consecutive edits (category, then subcategory) don't fight each other
+# and the grid never repaints — keeping scroll position and the open cell
+# editor right where the user left them.
+clientside_callback(
+    """function(cellChange, fullData, unreviewedOnly) {
+        var no = window.dash_clientside.no_update;
+        if (!cellChange || !fullData) return [no, no, no];
+        var ch = Array.isArray(cellChange) ? cellChange[0] : cellChange;
+        if (!ch || !ch.data) return [no, no, no];
+        var rowId = ch.data.icd_code || ch.data.description;
+        if (!rowId) return [no, no, no];
+        var colId = ch.colId || "";
+        var newVal = ch.data[colId];
+
+        var updated = fullData.map(function(r) {
+            if (!r) return r;
+            var rid = r.icd_code || r.description;
+            if (rid !== rowId) return r;
+            var nr = Object.assign({}, r);
+            nr[colId] = newVal;
+            // Any content edit means the row is now manually overridden.
+            if (colId === "category" || colId === "subcategory") nr.source = "manual";
+            return nr;
+        });
+
+        var total = updated.length;
+        var categorized = 0, reviewed_n = 0;
+        for (var i = 0; i < updated.length; i++) {
+            var r = updated[i];
+            if ((r.category || "").toString().trim()) categorized++;
+            if (r.reviewed) reviewed_n++;
+        }
+        var fmt = function(n) { return n.toLocaleString(); };
+        var stats = fmt(total) + " entries  |  " +
+                    fmt(categorized) + " categorized  |  " +
+                    fmt(reviewed_n) + " reviewed  |  " +
+                    fmt(total - reviewed_n) + " unreviewed";
+
+        // Re-apply the unreviewed-only filter so flipping reviewed=true on a
+        // row immediately removes it from view. AG Grid's getRowId diffing
+        // means other rows keep their scroll/selection/open editor state.
+        var visible = unreviewedOnly
+            ? updated.filter(function(r) { return !r.reviewed; })
+            : updated;
+        return [visible, updated, stats];
+    }""",
+    Output(f"{PAGE_ID}-rpm-diag-grid", "rowData", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-diag-grid-full-store", "data", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-diag-stats", "children", allow_duplicate=True),
+    Input(f"{PAGE_ID}-rpm-diag-grid", "cellValueChanged"),
+    State(f"{PAGE_ID}-rpm-diag-grid-full-store", "data"),
+    State(f"{PAGE_ID}-rpm-diag-unreviewed-toggle", "checked"),
+    prevent_initial_call=True,
+)
+
+
 # --- NPI Review: Accept All (check all rows) ---
 @callback(
     Output(f"{PAGE_ID}-rpm-npi-review-grid", "rowData", allow_duplicate=True),
@@ -7233,27 +7298,30 @@ def _build_diag_grid_data():
 
 
 @callback(
-    Output(f"{PAGE_ID}-rpm-diag-grid", "rowData", allow_duplicate=True),
-    Output(f"{PAGE_ID}-rpm-diag-grid-full-store", "data", allow_duplicate=True),
-    Output(f"{PAGE_ID}-rpm-diag-stats", "children", allow_duplicate=True),
+    Output(f"{PAGE_ID}-rpm-diag-grid", "id"),
     Input(f"{PAGE_ID}-rpm-diag-grid", "cellValueChanged"),
-    State(f"{PAGE_ID}-rpm-diag-grid-full-store", "data"),
-    State(f"{PAGE_ID}-rpm-diag-unreviewed-toggle", "checked"),
     prevent_initial_call=True,
 )
-def _rpm_diag_save_edit(changed, full_data, unreviewed_only):
-    """Save a manual cell edit (category, subcategory, or reviewed) to SQLite."""
+def _rpm_diag_save_edit(changed):
+    """Persist a manual cell edit (category, subcategory, or reviewed) to the
+    DB. UI/store updates are handled by the clientside cellValueChanged mirror
+    further down — this callback intentionally returns nothing visible so
+    rapid consecutive edits (set category → set subcategory) don't get
+    overwritten by a stale server echo, and the grid never re-renders.
+
+    Output is the grid's own `id` (a no-op-ish output) so Dash has somewhere
+    to put the dash.no_update — Dash callbacks must declare ≥1 Output.
+    """
     if not changed:
-        return dash.no_update, dash.no_update, dash.no_update
+        return dash.no_update
     from data.reviews_db import upsert_diagnosis_override
 
-    row_data = full_data or []
     row = changed[0].get("data", {}) if isinstance(changed, list) else changed.get("data", {})
     code = row.get("icd_code", "")
     desc = row.get("description", "")
     override_key = code or desc
     if not override_key:
-        return dash.no_update, dash.no_update, dash.no_update
+        return dash.no_update
 
     col = changed[0].get("colId", "") if isinstance(changed, list) else changed.get("colId", "")
     cat = row.get("category", "")
@@ -7264,27 +7332,7 @@ def _rpm_diag_save_edit(changed, full_data, unreviewed_only):
     if col == "reviewed":
         from data.reviews_db import set_diagnosis_reviewed_bulk
         set_diagnosis_reviewed_bulk([override_key], reviewed=bool(reviewed))
-
-    # Update full store
-    match_key = code if code else desc
-    for r in row_data:
-        rk = r.get("icd_code") or r.get("description", "")
-        if rk == match_key:
-            r["category"] = cat
-            r["subcategory"] = sub
-            r["reviewed"] = reviewed
-            r["source"] = "manual"
-            break
-
-    total = len(row_data)
-    categorized = sum(1 for r in row_data if r.get("category"))
-    reviewed_n = sum(1 for r in row_data if r.get("reviewed"))
-    stats = (
-        f"{total:,} entries  |  {categorized:,} categorized  |  "
-        f"{reviewed_n:,} reviewed  |  {total - reviewed_n:,} unreviewed"
-    )
-    visible = [r for r in row_data if not r.get("reviewed")] if unreviewed_only else row_data
-    return visible, row_data, stats
+    return dash.no_update
 
 
 @callback(
