@@ -1538,6 +1538,9 @@ layout = dmc.Stack(
                                                  "sort": "desc"},
                                                 {"field": "MRN", "headerName": "MRN", "flex": 0.5},
                                                 {"field": "Patient Name", "headerName": "Patient", "flex": 1},
+                                                {"field": "Referred by Provider", "headerName": "Ref'd By", "flex": 0.9},
+                                                {"field": "Referred by Location", "headerName": "From Location", "flex": 1},
+                                                {"field": "Referred by Department", "headerName": "From Dept", "flex": 1},
                                                 {"field": "Rfl Prim Dx", "headerName": "Primary Dx", "flex": 1.2},
                                                 {"field": "Diagnoses", "headerName": "Diagnoses", "flex": 1.5},
                                                 {"field": "Status", "headerName": "Status", "flex": 0.6},
@@ -4919,13 +4922,22 @@ def _build_rpm_grid_data() -> tuple[list[dict], str]:
             )[_patch_mask]
 
     # Apply merge tombstones from DB: redirect any (npi, loser_addr_key) to
-    # its survivor before aggregating. Keeps merged rows from reappearing
-    # after a reload (the underlying CSV still has both address_keys).
+    # its survivor's (npi, address_key) before aggregating. Keeps merged rows
+    # from reappearing after reload (source CSV still has both rows), and
+    # supports cross-NPI merges (the redirect can rewrite the NPI too).
     merge_map = get_referring_merge_map()
     if merge_map:
-        def _redirect(row):
-            return merge_map.get((row["_npi"], row["_addr_key"]), row["_addr_key"])
-        ref["_addr_key"] = ref.apply(_redirect, axis=1)
+        def _redirect_npi(row):
+            k = (row["_npi"], row["_addr_key"])
+            return merge_map[k][0] if k in merge_map else row["_npi"]
+        def _redirect_ak(row):
+            k = (row["_npi"], row["_addr_key"])
+            return merge_map[k][1] if k in merge_map else row["_addr_key"]
+        # Snapshot _npi first so the addr_key redirect uses the pre-rewrite npi.
+        new_npi = ref.apply(_redirect_npi, axis=1)
+        new_ak = ref.apply(_redirect_ak, axis=1)
+        ref["_npi"] = new_npi
+        ref["_addr_key"] = new_ak
     ref["_row_key"] = ref["_npi"] + "|" + ref["_addr_key"]
 
     # Aggregate per NPI+address: pick most common name/dept, count referrals
@@ -5577,21 +5589,35 @@ def _pick_merge_survivor(rows: list[dict]) -> dict:
     prevent_initial_call=True,
 )
 def _rpm_merge_open(n, selected_rows):
-    """Validate selection and open the merge confirmation modal."""
-    if not n or not selected_rows or len(selected_rows) < 2:
-        return False, "Select at least two rows with the same NPI to merge.", "", None
+    """Validate selection and open the merge confirmation modal.
 
-    npis = {r.get("npi", "") for r in selected_rows}
-    if len(npis) != 1 or not next(iter(npis)):
-        return (False,
-                "All selected rows must share the same NPI. Merging across "
-                "different physicians isn't supported.", "", None)
+    Supports both same-NPI merges (one provider's addresses) AND cross-NPI
+    merges (different providers — e.g. an NPI that's actually a duplicate of
+    another provider). The tombstone redirect handles both.
+    """
+    if not n or not selected_rows or len(selected_rows) < 2:
+        return False, "Select at least two rows to merge.", "", None
+    if not all(r.get("npi") for r in selected_rows):
+        return False, "All selected rows must have a provider ID.", "", None
 
     survivor = _pick_merge_survivor(selected_rows)
     survivor_key = survivor.get("row_key", "")
     losers = [r for r in selected_rows if r.get("row_key") != survivor_key]
 
-    npi = next(iter(npis))
+    npis = {r.get("npi", "") for r in selected_rows}
+    cross_npi = len(npis) > 1
+    survivor_npi = survivor.get("npi", "")
+    # `npi` in pending stays the loser's NPI for back-compat with the
+    # same-NPI merge_referring signature. For cross-NPI, all losers MUST
+    # share an NPI (different from survivor's) so merge_referring's bulk
+    # IN-clause lookup works. Enforce that:
+    loser_npis = {l.get("npi", "") for l in losers}
+    if cross_npi and len(loser_npis) > 1:
+        return (False,
+                "Cross-NPI merges currently support one survivor + losers "
+                "sharing a single (different) NPI. Selected losers span "
+                f"{len(loser_npis)} NPIs.", "", None)
+    npi = next(iter(loser_npis)) if cross_npi else survivor_npi
     total_referrals = sum(int(r.get("patient_count") or 0) for r in selected_rows)
     name = survivor.get("name", "")
 
@@ -5634,9 +5660,9 @@ def _rpm_merge_open(n, selected_rows):
         detail_children.extend(fill_lines)
 
     text = (
-        f"Merge {len(selected_rows)} rows for NPI {npi} ({name}) into one. "
-        f"Loser rows will be deleted; {total_referrals} total referrals will "
-        f"appear under the surviving address."
+        f"Merge {len(selected_rows)} rows into "
+        f"{name or survivor_npi}{' (cross-NPI)' if cross_npi else ''}. "
+        f"{total_referrals} total referrals will roll up under the surviving row."
     )
 
     # Use `or ""` (not the .get default) — Dash JSON serialization can hand back
@@ -5645,6 +5671,7 @@ def _rpm_merge_open(n, selected_rows):
     pending = {
         "npi": npi,
         "survivor_row_key": survivor_key,
+        "survivor_npi": survivor_npi,
         "survivor_address_key": survivor.get("address_key") or "",
         "loser_address_keys": [(l.get("address_key") or "") for l in losers],
         "loser_row_keys": [(l.get("row_key") or "") for l in losers],
@@ -5713,13 +5740,16 @@ def _rpm_merge_resolve(n_apply, n_cancel, pending, full_data, unreviewed_only, d
             "reviewed": bool(r.get("reviewed")),
         }
 
+    survivor_npi = pending.get("survivor_npi") or npi
     try:
         _ret = merge_referring(
             npi, surv_addr, loser_addr,
             survivor_defaults=_grid_fields(survivor),
             loser_defaults=[_grid_fields(l) for l in losers],
+            survivor_npi=(survivor_npi if survivor_npi != npi else None),
         )
-        print(f"[merge] merge_referring returned {_ret} tombstones for npi={npi}", flush=True)
+        print(f"[merge] merge_referring returned {_ret} tombstones for "
+              f"npi={npi} → survivor_npi={survivor_npi}", flush=True)
     except Exception as _e:
         print(f"[merge] merge_referring FAILED for npi={npi}: {_e}", flush=True)
         raise
@@ -6706,29 +6736,80 @@ def _rpm_npi_apply(n, review_data, row_data):
 
 
 def _fetch_referral_detail(npi, addr_key, name):
-    """Fetch referral detail rows for a given NPI + address key."""
+    """Fetch referral detail rows for a given (npi, addr_key) pair.
+
+    Uses the SAME hybrid ID + addr_key logic as _build_rpm_grid_data so
+    drill-down works for every kind of row the manager grid shows:
+    real NPIs, state-license IDs (DoctorId like "A02637"), name-synthesized
+    keys ("name:practitioner_unknown"), and the location-derived
+    addr_keys ("LOC:...") used for the Unknown bucket.
+    """
     from data.loader import load_referrals
-    ref = load_referrals()
+    from data.reviews_db import _addr_key as _ak_fn
+    ref = load_referrals().copy()
 
-    mask = ref["Referred By Prov NPI"].notna()
-    ref_npi = ref[mask].copy()
-    ref_npi["_npi"] = ref_npi["Referred By Prov NPI"].astype(float).astype(int).astype(str)
-    ref_npi = ref_npi[ref_npi["_npi"] == npi]
+    # Hybrid provider ID (NPI > cleaned DoctorId > name-synthesized fallback)
+    _npi_from_col = ref["Referred By Prov NPI"].apply(
+        lambda v: str(int(v)) if pd.notna(v) and float(v).is_integer() else ""
+    )
+    _npi_from_did = (ref.get("DoctorId", pd.Series("", index=ref.index))
+                     .astype(str).str.strip().str.split("/", n=1).str[0].str.strip())
+    _npi_from_did = _npi_from_did.where(
+        ~_npi_from_did.str.lower().isin({"nan", "none", "null", "", "unknown"}), ""
+    )
+    _npi_base = _npi_from_col.where(_npi_from_col != "", _npi_from_did)
+    _name_norm = (ref["Referred by Provider"].fillna("").astype(str).str.strip()
+                  .str.lower().str.replace(r"\s+", "_", regex=True))
+    _synthetic = "name:" + _name_norm.where(_name_norm != "", "_unknown")
+    ref["_npi"] = _npi_base.where(_npi_base != "", _synthetic)
 
-    from data.reviews_db import _addr_key
-    ref_npi["_ak"] = ref_npi.apply(
-        lambda r: _addr_key(
-            str(r.get("Referring Provider City", "")),
-            str(r.get("Referring Provider State", "")),
-            str(r.get("Referring Provider Zip Code", "")),
+    # Hybrid addr_key (city|state|zip > LOC: fallback for the Unknown bucket).
+    # Normalize the address columns first so NaN/None becomes "" and the
+    # blank-address rows resolve to addr_key="" — matches what
+    # _build_rpm_grid_data does. Skipping this gave "NONE|NONE|NONE" and the
+    # drill-down silently returned 0 rows for anything without a real address.
+    for _col in ("Referring Provider City", "Referring Provider State", "Referring Provider Zip Code"):
+        if _col in ref.columns:
+            ref[_col] = ref[_col].fillna("").astype(str).str.strip()
+    ref["_ak"] = ref.apply(
+        lambda r: _ak_fn(
+            r.get("Referring Provider City", ""),
+            r.get("Referring Provider State", ""),
+            r.get("Referring Provider Zip Code", ""),
         ), axis=1,
     )
-    ref_npi = ref_npi[ref_npi["_ak"] == addr_key]
+    _loc_src = ref.get("Referred by Location", pd.Series("", index=ref.index)).fillna("").astype(str).str.strip()
+    _dep_src = ref.get("Referred by Department", pd.Series("", index=ref.index)).fillna("").astype(str).str.strip()
+    _loc_norm = (_loc_src.where(_loc_src != "", _dep_src)
+                 .str.upper().str.replace(r"\s+", "_", regex=True))
+    _patch = (ref["_npi"] == "name:_unknown") & (ref["_ak"] == "")
+    if _patch.any():
+        ref.loc[_patch, "_ak"] = (
+            "LOC:" + _loc_norm.where(_loc_norm != "", "UNKNOWN")
+        )[_patch]
 
-    cols = ["Created", "MRN", "Patient Name", "Rfl Prim Dx", "Diagnoses", "Status", "First Appt", "Days to First Appt"]
-    detail = ref_npi[[c for c in cols if c in ref_npi.columns]].copy()
+    # Apply merge tombstones so drilling into the survivor's row also returns
+    # all the loser's referrals that were merged into it (including cross-NPI).
+    try:
+        from data.reviews_db import get_referring_merge_map
+        _mm = get_referring_merge_map()
+    except Exception:
+        _mm = {}
+    if _mm:
+        _pairs = list(zip(ref["_npi"].tolist(), ref["_ak"].tolist()))
+        ref["_npi"] = [_mm.get(p, (p[0], p[1]))[0] for p in _pairs]
+        ref["_ak"]  = [_mm.get(p, (p[0], p[1]))[1] for p in _pairs]
 
-    for dc in ["Created", "First Appt"]:
+    detail_df = ref[(ref["_npi"] == npi) & (ref["_ak"] == addr_key)].copy()
+
+    cols = [
+        "Created", "MRN", "Patient Name",
+        "Referred by Provider", "Referred by Location", "Referred by Department",
+        "Rfl Prim Dx", "Diagnoses",
+        "Status", "First Appt", "Days to First Appt",
+    ]
+    detail = detail_df[[c for c in cols if c in detail_df.columns]].copy()
+    for dc in ("Created", "First Appt"):
         if dc in detail.columns:
             detail[dc] = detail[dc].dt.strftime("%m/%d/%Y").fillna("")
 

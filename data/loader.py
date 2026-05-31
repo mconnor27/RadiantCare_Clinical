@@ -1861,6 +1861,22 @@ def load_referrals():
                         ~_patch_mask,
                         "LOC:" + _loc_norm.where(_loc_norm != "", "UNKNOWN"),
                     )
+
+                # Apply merge tombstones: redirect (loser_npi, loser_addr_key)
+                # to (survivor_npi, survivor_addr_key). Supports cross-NPI
+                # merges where a provider's referrals roll into a DIFFERENT
+                # provider's row. Same pipeline as _build_rpm_grid_data.
+                try:
+                    from data.reviews_db import get_referring_merge_map
+                    _merge_map = get_referring_merge_map()
+                except Exception:
+                    _merge_map = {}
+                if _merge_map:
+                    _key_pairs = list(zip(_npi_col.tolist(), _ak.tolist()))
+                    _new_npi = [_merge_map.get(p, (p[0], p[1]))[0] for p in _key_pairs]
+                    _new_ak  = [_merge_map.get(p, (p[0], p[1]))[1] for p in _key_pairs]
+                    _npi_col = pd.Series(_new_npi, index=df.index)
+                    _ak      = pd.Series(_new_ak,  index=df.index)
                 _row_key = _npi_col + "|" + _ak
                 from config.specialties import (
                     normalize_specialty as _norm_ov_spec,

@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS referring_physicians (
     source        TEXT NOT NULL DEFAULT 'manual',
     reviewed      INTEGER NOT NULL DEFAULT 0,
     merged_into_address_key TEXT,
+    merged_into_npi TEXT,
     updated_at    TEXT NOT NULL,
     updated_by    TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (npi, address_key)
@@ -284,6 +285,13 @@ def _ensure_table():
                 "ALTER TABLE referring_physicians ADD COLUMN IF NOT EXISTS "
                 "display_name TEXT"
             )
+            # Cross-NPI merge support: when set on a tombstone, the redirect
+            # points to a DIFFERENT NPI (not just a different address_key on
+            # the same provider). NULL means same-NPI tombstone (legacy).
+            conn.execute(
+                "ALTER TABLE referring_physicians ADD COLUMN IF NOT EXISTS "
+                "merged_into_npi TEXT"
+            )
         return
 
     # SQLite path (unchanged behaviour)
@@ -321,6 +329,8 @@ def _ensure_table():
                 pass
         if "display_name" not in rp_cols:
             conn.execute("ALTER TABLE referring_physicians ADD COLUMN display_name TEXT")
+        if "merged_into_npi" not in rp_cols:
+            conn.execute("ALTER TABLE referring_physicians ADD COLUMN merged_into_npi TEXT")
         pm_cols = [r[1] for r in conn.execute("PRAGMA table_info(payor_mappings)").fetchall()]
         if "phdsc_category" not in pm_cols:
             conn.execute("ALTER TABLE payor_mappings ADD COLUMN phdsc_category TEXT NOT NULL DEFAULT '9'")
@@ -577,34 +587,40 @@ def merge_referring(
     loser_address_keys: list[str],
     survivor_defaults: dict | None = None,
     loser_defaults: list[dict] | None = None,
+    survivor_npi: str | None = None,
 ) -> int:
     """Merge multiple (npi, address_key) rows into the survivor.
 
-    - The survivor row is upserted with merged values: its own non-blank fields
-      win; blanks are filled by the first non-blank value from any loser. Works
-      even when no DB row exists for the survivor yet — pass survivor_defaults
-      with the grid's in-memory values so we have something to seed from.
-    - Each loser gets a TOMBSTONE row with ``merged_into_address_key = survivor``
-      rather than a DELETE. The grid builder uses this map to redirect referral
-      aggregation away from the loser address_key, so the merge survives reload.
+    - Same-NPI by default: pass ``npi`` as the shared provider ID, and the
+      losers are ``[(npi, addr_key), ...]`` for each addr_key in
+      ``loser_address_keys``. Survivor is ``(npi, survivor_address_key)``.
+    - Cross-NPI: pass ``survivor_npi`` distinct from ``npi`` to merge a
+      DIFFERENT-NPI loser into the survivor. The tombstones get
+      ``merged_into_npi`` set so the grid/loader redirect remaps both the
+      NPI AND the addr_key when aggregating referrals.
 
-    Args:
-        survivor_defaults: optional {field: value} from the grid row for the
-            survivor. Used for fields where no DB row exists.
-        loser_defaults: optional list of grid-row dicts for losers (must include
-            ``address_key``). Used to source field values when a loser has no
-            DB row.
+    - The survivor row is upserted with merged values: its own non-blank fields
+      win; blanks are filled by the first non-blank value from any loser.
+    - Each loser gets a TOMBSTONE row (no DELETE) with merged_into_address_key
+      and optionally merged_into_npi set. The grid builder skips tombstones in
+      the overrides map and uses the merge map to redirect referral aggregation
+      so the merge survives reload.
 
     Returns the number of loser tombstones written.
     """
     npi = str(npi)
+    survivor_npi = str(survivor_npi) if survivor_npi else npi
+    cross_npi = survivor_npi != npi
     # Coerce None → '' for address keys. Grid rows can carry None when a
     # row's address_key was nullified through Dash JSON serialization; if we
     # let that through, the tombstone INSERT writes merged_into=NULL and the
     # row stops looking like a tombstone (it gets filtered out of the merge map).
     survivor_address_key = survivor_address_key or ""
     loser_address_keys = [k or "" for k in loser_address_keys]
-    losers = [k for k in loser_address_keys if k != survivor_address_key]
+    # For same-NPI merges, drop any loser key equal to the survivor's. For
+    # cross-NPI merges keep them — the loser and survivor are different rows.
+    losers = (loser_address_keys if cross_npi
+              else [k for k in loser_address_keys if k != survivor_address_key])
     if not losers:
         return 0
 
@@ -619,7 +635,7 @@ def merge_referring(
             "SELECT specialty, institution, address, city, state, zip_code, "
             "address_source, source, reviewed "
             "FROM referring_physicians WHERE npi = ? AND address_key = ?",
-            (npi, survivor_address_key),
+            (survivor_npi, survivor_address_key),
         ).fetchone()
 
         loser_rows = conn.execute(
@@ -684,7 +700,7 @@ def merge_referring(
                    address_source = excluded.address_source,
                    reviewed       = excluded.reviewed,
                    updated_at     = excluded.updated_at""",
-            (npi, survivor_address_key,
+            (survivor_npi, survivor_address_key,
              merged["specialty"] or None, merged["institution"] or None,
              merged["address"] or "", merged["city"] or "",
              merged["state"] or "", merged["zip_code"] or "",
@@ -692,17 +708,21 @@ def merge_referring(
         )
 
         # Tombstone each loser. Keep any existing fields so an unmerge is
-        # possible later; only flip merged_into_address_key.
+        # possible later; only flip merged_into_address_key (and
+        # merged_into_npi for cross-NPI merges).
+        merged_into_npi_val = survivor_npi if cross_npi else None
         count = 0
         for lk in losers:
             conn.execute(
                 """INSERT INTO referring_physicians
-                   (npi, address_key, merged_into_address_key, source, updated_at, updated_by)
-                   VALUES (?, ?, ?, 'merge', ?, '')
+                   (npi, address_key, merged_into_address_key, merged_into_npi,
+                    source, updated_at, updated_by)
+                   VALUES (?, ?, ?, ?, 'merge', ?, '')
                    ON CONFLICT(npi, address_key) DO UPDATE SET
                        merged_into_address_key = excluded.merged_into_address_key,
-                       updated_at = excluded.updated_at""",
-                (npi, lk, survivor_address_key, now),
+                       merged_into_npi         = excluded.merged_into_npi,
+                       updated_at              = excluded.updated_at""",
+                (npi, lk, survivor_address_key, merged_into_npi_val, now),
             )
             count += 1
 
@@ -710,20 +730,29 @@ def merge_referring(
     return count
 
 
-def get_referring_merge_map() -> dict[tuple[str, str], str]:
-    """Return {(npi, loser_address_key): survivor_address_key} for all
-    merge tombstones. Used by the grid builder to redirect aggregation.
+def get_referring_merge_map() -> dict[tuple[str, str], tuple[str, str]]:
+    """Return {(loser_npi, loser_address_key): (survivor_npi, survivor_address_key)}
+    for all merge tombstones. Used by the grid builder and the loader to
+    redirect referral aggregation.
 
     A tombstone row has merged_into_address_key IS NOT NULL. The survivor
-    value itself may be '' (when the survivor has no city/state/zip in source).
+    address_key may be '' (when the survivor has no city/state/zip in source).
+    `merged_into_npi` is NULL on same-NPI tombstones (most cases) — those
+    fall back to the loser's own NPI so the redirect is a simple addr_key swap.
     """
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT npi, address_key, merged_into_address_key "
+            "SELECT npi, address_key, merged_into_address_key, merged_into_npi "
             "FROM referring_physicians "
             "WHERE merged_into_address_key IS NOT NULL"
         ).fetchall()
-    return {(r["npi"], r["address_key"]): r["merged_into_address_key"] for r in rows}
+    return {
+        (r["npi"], r["address_key"]): (
+            r["merged_into_npi"] or r["npi"],
+            r["merged_into_address_key"],
+        )
+        for r in rows
+    }
 
 
 def referring_table_is_empty() -> bool:
