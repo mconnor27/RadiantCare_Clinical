@@ -1836,7 +1836,7 @@ def load_referrals():
                       .fillna("").astype(str).str.strip()
                       .str.lower().str.replace(r"\s+", "_", regex=True)
                 )
-                _synthetic = "name:" + _name_norm.where(_name_norm != "", "_anonymous")
+                _synthetic = "name:" + _name_norm.where(_name_norm != "", "_unknown")
                 _npi_col = _npi_base.where(_npi_base != "", _synthetic)
                 _city = df.get("Referring Provider City", pd.Series("", index=df.index)).fillna("").astype(str)
                 _state = df.get("Referring Provider State", pd.Series("", index=df.index)).fillna("").astype(str)
@@ -1845,6 +1845,22 @@ def load_referrals():
                     [_addr_key(c, s, z) for c, s, z in zip(_city, _state, _zip)],
                     index=df.index,
                 )
+                # Same location-derived addr_key patch as _build_rpm_grid_data
+                # so overrides keyed on "LOC:..." match here.
+                _loc_src = df.get(
+                    "Referred by Location", pd.Series("", index=df.index)
+                ).fillna("").astype(str).str.strip()
+                _dep_src = df.get(
+                    "Referred by Department", pd.Series("", index=df.index)
+                ).fillna("").astype(str).str.strip()
+                _loc_norm = (_loc_src.where(_loc_src != "", _dep_src)
+                             .str.upper().str.replace(r"\s+", "_", regex=True))
+                _patch_mask = (_npi_col == "name:_unknown") & (_ak == "")
+                if _patch_mask.any():
+                    _ak = _ak.where(
+                        ~_patch_mask,
+                        "LOC:" + _loc_norm.where(_loc_norm != "", "UNKNOWN"),
+                    )
                 _row_key = _npi_col + "|" + _ak
                 from config.specialties import (
                     normalize_specialty as _norm_ov_spec,

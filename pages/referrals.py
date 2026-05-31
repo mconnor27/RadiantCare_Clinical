@@ -4873,11 +4873,13 @@ def _build_rpm_grid_data() -> tuple[list[dict], str]:
     # Name fallback: when there's no usable NPI or DoctorId, key the row by
     # the provider name. Lets named-but-ID-less providers (~15 in current
     # data: Xiang Xie, Lora Sherman, Practitioner Unknown, etc.) stay visible
-    # and curatable instead of collapsing into one phantom row, and gives a
-    # single explicit bucket for truly anonymous referrals ("name:_anonymous").
+    # and curatable instead of collapsing into one phantom row. Truly
+    # nameless rows go under one synthetic "name:_unknown" provider; their
+    # rows are then split by Referred-by-Location below so the user still
+    # gets distinct rows per clinic to curate.
     _name_norm = (ref["Referred by Provider"].fillna("").astype(str).str.strip()
                   .str.lower().str.replace(r"\s+", "_", regex=True))
-    _synthetic = "name:" + _name_norm.where(_name_norm != "", "_anonymous")
+    _synthetic = "name:" + _name_norm.where(_name_norm != "", "_unknown")
     ref["_npi"] = _npi_base.where(_npi_base != "", _synthetic)
 
     if ref.empty:
@@ -4892,6 +4894,23 @@ def _build_rpm_grid_data() -> tuple[list[dict], str]:
         lambda r: _addr_key(r["Referring Provider City"], r["Referring Provider State"], r["Referring Provider Zip Code"]),
         axis=1,
     )
+
+    # For the unidentified-provider bucket ("name:_unknown") the source CSV
+    # has no city/state/zip — every row would collapse to an empty addr_key
+    # and the manager would show ONE row aggregating all the orphaned
+    # referrals. Derive a synthetic addr_key from Referred by Location (or
+    # Department as fallback) so each distinct referring clinic gets its own
+    # row, separately curatable for institution / specialty.
+    if "Referred by Location" in ref.columns or "Referred by Department" in ref.columns:
+        _loc_src = ref.get("Referred by Location", pd.Series("", index=ref.index)).fillna("").astype(str).str.strip()
+        _dep_src = ref.get("Referred by Department", pd.Series("", index=ref.index)).fillna("").astype(str).str.strip()
+        _loc_norm = (_loc_src.where(_loc_src != "", _dep_src)
+                     .str.upper().str.replace(r"\s+", "_", regex=True))
+        _patch_mask = (ref["_npi"] == "name:_unknown") & (ref["_addr_key"] == "")
+        if _patch_mask.any():
+            ref.loc[_patch_mask, "_addr_key"] = (
+                "LOC:" + _loc_norm.where(_loc_norm != "", "UNKNOWN")
+            )[_patch_mask]
 
     # Apply merge tombstones from DB: redirect any (npi, loser_addr_key) to
     # its survivor before aggregating. Keeps merged rows from reappearing
@@ -4988,11 +5007,21 @@ def _build_rpm_grid_data() -> tuple[list[dict], str]:
 
         full_address = ", ".join(p for p in [addr, city, state, zip_c] if p)
 
+        # For the unidentified-provider bucket, show "Unknown" in the Name
+        # column (the underlying source CSV had no name) and surface the
+        # location-derived addr_key suffix as the displayed full_address so
+        # the user can tell which clinic these orphaned referrals came from.
+        _name_val = display_name_override or r["name"]
+        if not _name_val and str(npi) == "name:_unknown":
+            _name_val = "Unknown"
+        if not full_address and str(addr_k).startswith("LOC:"):
+            full_address = "(from: " + addr_k[4:].replace("_", " ").title() + ")"
+
         rows.append({
             "npi": npi,
             "address_key": addr_k,
             "row_key": row_key,
-            "name": display_name_override or r["name"],
+            "name": _name_val,
             "name_raw": r.get("name_raw") or r["name"],
             "department": r["department"],
             "address": addr,
