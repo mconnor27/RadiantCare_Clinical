@@ -1705,19 +1705,21 @@ def _prepare_technique_dist_data(dff, date_col, start=None, end=None, date_mode=
             if use_census:
                 # Census: count each course in every period it's active
                 period_range = pd.date_range(start, end, freq="D")
-                all_periods = sorted(
-                    period_range.to_period(period_code).to_timestamp().unique()
-                )
+                periods_pd = sorted(period_range.to_period(period_code).unique())
+                all_periods = [p.to_timestamp() for p in periods_pd]
+                period_bounds = [
+                    (p.to_timestamp().to_numpy(), p.to_timestamp(how="end").to_numpy())
+                    for p in periods_pd
+                ]
 
                 ft = src_df["FirstTreatmentDate"].values
                 lt = src_df["LastTreatmentDate"].fillna(src_df["FirstTreatmentDate"]).values
                 techs = src_df["_techs"].values
 
-                # For each period, count active courses per technique
+                # For each period, count courses overlapping its full interval
                 rows = []
-                for p in all_periods:
-                    p_np = p.to_numpy()
-                    active = (ft <= p_np) & (lt >= p_np)
+                for p, (p_start, p_end) in zip(all_periods, period_bounds):
+                    active = (ft <= p_end) & (lt >= p_start)
                     for tech in ordered:
                         count = int((active & (techs == tech)).sum())
                         rows.append((p, tech, count))
@@ -1985,20 +1987,23 @@ def _prepare_volume_data(dff, agg, slice_by="", date_col="CourseStartDate", c2b=
         # Build period boundaries using to_period for consistent week alignment
         # with other charts (Monday-start weeks)
         period_range = pd.date_range(start, end, freq="D")
-        all_periods = sorted(
-            period_range.to_period(period_code).to_timestamp().unique()
-        )
+        periods_pd = sorted(period_range.to_period(period_code).unique())
+        all_periods = [p.to_timestamp() for p in periods_pd]
         dates = [d.isoformat() for d in all_periods]
+        # Count courses overlapping each period's full interval, not just those
+        # active at the period's start instant — otherwise a yearly bar reflects
+        # only courses on-beam on Jan 1 rather than all courses treated that year.
+        starts_np = [p.to_timestamp().to_numpy() for p in periods_pd]
+        ends_np = [p.to_timestamp(how="end").to_numpy() for p in periods_pd]
 
         ft = dff["FirstTreatmentDate"].values
         lt = dff["LastTreatmentDate"].fillna(dff["FirstTreatmentDate"]).values
 
         def _census_counts(sub_ft, sub_lt):
-            """Count courses active at each period start."""
+            """Count courses whose treatment overlapped each period interval."""
             counts = []
-            for p in all_periods:
-                p_np = p.to_numpy()
-                counts.append(int(((sub_ft <= p_np) & (sub_lt >= p_np)).sum()))
+            for p_start, p_end in zip(starts_np, ends_np):
+                counts.append(int(((sub_ft <= p_end) & (sub_lt >= p_start)).sum()))
             return counts
 
         series = []
