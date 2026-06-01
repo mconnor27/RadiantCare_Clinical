@@ -1795,6 +1795,11 @@ layout = dmc.Stack(
         ),
         # RPM stores and interval
         dcc.Store(id=f"{PAGE_ID}-rpm-grid-full-store", data=None),
+        # Authoritative institutions catalog (from the DB), mirrored into
+        # window.__rpmInstitutions for the InstitutionEditor autocomplete.
+        # Sourcing from here (not the inst-grid) means toolbar filters like
+        # "Unreviewed only" don't shrink the autocomplete options.
+        dcc.Store(id=f"{PAGE_ID}-rpm-institutions-catalog", data=[]),
         dcc.Store(id=f"{PAGE_ID}-rpm-inst-pending", data=None),
         dmc.Modal(
             id=f"{PAGE_ID}-rpm-inst-confirm",
@@ -2661,10 +2666,15 @@ def _build_referral_map(geo_df, departments_filter, selected_dept="All",
                     all_cd.extend([cd] * len(arc_lats) + [None])
 
             color = DEPARTMENT_COLORS.get(dept, CHART_COLORWAY[0])
+            # customdata is intentionally OMITTED here. With hoverinfo="text"
+            # it's never read, and the mixed list-vs-None elements appear to
+            # silently break Scattermapbox line rendering in Plotly 6.7.0
+            # (post-mapbox-deprecation). Markers worked because they don't
+            # carry None elements in their customdata.
             fig.add_trace(go.Scattermapbox(
                 lat=all_lats, lon=all_lons,
                 mode="lines", line=dict(width=2.5, color=color),
-                opacity=0.4, customdata=all_cd,
+                opacity=0.4,
                 text=all_text, hoverinfo="text", showlegend=False,
             ))
 
@@ -6402,6 +6412,36 @@ def _rpm_inst_delete(renderer_data, row_data):
     )
     inst_rows, inst_count = _build_inst_grid_data(row_data)
     return row_data, stats, inst_rows, inst_count
+
+
+# --- Populate the authoritative institutions catalog store from the DB
+# whenever the manager opens or an institution-affecting action fires.
+# Sourcing from get_all_institutions() (not the inst-grid built from
+# physician rows) means toolbar filters like "Unreviewed only" or
+# "Duplicate NPIs only" can't shrink the autocomplete options.
+@callback(
+    Output(f"{PAGE_ID}-rpm-institutions-catalog", "data"),
+    Input(f"{PAGE_ID}-rpm-modal", "opened"),
+    Input(f"{PAGE_ID}-rpm-inst-grid", "rowData"),
+)
+def _rpm_load_institutions_catalog(opened, _inst_rowdata_trigger):
+    from data.reviews_db import get_all_institutions
+    try:
+        return sorted(get_all_institutions())
+    except Exception:
+        return []
+
+
+# --- Mirror the catalog store into a JS global so the InstitutionEditor
+# autocomplete (dagcomponentfuncs.js) reads from it directly.
+clientside_callback(
+    """function(catalog) {
+        window.__rpmInstitutions = (catalog || []).filter(function (n) { return !!n; });
+        return window.dash_clientside.no_update;
+    }""",
+    Output(f"{PAGE_ID}-rpm-institutions-catalog", "id"),
+    Input(f"{PAGE_ID}-rpm-institutions-catalog", "data"),
+)
 
 
 # --- Institution export ---

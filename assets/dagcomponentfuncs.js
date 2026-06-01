@@ -687,8 +687,16 @@ dagcomponentfuncs.InstitutionEditor = function (props) {
     var _o = React.useState(true);
     var open = _o[0], setOpen = _o[1];
 
-    // Gather all unique institutions from the grid
+    // Gather all known institutions. Primary source: the institutions
+    // catalog mirrored into window.__rpmInstitutions by the clientside
+    // callback in pages/referrals.py (populated when the Institutions tab
+    // grid loads). Fallback: scan provider-grid rows. The catalog includes
+    // unassigned institutions; scanning grid rows misses those entirely.
     var allInstitutions = React.useMemo(function () {
+        var fromCatalog = window.__rpmInstitutions;
+        if (fromCatalog && fromCatalog.length) {
+            return fromCatalog.slice().sort();
+        }
         var insts = [];
         var seen = {};
         if (props.api) {
