@@ -1510,11 +1510,11 @@ layout = dmc.Stack(
                                         {"field": "first_referral", "headerName": "First", "flex": 0.5,
                                          "minWidth": 100,
                                          "filter": "agTextColumnFilter",
-                                         "comparator": {"function": "dagfuncs.compareMDY(valueA, valueB)"}},
+                                         "valueFormatter": {"function": "dagfuncs.fmtISO(value)"}},
                                         {"field": "last_referral", "headerName": "Last", "flex": 0.5,
                                          "minWidth": 100,
                                          "filter": "agTextColumnFilter",
-                                         "comparator": {"function": "dagfuncs.compareMDY(valueA, valueB)"}},
+                                         "valueFormatter": {"function": "dagfuncs.fmtISO(value)"}},
                                         {"field": "reviewed", "headerName": "Reviewed", "flex": 0.4,
                                          "cellDataType": "boolean",
                                          "editable": True,
@@ -1804,7 +1804,7 @@ layout = dmc.Stack(
                                             id=f"{PAGE_ID}-rpm-diag-detail-grid",
                                             columnDefs=apply_phi_grid_rules([
                                                 {"field": "Created", "headerName": "Date", "flex": 0.6, "sort": "desc",
-                                                 "comparator": {"function": "dagfuncs.compareMDY(valueA, valueB)"}},
+                                                 "valueFormatter": {"function": "dagfuncs.fmtISO(value)"}},
                                                 {"field": "Source", "headerName": "Source", "flex": 0.5,
                                                  "filter": "agTextColumnFilter",
                                                  "cellStyle": {"function":
@@ -4984,15 +4984,11 @@ def _build_rpm_grid_data() -> tuple[list[dict], str]:
     # supports cross-NPI merges (the redirect can rewrite the NPI too).
     merge_map = get_referring_merge_map()
     if merge_map:
-        def _redirect_npi(row):
-            k = (row["_npi"], row["_addr_key"])
-            return merge_map[k][0] if k in merge_map else row["_npi"]
-        def _redirect_ak(row):
-            k = (row["_npi"], row["_addr_key"])
-            return merge_map[k][1] if k in merge_map else row["_addr_key"]
-        # Snapshot _npi first so the addr_key redirect uses the pre-rewrite npi.
-        new_npi = ref.apply(_redirect_npi, axis=1)
-        new_ak = ref.apply(_redirect_ak, axis=1)
+        new_npi, new_ak = [], []
+        for _n, _a in zip(ref["_npi"], ref["_addr_key"]):
+            rn, ra = merge_map.get((_n, _a), (_n, _a))
+            new_npi.append(rn)
+            new_ak.append(ra)
         ref["_npi"] = new_npi
         ref["_addr_key"] = new_ak
     ref["_row_key"] = ref["_npi"] + "|" + ref["_addr_key"]
@@ -5109,8 +5105,8 @@ def _build_rpm_grid_data() -> tuple[list[dict], str]:
             "institution": inst,
             "source": source,
             "patient_count": int(r["referral_count"]),
-            "first_referral": r["first_referral"].strftime("%m/%d/%Y") if pd.notna(r.get("first_referral")) else "",
-            "last_referral": r["last_referral"].strftime("%m/%d/%Y") if pd.notna(r.get("last_referral")) else "",
+            "first_referral": r["first_referral"].strftime("%Y-%m-%d") if pd.notna(r.get("first_referral")) else "",
+            "last_referral": r["last_referral"].strftime("%Y-%m-%d") if pd.notna(r.get("last_referral")) else "",
             "reviewed": reviewed,
         })
 
@@ -7641,8 +7637,10 @@ def _rpm_diag_show_detail(store_data, close_clicks):
 
     detail = pd.concat(frames, ignore_index=True)
     if "Created" in detail.columns:
+        # ISO so the grid (and this server-side sort) order chronologically;
+        # the column's valueFormatter renders it back as MM/DD/YYYY.
         detail["Created"] = pd.to_datetime(detail["Created"], errors="coerce") \
-            .dt.strftime("%m/%d/%Y").fillna("")
+            .dt.strftime("%Y-%m-%d").fillna("")
     detail = detail.sort_values("Created", ascending=False, na_position="last")
 
     label = f"ICD {icd_code}" if icd_code else f"\"{description[:50]}\""

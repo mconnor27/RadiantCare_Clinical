@@ -23,34 +23,18 @@ dagfuncs.setPopupParent = function () {
 
 
 /**
- * Parse an "MM/DD/YYYY" string into a sortable YYYYMMDD integer.
- * Returns null for blank/unparseable values.
+ * Display formatter for date columns stored as ISO "YYYY-MM-DD" strings.
+ * Renders them as "MM/DD/YYYY" for the user while the underlying ISO value
+ * sorts chronologically with AG Grid's default (lexical) comparator — so the
+ * grid sorts dates correctly without a custom comparator (dash-ag-grid's
+ * function-string wrapper doesn't expose AG Grid's valueA/valueB to a
+ * comparator, so that path silently no-ops). Blank → en-dash.
  */
-dagfuncs._parseMDY = function (s) {
-    if (!s || typeof s !== "string") return null;
-    var parts = s.split("/");
-    if (parts.length !== 3) return null;
-    var m = parseInt(parts[0], 10);
-    var d = parseInt(parts[1], 10);
-    var y = parseInt(parts[2], 10);
-    if (isNaN(m) || isNaN(d) || isNaN(y)) return null;
-    return y * 10000 + m * 100 + d;
-};
-
-
-/**
- * Comparator for columns holding "MM/DD/YYYY" date strings. Sorts
- * chronologically instead of lexically (the default text sort compares the
- * MM/DD prefix first, so 01/02/2026 wrongly precedes 01/03/2015). Blanks
- * sort to the bottom of an ascending list.
- */
-dagfuncs.compareMDY = function (a, b) {
-    var pa = dagfuncs._parseMDY(a);
-    var pb = dagfuncs._parseMDY(b);
-    if (pa === null && pb === null) return 0;
-    if (pa === null) return 1;
-    if (pb === null) return -1;
-    return pa - pb;
+dagfuncs.fmtISO = function (value) {
+    if (!value || typeof value !== "string") return "–";
+    var p = value.split("-");
+    if (p.length !== 3) return value;
+    return p[1] + "/" + p[2] + "/" + p[0];
 };
 
 

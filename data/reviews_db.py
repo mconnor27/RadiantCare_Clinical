@@ -420,10 +420,53 @@ def get_all_course_reviews() -> dict[str, str]:
 # Referring physician overrides
 # ---------------------------------------------------------------------------
 
+def _canon_zip(z) -> str:
+    """Canonicalize a ZIP to its 5-digit form (drops the +4 extension).
+
+    `98104` and `98104-1336` are the same office; keeping the +4 fragments one
+    provider into multiple (npi, address_key) rows that survive merges only
+    until the next data refresh delivers the other variant. Non-US / malformed
+    zips fall back to whitespace-normalized upper.
+    """
+    s = str(z).strip()
+    m = re.match(r"(\d{5})", s.replace("-", "").replace(" ", ""))
+    if m:
+        return m.group(1)
+    return re.sub(r"\s+", " ", s).upper()
+
+
 def _addr_key(city: str = "", state: str = "", zip_code: str = "") -> str:
-    """Build a normalized address key from city/state/zip for composite PK."""
-    parts = [str(p).strip().upper() for p in (city, state, zip_code) if p and str(p).strip() and str(p) != "nan"]
+    """Build a normalized address key from city/state/zip for composite PK.
+
+    City/state are whitespace-collapsed + upper-cased; zip is canonicalized to
+    5 digits so trivial variants of the same address share one key.
+    """
+    parts = []
+    for p in (city, state):
+        p = str(p).strip()
+        if p and p.lower() != "nan":
+            parts.append(re.sub(r"\s+", " ", p).upper())
+    z = _canon_zip(zip_code) if (zip_code and str(zip_code).strip().lower() != "nan") else ""
+    if z:
+        parts.append(z)
     return "|".join(parts) if parts else ""
+
+
+def _canon_addr_key(key) -> str:
+    """Canonicalize an existing address_key STRING (not city/state/zip parts).
+
+    Used by the migration to bring stored keys / merge pointers in line with the
+    new `_addr_key`: each '|'-separated token is whitespace-normalized + upper,
+    and any zip-like token is truncated to 5 digits. Idempotent.
+    """
+    if key is None:
+        return None
+    out = []
+    for tok in str(key).split("|"):
+        tok = re.sub(r"\s+", " ", tok.strip()).upper()
+        m = re.match(r"^(\d{5})\d*$", tok.replace("-", ""))
+        out.append(m.group(1) if m else tok)
+    return "|".join(out)
 
 
 def upsert_referring(
@@ -753,6 +796,111 @@ def get_referring_merge_map() -> dict[tuple[str, str], tuple[str, str]]:
         )
         for r in rows
     }
+
+
+_ADDR_COLS_NOT_NULL = ("address", "city", "state", "zip_code", "address_source")
+
+
+def _merge_field_dicts(a: dict, b: dict) -> dict:
+    """Combine two non-tombstone rows that collide on the canonical key.
+
+    Prefer non-empty values and curated (non-'lookup') provenance; OR the
+    reviewed flag; keep the latest updated_at.
+    """
+    out = dict(a)
+    for f in ("specialty", "institution", "address", "city", "state", "zip_code",
+              "display_name", "address_source"):
+        if not (out.get(f) or "").strip() and (b.get(f) or "").strip():
+            out[f] = b[f]
+    rank = {"": 0, "lookup": 1, "course": 1, "cv": 1, "ai": 2, "claude_ai": 2,
+            "manual": 3, "merge": 3}
+    if rank.get(b.get("source", ""), 0) > rank.get(out.get("source", ""), 0):
+        out["source"] = b["source"]
+    out["reviewed"] = bool(a.get("reviewed")) or bool(b.get("reviewed"))
+    if (b.get("updated_at") or "") > (out.get("updated_at") or ""):
+        out["updated_at"] = b["updated_at"]
+    return out
+
+
+def migrate_addr_keys_to_canonical() -> dict:
+    """One-time: rewrite address_key / merged_into pointers to canonical form
+    (zip5, normalized whitespace), merging rows that now collide.
+
+    Idempotent — a no-op once all keys are already canonical. Rebuilds the
+    table inside a single transaction (the caller should back up first).
+    """
+    with _connect() as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT npi, address_key, display_name, specialty, institution, "
+            "address, city, state, zip_code, address_source, source, reviewed, "
+            "merged_into_address_key, merged_into_npi, updated_at, updated_by "
+            "FROM referring_physicians"
+        ).fetchall()]
+
+    changed = False
+    real: dict[tuple, dict] = {}   # (npi, new_key) -> merged row
+    tomb: dict[tuple, tuple] = {}  # (npi, new_key) -> (target_npi, target_key)
+    for r in rows:
+        nk = _canon_addr_key(r["address_key"])
+        if nk != r["address_key"]:
+            changed = True
+        if r["merged_into_address_key"] is not None:
+            nm = _canon_addr_key(r["merged_into_address_key"])
+            if nm != r["merged_into_address_key"]:
+                changed = True
+            tnpi = r["merged_into_npi"] or r["npi"]
+            # Loser key now equals its survivor → redundant self-redirect, drop.
+            if tnpi == r["npi"] and nm == nk:
+                changed = True
+                continue
+            tomb[(r["npi"], nk)] = (tnpi, nm)
+        else:
+            r2 = dict(r)
+            r2["address_key"] = nk
+            if r.get("zip_code"):
+                r2["zip_code"] = _canon_zip(r["zip_code"])
+            key = (r["npi"], nk)
+            real[key] = _merge_field_dicts(real[key], r2) if key in real else r2
+
+    # A key that is both a tombstone (redirect away) and a real row: redirect
+    # wins; fold the real row's curated fields into the survivor target.
+    for key in list(real.keys()):
+        if key in tomb:
+            changed = True
+            tgt = tomb[key]
+            if tgt in real:
+                real[tgt] = _merge_field_dicts(real[tgt], real[key])
+            del real[key]
+
+    if not changed:
+        return {"changed": False, "real": len(real), "tombstones": len(tomb)}
+
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute("DELETE FROM referring_physicians")
+        for (npi, k), r in real.items():
+            conn.execute(
+                "INSERT INTO referring_physicians "
+                "(npi, address_key, display_name, specialty, institution, address, "
+                " city, state, zip_code, address_source, source, reviewed, "
+                " merged_into_address_key, merged_into_npi, updated_at, updated_by) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,?,?)",
+                (npi, k, r.get("display_name"), r.get("specialty"), r.get("institution"),
+                 *(r.get(c) or "" for c in _ADDR_COLS_NOT_NULL),
+                 r.get("source") or "", 1 if r.get("reviewed") else 0,
+                 r.get("updated_at") or now, r.get("updated_by") or ""),
+            )
+        for (npi, k), (tnpi, tk) in tomb.items():
+            mi_npi = tnpi if tnpi != npi else None
+            conn.execute(
+                "INSERT INTO referring_physicians "
+                "(npi, address_key, merged_into_address_key, merged_into_npi, "
+                " source, updated_at, updated_by) VALUES (?,?,?,?,'merge',?,'')",
+                (npi, k, tk, mi_npi, now),
+            )
+    _invalidate_referrals_cache()
+    return {"changed": True, "before": len(rows),
+            "real": len(real), "tombstones": len(tomb)}
 
 
 def referring_table_is_empty() -> bool:
