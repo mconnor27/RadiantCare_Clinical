@@ -873,6 +873,24 @@ def categorise_free_text(text) -> str | None:
     return None
 
 
+# Free-text markers of malignancy. Deliberately conservative — matches the
+# unambiguous cancer terms ("malignant ...", "carcinoma", "sarcoma", etc.) and
+# not bare "neoplasm"/"tumor" (which may be benign). Used to flag referrals
+# whose patient-level ``Onc Dx`` indicates cancer even though the referral's own
+# diagnosis code resolved to a symptom or benign entry.
+_MALIGNANT_RE = _re.compile(
+    r"\b(cancer|carcinom\w*|malignan\w*|sarcoma|lymphoma|leukem\w*|melanoma"
+    r"|myeloma|mesothelioma|glioblastoma|gliom\w*|blastoma|seminoma|astrocytoma"
+    r"|adenocarcinoma|cholangiocarcinoma|metasta\w*)\b", _re.I)
+
+
+def is_malignant_text(text) -> bool:
+    """True when a free-text diagnosis clearly denotes a malignancy."""
+    if pd.isna(text) or not str(text).strip():
+        return False
+    return bool(_MALIGNANT_RE.search(str(text)))
+
+
 # ---------------------------------------------------------------------------
 # Referral-specific cascade
 # ---------------------------------------------------------------------------

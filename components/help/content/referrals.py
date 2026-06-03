@@ -211,6 +211,19 @@ UI_CONTENT = dmc.Stack(
                     "\"uret\", etc.) because ARIA free-text is inconsistent.",
                     size="xs", c="dimmed", mt="xs",
                 ),
+                dmc.Text(
+                    "\"Onc Dx\" is a patient-level field (the oncologic "
+                    "diagnosis on record), used only as a last-resort safety "
+                    "net — it never overrides a referral-specific code or text. "
+                    "Because a vague referral (e.g. \"kidney pain\") can hide a "
+                    "clear cancer on the Onc Dx, the Diagnosis Manager now "
+                    "surfaces the contributing Onc Dx values in their own "
+                    "column and raises a \"⚠ Review\" Flag whenever the Onc Dx "
+                    "indicates a malignancy but the resolved diagnosis is a "
+                    "symptom or benign / non-neoplasm code. Flagged rows are "
+                    "for manual review — nothing is recategorized automatically.",
+                    size="xs", c="dimmed", mt="xs",
+                ),
             ],
         ),
 

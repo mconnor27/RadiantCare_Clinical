@@ -23,6 +23,38 @@ dagfuncs.setPopupParent = function () {
 
 
 /**
+ * Parse an "MM/DD/YYYY" string into a sortable YYYYMMDD integer.
+ * Returns null for blank/unparseable values.
+ */
+dagfuncs._parseMDY = function (s) {
+    if (!s || typeof s !== "string") return null;
+    var parts = s.split("/");
+    if (parts.length !== 3) return null;
+    var m = parseInt(parts[0], 10);
+    var d = parseInt(parts[1], 10);
+    var y = parseInt(parts[2], 10);
+    if (isNaN(m) || isNaN(d) || isNaN(y)) return null;
+    return y * 10000 + m * 100 + d;
+};
+
+
+/**
+ * Comparator for columns holding "MM/DD/YYYY" date strings. Sorts
+ * chronologically instead of lexically (the default text sort compares the
+ * MM/DD prefix first, so 01/02/2026 wrongly precedes 01/03/2015). Blanks
+ * sort to the bottom of an ascending list.
+ */
+dagfuncs.compareMDY = function (a, b) {
+    var pa = dagfuncs._parseMDY(a);
+    var pb = dagfuncs._parseMDY(b);
+    if (pa === null && pb === null) return 0;
+    if (pa === null) return 1;
+    if (pb === null) return -1;
+    return pa - pb;
+};
+
+
+/**
  * Returns institution dropdown values with type-to-filter.
  * Collects all unique institutions from the grid data.
  */

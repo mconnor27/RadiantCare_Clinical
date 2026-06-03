@@ -81,8 +81,35 @@ from data.loader import load_diagnosis as _load_diag
 from utils.diagnosis_categories import (
     categorise_referral as _categorise_referral,
     categorise_free_text as _categorise_text,
+    is_malignant_text as _is_malignant_text,
 )
 _DIAG_C2C: dict[str, str] = build_code_to_category(_load_diag())
+
+
+def _is_neoplasm_code(code) -> bool:
+    """True if an ICD code sits in the neoplasm chapter.
+
+    ICD-10: C00–C97 (malignant), D00–D49 (in-situ / benign / uncertain
+    neoplasms). ICD-9: 140–239. Used to decide whether a resolved referral
+    diagnosis is itself oncologic before flagging an Onc Dx mismatch.
+    """
+    if not code:
+        return False
+    c = str(code).strip().upper()
+    if not c:
+        return False
+    if c[0] == "C":
+        return True
+    if c[0] == "D":
+        try:
+            return 0 <= int(c[1:3]) <= 49
+        except (ValueError, IndexError):
+            return False
+    # ICD-9 numeric
+    try:
+        return 140 <= int(float(c)) <= 239
+    except (ValueError, TypeError):
+        return False
 
 
 def _categorise_diagnosis(diagnoses_text, prim_dx_text=None, onc_dx_text=None):
@@ -1482,10 +1509,12 @@ layout = dmc.Stack(
                                          "type": "numericColumn"},
                                         {"field": "first_referral", "headerName": "First", "flex": 0.5,
                                          "minWidth": 100,
-                                         "filter": "agTextColumnFilter"},
+                                         "filter": "agTextColumnFilter",
+                                         "comparator": {"function": "dagfuncs.compareMDY(valueA, valueB)"}},
                                         {"field": "last_referral", "headerName": "Last", "flex": 0.5,
                                          "minWidth": 100,
-                                         "filter": "agTextColumnFilter"},
+                                         "filter": "agTextColumnFilter",
+                                         "comparator": {"function": "dagfuncs.compareMDY(valueA, valueB)"}},
                                         {"field": "reviewed", "headerName": "Reviewed", "flex": 0.4,
                                          "cellDataType": "boolean",
                                          "editable": True,
@@ -1677,10 +1706,25 @@ layout = dmc.Stack(
                                 dag.AgGrid(
                                     id=f"{PAGE_ID}-rpm-diag-grid",
                                     columnDefs=[
+                                        {"field": "onc_dx_conflict", "headerName": "Flag", "flex": 0.4,
+                                         "minWidth": 90,
+                                         "filter": True,
+                                         "headerTooltip": "Onc Dx indicates a malignancy but the resolved "
+                                                          "diagnosis is a symptom/benign entry — needs review",
+                                         "valueFormatter": {"function": "params.value ? '⚠ Review' : '–'"},
+                                         "cellStyle": {"function":
+                                            "params.value ? {color: '#D32F2F', fontWeight: 700} : {color: '#9CA3AF'}"}},
                                         {"field": "icd_code", "headerName": "ICD Code", "flex": 0.6,
                                          "filter": "agTextColumnFilter", "floatingFilter": True},
                                         {"field": "description", "headerName": "Description", "flex": 1.8,
                                          "filter": "agTextColumnFilter", "floatingFilter": True},
+                                        {"field": "onc_dx", "headerName": "Onc Dx", "flex": 1.4,
+                                         "filter": "agTextColumnFilter", "floatingFilter": True,
+                                         "tooltipField": "onc_dx",
+                                         "headerTooltip": "Distinct patient-level Onc Dx values from contributing referrals",
+                                         "cellStyle": {"function":
+                                            "params.data && params.data.onc_dx_conflict ? "
+                                            "{backgroundColor: 'rgba(211,47,47,0.08)'} : null"}},
                                         {"field": "category", "headerName": "Category", "flex": 1,
                                          "editable": True,
                                          "cellEditor": "agSelectCellEditor",
@@ -1759,7 +1803,8 @@ layout = dmc.Stack(
                                         dag.AgGrid(
                                             id=f"{PAGE_ID}-rpm-diag-detail-grid",
                                             columnDefs=apply_phi_grid_rules([
-                                                {"field": "Created", "headerName": "Date", "flex": 0.6, "sort": "desc"},
+                                                {"field": "Created", "headerName": "Date", "flex": 0.6, "sort": "desc",
+                                                 "comparator": {"function": "dagfuncs.compareMDY(valueA, valueB)"}},
                                                 {"field": "Source", "headerName": "Source", "flex": 0.5,
                                                  "filter": "agTextColumnFilter",
                                                  "cellStyle": {"function":
@@ -1769,6 +1814,8 @@ layout = dmc.Stack(
                                                 {"field": "Patient Name", "headerName": "Patient", "flex": 1},
                                                 {"field": "Rfl Prim Dx", "headerName": "Primary Dx", "flex": 1.2},
                                                 {"field": "Diagnoses", "headerName": "Diagnoses", "flex": 1.5},
+                                                {"field": "Onc Dx", "headerName": "Onc Dx", "flex": 1.2,
+                                                 "filter": "agTextColumnFilter"},
                                                 {"field": "Status", "headerName": "Status", "flex": 0.6},
                                             ]),
                                             defaultColDef={"sortable": True, "resizable": True,
@@ -7325,11 +7372,19 @@ def _build_diag_grid_data():
                 agg[key] = {
                     "desc": desc, "type": src_type,
                     "indices": {"radonc": [], "medonc": []},
+                    "onc_dx": set(),
                 }
             agg[key]["indices"][origin].append(idx)
             # Keep the best description (longest non-empty)
             if desc and len(desc) > len(agg[key]["desc"]):
                 agg[key]["desc"] = desc
+            # Collect distinct patient-level Onc Dx text contributing to this
+            # key, so the manager can surface it and flag malignancy mismatches.
+            onc_raw = row.get("Onc Dx")
+            if pd.notna(onc_raw):
+                onc_s = str(onc_raw).strip()
+                if onc_s and onc_s.lower() != "no onc dx":
+                    agg[key]["onc_dx"].add(onc_s)
 
     _ingest(ref, "radonc")
     _ingest(medonc, "medonc")
@@ -7388,6 +7443,23 @@ def _build_diag_grid_data():
         if not desc and code:
             desc = _DIAG_DESCRIPTIONS.get(code, "")
 
+        # Patient-level Onc Dx: surface distinct values, and flag the case the
+        # cascade can silently miss — Onc Dx indicates a malignancy but the
+        # referral's own resolved diagnosis is a symptom/benign entry.
+        onc_dx_vals = sorted(info.get("onc_dx", ()))
+        onc_dx_display = "; ".join(onc_dx_vals)
+        onc_malignant = any(_is_malignant_text(v) for v in onc_dx_vals)
+        # The resolved diagnosis is oncologic if it's a neoplasm-chapter ICD
+        # code, or (when resolved from free-text) its text/category indicates
+        # cancer. Only flag when Onc Dx is malignant but the resolved dx is not
+        # — e.g. a "kidney pain" symptom code behind an Onc Dx of renal cancer.
+        resolved_oncologic = (
+            _is_neoplasm_code(code)
+            or _is_malignant_text(desc)
+            or (not code and cat not in ("", "Benign Diseases", "Other", "Unknown", "Uncategorized"))
+        )
+        onc_dx_conflict = bool(onc_malignant and not resolved_oncologic)
+
         rows.append({
             "icd_code": code,
             "description": desc,
@@ -7399,6 +7471,8 @@ def _build_diag_grid_data():
             "origin": origin,
             "source": source,
             "reviewed": reviewed,
+            "onc_dx": onc_dx_display,
+            "onc_dx_conflict": onc_dx_conflict,
         })
 
     rows.sort(key=lambda r: r["patients"], reverse=True)
@@ -7409,10 +7483,12 @@ def _build_diag_grid_data():
     categorized = sum(1 for r in rows if r["category"])
     overridden = sum(1 for r in rows if r["source"] not in ("icd", "cv", "course", "free-text"))
     medonc_only = sum(1 for r in rows if r["origin"] == "medonc")
+    conflicts = sum(1 for r in rows if r["onc_dx_conflict"])
     stats = (
         f"{icd_count:,} ICD  |  {text_count:,} free-text  |  "
         f"{categorized:,} categorized  |  {total - categorized:,} unmapped  |  "
         f"{medonc_only:,} med-onc only  |  "
+        f"{conflicts:,} onc dx conflicts  |  "
         f"{overridden:,} overrides"
     )
     return rows, str(total), stats
@@ -7466,8 +7542,10 @@ def _rpm_diag_export(n, diag_data):
     """Export diagnosis mapping as CSV."""
     if not n or not diag_data:
         return dash.no_update
-    df = pd.DataFrame(diag_data)[["icd_code", "description", "category", "subcategory", "patients", "source"]]
-    df.columns = ["ICD Code", "Description", "Category", "Subcategory", "Patients", "Source"]
+    df = pd.DataFrame(diag_data)[["icd_code", "description", "onc_dx", "onc_dx_conflict",
+                                  "category", "subcategory", "patients", "source"]]
+    df.columns = ["ICD Code", "Description", "Onc Dx", "Onc Dx Conflict",
+                  "Category", "Subcategory", "Patients", "Source"]
     return dcc.send_data_frame(df.to_csv, "referral_diagnosis_mappings.csv", index=False)
 
 
@@ -7544,7 +7622,7 @@ def _rpm_diag_show_detail(store_data, close_clicks):
     rad_idx = idx_map.get("radonc", [])
     med_idx = idx_map.get("medonc", [])
 
-    cols = ["Created", "MRN", "Patient Name", "Rfl Prim Dx", "Diagnoses", "Status"]
+    cols = ["Created", "MRN", "Patient Name", "Rfl Prim Dx", "Diagnoses", "Onc Dx", "Status"]
     frames = []
 
     if rad_idx and _diag_detail_ref is not None:
