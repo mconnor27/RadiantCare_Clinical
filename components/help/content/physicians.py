@@ -12,8 +12,8 @@ UI_CONTENT = dmc.Stack(
     children=[
         dmc.Text(
             "The Physicians page tracks manpower, site assignments, after-"
-            "hours work, and cross-coverage for the four radiation "
-            "oncologists (Allen, Connor, Suszko, Tinnel). It cross-references "
+            "hours work, and cross-coverage for the radiation "
+            "oncologists (Allen, Connor, Kahn, Suszko, Tinnel). It cross-references "
             "the daily physician schedule (who was supposed to be at which "
             "site) with task completions (what actually got done, by whom, "
             "and when) to surface patterns like off-day work, weekend calls, "

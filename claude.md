@@ -86,11 +86,12 @@ When data processing logic is added or modified, update the help modal to reflec
 - File: `components/header.py` (or equivalent in rebuild)
 - Ensure processing notes are clear, concise, and user-friendly
 
-## Four Physicians
+## Physicians
 
-All physician filtering/display should recognize these four radiation oncologists:
+All physician filtering/display should recognize these radiation oncologists:
 - Allen, Gregory
 - Connor, Michael
+- Kahn, Leonel
 - Suszko, Justin
 - Tinnel, Brent
 

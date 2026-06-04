@@ -245,7 +245,7 @@ All data originates from **ARIA** (Varian) via automated SQL data warehouse expo
 **Business rules:**
 - Used to cross-reference task completion — identify work done while a physician was OFF or on WEEKEND CALL
 - Data extends months into the future
-- Four physicians: Allen Gregory, Connor Michael, Suszko Justin, Tinnel Brent
+- Physicians: Allen Gregory, Connor Michael, Kahn Leonel, Suszko Justin, Tinnel Brent
 - `DepartmentName` has `*` prefix — strip for display/joining
 
 ---
@@ -940,12 +940,13 @@ Courses (CourseId + PatientId)
 
 ## Known Physicians
 
-Four radiation oncologists appear across all data:
+The radiation oncologists appear across all data:
 
 | Name | Format variations |
 |------|-------------------|
 | Allen, Gregory | Allen, Gregory |
 | Connor, Michael | Connor, Michael |
+| Kahn, Leonel | Kahn, Leonel |
 | Suszko, Justin | Suszko, Justin |
 | Tinnel, Brent | Tinnel, Brent |
 

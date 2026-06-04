@@ -126,6 +126,7 @@ PRIOR_PERIOD_COLORS = ["#9CA3AF", "#B3B8C0", "#C9CDD4", "#DFE2E7", "#F0F1F4"]
 PHYSICIANS = [
     "Allen, Gregory",
     "Connor, Michael",
+    "Kahn, Leonel",
     "Suszko, Justin",
     "Tinnel, Brent",
 ]

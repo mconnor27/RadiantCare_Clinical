@@ -98,7 +98,7 @@ UI_CONTENT = dmc.Stack(
                 "relative).",
                 "Department chips — Lacey / Centralia / Aberdeen.",
                 "Physician — dropdown of treating or consult physicians (Allen, "
-                "Connor, Suszko, Tinnel, + others). Physician isn't on the OTV "
+                "Connor, Kahn, Suszko, Tinnel, + others). Physician isn't on the OTV "
                 "Audit CSV directly; it's joined from the Courses dataset on "
                 "(PatientId, CourseId).",
                 "Diagnosis accordion — ICD-10 categories / sub-categories with "

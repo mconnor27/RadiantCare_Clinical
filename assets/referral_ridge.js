@@ -224,7 +224,7 @@ window.dash_clientside.referralRidge = {
             hovermode: "closest",
             hoverlabel: {font: {family: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif", size: 12}},
             barmode: "overlay",
-            bargap: 0,
+            bargap: 0.1,
         };
 
         return {data: traces, layout: layout};

@@ -4991,11 +4991,34 @@ def _build_rpm_grid_data() -> tuple[list[dict], str]:
             new_ak.append(ra)
         ref["_npi"] = new_npi
         ref["_addr_key"] = new_ak
+
+    # Fold blank-address referrals into the provider's known address. ARIA
+    # leaves the address empty on some referrals, splitting one provider into a
+    # blank-key ('') row plus a real-address row. For a provider with exactly
+    # ONE real address those blanks are the same office with missing data, not a
+    # separate location — fold them in so a stray blank row takes on the main
+    # entry instead of lingering as its own row. Skip synthetic name:/LOC:
+    # providers and NPIs with multiple real addresses (blank is ambiguous there).
+    from collections import defaultdict as _dd
+    _real_addrs = _dd(set)
+    for _n, _a in zip(ref["_npi"], ref["_addr_key"]):
+        if _a and not str(_n).startswith(("name:", "LOC:")):
+            _real_addrs[_n].add(_a)
+    fold_target = {n: next(iter(a)) for n, a in _real_addrs.items() if len(a) == 1}
+    if fold_target:
+        ref["_addr_key"] = [
+            fold_target[_n] if (_a == "" and _n in fold_target) else _a
+            for _n, _a in zip(ref["_npi"], ref["_addr_key"])
+        ]
+
     ref["_row_key"] = ref["_npi"] + "|" + ref["_addr_key"]
 
-    # Aggregate per NPI+address: pick most common name/dept, count referrals
+    # Aggregate per NPI+address: pick most common name/dept, count referrals.
+    # Ignore blanks so a real value wins over the empty cells contributed by
+    # folded blank-address referrals (and over sporadic missing data generally).
     def _mode_or_first(s):
         s = s.dropna()
+        s = s[s.astype(str).str.strip() != ""]
         if s.empty:
             return ""
         m = s.mode()
@@ -5031,6 +5054,27 @@ def _build_rpm_grid_data() -> tuple[list[dict], str]:
 
     # Apply SQLite overrides (keyed on "npi|address_key")
     overrides = get_all_referring_overrides()
+
+    # Carry a folded blank-address row's curated values onto its real-address
+    # row, and drop the blank override so it isn't re-added as a separate
+    # manual row below. Real-row values win; blanks fill gaps; reviewed = OR.
+    for _n, _real in fold_target.items():
+        _blank_k = f"{_n}|"
+        if _blank_k not in overrides:
+            continue
+        _bov = overrides.pop(_blank_k)
+        _real_k = f"{_n}|{_real}"
+        if _real_k in overrides:
+            _ex = overrides[_real_k]
+            for _f in ("specialty", "institution", "address", "city", "state",
+                       "zip_code", "display_name", "address_source"):
+                if not (_ex.get(_f) or "") and (_bov.get(_f) or ""):
+                    _ex[_f] = _bov[_f]
+            _ex["reviewed"] = bool(_ex.get("reviewed")) or bool(_bov.get("reviewed"))
+            if _ex.get("source") in ("", "lookup") and _bov.get("source") not in ("", "lookup"):
+                _ex["source"] = _bov["source"]
+        else:
+            overrides[_real_k] = _bov
 
     rows = []
     for _, r in agg.iterrows():

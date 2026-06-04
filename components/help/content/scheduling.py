@@ -91,8 +91,9 @@ UI_CONTENT = dmc.Stack(
                 "slots.",
                 "Dept chips — Lacey / Centralia / Aberdeen, color-coded to "
                 "match the slot cards.",
-                "Physician chips — the canonical four (Allen, Connor, Suszko, "
-                "Tinnel) plus any additional human resources present in the "
+                "Physician chips — the named radiation oncologists (Allen, "
+                "Connor, Kahn, Suszko, Tinnel) plus any additional human "
+                "resources present in the "
                 "current data. Non-human resources like CT_RC_LACEY are "
                 "filtered out of the chip list. In Simulations mode the "
                 "physician filter only applies to booked sims (open HOLD SIM "
