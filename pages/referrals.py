@@ -360,7 +360,7 @@ def _build_filter_bar():
                         className="rc-compact-multi-wrap",
                         style={"position": "relative",
                                "display": "inline-block",
-                               "width": 220},
+                               "width": 200},
                         children=[
                             dmc.MultiSelect(
                                 id=f"{PAGE_ID}-filter-specialty",
@@ -397,7 +397,7 @@ def _build_filter_bar():
                         className="rc-compact-multi-wrap",
                         style={"position": "relative",
                                "display": "inline-block",
-                               "width": 240},
+                               "width": 220},
                         children=[
                             dmc.MultiSelect(
                                 id=f"{PAGE_ID}-filter-institution",
@@ -431,7 +431,7 @@ def _build_filter_bar():
                         className="rc-compact-multi-wrap",
                         style={"position": "relative",
                                "display": "inline-block",
-                               "width": 260},
+                               "width": 240},
                         children=[
                             dmc.MultiSelect(
                                 id=f"{PAGE_ID}-filter-provider",
