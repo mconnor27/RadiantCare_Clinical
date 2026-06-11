@@ -19,7 +19,7 @@ from components.chart_card import chart_card, register_chart_callbacks
 from components.detail_table import detail_table
 from components.kpi_card import kpi_card, kpi_placeholder
 from components.phi import apply_phi_grid_rules
-from utils.charts import apply_default_layout, empty_figure, color_for_index
+from utils.charts import apply_default_layout, empty_figure, color_for_index, full_period_range
 from utils.tables import sanitize_for_grid
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, SLIDER_MARKS,
@@ -1982,7 +1982,7 @@ def _prepare_volume_data(df, agg, slice_by="", c2b=None, accent_color=None):
     df = df.copy()
     period_code = "Y" if agg == "Y" else agg
     df["period"] = df["StartDateTime"].dt.to_period(period_code).dt.to_timestamp()
-    all_periods = sorted(df["period"].unique())
+    all_periods = full_period_range(df["period"], period_code)
     dates = [d.isoformat() for d in all_periods]
 
     series = _slice_series(df, slice_by, "period", all_periods, c2b, accent_color=accent_color)
@@ -2275,7 +2275,7 @@ def _prepare_time_trend_data(df, is_completed, agg="M", slice_by="", c2b=None, a
 
     period_code = "Y" if agg == "Y" else agg
     completed["period"] = completed["StartDateTime"].dt.to_period(period_code).dt.to_timestamp()
-    all_periods = sorted(completed["period"].unique())
+    all_periods = full_period_range(completed["period"], period_code)
     dates = [d.isoformat() for d in all_periods]
 
     series = _slice_series(completed, slice_by, "period", all_periods, c2b,
@@ -2341,7 +2341,7 @@ def _prepare_sla_data(df, is_completed, agg="W", slice_by="", c2b=None, accent_c
         completed["on_time"] = completed["CompletedDateTime"] <= completed["DueDateTime"]
     else:
         completed["on_time"] = completed["MinutesToComplete"] <= completed["MinutesAllowed"]
-    all_periods = sorted(completed["period"].unique())
+    all_periods = full_period_range(completed["period"], period_code)
     dates = [d.isoformat() for d in all_periods]
 
     series = []

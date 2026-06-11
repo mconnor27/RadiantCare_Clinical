@@ -375,6 +375,8 @@ window.dash_clientside.census = {
         function formatVal(v) {
             if (v === null || v === undefined || isNaN(v)) return isDollar ? "$0" : "0";
             if (isDollar) return "$" + Math.round(v).toLocaleString();
+            if (rawData.hoverDecimals !== undefined && rawData.hoverDecimals !== null)
+                return v.toFixed(rawData.hoverDecimals) + valueSuffix;
             if (isFractional) return v.toFixed(1) + valueSuffix;
             return Math.round(v) + valueSuffix;
         }
@@ -593,6 +595,15 @@ window.dash_clientside.census = {
             var headroom = (rawData.showBarTotals && chartType === "bar") ? 1.13 : 1.1;
             layout.yaxis.range = [0, Math.ceil(yMaxSCWT * headroom)];
             layout.yaxis.autorange = false;
+            // Tag the figure so the legend-toggle handler (bottom of this
+            // file) can recompute the range from visible traces only.
+            layout.meta = Object.assign({}, layout.meta, {dynY: {
+                headroom: headroom,
+                stackSum: stacked && chartType !== "line",
+                barTotals: !!(rawData.showBarTotals && chartType === "bar" && stacked),
+                dollar: !!isDollar,
+                suffix: valueSuffix
+            }});
         }
 
         // Bar total annotations on top of stacked bars
@@ -726,9 +737,17 @@ window.dash_clientside.census = {
         if (rawData.yRange) {
             fig.layout.yaxis.range = rawData.yRange;
             fig.layout.yaxis.autorange = false;
+            if (fig.layout.meta && fig.layout.meta.dynY) delete fig.layout.meta.dynY;
         } else if (yMax > 0) {
             fig.layout.yaxis.range = [0, Math.ceil(yMax * 1.1)];
             fig.layout.yaxis.autorange = false;
+            // Re-tag with this variant's headroom; the legend-toggle handler
+            // reads the x window from layout.xaxis.range.
+            var innerDynY = (fig.layout.meta && fig.layout.meta.dynY) || {};
+            fig.layout.meta = Object.assign({}, fig.layout.meta, {dynY: Object.assign({}, innerDynY, {
+                headroom: 1.1,
+                stackSum: stacked && chartType !== "line"
+            })});
         }
 
         // Hide legend entries for series with no data in the visible range
@@ -2529,3 +2548,105 @@ window.dash_clientside.cumulative = {
         return [ptData, ptValue, sliderMax, marks];
     }
 };
+
+// ---------------------------------------------------------------------------
+// Legend-toggle y-rescale. Census figures use a fixed y range (computed with
+// headroom from the data), so Plotly's autorange never kicks in when the user
+// toggles a series in the legend. Figures with a dynamic range carry
+// layout.meta.dynY; after a legend click, recompute the range — and stacked
+// bar total annotations — from the currently-visible traces only.
+// ---------------------------------------------------------------------------
+(function () {
+    if (window._censusLegendRescale) return;
+    window._censusLegendRescale = true;
+
+    function isoDay(v) {
+        if (typeof v === "number") return new Date(v).toISOString().slice(0, 10);
+        return String(v).slice(0, 10);
+    }
+
+    function rescale(gd) {
+        var lay = gd.layout || {};
+        var dyn = lay.meta && lay.meta.dynY;
+        if (!dyn || !gd.data) return;
+
+        // Category order mirrors Plotly's: first appearance across traces in
+        // trace order. Build from all traces (hidden included) so indices
+        // line up with the category x-range set by _buildWithRange.
+        var order = [], pos = {}, sums = [], skip = [];
+        for (var t = 0; t < gd.data.length; t++) {
+            var tr = gd.data[t];
+            skip[t] = !tr.x || !tr.y || (tr.line && tr.line.color === "transparent");
+            if (skip[t]) continue;
+            for (var i = 0; i < tr.x.length; i++) {
+                if (!(tr.x[i] in pos)) {
+                    pos[tr.x[i]] = order.length;
+                    order.push(tr.x[i]);
+                    sums.push(0);
+                }
+            }
+        }
+
+        var xr = (lay.xaxis && !lay.xaxis.autorange && lay.xaxis.range) ? lay.xaxis.range : null;
+        var isCat = lay.xaxis && lay.xaxis.type === "category";
+        function inWindow(key) {
+            if (!xr) return true;
+            if (isCat) {
+                var idx = pos[key];
+                return idx >= xr[0] && idx <= xr[1];
+            }
+            var d = isoDay(key);
+            return d >= isoDay(xr[0]) && d <= isoDay(xr[1]);
+        }
+
+        var yMax = 0;
+        for (var t = 0; t < gd.data.length; t++) {
+            var tr = gd.data[t];
+            if (skip[t] || tr.visible === "legendonly" || tr.visible === false) continue;
+            for (var i = 0; i < tr.x.length; i++) {
+                var v = tr.y[i];
+                if (typeof v !== "number" || isNaN(v)) continue;
+                if (!inWindow(tr.x[i])) continue;
+                if (dyn.stackSum) sums[pos[tr.x[i]]] += v;
+                else if (v > yMax) yMax = v;
+            }
+        }
+        if (dyn.stackSum) {
+            for (var i = 0; i < sums.length; i++) {
+                if (sums[i] > yMax && inWindow(order[i])) yMax = sums[i];
+            }
+        }
+        if (yMax <= 0) return;
+
+        var update = {"yaxis.range": [0, Math.ceil(yMax * (dyn.headroom || 1.1))]};
+        if (dyn.barTotals) {
+            var ann = [];
+            for (var i = 0; i < order.length; i++) {
+                if (sums[i] <= 0) continue;
+                var txt = dyn.dollar
+                    ? "$" + Math.round(sums[i]).toLocaleString()
+                    : Math.round(sums[i]) + (dyn.suffix || "");
+                ann.push({
+                    x: order[i], y: sums[i],
+                    text: "<b>" + txt + "</b>",
+                    showarrow: false, yshift: 8,
+                    font: {size: 11, color: "#374151", family: "Inter, system-ui, sans-serif"}
+                });
+            }
+            update.annotations = ann;
+        }
+        Plotly.relayout(gd, update);
+    }
+
+    document.addEventListener("click", function (ev) {
+        if (!ev.target || !ev.target.closest) return;
+        var legend = ev.target.closest(".js-plotly-plot .legend");
+        if (!legend) return;
+        var gd = legend.closest(".js-plotly-plot");
+        if (!gd || !gd.layout || !gd.layout.meta || !gd.layout.meta.dynY) return;
+        // Once after the single-click toggle resolves, and once more after
+        // Plotly's double-click (isolate series) window (~300ms) closes.
+        setTimeout(function () { rescale(gd); }, 120);
+        setTimeout(function () { rescale(gd); }, 450);
+    }, true);
+})();

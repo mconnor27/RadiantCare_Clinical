@@ -28,7 +28,7 @@ from components.detail_table import detail_table
 from components.diagnosis_filter import diagnosis_accordion, register_diagnosis_callbacks
 from components.outlier_panel import outlier_panel, register_outlier_callbacks
 from components.phi import filter_phi_columns
-from utils.charts import apply_default_layout, empty_figure
+from utils.charts import apply_default_layout, empty_figure, full_period_range
 from utils.diagnosis_categories import (
     build_code_to_category, categorise_referral,
 )
@@ -536,44 +536,50 @@ def _compute_medonc_flow_details(cohort, cap_0=_CAP_CREATED_TO_SCHED,
                 lambda g: int(g["LinkedRadRef"].astype(bool).sum()),
                 include_groups=False,
             )
-            all_periods = sorted(created.index)
+            all_periods = full_period_range(created.index, agg_key)
+            created_r = created.reindex(all_periods, fill_value=0)
+            scheduled_r = scheduled.reindex(all_periods, fill_value=0)
+            seen_r = seen.reindex(all_periods, fill_value=0)
+            radref_r = radref.reindex(all_periods, fill_value=0)
             conv_by_agg[agg_key] = {
                 "dates": [d.isoformat() for d in all_periods],
-                "created":   created.reindex(all_periods, fill_value=0).tolist(),
-                "scheduled": scheduled.reindex(all_periods, fill_value=0).tolist(),
-                "completed": seen.reindex(all_periods, fill_value=0).tolist(),
+                "created":   created_r.tolist(),
+                "scheduled": scheduled_r.tolist(),
+                "completed": seen_r.tolist(),
+                # Rates are None (gap) where the denominator is 0 — a period
+                # with no referrals created has an undefined rate, not 0%.
                 "schedPct": [
-                    round(scheduled.get(d, 0) / created.get(d, 1) * 100, 1) for d in all_periods
+                    None if c == 0 else round(s / c * 100, 1)
+                    for s, c in zip(scheduled_r, created_r)
                 ],
                 # True inter-stage rate: of those scheduled, what fraction were seen
                 "completePct": [
-                    round(seen.get(d, 0) / scheduled.get(d, 1) * 100, 1)
-                    if scheduled.get(d, 0) > 0 else 0.0
-                    for d in all_periods
+                    None if s == 0 else round(v / s * 100, 1)
+                    for v, s in zip(seen_r, scheduled_r)
                 ],
                 # Overall Created → Completed rate, for the default (no band
                 # selected) view. The proxy in medonc_flow_gantt.js swaps this
                 # in when no band is active so the "Created → Completed"
                 # title shows the right numbers.
                 "completePctOverall": [
-                    round(seen.get(d, 0) / created.get(d, 1) * 100, 1) for d in all_periods
+                    None if c == 0 else round(v / c * 100, 1)
+                    for v, c in zip(seen_r, created_r)
                 ],
                 # Med-Onc Appt → Rad-Onc Referral inter-stage rate — the shared
                 # flow_gantt.js conversion renderer only knows about 3 stages,
                 # so our 4th-stage conversion is handled by a custom branch in
                 # the medoncFlowGantt.renderConv proxy.
-                "radref": radref.reindex(all_periods, fill_value=0).tolist(),
+                "radref": radref_r.tolist(),
                 "radrefPct": [
-                    round(radref.get(d, 0) / seen.get(d, 1) * 100, 1)
-                    if seen.get(d, 0) > 0 else 0.0
-                    for d in all_periods
+                    None if v == 0 else round(r / v * 100, 1)
+                    for r, v in zip(radref_r, seen_r)
                 ],
                 # Cumulative-from-Created radref rate — used by the custom
                 # "overall pipeline" default view (no band selected) so we
                 # can stack three Created→X rates on one chart.
                 "radrefPctOverall": [
-                    round(radref.get(d, 0) / created.get(d, 1) * 100, 1)
-                    for d in all_periods
+                    None if c == 0 else round(r / c * 100, 1)
+                    for r, c in zip(radref_r, created_r)
                 ],
             }
 

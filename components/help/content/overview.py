@@ -781,6 +781,11 @@ FRONTEND_CONTENT = dmc.Stack(
                 "weeks / months depending on aggregation).",
                 "Series grouping — by department or by physician, colored from "
                 "DEPARTMENT_COLORS or the shared chart colorway.",
+                "Empty periods — weekly / monthly / yearly views keep every "
+                "period in the window on the x-axis: counts show as zero bars, "
+                "while averages, medians, and rates show a gap (no point) since "
+                "there is nothing to average. Daily views still omit weekends, "
+                "holidays, and other non-clinic days.",
             ]),
             body(
                 "Appears on Home (as a metric card), Operations, Clinic "

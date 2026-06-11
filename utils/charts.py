@@ -2,8 +2,31 @@
 
 import re
 
+import pandas as pd
 import plotly.graph_objects as go
 from config.settings import DEFAULT_LAYOUT, DEPARTMENT_COLORS, CHART_COLORWAY
+
+
+# Period-start frequencies matching .dt.to_period(code).dt.to_timestamp()
+_PERIOD_FREQ = {"W": "W-MON", "M": "MS", "Y": "YS"}
+
+
+def full_period_range(periods, agg):
+    """Sorted period-start Timestamps spanning min..max of `periods`,
+    including periods with no data, so zero buckets stay on the x-axis.
+
+    `periods` are period-start timestamps (from .dt.to_period(agg).dt.to_timestamp());
+    `agg` is the period code ("W"/"M"/"Y"). Daily ("D") is exempt — weekends and
+    holidays would otherwise render as zero bars — and returns the data-derived
+    periods unchanged. Count series should .reindex(..., fill_value=0); mean and
+    median series should .reindex(...) without fill so empty periods stay None.
+    """
+    uniq = pd.DatetimeIndex(pd.Series(list(periods)).dropna().unique()).sort_values()
+    freq = _PERIOD_FREQ.get(agg)
+    if freq is None or len(uniq) < 2:
+        return list(uniq)
+    full = pd.date_range(uniq[0], uniq[-1], freq=freq)
+    return list(full.union(uniq))
 
 
 # Light-mode default; assets/02_theme.js swaps to a dark slate in dark mode.

@@ -18,7 +18,7 @@ from components.chart_card import chart_card, register_chart_callbacks
 from components.chart_settings import chart_settings_popover
 from components.phi import apply_phi_grid_rules
 from utils.diagnosis_categories import SUBCATEGORIES as DIAG_SUBCATEGORIES
-from utils.charts import apply_default_layout, empty_figure
+from utils.charts import apply_default_layout, empty_figure, full_period_range
 from utils.permissions import can_see_manager_modals
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, DEFAULT_SLIDER, SLIDER_MARKS,
@@ -287,7 +287,7 @@ def _prepare_diag_dist_data(df, date_col):
         period_code = "Y" if agg == "Y" else agg
         t = tmp.copy()
         t["period"] = t[date_col].dt.to_period(period_code).dt.to_timestamp()
-        all_periods = sorted(t["period"].unique())
+        all_periods = full_period_range(t["period"], period_code)
         dates = [d.isoformat() for d in all_periods]
 
         pivot = t.groupby(["period", "_grp"]).size().unstack(fill_value=0)
@@ -385,7 +385,7 @@ def _prepare_trend_store(df, date_col, sort_order="volume", prior_windows=None):
         period_code = "Y" if agg == "Y" else agg
         t = tmp.copy()
         t["period"] = t[date_col].dt.to_period(period_code).dt.to_timestamp()
-        all_periods = sorted(t["period"].unique())
+        all_periods = full_period_range(t["period"], period_code)
         dates = [d.isoformat() for d in all_periods]
 
         series = []

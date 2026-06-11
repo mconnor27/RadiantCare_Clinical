@@ -32,7 +32,7 @@ from components.chart_settings import chart_settings_popover
 from components.detail_table import detail_table
 from components.outlier_panel import outlier_panel, register_outlier_callbacks
 from components.phi import apply_phi_grid_rules
-from utils.charts import apply_default_layout, empty_figure, dept_color, color_for_index
+from utils.charts import apply_default_layout, empty_figure, dept_color, color_for_index, full_period_range
 from utils.tables import sanitize_for_grid
 from utils.permissions import can_see_manager_modals
 from utils.diagnosis_categories import (
@@ -2822,7 +2822,7 @@ def _prepare_ref_volume_data(df, agg, slice_by="", payor_mode="broad"):
     df = df.copy()
     period_code = "Y" if agg == "Y" else agg
     df["period"] = df["Created"].dt.to_period(period_code).dt.to_timestamp()
-    all_periods = sorted(df["period"].unique())
+    all_periods = full_period_range(df["period"], period_code)
     dates = [d.isoformat() for d in all_periods]
 
     series = []
@@ -3321,7 +3321,7 @@ def _prepare_ref_trend_store(df, dimension):
         period_code = "Y" if agg == "Y" else agg
         t = tmp.copy()
         t["period"] = t["Created"].dt.to_period(period_code).dt.to_timestamp()
-        all_periods = sorted(t["period"].unique())
+        all_periods = full_period_range(t["period"], period_code)
         dates = [d.isoformat() for d in all_periods]
 
         series = []
@@ -3802,11 +3802,13 @@ def _compute_referral_flow_details(df, cap_0=_CAP_CREATED_TO_SCHEDULED, cap_1=_C
             gmed = temp.groupby("_period")["_days"].median()
             gmean = temp.groupby("_period")["_days"].mean()
             gcnt = temp.groupby("_period")["_days"].size()
-            all_periods = sorted(gmed.index)
+            all_periods = full_period_range(gmed.index, agg_key)
+            gmed = gmed.reindex(all_periods)
+            gmean = gmean.reindex(all_periods)
             trend_by_agg[agg_key] = {
                 "dates": [d.isoformat() for d in all_periods],
-                "medians": [round(float(gmed[d]), 1) for d in all_periods],
-                "means": [round(float(gmean[d]), 1) for d in all_periods],
+                "medians": [None if pd.isna(v) else round(float(v), 1) for v in gmed],
+                "means": [None if pd.isna(v) else round(float(v), 1) for v in gmean],
                 "kmMedians": [None] * len(all_periods),
                 "counts": [int(gcnt.get(d, 0)) for d in all_periods],
                 "completionRates": [1.0] * len(all_periods),
@@ -3874,19 +3876,22 @@ def _compute_referral_flow_details(df, cap_0=_CAP_CREATED_TO_SCHEDULED, cap_1=_C
                        else pd.Series(False, index=g.index)).sum(),
             include_groups=False,
         )
-        all_periods = sorted(period_created.index)
+        all_periods = full_period_range(period_created.index, agg_key)
+        created_r = period_created.reindex(all_periods, fill_value=0)
+        scheduled_r = period_scheduled.reindex(all_periods, fill_value=0)
+        completed_r = period_completed.reindex(all_periods, fill_value=0)
         conv_by_agg[agg_key] = {
             "dates": [d.isoformat() for d in all_periods],
-            "created": period_created.reindex(all_periods, fill_value=0).tolist(),
-            "scheduled": period_scheduled.reindex(all_periods, fill_value=0).tolist(),
-            "completed": period_completed.reindex(all_periods, fill_value=0).tolist(),
+            "created": created_r.tolist(),
+            "scheduled": scheduled_r.tolist(),
+            "completed": completed_r.tolist(),
             "schedPct": [
-                round(period_scheduled.get(d, 0) / period_created.get(d, 1) * 100, 1)
-                for d in all_periods
+                None if c == 0 else round(s / c * 100, 1)
+                for s, c in zip(scheduled_r, created_r)
             ],
             "completePct": [
-                round(period_completed.get(d, 0) / period_created.get(d, 1) * 100, 1)
-                for d in all_periods
+                None if c == 0 else round(p / c * 100, 1)
+                for p, c in zip(completed_r, created_r)
             ],
         }
 

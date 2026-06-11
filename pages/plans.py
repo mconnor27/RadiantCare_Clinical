@@ -24,7 +24,7 @@ from components.chart_card import chart_card, register_chart_callbacks
 from components.chart_settings import chart_settings_popover
 from components.detail_table import detail_table
 from components.phi import apply_phi_grid_rules
-from utils.charts import apply_default_layout, empty_figure, dept_color
+from utils.charts import apply_default_layout, empty_figure, dept_color, full_period_range
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, DEFAULT_SLIDER, SLIDER_MARKS,
     preset_to_slider_val, preset_to_exact_dates,
@@ -1548,7 +1548,7 @@ def _prepare_session_trend_data(dff, date_col, c2b, start=None, end=None, diag_m
         period_code = "Y" if agg == "Y" else agg
         t = tmp.copy()
         t["period"] = t["_plot_date"].dt.to_period(period_code).dt.to_timestamp()
-        all_periods = sorted(t["period"].unique())
+        all_periods = full_period_range(t["period"], period_code)
         dates = [d.isoformat() for d in all_periods]
 
         for slice_key in ["", "physician", "site", "diagnosis"]:
@@ -1640,7 +1640,7 @@ def _prepare_quit_trend_data(completed_df, date_col, c2b, start=None, end=None, 
         period_code = "Y" if agg == "Y" else agg
         t = tmp.copy()
         t["period"] = t["_plot_date"].dt.to_period(period_code).dt.to_timestamp()
-        all_periods = sorted(t["period"].unique())
+        all_periods = full_period_range(t["period"], period_code)
         dates = [d.isoformat() for d in all_periods]
 
         for slice_key in ["", "physician", "site", "diagnosis"]:
@@ -1768,7 +1768,7 @@ def _prepare_complexity_trend_data(dff, date_col, start=None, end=None):
         period_code = "Y" if agg == "Y" else agg
         t = tmp.copy()
         t["period"] = t["_plot_date"].dt.to_period(period_code).dt.to_timestamp()
-        all_periods = sorted(t["period"].unique())
+        all_periods = full_period_range(t["period"], period_code)
         dates = [d.isoformat() for d in all_periods]
 
         for dim, col, label in dims:
@@ -1885,7 +1885,7 @@ def _prepare_technique_dist_data(dff, date_col, start=None, end=None, date_mode=
             else:
                 t["_plot_date"] = t[date_col]
             t["period"] = t["_plot_date"].dt.to_period(period_code).dt.to_timestamp()
-            all_periods = sorted(t["period"].unique())
+            all_periods = full_period_range(t["period"], period_code)
             pivot = t.groupby(["period", tech_col]).size().unstack(fill_value=0)
             pivot = pivot.reindex(all_periods, fill_value=0)
 
@@ -2207,7 +2207,7 @@ def _prepare_volume_data(dff, agg, slice_by="", date_col="FirstTreatmentDate", c
 
     dff["period"] = dff["_plot_date"].dt.to_period(period_code).dt.to_timestamp()
 
-    all_periods = sorted(dff["period"].unique())
+    all_periods = full_period_range(dff["period"], period_code)
     dates = [d.isoformat() for d in all_periods]
 
     series = []

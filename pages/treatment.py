@@ -22,7 +22,7 @@ from components.kpi_card import kpi_card, kpi_placeholder
 from components.chart_card import chart_card, register_chart_callbacks
 from components.detail_table import detail_table
 from components.phi import apply_phi_grid_rules
-from utils.charts import apply_default_layout, empty_figure, dept_color
+from utils.charts import apply_default_layout, empty_figure, dept_color, full_period_range
 from utils.holidays import get_holidays
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, SLIDER_MARKS,
@@ -1120,22 +1120,29 @@ def _build_census_store(df, date_col, group_col, value_col, groups, colors,
     else:
         grouped = df.groupby([dk, group_col])[value_col].sum().reset_index(name="_v")
 
-    dates_all = sorted(grouped[dk].dropna().unique())
+    dates_all = full_period_range(grouped[dk], agg)
     if not dates_all:
         return None
     dates_str = [pd.Timestamp(d).isoformat() for d in dates_all]
 
+    is_mean = agg_func == "mean"
     series = []
     for grp in groups:
         sub = grouped[grouped[group_col] == grp]
-        vals = sub.set_index(dk)["_v"].reindex(dates_all, fill_value=0)
+        if is_mean:
+            # Averages/rates: empty periods stay None — never fake zeros
+            vals = sub.set_index(dk)["_v"].reindex(dates_all)
+            values = [None if pd.isna(v) else round(float(v), 2) for v in vals]
+        else:
+            vals = sub.set_index(dk)["_v"].reindex(dates_all, fill_value=0)
+            values = [round(float(v), 2) if pd.notna(v) else 0 for v in vals]
         series.append({
             "name": grp,
-            "values": [round(float(v), 2) if pd.notna(v) else 0 for v in vals],
+            "values": values,
             "color": colors.get(grp, CHART_COLORWAY[0]),
         })
 
-    if not any(any(v > 0 for v in s["values"]) for s in series):
+    if not any(any(v is not None and v > 0 for v in s["values"]) for s in series):
         return None
 
     return {
@@ -1156,7 +1163,8 @@ def _to_pct(store_data):
         total = sum(s["values"][di] for s in series if s["values"][di])
         if total > 0:
             for s in series:
-                s["values"][di] = round(s["values"][di] / total * 100, 1)
+                if s["values"][di] is not None:
+                    s["values"][di] = round(s["values"][di] / total * 100, 1)
     store_data["yTitle"] = "% of Total"
     return store_data
 

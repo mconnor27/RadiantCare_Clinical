@@ -22,7 +22,7 @@ from components.chart_settings import chart_settings_popover
 from components.detail_table import detail_table
 from components.outlier_panel import outlier_panel, register_outlier_callbacks
 from components.phi import apply_phi_grid_rules
-from utils.charts import apply_default_layout, empty_figure, dept_color
+from utils.charts import apply_default_layout, empty_figure, dept_color, full_period_range
 from utils.tables import sanitize_for_grid
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, DEFAULT_SLIDER, SLIDER_MARKS,
@@ -2370,7 +2370,7 @@ def _prepare_volume_data(dff, agg, slice_by="category", c2b=None):
     period_code = "Y" if agg == "Y" else agg
     dff["period"] = dff["ScheduledDateTime"].dt.to_period(period_code).dt.to_timestamp()
 
-    all_periods = sorted(dff["period"].unique())
+    all_periods = full_period_range(dff["period"], period_code)
     dates = [d.isoformat() for d in all_periods]
 
     series = []
@@ -2481,7 +2481,7 @@ def _prepare_lead_data(dff, departments, agg="M", slice_by="site"):
     if dff.empty:
         return None
 
-    all_periods = sorted(dff["period"].unique())
+    all_periods = full_period_range(dff["period"], period_code)
     dates = [d.isoformat() for d in all_periods]
     val_col = "DaysFromCreatedToAppt"
 
@@ -2587,7 +2587,7 @@ def _prepare_conversion_data(dff, departments, agg="M", slice_by="site"):
     period_code = "Y" if agg == "Y" else agg
     consults["period"] = consults["ScheduledDateTime"].dt.to_period(period_code).dt.to_timestamp()
 
-    all_periods = sorted(consults["period"].unique())
+    all_periods = full_period_range(consults["period"], period_code)
     dates = [d.isoformat() for d in all_periods]
 
     series = []
@@ -3011,7 +3011,7 @@ def _prepare_cancel_data(dff_all, agg="M", slice_by="type"):
     dff["period"] = dff["ScheduledDateTime"].dt.to_period(period_code).dt.to_timestamp()
     dff["_cancelled"] = dff["Status"].str.lower().str.contains("cancel|no-show|no show", na=False)
 
-    all_periods = sorted(dff["period"].unique())
+    all_periods = full_period_range(dff["period"], period_code)
     dates = [d.isoformat() for d in all_periods]
 
     series = []

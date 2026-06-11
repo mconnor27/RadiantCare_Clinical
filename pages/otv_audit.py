@@ -20,7 +20,7 @@ from components.chart_card import chart_card, register_chart_callbacks
 from components.detail_table import detail_table
 from components.phi import apply_phi_grid_rules
 from components.diagnosis_filter import diagnosis_accordion, register_diagnosis_callbacks
-from utils.charts import apply_default_layout, empty_figure
+from utils.charts import apply_default_layout, empty_figure, full_period_range
 from utils.tables import sanitize_for_grid
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, SLIDER_MARKS,
@@ -1516,19 +1516,29 @@ def _build_trend_chart(df, date_col, chart_type="line", agg="M", smooth=0):
     df = df.copy()
     df["_period"] = df[date_col].dt.to_period(agg).dt.to_timestamp()
 
-    grouped = df.groupby("_period").apply(
-        lambda x: (x["AuditResult"] != "Too Few").sum() / len(x) * 100 if len(x) > 0 else 0,
-        include_groups=False,
-    ).reset_index(name="compliance")
+    # Enumerate every period in range so zero-audit periods stay on the axis;
+    # counts fill 0, but a compliance rate for an empty period must be None.
+    all_periods = full_period_range(df["_period"], agg)
+    total = df.groupby("_period").size().reindex(all_periods, fill_value=0)
+    compliant = (
+        (df["AuditResult"] != "Too Few")
+        .groupby(df["_period"])
+        .sum()
+        .reindex(all_periods, fill_value=0)
+    )
+    compliance = (compliant / total * 100).where(total > 0)
 
-    y = grouped["compliance"].tolist()
+    y = [None if pd.isna(v) else v for v in compliance.tolist()]
     if smooth and smooth > 0 and len(y) > 3:
         window = min(int(smooth), len(y) - 1)
         if window >= 2:
-            s = pd.Series(y)
-            y = s.rolling(window, min_periods=1, center=True).mean().tolist()
+            s = pd.Series(y, dtype="float64")
+            smoothed = s.rolling(window, min_periods=1, center=True).mean().tolist()
+            # Keep empty periods as None even after smoothing
+            y = [None if orig is None or pd.isna(sv) else sv
+                 for orig, sv in zip(y, smoothed)]
 
-    x_vals = grouped["_period"].tolist()
+    x_vals = list(all_periods)
 
     fig = go.Figure()
     if chart_type == "bar":

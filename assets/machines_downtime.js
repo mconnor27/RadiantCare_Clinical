@@ -38,6 +38,29 @@ function _aggregateDates(rawDates, valueSets, agg) {
         }
     }
 
+    // Enumerate every W/M period between first and last so zero-downtime
+    // periods stay on the axis as zero bars (mirrors utils.charts
+    // full_period_range; "D" is exempt via the early return above).
+    // rawDates arrive sorted, so `order` is sorted.
+    if (order.length > 1) {
+        var full = [];
+        var cur = new Date(order[0] + "T00:00:00Z");
+        var lastD = new Date(order[order.length - 1] + "T00:00:00Z");
+        while (cur <= lastD) {
+            var fk = cur.toISOString().slice(0, 10);
+            full.push(fk);
+            if (!buckets[fk]) {
+                buckets[fk] = {date: fk, sums: valueSets.map(function() { return 0; })};
+            }
+            if (agg === "W") {
+                cur.setUTCDate(cur.getUTCDate() + 7);
+            } else {
+                cur.setUTCMonth(cur.getUTCMonth() + 1);
+            }
+        }
+        order = full;
+    }
+
     var dates = [];
     var aggValues = valueSets.map(function() { return []; });
     for (var j = 0; j < order.length; j++) {

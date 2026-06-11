@@ -15,7 +15,7 @@ from config.settings import (
 )
 from components.filter_bar import department_chips
 from components.phi import apply_phi_grid_rules
-from utils.charts import apply_default_layout, empty_figure
+from utils.charts import apply_default_layout, empty_figure, full_period_range
 from utils.date_slider import month_idx, idx_to_date, MAX_IDX, preset_to_slider_val, preset_to_exact_dates
 
 _DEFAULT_DATE_PRESET = "ytd"
@@ -682,14 +682,20 @@ def build_trend_chart(table_data, reviews, course_reviews, agg, mode):
     else:
         period = "W" if agg == "W" else "M"
         df["period"] = df["date"].dt.to_period(period).dt.start_time
-        grouped = df.groupby("period").agg(total=("_passing", "count"), passed=("_passing", "sum")).reset_index()
-        grouped["pass_rate"] = grouped["passed"] / grouped["total"] * 100
-        grouped = grouped.rename(columns={"period": "date"}).set_index("date").sort_index()
+        grouped = df.groupby("period").agg(total=("_passing", "count"), passed=("_passing", "sum"))
+        # Enumerate every period in range so zero-session weeks/months stay
+        # on the axis; counts fill 0, pass rate stays None for empty periods.
+        all_periods = full_period_range(grouped.index, agg)
+        grouped = grouped.reindex(all_periods, fill_value=0)
+        grouped["pass_rate"] = (grouped["passed"] / grouped["total"] * 100).where(grouped["total"] > 0)
+        grouped.index.name = "date"
+        grouped = grouped.sort_index()
 
     fig = go.Figure()
 
-    # Drop zero-total rows for bar mode so empty days (weekends) don't show
-    if mode == "bar":
+    # Drop zero-total rows for daily bar mode so empty days (weekends) don't
+    # show; W/M keep zero periods on the axis (pass rate is None there).
+    if mode == "bar" and agg == "D":
         grouped = grouped[grouped["total"] > 0]
 
     x = grouped.index

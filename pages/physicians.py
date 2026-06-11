@@ -1057,8 +1057,9 @@ def _build_manpower_data(df, agg="D"):
         # W/M/Y: sum man-days per period
         # Use period-start codes so JS detectAggLevel sees day=1 for M/Y
         resample_code = {"W": "W", "M": "MS", "Y": "YS"}.get(agg, agg)
+        # Resample zero-fills interior periods; keep them — a zero week
+        # (all physicians off) is meaningful and must show as a zero bar.
         grouped = daily["count"].resample(resample_code).sum()
-        grouped = grouped[grouped > 0]
         if grouped.empty:
             return None
         dates = [d.isoformat() for d in grouped.index]

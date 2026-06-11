@@ -19,7 +19,7 @@ from components.chart_card import chart_card, register_chart_callbacks
 from components.hours_ribbon import hours_ribbon_card, register_hours_ribbon_callbacks
 from components.detail_table import detail_table
 from dash_iconify import DashIconify
-from utils.charts import apply_default_layout, empty_figure, dept_color, smooth_limits
+from utils.charts import apply_default_layout, empty_figure, dept_color, smooth_limits, full_period_range
 
 dash.register_page(__name__, path="/operations", name="Operations", order=1)
 
@@ -564,7 +564,7 @@ def _prepare_efficiency_data(departments, machines, agg, start, end):
         # Cap at 150% — anything higher is bad data (e.g. ActualActiveMinutes = 230k)
         grouped["utilization"] = grouped["utilization"].clip(upper=150)
 
-        all_periods = sorted(grouped["period"].unique())
+        all_periods = full_period_range(grouped["period"], agg)
         date_range = [d.isoformat() for d in all_periods]
 
         # Build series for each resource that has meaningful data
@@ -597,7 +597,11 @@ def _prepare_efficiency_data(departments, machines, agg, start, end):
                     values.append(None)
                     raw_minutes.append(None)
                 else:
-                    values.append(round(util_val, 1) if pd.notna(util_val) and util_val > 0 else 0)
+                    # Utilization is a ratio — empty periods stay None, never fake 0
+                    if pd.isna(util_val):
+                        values.append(None)
+                    else:
+                        values.append(round(util_val, 1) if util_val > 0 else 0)
                     raw_minutes.append(round(min_val, 1) if pd.notna(min_val) else 0)
 
             entry = {
@@ -675,7 +679,7 @@ def _prepare_volume_data(departments, machines, agg, start, end):
         grouped = dv.groupby(["period", "Department"])[count_col].sum().reset_index()
 
         # Filter to active days (total > 0) to remove holidays
-        all_periods = sorted(grouped["period"].unique())
+        all_periods = full_period_range(grouped["period"], agg)
         if agg == "D":
             total_per_period = grouped.groupby("period")[count_col].sum()
             active_periods = total_per_period[total_per_period > 0].index

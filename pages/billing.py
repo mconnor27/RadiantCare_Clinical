@@ -30,7 +30,7 @@ from utils.permissions import (
 from components.kpi_card import kpi_card, kpi_placeholder
 from components.chart_card import chart_card, register_chart_callbacks
 from components.chart_settings import chart_settings_popover
-from utils.charts import apply_default_layout, empty_figure, dept_color, color_for_index
+from utils.charts import apply_default_layout, empty_figure, dept_color, color_for_index, full_period_range
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, DEFAULT_SLIDER, SLIDER_MARKS,
     preset_to_slider_val, preset_to_exact_dates,
@@ -972,7 +972,7 @@ def _build_payor_trend_store(df, date_col, groups, cmap, count_by, sort_order,
     for agg in ("W", "M", "Y"):
         t = df[[date_col, group_col]].dropna(subset=[date_col]).copy()
         t["period"] = t[date_col].dt.to_period(agg).dt.to_timestamp()
-        all_periods = sorted(t["period"].unique())
+        all_periods = full_period_range(t["period"], agg)
         dates = [d.isoformat() for d in all_periods]
 
         series = []

@@ -632,7 +632,7 @@ def update_yearly_stores(_, machines, section, ytd_mode, metric):
     all_years = sorted(set().union(*(df["DataYear"].unique() for df in processed.values())))
     dates = [f"{int(y)}-01-01" for y in all_years]
 
-    def _build_census(value_col, y_title, fill_zero=True, chart_id=None):
+    def _build_census(value_col, y_title, fill_zero=True, chart_id=None, hover_decimals=None):
         series = []
         for m in machines:
             if m not in processed:
@@ -648,7 +648,7 @@ def update_yearly_stores(_, machines, section, ytd_mode, metric):
                 "color": _machine_color(m),
             })
         return {"dates": dates, "series": series, "yTitle": y_title,
-                "stacked": True, "chartId": chart_id}
+                "stacked": True, "chartId": chart_id, "hoverDecimals": hover_decimals}
 
     # Sessions / Fractions (toggle via metric input)
     sessions_col = "TotalFractions" if metric == "fractions" else "TotalSessions"
@@ -658,7 +658,7 @@ def update_yearly_stores(_, machines, section, ytd_mode, metric):
     patients_data = _build_census("TotalPatients", "Patients",
                                   chart_id=f"{PAGE_ID}-chart-patients")
     dose_fx_data = _build_census("AvgDosePerFx_Gy", "Avg Dose/Fx (Gy)", fill_zero=False,
-                                 chart_id=f"{PAGE_ID}-chart-dose-per-fx")
+                                 chart_id=f"{PAGE_ID}-chart-dose-per-fx", hover_decimals=2)
 
     # Fields per fraction — computed ratio
     fpf_series = []
@@ -673,7 +673,8 @@ def update_yearly_stores(_, machines, section, ytd_mode, metric):
             "color": _machine_color(m),
         })
     fields_fx_data = {"dates": dates, "series": fpf_series, "yTitle": "Fields / Fraction",
-                      "stacked": True, "chartId": f"{PAGE_ID}-chart-fields-per-fx"}
+                      "stacked": True, "chartId": f"{PAGE_ID}-chart-fields-per-fx",
+                      "hoverDecimals": 2}
 
     return sessions_data, patients_data, dose_fx_data, fields_fx_data
 

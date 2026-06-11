@@ -22,7 +22,7 @@ from components.diagnosis_filter import diagnosis_accordion, register_diagnosis_
 from components.detail_table import detail_table
 from components.chart_settings import chart_settings_popover
 from components.phi import apply_phi_grid_rules
-from utils.charts import apply_default_layout, empty_figure
+from utils.charts import apply_default_layout, empty_figure, full_period_range
 from utils.tables import sanitize_for_grid
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, SLIDER_MARKS,
@@ -2279,7 +2279,7 @@ def _prepare_volume_data(df, agg, slice_by="", c2b=None, diag_mode="primary"):
     period_code = "Y" if agg == "Y" else agg
     df["period"] = df["ScheduledDateTime"].dt.to_period(period_code).dt.to_timestamp()
 
-    all_periods = sorted(df["period"].unique())
+    all_periods = full_period_range(df["period"], period_code)
     dates = [d.isoformat() for d in all_periods]
 
     series = []
@@ -2720,7 +2720,7 @@ def _prepare_timing_data(df, metric="consult_sim", agg="M", slice_by="", c2b=Non
 
     period_code = "Y" if agg == "Y" else agg
     df["period"] = df["ScheduledDateTime"].dt.to_period(period_code).dt.to_timestamp()
-    all_periods = sorted(df["period"].unique())
+    all_periods = full_period_range(df["period"], period_code)
     dates = [d.isoformat() for d in all_periods]
 
     series = []
@@ -2939,7 +2939,7 @@ def _prepare_cancel_data(dff_all, start, end, agg="M", slice_by=""):
     dff["period"] = dff["ScheduledDateTime"].dt.to_period(period_code).dt.to_timestamp()
     dff["_cancelled"] = dff["Status"].str.lower().str.contains("cancel|no-show|no show", na=False)
 
-    all_periods = sorted(dff["period"].unique())
+    all_periods = full_period_range(dff["period"], period_code)
     dates = [d.isoformat() for d in all_periods]
 
     series = []

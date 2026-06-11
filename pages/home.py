@@ -20,7 +20,7 @@ from components.outlier_panel import outlier_panel, register_outlier_callbacks
 from components.kpi_card import kpi_card, kpi_placeholder
 from components.chart_card import chart_card, register_chart_callbacks
 from components.hours_ribbon import hours_ribbon_card, register_hours_ribbon_callbacks
-from utils.charts import apply_default_layout, empty_figure, dept_color, smooth_limits
+from utils.charts import apply_default_layout, empty_figure, dept_color, smooth_limits, full_period_range
 from statsmodels.nonparametric.smoothers_lowess import lowess as _lowess
 
 PAGE_ID = "home"
@@ -1448,7 +1448,7 @@ def _build_metric_census_store(metric_id, departments, dim, agg, date_preset):
             daily = df.groupby([dkey, group_col])[unique_col].nunique().reset_index(name="count")
         else:
             daily = df.groupby([dkey, group_col]).size().reset_index(name="count")
-        date_range = sorted(daily[dkey].unique())
+        date_range = full_period_range(daily[dkey], agg)
     else:
         dkey = "_Date"
         if unique_col and unique_col in df.columns:

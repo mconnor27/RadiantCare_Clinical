@@ -10,6 +10,7 @@ import numpy as np
 from datetime import timedelta
 
 from config.settings import CHART_COLORWAY, DEFAULT_GRAPH_CONFIG, DEFAULT_LAYOUT, FONT_FAMILY, PRIMARY, OUTLIER_CAPS
+from utils.charts import full_period_range
 from utils.tables import sanitize_for_grid
 from utils.diagnosis_categories import (
     build_code_to_category, build_code_to_subcategory,
@@ -2552,15 +2553,22 @@ def _compute_flow_details(pivot, wf_full=None, use_business_days=False, agg_func
                 if km_med is not None:
                     km_medians[period] = round(km_med, 1)
 
-            # Use all periods that have either raw or KM data
-            all_periods = sorted(set(grouped_median.index) | set(km_medians.keys()))
+            # All periods with raw or KM data, extended over empty W/M buckets
+            # (medians/means/rates are None on empty periods, never 0)
+            all_periods = full_period_range(
+                set(grouped_median.index) | set(km_medians.keys()), _agg_key
+            )
             trend_by_agg[_agg_key] = {
                 "dates": [d.isoformat() for d in all_periods],
                 "medians": [round(float(grouped_median[d]), 1) if d in grouped_median.index else None for d in all_periods],
                 "means": [round(float(grouped_mean[d]), 1) if d in grouped_mean.index else None for d in all_periods],
                 "kmMedians": [km_medians.get(d) for d in all_periods],
                 "counts": [int(completed_n.get(d, 0)) for d in all_periods],
-                "completionRates": [round(float(rates.get(d, 0)), 2) for d in all_periods],
+                "completionRates": [
+                    round(float(rates[d]), 2) if d in rates.index
+                    else (0 if d in started_n.index else None)
+                    for d in all_periods
+                ],
             }
 
         # Overall KM median for the distribution chart
@@ -2640,14 +2648,20 @@ def _compute_flow_details(pivot, wf_full=None, use_business_days=False, agg_func
                         if km_med is not None:
                             tkm_medians[period] = round(km_med, 1)
 
-                    tall_periods = sorted(set(tgrouped_median.index) | set(tkm_medians.keys()))
+                    tall_periods = full_period_range(
+                        set(tgrouped_median.index) | set(tkm_medians.keys()), _agg_key
+                    )
                     ttba[_agg_key] = {
                         "dates": [d.isoformat() for d in tall_periods],
                         "medians": [round(float(tgrouped_median[d]), 1) if d in tgrouped_median.index else None for d in tall_periods],
                         "means": [round(float(tgrouped_mean[d]), 1) if d in tgrouped_mean.index else None for d in tall_periods],
                         "kmMedians": [tkm_medians.get(d) for d in tall_periods],
                         "counts": [int(tcompleted_n.get(d, 0)) for d in tall_periods],
-                        "completionRates": [round(float(trates.get(d, 0)), 2) for d in tall_periods],
+                        "completionRates": [
+                            round(float(trates[d]), 2) if d in trates.index
+                            else (0 if d in tstarted_n.index else None)
+                            for d in tall_periods
+                        ],
                     }
                 tkm_median_overall = _kaplan_meier_median(
                     tkm_obs["_obs_days"].values, tkm_obs["_event"].values,
@@ -2686,11 +2700,13 @@ def _prepare_trend_data(pivot, use_business_days=False, agg_func="median"):
 
     temp["month"] = temp["Exam"].dt.to_period("M").dt.to_timestamp()
     monthly = temp.groupby("month")["total_days"].median()
-    dates = [d.isoformat() for d in monthly.index]
+    # Keep empty months on the axis; medians stay None there, never 0
+    months_all = full_period_range(monthly.index, "M")
+    dates = [d.isoformat() for d in months_all]
 
     series = [{
         "name": "Total Pipeline",
-        "values": monthly.tolist(),
+        "values": [None if pd.isna(v) else float(v) for v in monthly.reindex(months_all)],
         "color": CHART_COLORWAY[0],
     }]
 
@@ -2710,7 +2726,8 @@ def _prepare_trend_data(pivot, use_business_days=False, agg_func="median"):
                 stage_monthly = stage_temp.groupby("month")["_days"].median()
                 series.append({
                     "name": label,
-                    "values": stage_monthly.reindex(monthly.index, fill_value=0).tolist(),
+                    "values": [None if pd.isna(v) else float(v)
+                               for v in stage_monthly.reindex(months_all)],
                     "color": CHART_COLORWAY[color_idx],
                 })
 
