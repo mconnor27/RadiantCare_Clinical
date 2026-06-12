@@ -2568,13 +2568,26 @@ def _prepare_referral_geo_data(df):
     else:
         work["_our_dept"] = work["Referred by Department"].apply(_map_to_our_dept).fillna("Unknown")
 
+    # Effective address fields: prefer the curated "* Override" columns the
+    # loader fills from the Provider Manager's manual/AI address corrections,
+    # falling back to the raw CSV value per field.
+    def _eff(col):
+        base = work.get(col, pd.Series("", index=work.index)).fillna("").astype(str)
+        ovr_col = col + " Override"
+        if ovr_col in work.columns:
+            ovr = work[ovr_col].fillna("").astype(str)
+            base = ovr.where(ovr.str.strip() != "", base)
+        return base
+
+    work["_eff_address"] = _eff("Referring Provider Address")
+    work["_eff_city"] = _eff("Referring Provider City")
+    work["_eff_state"] = _eff("Referring Provider State")
+    work["_eff_zip"] = _eff("Referring Provider Zip Code")
+
     # Build address key for each row
     work["_addr_key"] = work.apply(
         lambda r: _addr_geocode_key(
-            r.get("Referring Provider Address", ""),
-            r.get("Referring Provider City", ""),
-            r.get("Referring Provider State", ""),
-            r.get("Referring Provider Zip Code", ""),
+            r["_eff_address"], r["_eff_city"], r["_eff_state"], r["_eff_zip"],
         ), axis=1,
     )
     work = work[work["_addr_key"].str.strip("|") != "|||"]
@@ -2588,10 +2601,10 @@ def _prepare_referral_geo_data(df):
     for key in unique_keys:
         row = work[work["_addr_key"] == key].iloc[0]
         addr_records.append({
-            "address": row.get("Referring Provider Address", ""),
-            "city": row.get("Referring Provider City", ""),
-            "state": row.get("Referring Provider State", ""),
-            "zip_code": row.get("Referring Provider Zip Code", ""),
+            "address": row["_eff_address"],
+            "city": row["_eff_city"],
+            "state": row["_eff_state"],
+            "zip_code": row["_eff_zip"],
         })
 
     # Geocode
@@ -2606,18 +2619,18 @@ def _prepare_referral_geo_data(df):
     if has_dept:
         grp = work.groupby(["_addr_key", "_our_dept"]).agg(
             referral_count=("_addr_key", "size"),
-            primary_city=("Referring Provider City",
+            primary_city=("_eff_city",
                           lambda s: s.mode().iloc[0] if not s.mode().empty else ""),
-            zip5=("Referring Provider Zip Code",
+            zip5=("_eff_zip",
                   lambda s: normalize_zip(s.mode().iloc[0]) if not s.mode().empty else ""),
             **_inst_agg,
         ).reset_index().rename(columns={"_addr_key": "addr_key", "_our_dept": "Department"})
     else:
         grp = work.groupby("_addr_key").agg(
             referral_count=("_addr_key", "size"),
-            primary_city=("Referring Provider City",
+            primary_city=("_eff_city",
                           lambda s: s.mode().iloc[0] if not s.mode().empty else ""),
-            zip5=("Referring Provider Zip Code",
+            zip5=("_eff_zip",
                   lambda s: normalize_zip(s.mode().iloc[0]) if not s.mode().empty else ""),
             **_inst_agg,
         ).reset_index().rename(columns={"_addr_key": "addr_key"})
@@ -3520,14 +3533,23 @@ def _build_detail_table(df):
         axis=1,
     )
 
-    # Full address: "Street, City, ST Zip"
+    # Full address: "Street, City, ST Zip" — prefer the curated "* Override"
+    # columns (Provider Manager address corrections) per field, like the map.
     addr_parts = ["Referring Provider Address", "Referring Provider City",
                    "Referring Provider State", "Referring Provider Zip Code"]
     if any(c in df.columns for c in addr_parts):
-        street = df.get("Referring Provider Address", pd.Series("", index=df.index)).fillna("")
-        city = df.get("Referring Provider City", pd.Series("", index=df.index)).fillna("")
-        state = df.get("Referring Provider State", pd.Series("", index=df.index)).fillna("")
-        zipcode = df.get("Referring Provider Zip Code", pd.Series("", index=df.index)).fillna("").astype(str)
+        def _eff(col):
+            base = df.get(col, pd.Series("", index=df.index)).fillna("").astype(str)
+            ovr_col = col + " Override"
+            if ovr_col in df.columns:
+                ovr = df[ovr_col].fillna("").astype(str)
+                base = ovr.where(ovr.str.strip() != "", base)
+            return base
+
+        street = _eff("Referring Provider Address")
+        city = _eff("Referring Provider City")
+        state = _eff("Referring Provider State")
+        zipcode = _eff("Referring Provider Zip Code")
         city_st_zip = (city.str.strip() + ", " + state.str.strip() + " " + zipcode.str.strip()).str.strip(", ")
         df["Address"] = (street.str.strip() + ", " + city_st_zip).str.strip(", ")
         df.loc[df["Address"].str.strip() == "", "Address"] = pd.NA

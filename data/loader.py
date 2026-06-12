@@ -1644,15 +1644,16 @@ def load_referrals():
     # Fold the referring-overrides table fingerprint into the cache signature
     # so saving an override (which doesn't touch the source xlsx) still busts
     # the parquet cache on the next load.
-    # The v2 suffix forces a one-time rebuild on deploy: prior to this version
-    # the override-apply pass silently swallowed a ValueError on malformed
-    # DoctorIds (e.g. "1234567890/Kaise"), so the cached parquets shipped from
-    # disk had institution renames missing.
+    # The version suffix forces a one-time rebuild on deploy when the
+    # override-apply pass changes shape. v2: fixed the swallowed ValueError on
+    # malformed DoctorIds that left institution renames out of cached parquets.
+    # v3: added the "Referring Provider * Override" address columns consumed by
+    # the referral map.
     try:
         from data.reviews_db import get_referring_overrides_fingerprint
-        _overrides_fp = "v2|" + get_referring_overrides_fingerprint()
+        _overrides_fp = "v3|" + get_referring_overrides_fingerprint()
     except Exception:
-        _overrides_fp = "v2|"
+        _overrides_fp = "v3|"
     cached = _read_parquet_cache("Referrals", src_paths, extra=_overrides_fp)
     if cached is not None:
         return cached
@@ -1882,6 +1883,21 @@ def load_referrals():
                     normalize_specialty as _norm_ov_spec,
                     bucket_to_dept as _bucket_ov_spec,
                 )
+                # Curated addresses go in separate Override columns rather than
+                # overwriting the raw provider address columns: the Provider
+                # Manager re-derives its override keys from the raw city/state/
+                # zip, so rewriting those would orphan every stored override.
+                # Consumers that want the corrected location (the referral map)
+                # prefer the Override columns when present.
+                _OVR_ADDR_COLS = {
+                    "address": "Referring Provider Address Override",
+                    "city": "Referring Provider City Override",
+                    "state": "Referring Provider State Override",
+                    "zip_code": "Referring Provider Zip Code Override",
+                }
+                if any(v.get("address_source") for v in _overrides.values()):
+                    for _ovr_col in _OVR_ADDR_COLS.values():
+                        df[_ovr_col] = ""
                 for key, vals in _overrides.items():
                     mask = _row_key == key
                     if not mask.any():
@@ -1902,6 +1918,10 @@ def load_referrals():
                             df.loc[idx, "DeptSpecialty"] = _spec
                     if vals.get("institution"):
                         df.loc[idx, "DoctorInstitution"] = vals["institution"]
+                    if vals.get("address_source"):
+                        for _fld, _ovr_col in _OVR_ADDR_COLS.items():
+                            if vals.get(_fld):
+                                df.loc[idx, _ovr_col] = str(vals[_fld])
         except Exception:
             pass
 

@@ -112,7 +112,10 @@ UI_CONTENT = dmc.Stack(
             body(
                 "Mapbox dots at referring physician addresses (geocoded from "
                 "DoctorCompleteAddress), sized by patient count and colored by "
-                "site. Same filter overlays as the Patients map — flow lines, "
+                "site. Addresses corrected in the Referring Physician Manager "
+                "(manual edits or AI research) override the raw ARIA address "
+                "before geocoding, so curated locations plot at the corrected "
+                "spot. Same filter overlays as the Patients map — flow lines, "
                 "min-count slider, region toggle, site filter.",
             ),
 
@@ -122,9 +125,12 @@ UI_CONTENT = dmc.Stack(
             bullets([
                 "Detail table — one row per referral with Created / Scheduled "
                 "/ First Appt dates, provider, institution, specialty, "
-                "diagnosis, payer, lead-times, status. AG Grid with column "
-                "filtering; when filters are active a red badge appears and "
-                "the KPIs / charts / sparklines reflect the filtered subset.",
+                "diagnosis, payer, lead-times, status. The Address column "
+                "shows the curated address from the Referring Physician "
+                "Manager when one exists, falling back to the raw ARIA value. "
+                "AG Grid with column filtering; when filters are active a red "
+                "badge appears and the KPIs / charts / sparklines reflect the "
+                "filtered subset.",
                 "Referring Physician Manager modal — three tabs (Providers / "
                 "Institutions / Diagnoses) for editing directory metadata. "
                 "Includes NPI registry lookup for specialty autofill, AI-"
