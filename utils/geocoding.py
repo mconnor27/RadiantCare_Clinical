@@ -18,7 +18,9 @@ from datetime import datetime
 from pathlib import Path
 from functools import lru_cache
 
-from config.settings import PROJECT_ROOT, DEPARTMENTS, DEPARTMENT_COLORS, PHI_MODE
+from config.settings import (
+    PROJECT_ROOT, DEPARTMENTS, DEPARTMENT_COLORS, PHI_MODE, MAPBOX_TOKEN,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -435,21 +437,88 @@ def _addr_geocode_key(address, city, state, zip_code):
     return "|".join(parts)
 
 
-def geocode_addresses(addr_records, max_nominatim=20):
-    """Geocode a list of address dicts, using cache + Nominatim.
+# Source quality ranking. Anything below "mapbox" is a candidate for upgrade
+# when a street address is available and a Mapbox token is configured.
+# "city"/"street" were produced by the old Nominatim-only path, which silently
+# returned postcode/town centroids (e.g. a downtown Aberdeen point that lands
+# in the Chehalis River) and mislabeled them — so they are NOT trustworthy and
+# must be re-geocoded once Mapbox is available.
+_PRECISE_SOURCES = ("mapbox",)
+
+
+def _geocode_mapbox(address, city, state, zip5):
+    """Geocode a full US street address via the Mapbox Geocoding API.
+
+    Returns (lat, lon) on a confident street-level match, else None. Mapbox
+    resolves small-town house numbers (and unit/suite suffixes) that public
+    Nominatim silently drops to a town centroid. Uses stdlib urllib so no new
+    dependency is introduced.
+    """
+    if not MAPBOX_TOKEN or not (address and city and state):
+        return None
+    import json as _json
+    import urllib.parse as _up
+    import urllib.request as _ur
+
+    query = f"{address}, {city}, {state}"
+    if zip5:
+        query += f" {zip5}"
+    url = (
+        "https://api.mapbox.com/geocoding/v5/mapbox.places/"
+        + _up.quote(query)
+        + ".json?country=US&limit=1&types=address&autocomplete=false"
+        + "&access_token=" + _up.quote(MAPBOX_TOKEN)
+    )
+    try:
+        with _ur.urlopen(url, timeout=10) as resp:
+            data = _json.load(resp)
+    except Exception as exc:
+        logger.debug("Mapbox geocode failed for %r: %s", query, exc)
+        return None
+    feats = data.get("features") or []
+    if not feats:
+        return None
+    feat = feats[0]
+    # Require a true rooftop match, not a street/town centroid:
+    #   - place_type is exactly ["address"] (not poi / place / postcode)
+    #   - a house number was actually resolved (feat["address"] present) — when
+    #     Mapbox can't find the number it returns the street line with no
+    #     "address" property (e.g. "S Cedar St" instead of "2202 S Cedar St")
+    #   - relevance >= 0.8 rejects gross mismatches (e.g. a Fife address that
+    #     falls through to Seaview at 0.62) while still accepting rooftops that
+    #     are only penalized for a stale ZIP in the source data (~0.89).
+    if feat.get("place_type") != ["address"]:
+        return None
+    if not feat.get("address"):
+        return None
+    if feat.get("relevance", 0) < 0.8:
+        return None
+    center = feat.get("center") or []
+    if len(center) != 2:
+        return None
+    lon, lat = float(center[0]), float(center[1])
+    if not _is_valid_us_coord(lat, lon):
+        return None
+    return lat, lon
+
+
+def geocode_addresses(addr_records, max_nominatim=20, max_mapbox=200):
+    """Geocode a list of address dicts, using cache + Mapbox + Nominatim.
 
     Each record: {"address", "city", "state", "zip_code"} (all strings).
     Returns DataFrame with: addr_key, lat, lon.
 
-    Uses a two-tier approach:
+    Tiered approach (best first):
       1. Check persistent address cache
-      2. Nominatim freeform query for uncached addresses (rate-limited)
-    Falls back to ZIP centroid if Nominatim fails.
+      2. Mapbox Geocoding API — street-level, handles unit suffixes (source="mapbox")
+      3. Nominatim freeform query (source="street"/"city")
+      4. ZIP centroid fallback (source="zip")
 
     Args:
-        max_nominatim: Max Nominatim API calls per invocation to avoid
-            blocking the page. Remaining addresses use ZIP centroid
-            fallback and get precise geocoding on subsequent calls.
+        max_nominatim: Max Nominatim API calls per invocation.
+        max_mapbox: Max Mapbox API calls per invocation. Mapbox is fast and
+            reliable, so this is higher than the Nominatim cap. Remaining
+            addresses keep their fallback coords and upgrade on later passes.
     """
     if not addr_records:
         return pd.DataFrame(columns=["addr_key", "lat", "lon"])
@@ -459,6 +528,8 @@ def geocode_addresses(addr_records, max_nominatim=20):
     if not cache.empty:
         cached_source = dict(zip(cache["addr_key"], cache["source"].fillna("")))
 
+    mapbox_on = bool(MAPBOX_TOKEN)
+
     # Deduplicate by key
     key_to_record = {}
     for rec in addr_records:
@@ -466,15 +537,21 @@ def geocode_addresses(addr_records, max_nominatim=20):
         if key not in key_to_record:
             key_to_record[key] = rec
 
-    # Geocode if: never cached, OR cached only at coarse ZIP-centroid quality
-    # while a street address is available to retry for street-level precision.
-    # (Once an entry reaches "street" or "city" we leave it alone.)
+    # Decide which keys to (re)geocode:
+    #   - never cached → geocode
+    #   - cached at coarse ZIP quality but a street address exists → retry
+    #   - cached at any non-precise source (incl. old "city"/"street" Nominatim
+    #     centroids) while Mapbox is available and a street address exists →
+    #     upgrade to street-level precision
     needed = {}
     for k, v in key_to_record.items():
         src = cached_source.get(k)
+        has_street = bool((v.get("address") or "").strip())
         if k not in cached_source:
             needed[k] = v
-        elif src in ("zip", "", None) and (v.get("address") or "").strip():
+        elif src in ("zip", "", None) and has_street:
+            needed[k] = v
+        elif mapbox_on and src not in _PRECISE_SOURCES and has_street:
             needed[k] = v
 
     if not needed:
@@ -490,6 +567,7 @@ def geocode_addresses(addr_records, max_nominatim=20):
         zip_lookup = dict(zip(zip_cache["zip5"], zip(zip_cache["lat"], zip_cache["lon"])))
 
     nominatim_calls = 0
+    mapbox_calls = 0
     for key, rec in needed.items():
         address = (rec.get("address") or "").strip()
         city = (rec.get("city") or "").strip()
@@ -498,8 +576,17 @@ def geocode_addresses(addr_records, max_nominatim=20):
         lat = lon = None
         source = None
 
-        # Only hit Nominatim if under the batch limit
-        if nominatim_calls < max_nominatim:
+        # Primary: Mapbox street-level geocoding (handles small-town house
+        # numbers and unit/suite suffixes that Nominatim drops to a centroid).
+        if mapbox_on and mapbox_calls < max_mapbox and address and city and state:
+            mapbox_calls += 1
+            coords = _geocode_mapbox(address, city, state, zip5)
+            if coords:
+                lat, lon = coords
+                source = "mapbox"
+
+        # Only hit Nominatim if Mapbox didn't resolve and we're under the batch limit
+        if lat is None and nominatim_calls < max_nominatim:
             # Try full street address first
             if address and city and state:
                 query = f"{address}, {city}, {state}"

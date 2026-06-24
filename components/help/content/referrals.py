@@ -265,9 +265,13 @@ UI_CONTENT = dmc.Stack(
                 "before matching against the Referring lookup so "
                 "\"Smith, John MD\" and \"Smith, John\" resolve to the same "
                 "physician.",
-                "Geocoding for the provider map uses utils.geocoding with "
-                "address-level hashing (_addr_geocode_key) — cached across "
-                "sessions.",
+                "Geocoding for the provider map resolves the full street "
+                "address (curated override first, then raw) to a rooftop "
+                "coordinate via the Mapbox Geocoding API, accepting only "
+                "true house-number matches; addresses Mapbox can't pin (PO "
+                "boxes, malformed records) fall back to Nominatim and then a "
+                "ZIP centroid. Results are hashed by address (_addr_geocode_key) "
+                "and cached across sessions in data/geocode_addr_cache.csv.",
                 "Prior-period trends use either Calendar-aligned or Rolling "
                 "windows (toggle per chart) so a \"30 day\" prior can be "
                 "compared to either the previous calendar month or the "

@@ -254,6 +254,26 @@ def _get_data(section_filter):
     return lifetime, yearly
 
 
+def _apply_ytd(mdf, ytd_mode, current_year, year_fraction):
+    """Apply current-year handling (project / actual / exclude) to a per-machine
+    yearly frame. Returns a frame; does not mutate the input."""
+    if ytd_mode == "exclude":
+        return mdf[mdf["DataYear"] != current_year]
+    if ytd_mode == "project" and year_fraction > 0:
+        is_current = mdf["DataYear"] == current_year
+        if is_current.any():
+            mdf = mdf.copy()
+            scale = 1 / year_fraction
+            for col in ["TotalFields", "TotalDose_Gy", "TotalFractions",
+                        "TotalSessions", "TotalPatients"]:
+                if col in mdf.columns:
+                    mdf.loc[is_current, col] = (mdf.loc[is_current, col] * scale).round(0)
+            fx = mdf.loc[is_current, "TotalFractions"]
+            dose = mdf.loc[is_current, "TotalDose_Gy"]
+            mdf.loc[is_current, "AvgDosePerFx_Gy"] = (dose / fx.replace(0, np.nan)).round(4)
+    return mdf
+
+
 # ---------------------------------------------------------------------------
 # Main callback — KPIs + machine cards + timeline
 # ---------------------------------------------------------------------------
@@ -266,8 +286,9 @@ def _get_data(section_filter):
     Input(f"{PAGE_ID}-interval", "n_intervals"),
     Input(f"{PAGE_ID}-filter-machine", "value"),
     Input(f"{PAGE_ID}-filter-section", "value"),
+    Input(f"{PAGE_ID}-filter-ytd", "value"),
 )
-def update_kpis_cards_timeline(_, machines, section):
+def update_kpis_cards_timeline(_, machines, section, ytd_mode):
     if not machines:
         empty_graph = dcc.Graph(figure=empty_figure("Select at least one machine"),
                                 config={"displayModeBar": False}, style={"height": "100px"})
@@ -312,6 +333,8 @@ def update_kpis_cards_timeline(_, machines, section):
     ]
 
     # --- Machine cards (ordered to match chip order) ---
+    current_year = pd.Timestamp.now().year
+    year_fraction = pd.Timestamp.now().timetuple().tm_yday / 365.25
     machine_cards = []
     lt_indexed = lt.set_index("Machine")
     for m in ALL_MACHINES:
@@ -338,8 +361,9 @@ def update_kpis_cards_timeline(_, machines, section):
             days_since = (pd.Timestamp.now() - last_tx).days
             is_retired = days_since > 365
 
-        # Mini sparkline from yearly data
+        # Mini sparkline from yearly data (respects current-year handling)
         m_yearly = yearly[yearly["Machine"] == m].sort_values("DataYear")
+        m_yearly = _apply_ytd(m_yearly, ytd_mode, current_year, year_fraction)
         spark_vals = m_yearly["TotalSessions"].tolist() if not m_yearly.empty else None
         spark_labels = m_yearly["DataYear"].astype(int).astype(str).tolist() if not m_yearly.empty else None
 
@@ -609,19 +633,7 @@ def update_yearly_stores(_, machines, section, ytd_mode, metric):
         mdf = yr[yr["Machine"] == m].copy()
         if mdf.empty:
             continue
-        if ytd_mode == "exclude":
-            mdf = mdf[mdf["DataYear"] != current_year]
-        elif ytd_mode == "project" and year_fraction > 0:
-            is_current = mdf["DataYear"] == current_year
-            if is_current.any():
-                scale = 1 / year_fraction
-                for col in ["TotalFields", "TotalDose_Gy", "TotalFractions",
-                            "TotalSessions", "TotalPatients"]:
-                    if col in mdf.columns:
-                        mdf.loc[is_current, col] = (mdf.loc[is_current, col] * scale).round(0)
-                fx = mdf.loc[is_current, "TotalFractions"]
-                dose = mdf.loc[is_current, "TotalDose_Gy"]
-                mdf.loc[is_current, "AvgDosePerFx_Gy"] = (dose / fx.replace(0, np.nan)).round(4)
+        mdf = _apply_ytd(mdf, ytd_mode, current_year, year_fraction)
         if not mdf.empty:
             processed[m] = mdf
 
