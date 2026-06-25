@@ -25,7 +25,7 @@
 
             try {
                 window.dash_clientside.flowGantt._renderSinglePipeline(
-                    rawData, false, null
+                    rawData, false, null, {spreadExits: true}
                 );
             } finally {
                 // Restore original ID

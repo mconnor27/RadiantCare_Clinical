@@ -54,6 +54,11 @@ _DEFAULT_DATE_PRESET = "12mo"
 _CAP_CREATED_TO_SCHEDULED = 14   # > 2 weeks = outlier
 _CAP_SCHEDULED_TO_VISIT = 28     # > 4 weeks = outlier
 _CAP_TOTAL = _CAP_CREATED_TO_SCHEDULED + _CAP_SCHEDULED_TO_VISIT
+# Fixed caps for the downstream EBRT lane (not driven by the outlier sliders,
+# which only control the first two transitions).
+_CAP_VISIT_TO_SIM = 90     # consult -> simulation
+_CAP_SIM_TO_TX = 45        # simulation -> treatment start
+_CAP_TX_DURATION = 120     # treatment start -> completion (course length)
 
 # Dimension trend/comparison chart height
 _DIM_RIDGE_HEIGHT = 720
@@ -683,6 +688,10 @@ layout = dmc.Stack(
                             },
                         ),
                     ],
+                ),
+                dmc.Text(
+                    "", id=f"{PAGE_ID}-flow-footnote",
+                    size="xs", c=NEUTRAL["text_secondary"], mt="xs", fs="italic",
                 ),
             ],
             p="md", radius="md", shadow="xs", withBorder=True,
@@ -3643,19 +3652,26 @@ def _build_detail_table(df):
 # Referral Flow-Gantt Data
 # ---------------------------------------------------------------------------
 
-_FLOW_STAGES = ["Created", "Scheduled", "Visit Completed"]
-_FLOW_COLORS = ["#7C2A83", "#2196F3", "#4CAF50"]
+_FLOW_STAGES = ["Created", "Scheduled", "Visit Completed",
+                "Simulation", "Tx Started", "Tx Completed"]
+_FLOW_COLORS = ["#7C2A83", "#2196F3", "#00ACC1", "#FFB300", "#FB8C00", "#4CAF50"]
 
 
 def _compute_referral_flow_data(df, cap_0=_CAP_CREATED_TO_SCHEDULED, cap_1=_CAP_SCHEDULED_TO_VISIT):
     """Build the data dict consumed by the flow_gantt.js renderer.
 
-    Three reality-based stages:
-      Created -> Scheduled (MRN-matched to CV) -> Visit Completed
+    Six stages:
+      Created -> Scheduled -> Visit Completed (referral + CV match)
+        -> Simulation -> Tx Started -> Tx Completed (EBRT lane, from
+        Simulations + Courses joined via _enrich_with_treatment)
 
-    Dropoff categories:
-      Pending  = appointment is genuinely in the future (First Appt > today)
-      Cancelled = referral Denied/Canceled, or CV status is Canceled/No-Show
+    Stages 1-3 count all referrals; stages 4-6 are the EBRT cohort, so the
+    funnel narrows at Visit Completed -> Simulation — that drop is the
+    non-EBRT exit (brachy / Pluvicto / surveillance / referred out / lost),
+    surfaced separately in the footnote.
+
+    Dropoff categories per transition: Pending (still in flight) vs Cancelled
+    (closed / not proceeding).
     """
     if df.empty:
         return None
@@ -3682,75 +3698,109 @@ def _compute_referral_flow_data(df, cap_0=_CAP_CREATED_TO_SCHEDULED, cap_1=_CAP_
         "Confirmed", "Rescheduled",
     ]) if "CVMatch" in df.columns else created & False
 
-    masks = [created, scheduled, completed]
+    # --- Downstream EBRT lane (Simulations + Courses, joined upstream) ---
+    # has_sim also trips on TxStartDate so a matched course whose simulation row
+    # we missed still counts as having reached simulation (EBRT always sims).
+    sim_date = df["SimDate"] if "SimDate" in df.columns else pd.Series(pd.NaT, index=df.index)
+    tx_start = df["TxStartDate"] if "TxStartDate" in df.columns else pd.Series(pd.NaT, index=df.index)
+    tx_done = df["TxComplete"] == True if "TxComplete" in df.columns else created & False
+    has_sim = sim_date.notna() | tx_start.notna()
+    has_start = tx_start.notna()
+    # Nest each downstream stage inside Visit Completed so the funnel stays
+    # monotonic (stage N+1 ⊆ stage N): completed ⊇ sim ⊇ started ⊇ done.
+    sim_reached = completed & has_sim
+    tx_started = completed & has_start
+    tx_completed = completed & has_start & tx_done
+
+    masks = [created, scheduled, completed, sim_reached, tx_started, tx_completed]
     stage_counts = [int(m.sum()) for m in masks]
 
-    # --- Flow values ---
-    flow_values = [
-        int((created & scheduled).sum()),
-        int((scheduled & completed).sum()),
-    ]
-
-    # --- Dropoffs ---
-    dropoffs = [
-        int((created & ~scheduled).sum()),
-        int((scheduled & ~completed).sum()),
-    ]
+    # --- Flow + dropoff between consecutive stages (masks are nested) ---
+    flow_values = [int((masks[i] & masks[i + 1]).sum()) for i in range(n - 1)]
+    dropoffs = [int((masks[i] & ~masks[i + 1]).sum()) for i in range(n - 1)]
 
     # --- Pending vs Cancelled in dropoffs ---
-    is_cancelled = df["Status"].isin(["Denied", "Canceled"])
-    cv_cancelled = df["CVMatch"].isin(["Canceled", "No Show"]) if "CVMatch" in df.columns else created & False
+    is_terminal = df["Status"].isin(["Closed", "Denied", "Canceled"])
+    recent_visit = (
+        df["First Appt"].notna() & (df["First Appt"] >= today - pd.Timedelta(days=_CAP_VISIT_TO_SIM))
+    ) if "First Appt" in df.columns else created & False
+    recent_sim = sim_date.notna() & (sim_date >= today - pd.Timedelta(days=_CAP_SIM_TO_TX))
 
     pending_counts = []
     cancelled_counts = []
 
-    # Drop from Created -> Scheduled (never got an appointment — all are lost/closed)
+    # 0: Created -> Scheduled (never got an appointment)
     drop_0 = created & ~scheduled
-    # Pending if status is still active (Pending Review, Authorized, Open)
-    is_terminal = df["Status"].isin(["Closed", "Denied", "Canceled"])
     pending_counts.append(int((drop_0 & ~is_terminal).sum()))
     cancelled_counts.append(int((drop_0 & is_terminal).sum()))
 
-    # Drop from Scheduled -> Completed
+    # 1: Scheduled -> Visit Completed
     drop_1 = scheduled & ~completed
-    # Pending = future appt OR appt attached but no CV yet (visit hasn't happened)
     drop_1_pending = drop_1 & (has_future_appt | (appt_attached & ~cv_matched))
     pending_counts.append(int(drop_1_pending.sum()))
-    # Cancelled = the rest (CV canceled/no-show or referral denied/canceled)
     cancelled_counts.append(int((drop_1 & ~drop_1_pending).sum()))
+
+    # 2: Visit Completed -> Simulation (the non-EBRT exit; recent = maybe still coming)
+    drop_2 = completed & ~sim_reached
+    pending_counts.append(int((drop_2 & recent_visit).sum()))
+    cancelled_counts.append(int((drop_2 & ~recent_visit).sum()))
+
+    # 3: Simulation -> Tx Started (recent sim = treatment likely pending)
+    drop_3 = sim_reached & ~tx_started
+    pending_counts.append(int((drop_3 & recent_sim).sum()))
+    cancelled_counts.append(int((drop_3 & ~recent_sim).sum()))
+
+    # 4: Tx Started -> Tx Completed (still ACTIVE = on treatment now = pending, not lost)
+    drop_4 = tx_started & ~tx_completed
+    pending_counts.append(int(drop_4.sum()))
+    cancelled_counts.append(0)
 
     # --- Inter-stage durations (with outlier caps) ---
     def _safe_stat(series, cap, func="median"):
-        s = series.dropna()
+        s = pd.to_numeric(series, errors="coerce").dropna()
         s = s[(s >= 0) & (s <= cap)]
         if s.empty:
             return 0.0
         return float(s.median()) if func == "median" else float(s.mean())
 
-    # Created -> Scheduled: days from referral Created to appointment booked
+    cap_total = cap_0 + cap_1
+
+    # 0: Created -> Scheduled (referral created to appointment booked)
     if "CVBookedDate" in df.columns and "Created" in df.columns:
         d0 = (df["CVBookedDate"] - df["Created"]).dt.days
     else:
         d0 = pd.Series(dtype=float)
-    cap_total = cap_0 + cap_1
-    median_days = [_safe_stat(d0, cap_0, "median")]
-    mean_days = [_safe_stat(d0, cap_0, "mean")]
-
-    # Scheduled -> Completed: days from booked to visit
+    # 1: Scheduled -> Visit (booked to visit)
     d1 = df["CVDaysBookedToAppt"] if "CVDaysBookedToAppt" in df.columns else pd.Series(dtype=float)
-    median_days.append(_safe_stat(d1, cap_1, "median"))
-    mean_days.append(_safe_stat(d1, cap_1, "mean"))
-
-    # --- True per-patient total (median of individual totals, not sum of medians) ---
-    if "CVBookedDate" in df.columns and "CVDaysBookedToAppt" in df.columns:
-        _per_patient = (df["CVBookedDate"] - df["Created"]).dt.days + df["CVDaysBookedToAppt"]
-        _per_patient = _per_patient[(_per_patient >= 0) & (_per_patient <= cap_total)].dropna()
-        total_median = float(_per_patient.median()) if not _per_patient.empty else sum(median_days)
+    # 2: Visit Completed -> Simulation
+    d2 = (sim_date - df["First Appt"]).dt.days if "First Appt" in df.columns else pd.Series(dtype=float)
+    # 3: Simulation -> Tx Started (prefer precomputed DaysFromSimToTreatment)
+    if "SimToTxDays" in df.columns and df["SimToTxDays"].notna().any():
+        d3 = pd.to_numeric(df["SimToTxDays"], errors="coerce")
     else:
-        total_median = sum(median_days)
+        d3 = (tx_start - sim_date).dt.days
+    # 4: Tx Started -> Tx Completed (course length)
+    if "TxDurationDays" in df.columns and df["TxDurationDays"].notna().any():
+        d4 = pd.to_numeric(df["TxDurationDays"], errors="coerce")
+    else:
+        d4 = (df["TxCompleteDate"] - tx_start).dt.days if "TxCompleteDate" in df.columns else pd.Series(dtype=float)
 
-    # --- X positions (evenly spaced for 3 stages) ---
-    x_positions = [0.0, 0.5, 1.0]
+    _caps = [cap_0, cap_1, _CAP_VISIT_TO_SIM, _CAP_SIM_TO_TX, _CAP_TX_DURATION]
+    _dseries = [d0, d1, d2, d3, d4]
+    median_days = [_safe_stat(s, c, "median") for s, c in zip(_dseries, _caps)]
+    mean_days = [_safe_stat(s, c, "mean") for s, c in zip(_dseries, _caps)]
+
+    # --- True per-patient total: Created -> Tx Completed for the completed cohort ---
+    if "TxCompleteDate" in df.columns and tx_completed.any():
+        _pp = (df.loc[tx_completed, "TxCompleteDate"] - df.loc[tx_completed, "Created"]).dt.days
+        _cap_all = sum(_caps)
+        _pp = _pp[(_pp >= 0) & (_pp <= _cap_all)].dropna()
+        total_median = float(_pp.median()) if not _pp.empty else float(sum(median_days))
+    else:
+        total_median = float(sum(median_days))
+
+    # --- X positions (evenly spaced across stages) ---
+    x_positions = [i / (n - 1) for i in range(n)]
 
     return {
         "stages": stages,
@@ -3795,10 +3845,13 @@ def _simple_kde(values, n_points=200):
 def _compute_referral_flow_details(df, cap_0=_CAP_CREATED_TO_SCHEDULED, cap_1=_CAP_SCHEDULED_TO_VISIT):
     """Compute per-transition detail data for clientside distribution & trend.
 
-    Transitions:
-        0: Created -> Scheduled   (days = Days to First Appt)
-        1: Scheduled -> Completed (days = |CVDateOffset|, usually 0)
-    Total: Created -> Completed   (days = Days to First Appt)
+    Transition index matches the gantt band index (selected-flow):
+        0: Created -> Scheduled
+        1: Scheduled -> Visit Completed
+        2: Visit Completed -> Simulation
+        3: Simulation -> Tx Started
+        4: Tx Started -> Tx Completed
+    Total: Created -> Visit Completed (referral lead-time headline)
     """
     if df.empty:
         return None
@@ -3868,6 +3921,38 @@ def _compute_referral_flow_details(df, cap_0=_CAP_CREATED_TO_SCHEDULED, cap_1=_C
     transitions.append(_build_transition(
         d1, ref1, "Scheduled \u2192 Visit", _FLOW_COLORS[1],
         cap=cap_1,
+    ))
+
+    # --- Downstream EBRT lane transitions (Simulations + Courses) ---
+    sim_date = df["SimDate"] if "SimDate" in df.columns else pd.Series(pd.NaT, index=df.index)
+    tx_start = df["TxStartDate"] if "TxStartDate" in df.columns else pd.Series(pd.NaT, index=df.index)
+
+    # Transition 2: Visit Completed -> Simulation (referenced at the visit date)
+    d2 = (sim_date - df["First Appt"]).dt.days if "First Appt" in df.columns else pd.Series(dtype=float)
+    ref2 = df["First Appt"] if "First Appt" in df.columns else pd.Series(dtype="datetime64[ns]")
+    transitions.append(_build_transition(
+        d2, ref2, "Visit \u2192 Simulation", _FLOW_COLORS[2],
+        cap=_CAP_VISIT_TO_SIM,
+    ))
+
+    # Transition 3: Simulation -> Tx Started (prefer precomputed sim->tx days)
+    if "SimToTxDays" in df.columns and df["SimToTxDays"].notna().any():
+        d3 = pd.to_numeric(df["SimToTxDays"], errors="coerce")
+    else:
+        d3 = (tx_start - sim_date).dt.days
+    transitions.append(_build_transition(
+        d3, sim_date, "Simulation \u2192 Tx Start", _FLOW_COLORS[3],
+        cap=_CAP_SIM_TO_TX,
+    ))
+
+    # Transition 4: Tx Started -> Tx Completed (course length)
+    if "TxDurationDays" in df.columns and df["TxDurationDays"].notna().any():
+        d4 = pd.to_numeric(df["TxDurationDays"], errors="coerce")
+    else:
+        d4 = (df["TxCompleteDate"] - tx_start).dt.days if "TxCompleteDate" in df.columns else pd.Series(dtype=float)
+    transitions.append(_build_transition(
+        d4, tx_start, "Tx Start \u2192 Tx Complete", _FLOW_COLORS[4],
+        cap=_CAP_TX_DURATION,
     ))
 
     # Total: Created -> Visit (same methodology as Gantt/KPI: booked + booked-to-visit)
@@ -4064,6 +4149,153 @@ def _cross_validate_with_cv(df):
     return df
 
 
+def _enrich_with_treatment(df):
+    """Join EBRT downstream milestones onto referrals via MRN -> PatientId.
+
+    Anchors each referral to the first treatment episode on/after its Created
+    date (small slack for data jitter) so a patient re-referred years later is
+    matched to the new episode, not an old one. Adds:
+        SimDate         earliest post-referral simulation date (EBRT)
+        TxStartDate     first treatment date of that episode
+        TxCompleteDate  last treatment date of a COMPLETED course
+        TxComplete      bool — matched course ClinicalStatus == COMPLETED
+        SimToTxDays     days simulation -> treatment start (precomputed)
+        TxDurationDays  course duration (start -> complete)
+        RTModality      set only for Pluvicto / Brachytherapy patients (footnote)
+
+    These power the EBRT lane (stages 4-6) of the referral flow gantt and the
+    non-EBRT footnote. Referrals with no matching episode keep NaT/NA, so the
+    funnel narrows naturally at Visit Completed -> Simulation.
+    """
+    from data.loader import load_simulations, load_courses, load_workflow
+
+    df = df.copy()
+    df["SimDate"] = pd.NaT
+    df["TxStartDate"] = pd.NaT
+    df["TxCompleteDate"] = pd.NaT
+    df["TxComplete"] = False
+    df["SimToTxDays"] = pd.NA
+    df["TxDurationDays"] = pd.NA
+    df["RTModality"] = pd.NA
+
+    if "MRN" not in df.columns or "Created" not in df.columns or df.empty:
+        return df
+
+    ref = pd.DataFrame({
+        "_rid": df.index,
+        "MRN": pd.to_numeric(df["MRN"], errors="coerce").astype("Int64"),
+        "Created": pd.to_datetime(df["Created"], errors="coerce"),
+    }).dropna(subset=["MRN", "Created"])
+    if ref.empty:
+        return df
+
+    def _first_on_after(src, date_col, slack=14):
+        """For each referral, the whole src row with the earliest date_col that
+        is >= Created - slack (same patient). Returns a frame keyed by _rid.
+        Uses drop_duplicates (not groupby.first) so payload NaNs in the chosen
+        row are preserved rather than back-filled from a later episode."""
+        if src is None or src.empty or date_col not in src.columns:
+            return pd.DataFrame()
+        s = src.copy()
+        s["PatientId"] = pd.to_numeric(s["PatientId"], errors="coerce").astype("Int64")
+        s[date_col] = pd.to_datetime(s[date_col], errors="coerce")
+        s = s.dropna(subset=["PatientId", date_col])
+        if s.empty:
+            return pd.DataFrame()
+        j = ref.merge(s, left_on="MRN", right_on="PatientId", how="inner")
+        j = j[j[date_col] >= (j["Created"] - pd.Timedelta(days=slack))]
+        if j.empty:
+            return pd.DataFrame()
+        return j.sort_values(date_col).drop_duplicates(subset="_rid", keep="first")
+
+    # --- Simulation + EBRT treatment start (Simulations.csv) ---
+    try:
+        sim = load_simulations()
+    except Exception:
+        sim = pd.DataFrame()
+    if not sim.empty and {"PatientId", "ScheduledDateTime"}.issubset(sim.columns):
+        sim_cols = ["PatientId", "ScheduledDateTime", "FirstTreatmentDate",
+                    "DaysFromSimToTreatment"]
+        hit = _first_on_after(sim[[c for c in sim_cols if c in sim.columns]], "ScheduledDateTime")
+        if not hit.empty:
+            idx = hit["_rid"].values
+            df.loc[idx, "SimDate"] = pd.to_datetime(hit["ScheduledDateTime"].values)
+            if "FirstTreatmentDate" in hit.columns:
+                df.loc[idx, "TxStartDate"] = pd.to_datetime(hit["FirstTreatmentDate"].values, errors="coerce")
+            if "DaysFromSimToTreatment" in hit.columns:
+                df.loc[idx, "SimToTxDays"] = pd.to_numeric(hit["DaysFromSimToTreatment"].values, errors="coerce")
+
+    # --- Treatment completion (Courses.csv) ---
+    try:
+        cou = load_courses()
+    except Exception:
+        cou = pd.DataFrame()
+    if not cou.empty and "PatientId" in cou.columns:
+        anchor = "FirstTreatmentDate" if "FirstTreatmentDate" in cou.columns else "CourseStartDate"
+        cou_cols = ["PatientId", anchor, "FirstTreatmentDate", "LastTreatmentDate",
+                    "ClinicalStatus", "TreatmentDurationDays"]
+        hit = _first_on_after(cou[[c for c in dict.fromkeys(cou_cols) if c in cou.columns]], anchor)
+        if not hit.empty:
+            idx = hit["_rid"].values
+            # Treatment start: fall back to course FirstTreatmentDate where the
+            # simulation join didn't supply one (matching-gap robustness).
+            if "FirstTreatmentDate" in hit.columns:
+                start_vals = pd.to_datetime(hit["FirstTreatmentDate"].values, errors="coerce")
+                cur = pd.to_datetime(df.loc[idx, "TxStartDate"].values)
+                df.loc[idx, "TxStartDate"] = np.where(pd.isna(cur), start_vals, cur)
+            status = (hit["ClinicalStatus"].astype(str).str.strip().str.upper()
+                      if "ClinicalStatus" in hit.columns else pd.Series("", index=hit.index))
+            done = (status == "COMPLETED").values
+            df.loc[idx, "TxComplete"] = done
+            if "LastTreatmentDate" in hit.columns:
+                last_vals = pd.to_datetime(hit["LastTreatmentDate"].values, errors="coerce")
+                done_idx = idx[done]
+                df.loc[done_idx, "TxCompleteDate"] = last_vals[done]
+            if "TreatmentDurationDays" in hit.columns:
+                df.loc[idx, "TxDurationDays"] = pd.to_numeric(hit["TreatmentDurationDays"].values, errors="coerce")
+
+    # --- Non-EBRT modality flag for footnote (Workflow: Pluvicto / Brachy) ---
+    # Only these two matter here; filtering first keeps the join tiny.
+    try:
+        wf = load_workflow()
+    except Exception:
+        wf = pd.DataFrame()
+    if not wf.empty and {"ModalityType", "PatientId", "ExamDateTime"}.issubset(wf.columns):
+        m = wf["ModalityType"].astype(str).str.strip().str.lower()
+        sub = wf.loc[m.isin(["pluvicto", "brachytherapy"]),
+                     ["PatientId", "ModalityType", "ExamDateTime"]].copy()
+        if not sub.empty:
+            sub = sub.rename(columns={"ExamDateTime": "exam"})
+            sub["modality"] = sub["ModalityType"].astype(str).str.strip().str.title()
+            hit = _first_on_after(sub[["PatientId", "exam", "modality"]], "exam", slack=30)
+            if not hit.empty:
+                df.loc[hit["_rid"].values, "RTModality"] = hit["modality"].values
+
+    return df
+
+
+def _flow_modality_footnote(df):
+    """Footnote naming consult-completed patients who took a non-EBRT pathway
+    (Pluvicto / brachytherapy) instead of simulation. Empty string when none,
+    so the line stays hidden on the common EBRT-only view."""
+    if df is None or df.empty or "RTModality" not in df.columns:
+        return ""
+    mod = df["RTModality"].astype(str).str.strip().str.lower()
+    n_pluv = int((mod == "pluvicto").sum())
+    n_brachy = int((mod == "brachytherapy").sum())
+    if not (n_pluv or n_brachy):
+        return ""
+    parts = []
+    if n_pluv:
+        parts.append(f"{n_pluv:,} to Pluvicto")
+    if n_brachy:
+        parts.append(f"{n_brachy:,} to brachytherapy")
+    denom = (int(df["CVMatch"].isin(["Confirmed", "Rescheduled"]).sum())
+             if "CVMatch" in df.columns else len(df))
+    return (f"Non-EBRT pathways — of {denom:,} consult-completed patients, "
+            f"{' and '.join(parts)} (separate pathways, not shown in the EBRT funnel above).")
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -4112,6 +4344,7 @@ def _prior_range(start, end):
     Output(f"{PAGE_ID}-dim-compare-settings-prior-periods", "marks"),
     Output(f"{PAGE_ID}-store-kpi-sparklines", "data"),
     Output(f"{PAGE_ID}-store-map-geo", "data"),
+    Output(f"{PAGE_ID}-flow-footnote", "children"),
     # Inputs
     Input(f"{PAGE_ID}-interval", "n_intervals"),
     Input(f"{PAGE_ID}-filter-daterange", "start_date"),
@@ -4170,7 +4403,7 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
     no_prov = []
     no_ctrl = (dash.no_update, dash.no_update, dash.no_update, dash.no_update)
     empty_out = (empty_kpis, None, None,
-                 [], [], None, {}, no_spec, no_inst, no_prov) + no_ctrl + ({}, None)
+                 [], [], None, {}, no_spec, no_inst, no_prov) + no_ctrl + ({}, None, "")
 
     try:
         df = load_referrals()
@@ -4418,9 +4651,14 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
     # Apply grid row filter — KPIs, sparklines, and charts use the subset
     all_data = _apply_grid_row_filter(all_data, grid_rows)
 
-    # --- Flow Gantt ---
+    # --- Flow Gantt (enrich with downstream EBRT milestones first) ---
+    try:
+        all_data = _enrich_with_treatment(all_data)
+    except Exception:
+        pass  # gantt still renders stages 1-3 if enrichment fails
     flow_data = _compute_referral_flow_data(all_data, cap_0=cap_0, cap_1=cap_1)
     flow_details = _compute_referral_flow_details(all_data, cap_0=cap_0, cap_1=cap_1)
+    flow_footnote = _flow_modality_footnote(all_data)
 
     # --- Map geo data (may block on geocoding — don't let it break the page) ---
     try:
@@ -4538,10 +4776,11 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
         nu = dash.no_update
         return (nu, nu, nu, nu, nu,
                 dim_trend_store, compare_figs, nu, nu, nu,
-                pt_data, pt_value, slider_max, slider_marks, nu, nu)
+                pt_data, pt_value, slider_max, slider_marks, nu, nu, nu)
     return (kpis, flow_data, flow_details, table_rows, table_cols,
             dim_trend_store, compare_figs, spec_options, inst_options, prov_options,
-            pt_data, pt_value, slider_max, slider_marks, sparkline_store, geo_store)
+            pt_data, pt_value, slider_max, slider_marks, sparkline_store, geo_store,
+            flow_footnote)
 
 
 # ---------------------------------------------------------------------------

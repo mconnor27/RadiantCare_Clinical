@@ -225,7 +225,7 @@ window.dash_clientside.flowGantt = {
         return this._renderSinglePipeline(rawData, showLoopbacks, null);
     },
 
-    _renderSinglePipeline: function(rawData, showLoopbacks, pipelineLabel) {
+    _renderSinglePipeline: function(rawData, showLoopbacks, pipelineLabel, opts) {
         var container = document.getElementById("wf-flow-gantt");
         if (!container) return window.dash_clientside.no_update;
 
@@ -386,6 +386,16 @@ window.dash_clientside.flowGantt = {
         var pendingColor   = "#64748B";
         var cancelledColor = "#EF4444";
 
+        // Spread-exits mode (referrals gantt): distribute the Pending and
+        // Cancelled collectors down the right edge to fill vertical space
+        // instead of stacking them just below the last bar. Bottoms are
+        // anchored relative to the bar baseline below (see spreadPendBot /
+        // spreadCancBot) so Cancelled never drops past the leftmost (Created)
+        // bar baseline into the empty zone.
+        var spreadExits   = !!(opts && opts.spreadExits);
+        var spreadPendBot = 0;   // set after bar geometry (spread mode only)
+        var spreadCancBot = 0;   // set after bar geometry (spread mode only)
+
         function xMap(t) { return plotL + t * plotW; }
 
         // Cubic bezier evaluation
@@ -486,6 +496,20 @@ window.dash_clientside.flowGantt = {
             });
         }
 
+        // Spread-mode collector anchors (bottoms), now that bars exist.
+        // Cancelled sits ON the leftmost (Created) bar baseline — never below
+        // it. Pending sits halfway between that baseline and the last bar's
+        // bottom, so the three right-edge nodes spread evenly without leaking
+        // into the empty zone under the funnel.
+        if (spreadExits) {
+            var _baseLine = bars[0].bot;
+            spreadCancBot = _baseLine;
+            spreadPendBot = Math.max(
+                _baseLine + 0.10,
+                _baseLine + (bars[nStages - 1].bot - _baseLine) * 0.5
+            );
+        }
+
         // Edge trackers (for stacking flows/exits along bar edges)
         // Flow bands: top-down from bar top
         // Exit bands: bottom-up from bar bottom (separate tracker)
@@ -540,6 +564,14 @@ window.dash_clientside.flowGantt = {
             if (_minSrcBot < 1) {
                 // 0.025 = sag (~0.02) + visual cushion (~0.005)
                 contentBot = Math.min(contentBot, _minSrcBot - 0.025);
+            }
+
+            // Spread mode: collectors are anchored low (mid + floor), so the
+            // content floor is driven by the lowest collector's exit-ribbon
+            // belly rather than by stacking under the last bar.
+            if (spreadExits) {
+                var _spreadFloor = (_tmpTotalC > 0) ? spreadCancBot : spreadPendBot;
+                contentBot = Math.min(contentBot, _spreadFloor - 0.03);
             }
         }
         yLo = contentBot - 0.02;
@@ -684,8 +716,8 @@ window.dash_clientside.flowGantt = {
 
         // ── Pending collector ──
         if (totalPending > 0) {
-            var pCollTop = collCursor;
             var pCollH   = Math.min(0.06, Math.max(0.025, maxBarH * totalPending / maxCount));
+            var pCollTop = spreadExits ? (spreadPendBot + pCollH) : collCursor;
             var pCollBot = pCollTop - pCollH;
 
             var pBarFill  = hexToRgba(pendingColor, 0.85);
@@ -828,8 +860,8 @@ window.dash_clientside.flowGantt = {
 
         // ── Cancelled collector ──
         if (totalCancelled > 0) {
-            var cCollTop = collCursor;
             var cCollH   = Math.min(0.06, Math.max(0.025, maxBarH * totalCancelled / maxCount));
+            var cCollTop = spreadExits ? (spreadCancBot + cCollH) : collCursor;
             var cCollBot = cCollTop - cCollH;
 
             var cBarFill  = hexToRgba(cancelledColor, 0.85);
