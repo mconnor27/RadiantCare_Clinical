@@ -240,7 +240,10 @@ def upload_to_r2() -> int:
         config=_BotoConfig(
             signature_version="s3v4",
             s3={"addressing_style": "path"},
-            retries={"max_attempts": 3, "mode": "standard"},
+            # Marginal home links intermittently corrupt/drop packets to R2
+            # (seen as "connection closed" and TLS "bad record mac" mid-part).
+            # Adaptive mode with more attempts rides those out per-part.
+            retries={"max_attempts": 8, "mode": "adaptive"},
         ),
     )
 
@@ -263,15 +266,33 @@ def upload_to_r2() -> int:
               f"skipping PUT + redeploy.")
         return 0
 
-    buf.seek(0)
+    # Multipart upload instead of a single-shot put_object. The tarball has
+    # grown past 450 MB, and a one-shot PUT over a home connection was dropping
+    # mid-stream ("Connection was closed before we received a valid response"),
+    # leaving production stale. upload_fileobj chunks the body and retries each
+    # part independently, so a blip costs one 32 MB part, not the whole upload.
+    from boto3.s3.transfer import TransferConfig
+    transfer_cfg = TransferConfig(
+        multipart_threshold=16 * 1024 * 1024,
+        multipart_chunksize=32 * 1024 * 1024,
+        # Fewer simultaneous streams is gentler on a flaky link — each part is
+        # likelier to complete uncorrupted than with 4 competing for bandwidth.
+        max_concurrency=2,
+        use_threads=True,
+    )
     try:
-        s3.put_object(
-            Bucket=bucket,
-            Key=object_key,
-            Body=payload,
-            ContentType="application/gzip",
-            CacheControl="no-cache",
-            Metadata={"sha256": new_sha},
+        # Metadata/ContentType survive multipart, so the skip-if-unchanged
+        # head_object("sha256") check on the next run still works.
+        s3.upload_fileobj(
+            io.BytesIO(payload),
+            bucket,
+            object_key,
+            ExtraArgs={
+                "ContentType": "application/gzip",
+                "CacheControl": "no-cache",
+                "Metadata": {"sha256": new_sha},
+            },
+            Config=transfer_cfg,
         )
     except (BotoCoreError, ClientError) as exc:
         print(f"[upload] ERROR: {exc}")
