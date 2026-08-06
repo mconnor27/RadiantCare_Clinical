@@ -1120,9 +1120,15 @@ def _build_day_index_ticks(start_norm, n_days, max_ticks=12):
 # Ridgeline: Fractions per Course by Year
 # ---------------------------------------------------------------------------
 
-def _prepare_ridgeline_data(df, date_col):
-    """Extract per-year fraction values for the ridgeline store.
+_RIDGE_EPOCH = pd.Timestamp("1970-01-01")
 
+
+def _prepare_ridgeline_data(df, date_col, start=None, end=None, date_preset=None):
+    """Extract raw (day, fraction) points for the ridgeline store.
+
+    Stores the ungrouped all-history points plus the current selected date
+    window, so the ridgeline can slice out the N most-recent periods
+    (via _window_ridgeline_data) without rebuilding the whole page.
     Returns a JSON-serialisable dict or None.
     """
     col = "FractionsPrescribed"
@@ -1140,21 +1146,110 @@ def _prepare_ridgeline_data(df, date_col):
     q1, q3 = tmp["_frac"].quantile(0.25), tmp["_frac"].quantile(0.75)
     upper_fence = q3 + 1.5 * (q3 - q1)
     tmp = tmp[tmp["_frac"] <= upper_fence]
-
-    tmp["_year"] = tmp[date_col].dt.year
-    years = sorted(tmp["_year"].unique(), reverse=True)
-    if not years:
+    if tmp.empty:
         return None
 
-    per_year = {}
-    for yr in years:
-        per_year[str(yr)] = tmp.loc[tmp["_year"] == yr, "_frac"].tolist()
+    days = (tmp[date_col].dt.normalize() - _RIDGE_EPOCH).dt.days
+
+    def _iso(ts):
+        return pd.Timestamp(ts).normalize().isoformat() if ts is not None else None
 
     return {
-        "years": [str(y) for y in years],
-        "per_year": per_year,
+        "t": days.astype(int).tolist(),
+        "frac": tmp["_frac"].astype(float).tolist(),
         "x_min": max(0, float(tmp["_frac"].min()) - 2),
         "x_max": float(tmp["_frac"].max()) + 2,
+        # Current selected window drives Calendar/Rolling period spans; falls
+        # back to the data's own last date when no explicit range is set.
+        "start": _iso(start),
+        "end": _iso(end) or _iso(tmp[date_col].max()),
+        "date_preset": date_preset,
+    }
+
+
+def _ridge_period_label(ps, pe):
+    """Compact y-axis label for a ridgeline period window."""
+    full_year = ps.month == 1 and ps.day == 1 and pe.month == 12 and pe.day >= 28
+    if full_year or ps.year == pe.year and ps.month == 1 and pe.month == 12:
+        return str(ps.year)
+    if ps.year == pe.year:
+        return f"{ps.strftime('%b')}–{pe.strftime('%b %Y')}"
+    return f"{ps.strftime('%b %y')}–{pe.strftime('%b %y')}"
+
+
+def _window_ridgeline_data(raw, n_periods, period_type):
+    """Slice raw points into the N most-recent periods (newest-first).
+
+    period_type:
+      - "full_year": complete calendar years, ignoring the selected range.
+      - "calendar":  the selected range span, shifted back whole years.
+      - "rolling":   the selected range span, shifted back by its own length.
+
+    Returns a dict shaped for _build_ridgeline_figure: ``years`` (display
+    labels) and ``values`` (parallel list of fraction-value lists).
+    """
+    if not raw or not raw.get("t"):
+        return None
+
+    t = np.asarray(raw["t"], dtype=float)
+    frac = np.asarray(raw["frac"], dtype=float)
+    n_periods = max(2, min(int(n_periods or 6), 20))
+    data_min_day = float(t.min())
+
+    def _to_day(ts):
+        return (pd.Timestamp(ts).normalize() - _RIDGE_EPOCH).days
+
+    end = pd.Timestamp(raw["end"]).normalize()
+    start = pd.Timestamp(raw["start"]).normalize() if raw.get("start") else end
+
+    windows = []  # (label, start_day, end_day), newest-first
+    if period_type == "full_year":
+        for i in range(n_periods):
+            yr = end.year - i
+            ps, pe = pd.Timestamp(yr, 1, 1), pd.Timestamp(yr, 12, 31)
+            if _to_day(pe) < data_min_day:
+                break
+            windows.append((str(yr), _to_day(ps), _to_day(pe)))
+    else:
+        period_days = max((end - start).days + 1, 1)
+        pt = period_type
+        # Calendar shifts of a >1yr window overlap — fall back to rolling.
+        if period_days > 366 and pt == "calendar":
+            pt = "rolling"
+        for i in range(n_periods):
+            if pt == "calendar":
+                ps = start - pd.DateOffset(years=i)
+                pe = end - pd.DateOffset(years=i)
+            else:
+                shift = pd.Timedelta(days=period_days * i)
+                ps, pe = start - shift, end - shift
+            if _to_day(pe) < data_min_day:
+                break
+            windows.append((_ridge_period_label(ps, pe), _to_day(ps), _to_day(pe)))
+
+    if not windows:
+        return None
+
+    labels, values = [], []
+    for label, sday, eday in windows:
+        mask = (t >= sday) & (t <= eday)
+        labels.append(label)
+        values.append(frac[mask].tolist())
+
+    # Scale the x-range to the displayed periods (not all-history), so the axis
+    # fits the data actually shown.
+    shown = np.concatenate([np.asarray(v) for v in values if len(v)]) if any(values) else np.array([])
+    if shown.size:
+        x_min = max(0.0, float(shown.min()) - 2)
+        x_max = float(shown.max()) + 2
+    else:
+        x_min, x_max = raw["x_min"], raw["x_max"]
+
+    return {
+        "years": labels,
+        "values": values,
+        "x_min": x_min,
+        "x_max": x_max,
     }
 
 
@@ -1762,31 +1857,93 @@ def _prepare_technique_dist_data(dff, date_col, start=None, end=None, date_mode=
 _RIDGE_HEIGHT = 720
 
 
-def _build_ridgeline_figure(data, bw_factor=0.5, mode="density", theme="light"):
-    """Build the ridgeline Plotly figure from store data + bandwidth factor."""
+def _build_ridgeline_figure(data, bw_factor=0.5, mode="density", theme="light",
+                            hist_layout="rows", hist_norm="count"):
+    """Build the ridgeline Plotly figure from store data + bandwidth factor.
+
+    hist_layout (histogram mode only): "rows" = one stacked subplot per period
+    (default); "grouped" = all periods overlaid on a single axis as grouped bars.
+    hist_norm (histogram mode only): "count" = raw course counts (default);
+    "percent" = each period normalised to a share of its own courses, so
+    different-sized periods compare fairly.
+    """
     from scipy.stats import gaussian_kde
     _is_dark = (theme or "light") == "dark"
     _ridge_border = "rgba(230,234,245,0.75)" if _is_dark else "rgba(255,255,255,0.45)"
 
-    if not data:
+    if not data or not data.get("years"):
         fig = empty_figure("No fractions data available")
         fig.update_layout(height=_RIDGE_HEIGHT)
         return fig
 
     years = data["years"]
-    per_year = data["per_year"]
+    values = data["values"]
 
     spacing = 0.32
-    peak_factor = 5.35
+    # Overlap scales with the number of ridges: many chunks -> classic dense
+    # ridgeline (tall peaks, heavy overlap); few chunks -> lower peaks so the
+    # density plots barely overlap.
+    n_ridges = len(years)
+    peak_factor = min(5.35, max(1.2, 0.6 * n_ridges))
 
     if mode == "histogram":
         from plotly.subplots import make_subplots
 
         n_years = len(years)
-        bin_min = int(data["x_min"])
-        bin_max = int(data["x_max"]) + 1
-        bins = np.arange(bin_min, bin_max + 1)
-        bin_centers = (bins[:-1] + bins[1:]) / 2.0
+        # Fractions are discrete integers, so center each bin ON its integer
+        # value (edges at half-integers). Integer edges would put a value of N
+        # into the [N, N+1) bin — rendering it half a unit too high.
+        bin_min = int(np.floor(data["x_min"]))
+        bin_max = int(np.ceil(data["x_max"]))
+        bin_centers = np.arange(bin_min, bin_max + 1)
+        bins = np.arange(bin_min - 0.5, bin_max + 1.0, 1.0)
+
+        _pct = hist_norm == "percent"
+        _y_title = "Share of Courses (%)" if _pct else "Courses"
+        _hover = (
+            "<br>Fractions: %{x:.0f}"
+            + ("<br>Share: %{y:.1f}%<br>Count: %{customdata[1]:,}" if _pct
+               else "<br>Count: %{y:,}")
+            + "<br>Median: %{customdata[0]:.0f}<extra></extra>"
+        )
+
+        def _hist_y(vals):
+            counts, _ = np.histogram(vals, bins=bins)
+            n = len(vals)
+            y = (counts / n * 100.0) if (_pct and n) else counts.astype(float)
+            median_fx = float(np.median(vals)) if n else 0
+            cdata = np.column_stack([np.full(len(counts), median_fx), counts])
+            return y, counts, n, median_fx, cdata
+
+        if hist_layout == "grouped":
+            # Single axis, one grouped-bar series per period. Newest period gets
+            # the brand purple (CHART_COLORWAY[0]); others follow the sequence.
+            fig = go.Figure()
+            for i, yr in enumerate(years):
+                vals = np.array(values[i])
+                y, counts, n_courses, median_fx, cdata = _hist_y(vals)
+                fig.add_trace(go.Bar(
+                    x=bin_centers.tolist(),
+                    y=y.tolist(),
+                    name=str(yr),
+                    marker_color=CHART_COLORWAY[i % len(CHART_COLORWAY)],
+                    marker_line_width=0,
+                    customdata=cdata,
+                    hovertemplate=f"<b>{yr}</b> (n={n_courses:,})" + _hover,
+                ))
+            fig.update_layout(height=_RIDGE_HEIGHT, barmode="group", bargap=0.15,
+                              bargroupgap=0.0, margin=dict(l=60, r=16, t=48, b=40))
+            apply_default_layout(fig)
+            fig.update_layout(
+                height=_RIDGE_HEIGHT, barmode="group", bargap=0.15, bargroupgap=0.0,
+                margin=dict(l=60, r=16, t=48, b=40),
+                xaxis=dict(title="Fractions Prescribed", showgrid=False, zeroline=False),
+                yaxis=dict(title=_y_title, showgrid=True,
+                           gridcolor="rgba(200,200,200,0.3)", zeroline=False),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                            xanchor="left", x=0, title_text=""),
+            )
+            return fig
 
         fig = make_subplots(
             rows=n_years, cols=1,
@@ -1799,25 +1956,17 @@ def _build_ridgeline_figure(data, bw_factor=0.5, mode="density", theme="light"):
         # assignment to keep the newest year in the bottom row.
         for i, yr in enumerate(years):
             row = n_years - i
-            vals = np.array(per_year[yr])
-            counts, _ = np.histogram(vals, bins=bins)
-            n_courses = len(vals)
-            median_fx = float(np.median(vals)) if len(vals) else 0
+            vals = np.array(values[i])
+            y, counts, n_courses, median_fx, cdata = _hist_y(vals)
 
             fig.add_trace(go.Bar(
                 x=bin_centers.tolist(),
-                y=counts.tolist(),
+                y=y.tolist(),
                 marker_color="rgb(158, 113, 178)",
                 marker_line_width=0,
                 width=1.0,
-                customdata=np.full(len(bin_centers), median_fx).tolist(),
-                hovertemplate=(
-                    f"<b>{yr}</b> (n={n_courses:,})"
-                    "<br>Fractions: %{x:.0f}"
-                    "<br>Count: %{y}"
-                    "<br>Median: %{customdata:.0f}"
-                    "<extra></extra>"
-                ),
+                customdata=cdata,
+                hovertemplate=f"<b>{yr}</b> (n={n_courses:,})" + _hover,
                 showlegend=False,
             ), row=row, col=1)
 
@@ -1859,12 +2008,12 @@ def _build_ridgeline_figure(data, bw_factor=0.5, mode="density", theme="light"):
 
     else:  # density mode
         x_pts = np.linspace(data["x_min"], data["x_max"], 200)
-        kde_curves = {}
+        kde_curves = []
         global_max = 0.0
-        for yr in years:
-            vals = np.array(per_year[yr])
+        for i, yr in enumerate(years):
+            vals = np.array(values[i])
             if len(vals) < 3:
-                kde_curves[yr] = np.zeros_like(x_pts)
+                kde_curves.append(np.zeros_like(x_pts))
                 continue
             try:
                 if bw_factor <= 0.5:
@@ -1876,7 +2025,7 @@ def _build_ridgeline_figure(data, bw_factor=0.5, mode="density", theme="light"):
                 y_pts = kde(x_pts)
             except Exception:
                 y_pts = np.zeros_like(x_pts)
-            kde_curves[yr] = y_pts
+            kde_curves.append(y_pts)
             peak = y_pts.max()
             if peak > global_max:
                 global_max = peak
@@ -1889,9 +2038,9 @@ def _build_ridgeline_figure(data, bw_factor=0.5, mode="density", theme="light"):
 
         for i, yr in enumerate(years):
             baseline = i * spacing
-            y_scaled = kde_curves[yr] * scale + baseline
+            y_scaled = kde_curves[i] * scale + baseline
             ridge_tops.append(float(np.max(y_scaled)) if len(y_scaled) else baseline)
-            vals = per_year[yr]
+            vals = values[i]
             n_courses = len(vals)
             median_fx = float(np.median(vals)) if vals else 0
 
@@ -2999,7 +3148,8 @@ def _update_courses_kpis(*args):
     # ------------------------------------------------------------------
     # Store data for charts rendered by other callbacks
     # ------------------------------------------------------------------
-    ridgeline_data = _prepare_ridgeline_data(dff_all_no_date, date_col)
+    ridgeline_data = _prepare_ridgeline_data(dff_all_no_date, date_col,
+                                             start=start, end=end, date_preset=date_preset)
     _dm = data.get("diag_mode", "primary")
     frac_trend_data = _prepare_frac_trend_data(dff, date_col, c2b, start=start, end=end, diag_mode=_dm)
     frac_dist_data = _prepare_frac_dist_data(dff)
@@ -3041,7 +3191,7 @@ def _update_courses_kpis(*args):
                         justify="space-between",
                         align="center",
                         children=[
-                            dmc.Text("Fractions per Course by Year", size="sm", fw=500, c="#6B7280"),
+                            dmc.Text("Fractions per Course by Period", size="sm", fw=500, c="#6B7280"),
                             dmc.Group(
                                 gap="sm", align="center",
                                 children=[
@@ -3058,7 +3208,73 @@ def _update_courses_kpis(*args):
                                         "courses-ridgeline",
                                         chart_types=None,
                                         show_smooth=False,
+                                        show_grouping=False,
                                         extra_settings=[
+                                            dmc.Stack(
+                                                gap=4,
+                                                children=[
+                                                    dmc.Text("Period Type", size="xs", fw=500, c="#6B7280"),
+                                                    dmc.SegmentedControl(
+                                                        id="courses-ridge-period-type",
+                                                        data=[
+                                                            {"value": "full_year", "label": "Full Year"},
+                                                            {"value": "calendar", "label": "Calendar"},
+                                                            {"value": "rolling", "label": "Rolling"},
+                                                        ],
+                                                        value="full_year",
+                                                        size="xs",
+                                                        fullWidth=True,
+                                                    ),
+                                                ],
+                                            ),
+                                            dmc.Stack(
+                                                gap=4,
+                                                children=[
+                                                    dmc.Text("Periods Back", size="xs", fw=500, c="#6B7280"),
+                                                    dmc.Slider(
+                                                        id="courses-ridge-nperiods",
+                                                        min=2,
+                                                        max=20,
+                                                        step=1,
+                                                        value=6,
+                                                        size="xs",
+                                                        color="violet",
+                                                        showLabelOnHover=True,
+                                                        updatemode="drag",
+                                                    ),
+                                                ],
+                                            ),
+                                            html.Div(
+                                                id="courses-ridge-hist-layout-group",
+                                                style={"display": "none"},
+                                                children=dmc.Stack(
+                                                    gap=4,
+                                                    children=[
+                                                        dmc.Text("Histogram Layout", size="xs", fw=500, c="#6B7280"),
+                                                        dmc.SegmentedControl(
+                                                            id="courses-ridge-hist-layout",
+                                                            data=[
+                                                                {"value": "rows", "label": "Rows"},
+                                                                {"value": "grouped", "label": "Grouped"},
+                                                            ],
+                                                            value="rows",
+                                                            size="xs",
+                                                            fullWidth=True,
+                                                        ),
+                                                        dmc.Text("Y Axis", size="xs", fw=500, c="#6B7280"),
+                                                        dmc.SegmentedControl(
+                                                            id="courses-ridge-hist-norm",
+                                                            data=[
+                                                                {"value": "count", "label": "Count"},
+                                                                {"value": "percent", "label": "%"},
+                                                            ],
+                                                            value="count",
+                                                            size="xs",
+                                                            fullWidth=True,
+                                                        ),
+                                                    ],
+                                                ),
+                                            ),
                                             html.Div(
                                                 id="courses-ridge-bw-group",
                                                 children=dmc.Stack(
@@ -3186,6 +3402,7 @@ def _update_courses_kpis(*args):
                                                 "courses-frac-dist",
                                                 chart_types=None,
                                                 show_smooth=False,
+                                                show_grouping=False,
                                                 extra_settings=[
                                                     html.Div(
                                                         id="courses-frac-dist-bw-group",
@@ -3761,10 +3978,18 @@ for _spark_id in _COURSES_SPARKLINE_IDS:
     Input("courses-store-ridgeline", "data"),
     Input("courses-ridge-bw", "value"),
     Input("courses-ridge-mode", "value"),
+    Input("courses-ridge-nperiods", "value"),
+    Input("courses-ridge-period-type", "value"),
+    Input("courses-ridge-hist-layout", "value"),
+    Input("courses-ridge-hist-norm", "value"),
     Input("global-theme-store", "data"),
 )
-def _update_ridgeline(data, bw, mode, theme):
-    return _build_ridgeline_figure(data, bw_factor=bw or 0.5, mode=mode or "density", theme=theme)
+def _update_ridgeline(data, bw, mode, n_periods, period_type, hist_layout, hist_norm, theme):
+    windowed = _window_ridgeline_data(data, n_periods, period_type or "full_year")
+    return _build_ridgeline_figure(windowed, bw_factor=bw or 0.5,
+                                   mode=mode or "density", theme=theme,
+                                   hist_layout=hist_layout or "rows",
+                                   hist_norm=hist_norm or "count")
 
 
 # Hide bandwidth slider in histogram mode
@@ -3773,6 +3998,15 @@ clientside_callback(
         return mode === "histogram" ? {display: "none"} : {};
     }""",
     Output("courses-ridge-bw-group", "style"),
+    Input("courses-ridge-mode", "value"),
+)
+
+# Show histogram-layout toggle only in histogram mode
+clientside_callback(
+    """function(mode) {
+        return mode === "histogram" ? {} : {display: "none"};
+    }""",
+    Output("courses-ridge-hist-layout-group", "style"),
     Input("courses-ridge-mode", "value"),
 )
 
