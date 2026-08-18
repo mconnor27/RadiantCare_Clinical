@@ -25,11 +25,66 @@ dash.register_page(__name__, path="/mobile", name="Mobile", order=99)
 
 PAGE_ID = "mobilehome"
 
+# Left-filter cycle values. Dept-based metrics cycle through sites; the Tasks
+# metric reuses the same left button to cycle through task-type groups instead.
+_DEPTS = ["all", "Lacey", "Centralia", "Aberdeen"]
+_DEPT_LABEL = {"all": "All Sites", "Lacey": "Lacey",
+               "Centralia": "Centralia", "Aberdeen": "Aberdeen"}
+
+_TASK_LEFT_VALUES = ["all", "Draw Volumes", "Draw Volumes (SRS)",
+                     "Contour Review", "Create Isodose Plan", "Review Plan"]
+_TASK_LEFT_LABEL = {
+    "all": "All Tasks",
+    "Draw Volumes": "Draw Volumes",
+    "Draw Volumes (SRS)": "Draw Volumes (SRS)",
+    "Contour Review": "Contour Review",
+    "Create Isodose Plan": "Create Isodose Plan",
+    "Review Plan": "Review Plan",
+}
+
+# Task-type group completed by planners rather than the named radiation
+# oncologists — the right cycle button offers planners for this group.
+_TASK_PLANNER_GROUP = "Create Isodose Plan"
+
+_TASKS_CACHE = {}
+
+
+def _tasks_resolved():
+    """Tasks frame with ResolvedMD + TaskGroup columns. Rebuilt only when the
+    underlying Tasks load changes (keyed on the loaded frame's identity), so
+    the row-wise MD resolution runs once per data refresh, not per callback."""
+    from data.loader import load_tasks
+    raw = load_tasks()
+    key = id(raw)
+    if _TASKS_CACHE.get("key") != key:
+        from pages.tasks import _resolve_md, _TASK_TYPE_TO_GROUP
+        df = _resolve_md(raw)  # returns a copy
+        if "ActivityName" in df.columns:
+            df["TaskGroup"] = df["ActivityName"].map(_TASK_TYPE_TO_GROUP)
+        else:
+            df["TaskGroup"] = pd.NA
+        _TASKS_CACHE["key"] = key
+        _TASKS_CACHE["df"] = df
+    return _TASKS_CACHE["df"]
+
+
+def _metric_df_tasks(task_groups):
+    """Tasks per-row frame filtered to the selected task-type group(s).
+
+    `task_groups` mirrors the `departments` arg of the other metric frame
+    functions — the left cycle button passes [group] or None (all)."""
+    df = _tasks_resolved()
+    if task_groups and "TaskGroup" in df.columns:
+        return df[df["TaskGroup"].isin(task_groups)]
+    return df
+
+
 _METRICS = [
-    {"value": "tx",       "label": "Treatments", "color": CHART_COLORWAY[0], "date_col": "ScheduledDateTime", "frame_fn": _metric_df_tx,       "physician_col": "TreatingPhysician"},
-    {"value": "consults", "label": "Consults",   "color": CHART_COLORWAY[2], "date_col": "ScheduledDateTime", "frame_fn": _metric_df_consults, "physician_col": "AppointmentPhysician"},
-    {"value": "sims",     "label": "Sims",       "color": CHART_COLORWAY[1], "date_col": "ScheduledDateTime", "frame_fn": _metric_df_sims,     "physician_col": "ConsultPhysician"},
-    {"value": "refs",     "label": "Referrals",  "color": PRIMARY,           "date_col": "Created",           "frame_fn": _metric_df_refs,     "physician_col": None},
+    {"value": "tx",       "label": "Treatments", "color": CHART_COLORWAY[0], "date_col": "ScheduledDateTime", "frame_fn": _metric_df_tx,       "physician_col": "TreatingPhysician",   "left_values": _DEPTS,            "left_labels": _DEPT_LABEL,     "left_col": "Department"},
+    {"value": "consults", "label": "Consults",   "color": CHART_COLORWAY[2], "date_col": "ScheduledDateTime", "frame_fn": _metric_df_consults, "physician_col": "AppointmentPhysician","left_values": _DEPTS,            "left_labels": _DEPT_LABEL,     "left_col": "Department"},
+    {"value": "sims",     "label": "Sims",       "color": CHART_COLORWAY[1], "date_col": "ScheduledDateTime", "frame_fn": _metric_df_sims,     "physician_col": "ConsultPhysician",    "left_values": None,              "left_labels": {},             "left_col": None},
+    {"value": "tasks",    "label": "Tasks",      "color": CHART_COLORWAY[4], "date_col": "StartDateTime",     "frame_fn": _metric_df_tasks,    "physician_col": "ResolvedMD",          "left_values": _TASK_LEFT_VALUES, "left_labels": _TASK_LEFT_LABEL,"left_col": "TaskGroup"},
+    {"value": "refs",     "label": "Referrals",  "color": PRIMARY,           "date_col": "Created",           "frame_fn": _metric_df_refs,     "physician_col": None,                  "left_values": _DEPTS,            "left_labels": _DEPT_LABEL,     "left_col": "_OurDept"},
 ]
 _METRIC_BY_VALUE = {m["value"]: m for m in _METRICS}
 
@@ -124,16 +179,62 @@ def _counts_between(df, date_col, start, end):
     )
 
 
-def _daily_counts(df, date_col, range_key):
+def _daily_counts(df, date_col, range_key, anchor=None):
+    """Daily counts over the selected range.
+
+    `anchor` pins the range's end date to the dataset's latest date (passed by
+    the caller, filter-independent) so e.g. YTD always means the current data
+    year — not the last date of whatever subset the filters produced. Without
+    it, filtering to a person whose data stops years ago would shift the whole
+    window back to their final year."""
     if df is None or df.empty or date_col not in df.columns:
         return None, None
     s = df[date_col].dropna()
-    if s.empty:
-        return None, None
-    last = s.dt.normalize().max()
-    start, end = _resolve_range(range_key, last)
+    if anchor is None:
+        if s.empty:
+            return None, None
+        anchor = s.dt.normalize().max()
+    start, end = _resolve_range(range_key, anchor)
     counts = _counts_between(df, date_col, start, end)
     return counts, (start, end)
+
+
+def _metric_last_date(spec):
+    """Latest date for a metric across ALL data (ignoring dept/physician/task
+    filters), used to anchor the selected range. frame_fn(None) is cached per
+    metric, so this is cheap."""
+    dc = spec.get("date_col")
+    try:
+        full = spec["frame_fn"](None)
+    except Exception:
+        return None
+    if full is None or full.empty or dc not in full.columns:
+        return None
+    s = full[dc].dropna()
+    return s.dt.normalize().max() if not s.empty else None
+
+
+def _in_range(df, date_col, start, end):
+    """Rows of df whose date falls within [start, end] (end inclusive)."""
+    if df is None or df.empty or date_col not in df.columns or start is None or end is None:
+        return df
+    d = df[date_col]
+    return df[(d >= start) & (d <= end + pd.Timedelta(days=1))]
+
+
+def _people_options(sub, phys_col, planner_mode):
+    """Names present in `sub`. Planner mode returns every present name ordered
+    by volume (busiest first); otherwise the named radiation oncologists that
+    appear, in canonical order (per CLAUDE.md)."""
+    if sub is None or sub.empty or phys_col not in sub.columns:
+        return []
+    col = sub[phys_col].dropna().astype(str)
+    if col.empty:
+        return []
+    if planner_mode:
+        return col.value_counts().index.tolist()
+    present = set(col.unique())
+    return [n for n in PHYSICIANS if n in present]
 
 
 def _loess_line(counts, frac=0.15):
@@ -389,15 +490,17 @@ def _build_cum_line_fig(counts, label, color, range_key, prior_counts, prior_shi
     return fig
 
 
-def _build_cum_bar_fig(df, date_col, label, color, range_key, n_periods=4, project=True):
+def _build_cum_bar_fig(df, date_col, label, color, range_key, n_periods=4, project=True, anchor=None):
     """Totals for current + (n_periods-1) prior equivalents as bars, with YTD projection stack."""
     title_text = f"{label} — Cumulative"
     if df is None or df.empty or date_col not in df.columns:
         return _empty_fig(title_text)
     s = df[date_col].dropna()
-    if s.empty:
-        return _empty_fig(title_text)
-    last = s.dt.normalize().max()
+    if anchor is None:
+        if s.empty:
+            return _empty_fig(title_text)
+        anchor = s.dt.normalize().max()
+    last = anchor
 
     periods = []
     for offset in range(n_periods):
@@ -977,7 +1080,7 @@ def _apply_page_filters(df, spec, settings):
     return df
 
 
-def _trend_summary(df, spec, range_key, counts, agg):
+def _trend_summary(df, spec, range_key, counts, agg, anchor=None):
     """Build summary dict for the trend info drawer."""
     out = {"metric": spec["label"], "range": _RANGE_LABEL.get(range_key, ""), "agg": _AGG_LABEL.get(agg, "Daily")}
     if counts is None or counts.empty:
@@ -989,10 +1092,13 @@ def _trend_summary(df, spec, range_key, counts, agg):
     out["biz_days"] = int(len(daily_nz))
     out["daily_avg"] = round(float(daily_nz.mean()), 1) if not daily_nz.empty else 0
     out["peak_day"] = int(daily_nz.max()) if not daily_nz.empty else 0
-    # Prior-period comparison.
+    # Prior-period comparison — anchor on the dataset's latest date so the
+    # comparison window matches the (filter-independent) selected range.
     date_col = spec["date_col"]
-    if date_col in df.columns and not df[date_col].dropna().empty:
+    last = anchor
+    if last is None and date_col in df.columns and not df[date_col].dropna().empty:
         last = df[date_col].dropna().dt.normalize().max()
+    if last is not None:
         p_start, p_end = _resolve_prior_range(range_key, last)
         if p_start is not None:
             prior = _counts_between(df, date_col, p_start, p_end)
@@ -1016,14 +1122,15 @@ def _trend_summary(df, spec, range_key, counts, agg):
 def update_trend_chart(metric, range_key, agg, settings, _n):
     spec = _METRIC_BY_VALUE.get(metric) or _METRICS[0]
     df = _apply_page_filters(None, spec, settings)
-    counts, _rng = _daily_counts(df, spec["date_col"], range_key)
+    anchor = _metric_last_date(spec)
+    counts, _rng = _daily_counts(df, spec["date_col"], range_key, anchor=anchor)
     agg = agg if agg in _AGG_CYCLE else "D"
     fig = _build_trend_fig(counts, spec["label"], spec["color"], range_key, agg=agg)
-    summary = _trend_summary(df, spec, range_key, counts, agg)
+    summary = _trend_summary(df, spec, range_key, counts, agg, anchor=anchor)
     return fig, summary, f"{spec['label']} — Trend"
 
 
-def _cum_summary(df, spec, range_key, counts, cum_mode="line"):
+def _cum_summary(df, spec, range_key, counts, cum_mode="line", anchor=None):
     """Build summary dict for the cumulative info drawer.
 
     In line mode: current + immediate prior + (for YTD) full prior year + projection.
@@ -1036,9 +1143,13 @@ def _cum_summary(df, spec, range_key, counts, cum_mode="line"):
         return out
     out["current_total"] = int(counts.sum())
     date_col = spec["date_col"]
-    if not (date_col in df.columns and not df[date_col].dropna().empty):
+    last = anchor
+    if last is None:
+        if not (date_col in df.columns and not df[date_col].dropna().empty):
+            return out
+        last = df[date_col].dropna().dt.normalize().max()
+    elif date_col not in df.columns:
         return out
-    last = df[date_col].dropna().dt.normalize().max()
 
     if cum_mode == "bar":
         # 4 periods (current + 3 priors), oldest → newest for display.
@@ -1101,20 +1212,24 @@ def _cum_summary(df, spec, range_key, counts, cum_mode="line"):
 def update_cum_chart(metric, range_key, cum_mode, project_on, settings, _n):
     spec = _METRIC_BY_VALUE.get(metric) or _METRICS[0]
     df = _apply_page_filters(None, spec, settings)
-    counts, rng = _daily_counts(df, spec["date_col"], range_key)
+    anchor = _metric_last_date(spec)
+    counts, rng = _daily_counts(df, spec["date_col"], range_key, anchor=anchor)
     project_on = bool(project_on) if project_on is not None else True
-    summary = _cum_summary(df, spec, range_key, counts, cum_mode=cum_mode)
+    summary = _cum_summary(df, spec, range_key, counts, cum_mode=cum_mode, anchor=anchor)
     title = f"{spec['label']} — Cumulative"
     if cum_mode == "bar":
         fig = _build_cum_bar_fig(df, spec["date_col"], spec["label"], spec["color"],
-                                 range_key, project=project_on)
+                                 range_key, project=project_on, anchor=anchor)
         return fig, summary, title
     # Line mode — need prior period series shifted onto current x-axis.
     prior_counts = None
     prior_shift = None
     if rng is not None:
         start, _end = rng
-        last = df[spec["date_col"]].dropna().dt.normalize().max() if (df is not None and spec["date_col"] in df.columns) else None
+        last = anchor if anchor is not None else (
+            df[spec["date_col"]].dropna().dt.normalize().max()
+            if (df is not None and spec["date_col"] in df.columns and not df[spec["date_col"]].dropna().empty)
+            else None)
         if last is not None:
             p_start, p_end = _resolve_prior_range(range_key, last)
             # YTD + projection-on: extend prior trace to full prior calendar
@@ -1324,13 +1439,10 @@ clientside_callback(
     Input("global-theme-store", "data"),
 )
 
-# Mobile filter row: dept + physician cycle buttons.
+# Mobile filter row: left (dept / task-type) + physician cycle buttons.
 # Clicking advances to the next value; disabled when the filter doesn't
-# apply to the current metric. On metric change, the physician list may
-# shrink — reset to "all" if the previous value is no longer valid.
-_DEPTS = ["all", "Lacey", "Centralia", "Aberdeen"]
-_DEPT_LABEL = {"all": "All Sites", "Lacey": "Lacey",
-               "Centralia": "Centralia", "Aberdeen": "Aberdeen"}
+# apply to the current metric. On metric change, the value may no longer be
+# valid (e.g. a dept when switching to Tasks) — reset to "all" if so.
 
 
 @callback(
@@ -1344,58 +1456,98 @@ _DEPT_LABEL = {"all": "All Sites", "Lacey": "Lacey",
     Input(f"{PAGE_ID}-dept-cycle-btn", "n_clicks"),
     Input(f"{PAGE_ID}-phys-cycle-btn", "n_clicks"),
     Input(f"{PAGE_ID}-metric", "value"),
+    Input(f"{PAGE_ID}-range", "value"),
     State(f"{PAGE_ID}-dept-sel", "data"),
     State(f"{PAGE_ID}-phys-sel", "data"),
 )
-def cycle_filters(_dept_n, _phys_n, metric, dept_cur, phys_cur):
+def cycle_filters(_dept_n, _phys_n, metric, range_key, left_cur, phys_cur):
     from dash import ctx
     spec = _METRIC_BY_VALUE.get(metric) or _METRICS[0]
     phys_col = spec.get("physician_col")
-    dept_applies = metric != "sims"
+    left_values = spec.get("left_values")
+    left_col = spec.get("left_col")
+    left_labels = spec.get("left_labels") or {}
+    left_applies = bool(left_values)
     phys_applies = phys_col is not None
-
-    # Physicians present in this metric's data (filtered to the four
-    # named radiation oncologists, per CLAUDE.md).
-    phys_options = ["all"]
-    if phys_col:
-        try:
-            df = spec["frame_fn"](None)
-            if not df.empty and phys_col in df.columns:
-                present = set(df[phys_col].dropna().astype(str).unique())
-                phys_options += [n for n in PHYSICIANS if n in present]
-        except Exception:
-            pass
-
-    dept = dept_cur if dept_cur in _DEPTS else "all"
-    phys = phys_cur if phys_cur in phys_options else "all"
-
+    date_col = spec["date_col"]
     trig = ctx.triggered_id
-    if trig == f"{PAGE_ID}-dept-cycle-btn" and dept_applies:
-        i = _DEPTS.index(dept)
-        dept = _DEPTS[(i + 1) % len(_DEPTS)]
-    elif trig == f"{PAGE_ID}-phys-cycle-btn" and phys_applies:
-        i = phys_options.index(phys) if phys in phys_options else 0
-        phys = phys_options[(i + 1) % len(phys_options)]
+    dept_btn = f"{PAGE_ID}-dept-cycle-btn"
+    phys_btn = f"{PAGE_ID}-phys-cycle-btn"
 
-    if not dept_applies:
-        dept = "all"
-    if not phys_applies:
-        phys = "all"
+    # Full metric frame (all-time) + the subset within the selected timeframe.
+    # Distinction matters: the *universe* (what's a valid selection at all) comes
+    # from all-time data, while *cycling* only steps through values with data in
+    # the current timeframe. So a person you're viewing who has no data in the
+    # new range stays selected (chart shows 0), but the next toggle skips them.
+    try:
+        full = spec["frame_fn"](None)
+    except Exception:
+        full = pd.DataFrame()
+    anchor = None
+    if full is not None and not full.empty and date_col in full.columns:
+        s = full[date_col].dropna()
+        anchor = s.dt.normalize().max() if not s.empty else None
+    start, end = _resolve_range(range_key, anchor) if anchor is not None else (None, None)
+    full_r = _in_range(full, date_col, start, end)
 
-    settings = {"dept": dept, "physician": phys}
+    def _advance(current, avail):
+        """Step to the next value in `avail` (the in-range cycle). If `current`
+        isn't in it (e.g. it has no data this range), drop to the first real
+        value so we never land back on the empty selection."""
+        if current in avail:
+            return avail[(avail.index(current) + 1) % len(avail)]
+        return avail[1] if len(avail) > 1 else "all"
 
-    dept_label = "N/A" if not dept_applies else _DEPT_LABEL.get(dept, dept)
+    # ---- Left (dept / task-type) selection ----
+    # A dept/task-type stays "valid" regardless of range; keep it even at 0 and
+    # let cycling skip empties.
+    left_sel = left_cur if (left_applies and left_cur in left_values) else "all"
+    if left_applies and trig == dept_btn:
+        avail = ["all"]
+        if left_col and full_r is not None and not full_r.empty and left_col in full_r.columns:
+            present_r = set(full_r[left_col].dropna().astype(str).unique())
+            avail += [v for v in left_values if v != "all" and v in present_r]
+        else:
+            avail = list(left_values)
+        left_sel = _advance(left_sel, avail)
+    if not left_applies:
+        left_sel = "all"
+
+    # ---- Physician / planner selection (depends on the final left_sel) ----
+    planner_mode = (metric == "tasks" and left_sel == _TASK_PLANNER_GROUP)
+    phys_all_label = "All Planners" if planner_mode else "All MDs"
+    phys = "all"
+    if phys_applies:
+        def _sub(frame):
+            if frame is None or frame.empty:
+                return frame
+            if left_applies and left_col and left_sel != "all" and left_col in frame.columns:
+                return frame[frame[left_col].astype(str) == left_sel]
+            return frame
+        universe = set(_people_options(_sub(full), phys_col, planner_mode))
+        avail = ["all"] + _people_options(_sub(full_r), phys_col, planner_mode)
+        # Keep the current person if valid for this context (even at 0 in range);
+        # only reset when they don't belong (e.g. an MD when switched to planners).
+        phys = phys_cur if (phys_cur == "all" or phys_cur in universe) else "all"
+        if trig == phys_btn:
+            phys = _advance(phys, avail)
+
+    # settings["dept"] carries the left-filter value (department OR task-type
+    # group); the metric's frame_fn interprets it.
+    settings = {"dept": left_sel, "physician": phys}
+
+    left_label = "N/A" if not left_applies else left_labels.get(left_sel, left_sel)
     if not phys_applies:
         phys_label = "N/A"
     elif phys == "all":
-        phys_label = "All MDs"
+        phys_label = phys_all_label
     else:
-        # Show last name only (names are "Last, First").
+        # Show last name only (names are usually "Last, First").
         phys_label = phys.split(",")[0].strip()
 
-    return (dept, phys, settings,
-            dept_label, phys_label,
-            not dept_applies, not phys_applies)
+    return (left_sel, phys, settings,
+            left_label, phys_label,
+            not left_applies, not phys_applies)
 
 # Group C: drawer toggle.
 clientside_callback(
