@@ -47,6 +47,19 @@ _CAP_LEAD = 21          # outlier cap: consult → sim (days)
 _CAP_TIME_TO_TX = 21    # outlier cap: sim → treatment (days)
 _CAP_LEAD_TIME = 21     # outlier cap: lead time / booked → sim (days)
 
+# Duration range filter (minutes). Top handle at max == unbounded (long-tail sims).
+_DURATION_SLIDER_MIN = 0
+_DURATION_SLIDER_MAX = 180
+
+# Outlier-panel "Filter" mode: transition day-count columns (order matches the
+# panel transitions) and the range-slider ceiling. Top handle == unbounded.
+_OUTLIER_FILTER_MAX = 60
+_OUTLIER_FILTER_COLS = [
+    "DaysFromClinicExamToSimulation",  # Consult → Sim
+    "DaysFromSimToTreatment",          # Sim → Treatment
+    "DaysFromCreatedToAppt",           # Lead Time (booked → sim)
+]
+
 # Physician role → column mapping
 _SIM_PHYS_COL = {
     "consult": "ConsultPhysician",
@@ -234,7 +247,7 @@ def _build_sim_filter_bar():
                             html.Div(
                                 children=[
                                     dmc.Button(
-                                        "Sim Type",
+                                        "Type",
                                         id="sim-simtype-trigger",
                                         variant="default",
                                         size="sm",
@@ -320,6 +333,68 @@ def _build_sim_filter_bar():
                         style={"position": "relative", "display": "inline-block"},
                     ),
                     diagnosis_accordion("sim"),
+                    # Duration range (pop-down panel with two-handle slider)
+                    html.Div(
+                        children=[
+                            dmc.Button(
+                                "Duration",
+                                id="sim-duration-trigger",
+                                variant="default",
+                                size="sm",
+                                leftSection=DashIconify(icon="mdi:timer-outline", width=14),
+                                rightSection=DashIconify(icon="mdi:chevron-down", width=14),
+                            ),
+                            dmc.Paper(
+                                children=[
+                                    dmc.Group(
+                                        justify="space-between",
+                                        mb=6,
+                                        children=[
+                                            dmc.Text("Duration Range", size="xs", c="#6B7280"),
+                                            dmc.Text(
+                                                "All",
+                                                id="sim-duration-label",
+                                                size="xs", fw=600, c="#7C2A83",
+                                            ),
+                                        ],
+                                    ),
+                                    dmc.RangeSlider(
+                                        id="sim-filter-duration",
+                                        min=_DURATION_SLIDER_MIN,
+                                        max=_DURATION_SLIDER_MAX,
+                                        step=5,
+                                        value=[_DURATION_SLIDER_MIN, _DURATION_SLIDER_MAX],
+                                        marks=[
+                                            {"value": 0, "label": "0"},
+                                            {"value": 30, "label": "30"},
+                                            {"value": 60, "label": "60"},
+                                            {"value": 90, "label": "90"},
+                                            {"value": 120, "label": "120"},
+                                            {"value": 150, "label": "150"},
+                                            {"value": 180, "label": "180+"},
+                                        ],
+                                        color="violet",
+                                        size="sm",
+                                        minRange=0,
+                                        mb="sm",
+                                    ),
+                                    dmc.Button(
+                                        "Reset",
+                                        id="sim-duration-reset",
+                                        size="compact-xs",
+                                        variant="light",
+                                        color="violet",
+                                        mt="sm",
+                                    ),
+                                ],
+                                id="sim-duration-panel",
+                                p="sm", shadow="md", withBorder=True, radius="md",
+                                className="wf-chip-dropdown",
+                                style={"display": "none", "minWidth": "280px"},
+                            ),
+                        ],
+                        style={"position": "relative", "display": "inline-block"},
+                    ),
                     # Scope: All / Initial
                     dmc.SegmentedControl(
                         id="sim-volume-scope",
@@ -348,7 +423,7 @@ def _build_sim_filter_bar():
                         ("Consult \u2192 Sim", _CAP_LEAD),
                         ("Sim \u2192 Treatment", _CAP_TIME_TO_TX),
                         ("Lead Time", _CAP_LEAD_TIME),
-                    ]),
+                    ], allow_filter_mode=True, filter_max=_OUTLIER_FILTER_MAX),
                     # Smoothing
                     dmc.Group(
                         children=[
@@ -612,6 +687,7 @@ layout = dmc.Stack(
                         {"value": "line", "label": "Line"},
                         {"value": "area", "label": "Area"},
                         {"value": "bar", "label": "Bar"},
+                        {"value": "histogram", "label": "Histogram"},
                     ],
                     show_smooth=True,
                     smooth_max=12,
@@ -1017,7 +1093,7 @@ def _register_sim_filter_callbacks():
     _display_map_json = _json.dumps(_SIM_TYPE_DISPLAY)
     clientside_callback(
         "function(vals) {"
-        "  if (!vals || vals.length === 0) return 'Sim Type';"
+        "  if (!vals || vals.length === 0) return 'Type';"
         "  var dm = " + _display_map_json + ";"
         "  if (vals.length === 1) return dm[vals[0]] || vals[0];"
         "  return vals.length + ' selected';"
@@ -1083,6 +1159,44 @@ def _register_sim_filter_callbacks():
         prevent_initial_call=True,
     )
 
+    # --- Duration range: trigger button summary label ---
+    clientside_callback(
+        """function(val) {
+            if (!val || val.length !== 2) return "Duration";
+            var lo = val[0], hi = val[1], MIN = 0, MAX = 180;
+            if (lo <= MIN && hi >= MAX) return "Duration";
+            var hiTxt = hi >= MAX ? (MAX + "+") : ("" + hi);
+            if (lo <= MIN) return "Duration ≤ " + hiTxt + "m";
+            if (hi >= MAX) return "Duration ≥ " + lo + "m";
+            return "Duration " + lo + "–" + hiTxt + "m";
+        }""",
+        Output("sim-duration-trigger", "children"),
+        Input("sim-filter-duration", "value"),
+    )
+
+    # --- Duration range: in-panel label ---
+    clientside_callback(
+        """function(val) {
+            if (!val || val.length !== 2) return "All";
+            var lo = val[0], hi = val[1], MIN = 0, MAX = 180;
+            if (lo <= MIN && hi >= MAX) return "All";
+            var hiTxt = hi >= MAX ? (MAX + "+") : ("" + hi);
+            if (lo <= MIN) return "≤ " + hiTxt + " min";
+            if (hi >= MAX) return "≥ " + lo + " min";
+            return lo + "–" + hiTxt + " min";
+        }""",
+        Output("sim-duration-label", "children"),
+        Input("sim-filter-duration", "value"),
+    )
+
+    # --- Duration range: reset to full span ---
+    clientside_callback(
+        """function(n) { return [0, 180]; }""",
+        Output("sim-filter-duration", "value", allow_duplicate=True),
+        Input("sim-duration-reset", "n_clicks"),
+        prevent_initial_call=True,
+    )
+
 
 # Register filter callbacks
 _register_sim_filter_callbacks()
@@ -1091,7 +1205,8 @@ _register_sim_filter_callbacks()
 register_diagnosis_callbacks("sim")
 
 # Register outlier panel callbacks
-register_outlier_callbacks(PAGE_ID, n_transitions=3, defaults=[_CAP_LEAD, _CAP_TIME_TO_TX, _CAP_LEAD_TIME])
+register_outlier_callbacks(PAGE_ID, n_transitions=3, defaults=[_CAP_LEAD, _CAP_TIME_TO_TX, _CAP_LEAD_TIME],
+                           allow_filter_mode=True, filter_max=_OUTLIER_FILTER_MAX)
 
 
 # ---------------------------------------------------------------------------
@@ -1109,10 +1224,11 @@ register_outlier_callbacks(PAGE_ID, n_transitions=3, defaults=[_CAP_LEAD, _CAP_T
     Input("sim-volume-scope", "value"),
     Input("sim-inpatient-switch", "checked"),
     Input("sim-physician-role", "data"),
+    Input("sim-filter-duration", "value"),
 )
 def _populate_sim_physician_chips(_n, slider_val, departments, sim_types,
                                   machines, body_sites, diag_mode, volume_scope,
-                                  inpatient, physician_role):
+                                  inpatient, physician_role, duration):
     from data.loader import load_simulations, load_diagnosis
     col = _SIM_PHYS_COL.get(physician_role or "consult", "ConsultPhysician")
     try:
@@ -1137,6 +1253,8 @@ def _populate_sim_physician_chips(_n, slider_val, departments, sim_types,
     # Machine
     if machines and "SimulationResource" in df.columns:
         df = df[df["SimulationResource"].isin(machines)]
+    # Duration
+    df = _apply_duration_filter(df, duration)
     # Diagnosis
     if body_sites:
         try:
@@ -1218,6 +1336,57 @@ def _sim_trend(curr, prior, invert=False):
     return f"{abs(pct):.0f}%", direction, prior
 
 
+def _apply_duration_filter(df, duration):
+    """Filter df to rows whose DurationMinutes falls in the selected [low, high] range.
+
+    `duration` is the RangeSlider value [low, high] in minutes. The high handle at
+    the slider max is treated as unbounded so long-tail sims (up to ~13h) are kept.
+    """
+    if "DurationMinutes" not in df.columns:
+        return df
+    if not isinstance(duration, (list, tuple)) or len(duration) != 2:
+        return df
+    lo, hi = duration
+    if lo is None or hi is None:
+        return df
+    # No-op when the range spans the full slider
+    if lo <= _DURATION_SLIDER_MIN and hi >= _DURATION_SLIDER_MAX:
+        return df
+    d = pd.to_numeric(df["DurationMinutes"], errors="coerce")
+    mask = d.notna() & (d >= lo)
+    if hi < _DURATION_SLIDER_MAX:
+        mask &= d <= hi
+    return df[mask]
+
+
+def _apply_outlier_range_filters(df, ranges):
+    """Filter-mode of the outlier panel: keep rows whose transition day-counts
+    fall within the selected [low, high] range for each transition.
+
+    `ranges` is a list of [low, high] pairs aligned with _OUTLIER_FILTER_COLS.
+    A range spanning the full slider ([0, _OUTLIER_FILTER_MAX]) is inactive.
+    The high handle at _OUTLIER_FILTER_MAX means unbounded above (keeps long tail).
+    Rows with a missing value in a filtered column are excluded when that
+    transition's range is active.
+    """
+    if not ranges:
+        return df
+    for col, rng in zip(_OUTLIER_FILTER_COLS, ranges):
+        if col not in df.columns or not isinstance(rng, (list, tuple)) or len(rng) != 2:
+            continue
+        lo, hi = rng
+        if lo is None or hi is None:
+            continue
+        if lo <= 0 and hi >= _OUTLIER_FILTER_MAX:
+            continue  # full span → inactive
+        d = pd.to_numeric(df[col], errors="coerce")
+        mask = d.notna() & (d >= lo)
+        if hi < _OUTLIER_FILTER_MAX:
+            mask &= d <= hi
+        df = df[mask]
+    return df
+
+
 def _dedup_patient_day(src):
     """Deduplicate simulations to one per patient per day."""
     if "PatientId" not in src.columns or "ScheduledDateTime" not in src.columns:
@@ -1232,7 +1401,8 @@ def _dedup_patient_day(src):
 def _load_and_filter_sim(slider_val, departments, physician, sim_types,
                           machines, body_sites, diag_mode, volume_scope,
                           inpatient, weekend_only, date_preset,
-                          physician_role="consult"):
+                          physician_role="consult", duration="all",
+                          outlier_mode="cap", outlier_ranges=None):
     """Load simulations data, apply filters. Returns dict or None."""
     from data.loader import load_simulations, load_diagnosis
 
@@ -1255,6 +1425,9 @@ def _load_and_filter_sim(slider_val, departments, physician, sim_types,
         df = df[df["ActivityName"].isin(sim_types)]
     if machines and "SimulationResource" in df.columns:
         df = df[df["SimulationResource"].isin(machines)]
+    df = _apply_duration_filter(df, duration)
+    if outlier_mode == "filter":
+        df = _apply_outlier_range_filters(df, outlier_ranges)
 
     # Diagnosis lookup
     try:
@@ -1333,20 +1506,32 @@ _SIM_FILTER_INPUTS = [
     Input("sim-weekend-switch", "checked"),
     Input("sim-filter-date-preset", "value"),
     Input("sim-physician-role", "data"),
+    Input("sim-filter-duration", "value"),
+    Input("sim-outlier-mode", "value"),
+    Input("sim-outlier-range-0", "value"),
+    Input("sim-outlier-range-1", "value"),
+    Input("sim-outlier-range-2", "value"),
 ]
+
+# Number of shared filter inputs — per-callback "extra" inputs start at this
+# offset in *args. Keep extractions relative to this so adding a shared input
+# doesn't require re-indexing every callback.
+_N_SIM_FILTER = len(_SIM_FILTER_INPUTS)
 
 
 def _unpack_sim_filter_args(args):
-    """Unpack the 13 common filter args into kwargs for _load_and_filter_sim."""
+    """Unpack the shared filter args into kwargs for _load_and_filter_sim."""
     (_n, slider_val, departments, physician, sim_types,
      machines, body_sites, diag_mode, volume_scope, inpatient,
-     weekend_only, date_preset, physician_role) = args[:13]
+     weekend_only, date_preset, physician_role, duration,
+     outlier_mode, orange0, orange1, orange2) = args[:_N_SIM_FILTER]
     return dict(
         slider_val=slider_val, departments=departments, physician=physician,
         sim_types=sim_types, machines=machines, body_sites=body_sites,
         diag_mode=diag_mode, volume_scope=volume_scope, inpatient=inpatient,
         weekend_only=weekend_only, date_preset=date_preset,
-        physician_role=physician_role,
+        physician_role=physician_role, duration=duration,
+        outlier_mode=outlier_mode, outlier_ranges=[orange0, orange1, orange2],
     )
 
 
@@ -1429,10 +1614,14 @@ def _update_sim_table(*args):
 )
 def _update_sim_kpis(*args):
     ctx = _unpack_sim_filter_args(args)
-    resim_scope = args[13] or "resim"
-    outlier_enabled = args[14]
-    cap_lead_raw, cap_tx_raw, cap_lt_raw = args[15], args[16], args[17]
-    grid_rows = args[18]
+    resim_scope = args[_N_SIM_FILTER + 0] or "resim"
+    outlier_enabled = args[_N_SIM_FILTER + 1]
+    cap_lead_raw, cap_tx_raw, cap_lt_raw = (
+        args[_N_SIM_FILTER + 2], args[_N_SIM_FILTER + 3], args[_N_SIM_FILTER + 4])
+    grid_rows = args[_N_SIM_FILTER + 5]
+    # In filter mode the ranges filter the dataset directly, so disable capping.
+    if ctx.get("outlier_mode") == "filter":
+        outlier_enabled = False
     if not outlier_enabled:
         cap_lead, cap_time_to_tx, cap_lead_time = 365, 365, 365
     else:
@@ -1700,7 +1889,8 @@ def _update_sim_kpis(*args):
 )
 def _update_sim_volume(*args):
     ctx = _unpack_sim_filter_args(args)
-    agg, volume_slice, grid_rows = args[13], args[14], args[15]
+    agg, volume_slice, grid_rows = (
+        args[_N_SIM_FILTER + 0], args[_N_SIM_FILTER + 1], args[_N_SIM_FILTER + 2])
     data = _load_and_filter_sim(**ctx)
     if data is None:
         return None
@@ -1729,10 +1919,15 @@ def _update_sim_volume(*args):
 )
 def _update_sim_timing(*args):
     ctx = _unpack_sim_filter_args(args)
-    timing_metric, timing_agg, timing_slice = args[13], args[14], args[15]
-    outlier_enabled = args[16]
-    cap_lead_raw, cap_tx_raw, cap_lt_raw = args[17], args[18], args[19]
-    grid_rows = args[20]
+    timing_metric, timing_agg, timing_slice = (
+        args[_N_SIM_FILTER + 0], args[_N_SIM_FILTER + 1], args[_N_SIM_FILTER + 2])
+    outlier_enabled = args[_N_SIM_FILTER + 3]
+    cap_lead_raw, cap_tx_raw, cap_lt_raw = (
+        args[_N_SIM_FILTER + 4], args[_N_SIM_FILTER + 5], args[_N_SIM_FILTER + 6])
+    grid_rows = args[_N_SIM_FILTER + 7]
+    # In filter mode the ranges filter the dataset directly, so disable capping.
+    if ctx.get("outlier_mode") == "filter":
+        outlier_enabled = False
     if not outlier_enabled:
         cap_lead, cap_tx, cap_lt = 365, 365, 365
     else:
@@ -1770,8 +1965,9 @@ def _update_sim_timing(*args):
 )
 def _update_sim_cumulative(*args):
     ctx = _unpack_sim_filter_args(args)
-    cumul_mode, cumul_period_type, cumul_slice = args[13], args[14], args[15]
-    grid_rows = args[16]
+    cumul_mode, cumul_period_type, cumul_slice = (
+        args[_N_SIM_FILTER + 0], args[_N_SIM_FILTER + 1], args[_N_SIM_FILTER + 2])
+    grid_rows = args[_N_SIM_FILTER + 3]
     data = _load_and_filter_sim(**ctx)
     if data is None:
         return None
@@ -1803,7 +1999,8 @@ def _update_sim_cumulative(*args):
 )
 def _update_sim_cancel(*args):
     ctx = _unpack_sim_filter_args(args)
-    cancel_agg, cancel_slice, grid_rows = args[13], args[14], args[15]
+    cancel_agg, cancel_slice, grid_rows = (
+        args[_N_SIM_FILTER + 0], args[_N_SIM_FILTER + 1], args[_N_SIM_FILTER + 2])
     data = _load_and_filter_sim(**ctx)
     if data is None:
         return None
@@ -1834,9 +2031,10 @@ def _update_sim_cancel(*args):
 )
 def _update_sim_diag_billing(*args):
     ctx = _unpack_sim_filter_args(args)
-    diagnosis_compare, diagnosis_slice, diagnosis_mode = args[13], args[14], args[15]
-    billing_slice, billing_mode = args[16], args[17]
-    grid_rows = args[18]
+    diagnosis_compare, diagnosis_slice, diagnosis_mode = (
+        args[_N_SIM_FILTER + 0], args[_N_SIM_FILTER + 1], args[_N_SIM_FILTER + 2])
+    billing_slice, billing_mode = args[_N_SIM_FILTER + 3], args[_N_SIM_FILTER + 4]
+    grid_rows = args[_N_SIM_FILTER + 5]
     data = _load_and_filter_sim(**ctx)
 
     empty = empty_figure()
@@ -1890,6 +2088,10 @@ clientside_callback(
 
 clientside_callback(
     """function(rawData, smoothPct, chartType, currentFig) {
+        if (chartType === "histogram") {
+            return window.dash_clientside.histogram.render(
+                rawData ? rawData.hist : null, "histogram", null, currentFig);
+        }
         return window.dash_clientside.census.smoothChartWithType(rawData, smoothPct, chartType, currentFig);
     }""",
     Output("sim-chart-timing", "figure"),
@@ -1898,6 +2100,16 @@ clientside_callback(
     Input("sim-timing-settings-type", "value"),
     State("sim-chart-timing", "figure"),
     prevent_initial_call=True,
+)
+
+# Histogram is a distribution (not time-bucketed) — hide the Weekly/Monthly/Yearly
+# aggregation toggle when the timing chart is in histogram mode.
+clientside_callback(
+    """function(chartType) {
+        return chartType === "histogram" ? {"display": "none"} : {};
+    }""",
+    Output("sim-timing-agg", "style"),
+    Input("sim-timing-settings-type", "value"),
 )
 
 clientside_callback(
@@ -2688,6 +2900,50 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
     }
 
 
+def _timing_groups(df, slice_by, c2b=None, diag_mode="primary"):
+    """Return [(name, color, subdf), ...] for the timing chart's slice grouping.
+
+    name is None for the un-sliced total (caller supplies the metric title).
+    Shared by the time-series and histogram builders so the two stay in sync.
+    """
+    if not slice_by:
+        return [(None, PRIMARY, df)]
+
+    groups = []
+    if slice_by == "scope" and "ActivityName" in df.columns:
+        init_mask = df["ActivityName"].apply(_is_initial_sim)
+        for label, mask_val, color in [("Initial", init_mask, CHART_COLORWAY[0]),
+                                        ("Other", ~init_mask, CHART_COLORWAY[2])]:
+            sub = df[mask_val]
+            if not sub.empty:
+                groups.append((label, color, sub))
+    elif slice_by == "type" and "ActivityName" in df.columns:
+        for i, stype in enumerate(sorted(df["ActivityName"].dropna().unique())):
+            groups.append((_sim_display_name(stype),
+                           CHART_COLORWAY[i % len(CHART_COLORWAY)],
+                           df[df["ActivityName"] == stype]))
+    elif slice_by == "dept" and "Department" in df.columns:
+        for dept in sorted(df["Department"].dropna().unique()):
+            groups.append((dept,
+                           DEPARTMENT_COLORS.get(dept, CHART_COLORWAY[len(groups) % len(CHART_COLORWAY)]),
+                           df[df["Department"] == dept]))
+    elif slice_by == "physician" and "SupervisingPhysician" in df.columns:
+        for i, phys in enumerate(sorted(df["SupervisingPhysician"].dropna().unique())):
+            groups.append((phys.split(",")[0] if "," in phys else phys,
+                           CHART_COLORWAY[i % len(CHART_COLORWAY)],
+                           df[df["SupervisingPhysician"] == phys]))
+    elif slice_by == "machine" and "SimulationResource" in df.columns:
+        for m in sorted(df["SimulationResource"].dropna().unique()):
+            groups.append((_SIM_MACHINE_DISPLAY.get(m, m),
+                           _SIM_MACHINE_COLORS.get(m, CHART_COLORWAY[len(groups) % len(CHART_COLORWAY)]),
+                           df[df["SimulationResource"] == m]))
+    elif slice_by == "bodysite" and "DiagnosisCodes" in df.columns and c2b:
+        df = assign_diagnosis_column(df, c2b, mode=diag_mode)
+        for i, bs in enumerate(sorted(df["_bs"].dropna().unique())):
+            groups.append((bs, CHART_COLORWAY[i % len(CHART_COLORWAY)], df[df["_bs"] == bs]))
+    return groups
+
+
 def _prepare_timing_data(df, metric="consult_sim", agg="M", slice_by="", c2b=None, cap=None, diag_mode="primary"):
     """Prepare timing interval data for clientside rendering.
 
@@ -2723,93 +2979,45 @@ def _prepare_timing_data(df, metric="consult_sim", agg="M", slice_by="", c2b=Non
     all_periods = full_period_range(df["period"], period_code)
     dates = [d.isoformat() for d in all_periods]
 
-    series = []
+    groups = _timing_groups(df, slice_by, c2b, diag_mode)
+    if not groups:
+        return None
 
-    if not slice_by:
-        medians = df.groupby("period")["_val"].median().reindex(all_periods)
+    series = []       # time-series (median per period) for line/area/bar
+    hist_series = []  # raw day-counts per group for the histogram view
+    for name, color, sub in groups:
+        if sub is None or sub.empty:
+            continue
+        disp_name = name if name is not None else title_map.get(metric, metric)
+        medians = sub.groupby("period")["_val"].median().reindex(all_periods)
         values = [v if pd.notna(v) else None for v in medians.tolist()]
-        series.append({
-            "name": title_map.get(metric, metric),
-            "values": values,
-            "color": PRIMARY,
-        })
-
-    elif slice_by == "scope" and "ActivityName" in df.columns:
-        init_mask = df["ActivityName"].apply(_is_initial_sim)
-        for label, mask_val, color in [("Initial", init_mask, CHART_COLORWAY[0]), ("Other", ~init_mask, CHART_COLORWAY[2])]:
-            sub = df[mask_val]
-            if sub.empty:
-                continue
-            medians = sub.groupby("period")["_val"].median().reindex(all_periods)
-            values = [v if pd.notna(v) else None for v in medians.tolist()]
-            series.append({
-                "name": label,
-                "values": values,
-                "color": color,
-            })
-
-    elif slice_by == "type" and "ActivityName" in df.columns:
-        for i, stype in enumerate(sorted(df["ActivityName"].dropna().unique())):
-            sub = df[df["ActivityName"] == stype]
-            medians = sub.groupby("period")["_val"].median().reindex(all_periods)
-            values = [v if pd.notna(v) else None for v in medians.tolist()]
-            series.append({
-                "name": _sim_display_name(stype),
-                "values": values,
-                "color": CHART_COLORWAY[i % len(CHART_COLORWAY)],
-            })
-
-    elif slice_by == "dept" and "Department" in df.columns:
-        for dept in sorted(df["Department"].dropna().unique()):
-            sub = df[df["Department"] == dept]
-            medians = sub.groupby("period")["_val"].median().reindex(all_periods)
-            values = [v if pd.notna(v) else None for v in medians.tolist()]
-            series.append({
-                "name": dept,
-                "values": values,
-                "color": DEPARTMENT_COLORS.get(dept, CHART_COLORWAY[len(series) % len(CHART_COLORWAY)]),
-            })
-
-    elif slice_by == "physician" and "SupervisingPhysician" in df.columns:
-        for i, phys in enumerate(sorted(df["SupervisingPhysician"].dropna().unique())):
-            sub = df[df["SupervisingPhysician"] == phys]
-            medians = sub.groupby("period")["_val"].median().reindex(all_periods)
-            values = [v if pd.notna(v) else None for v in medians.tolist()]
-            series.append({
-                "name": phys.split(",")[0] if "," in phys else phys,
-                "values": values,
-                "color": CHART_COLORWAY[i % len(CHART_COLORWAY)],
-            })
-
-    elif slice_by == "machine" and "SimulationResource" in df.columns:
-        for m in sorted(df["SimulationResource"].dropna().unique()):
-            sub = df[df["SimulationResource"] == m]
-            medians = sub.groupby("period")["_val"].median().reindex(all_periods)
-            values = [v if pd.notna(v) else None for v in medians.tolist()]
-            series.append({
-                "name": _SIM_MACHINE_DISPLAY.get(m, m),
-                "values": values,
-                "color": _SIM_MACHINE_COLORS.get(m, CHART_COLORWAY[len(series) % len(CHART_COLORWAY)]),
-            })
-
-    elif slice_by == "bodysite" and "DiagnosisCodes" in df.columns and c2b:
-        df = assign_diagnosis_column(df, c2b, mode=diag_mode)
-        for i, bs in enumerate(sorted(df["_bs"].dropna().unique())):
-            sub = df[df["_bs"] == bs]
-            medians = sub.groupby("period")["_val"].median().reindex(all_periods)
-            values = [v if pd.notna(v) else None for v in medians.tolist()]
-            series.append({
-                "name": bs,
-                "values": values,
-                "color": CHART_COLORWAY[i % len(CHART_COLORWAY)],
-            })
+        series.append({"name": disp_name, "values": values, "color": color})
+        hist_series.append({"name": disp_name, "values": sub["_val"].tolist(), "color": color})
 
     if not series:
         return None
 
+    disp_all = df["_val"]
+    hist = {
+        "series": hist_series,
+        "stats": {
+            "n": int(len(disp_all)),
+            "median": float(disp_all.median()),
+            "mean": float(disp_all.mean()),
+            "q1": float(disp_all.quantile(0.25)),
+            "q3": float(disp_all.quantile(0.75)),
+            "suffix": "d",
+            "tickSuffix": "d",
+            "xTitle": "Days",
+            "accentColor": PRIMARY,
+        },
+        "sliced": bool(slice_by),
+    }
+
     return {
         "dates": dates,
         "series": series,
+        "hist": hist,
         "height": 350,
         "yTitle": "Median Days",
         "hideLegend": len(series) <= 1,
@@ -3292,9 +3500,9 @@ def _build_detail_table(df):
     """Build AG Grid table data and column definitions."""
     display_cols = [
         "ScheduledDateTime", "PatientFullName", "Department",
-        "SupervisingPhysician", "ActivityName", "Duration",
+        "SupervisingPhysician", "ActivityName", "DurationMinutes",
         "DaysFromClinicExamToSimulation", "DaysFromSimToTreatment",
-        "DaysFromClinicExamToTreatment",
+        "DaysFromClinicExamToTreatment", "ActivityNote",
     ]
 
     available_cols = [c for c in display_cols if c in df.columns]
@@ -3319,11 +3527,12 @@ def _build_detail_table(df):
         "Department": "Department",
         "SupervisingPhysician": "Physician",
         "ActivityName": "Sim Type",
-        "Duration": "Duration (min)",
+        "DurationMinutes": "Duration (min)",
         "PatientFullName": "Patient",
         "DaysFromClinicExamToSimulation": "Consult\u2192Sim (days)",
         "DaysFromSimToTreatment": "Sim\u2192Tx (days)",
         "DaysFromClinicExamToTreatment": "Consult\u2192Tx (days)",
+        "ActivityNote": "Notes",
     }
 
     col_defs = []
@@ -3331,6 +3540,15 @@ def _build_detail_table(df):
         d = {"field": c, "headerName": header_map.get(c, c)}
         if c == "ScheduledDateTime":
             d["sort"] = "desc"
+        if c == "DurationMinutes":
+            d["type"] = "numericColumn"
+            d["filter"] = "agNumberColumnFilter"
+        if c == "ActivityNote":
+            d["flex"] = 2
+            d["minWidth"] = 200
+            d["tooltipField"] = "ActivityNote"
+            d["wrapText"] = True
+            d["autoHeight"] = True
         col_defs.append(d)
     col_defs.append({"field": "_row_idx", "hide": True})
     col_defs = apply_phi_grid_rules(col_defs)

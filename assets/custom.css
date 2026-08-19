@@ -1097,13 +1097,13 @@ html[data-theme="dark"] .ag-theme-alpine-dark {
     font-size: 11px;
     padding: 2px 6px;
 }
-/* Dim sliders when outlier caps are disabled */
-#wf-outlier-panel .wf-outlier-sliders.is-disabled {
+/* Dim sliders when outlier caps are disabled (all outlier panels) */
+.wf-outlier-sliders.is-disabled {
     opacity: 0.35;
     pointer-events: none;
     transition: opacity 0.2s ease;
 }
-#wf-outlier-panel .wf-outlier-sliders {
+.wf-outlier-sliders {
     transition: opacity 0.2s ease;
 }
 
