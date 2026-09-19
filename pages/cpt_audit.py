@@ -49,11 +49,19 @@ _COL_DEFS = apply_phi_grid_rules([
     {"field": "FieldGating", "headerName": "Gate"},
     {"field": "CPT_Correct", "headerName": "Correct"},
     {"field": "_billed_display", "headerName": "Billed"},
+    {"field": "Auth_Tx", "headerName": "Authed"},
     {"field": "AuditResult", "headerName": "Result",
      "filter": False, "sortable": False,
      "cellStyle": {"styleConditions": [
          {"condition": "params.value === 'PASS'", "style": {"color": SEMANTIC_COLORS["success"], "fontWeight": "600"}},
          {"condition": "params.value === 'FAIL'", "style": {"color": SEMANTIC_COLORS["error"], "fontWeight": "600"}},
+     ]}},
+    {"field": "DeliveryAuthResult", "headerName": "Auth Result", "flex": 1.5,
+     "filter": False, "sortable": False,
+     "cellStyle": {"styleConditions": [
+         {"condition": "params.value === 'PASS'", "style": {"color": SEMANTIC_COLORS["success"], "fontWeight": "600"}},
+         {"condition": "params.value && params.value.indexOf('FAIL') === 0", "style": {"color": SEMANTIC_COLORS["error"], "fontWeight": "600"}},
+         {"condition": "params.value === 'NO AUTH NOTE'", "style": {"color": SEMANTIC_COLORS["warning"], "fontWeight": "600"}},
      ]}},
     {"field": "ReviewStatus", "headerName": "Review", "flex": 2.3, "minWidth": 180,
      "cellRenderer": "CptReviewButtons", "sortable": False, "filter": False},
@@ -368,6 +376,7 @@ def update_cpt_audit(_n, start_date, end_date, departments):
         "PatientMRN", "PatientCode", "Department", "Machine", "CourseName",
         "RxTechnique_Day", "UniqueIsocenters", "FieldGating",
         "CPT_Correct", "CPT_Billed", "AuditResult",
+        "Auth_Tx", "DeliveryAuthResult",
     ]
     keep = [c for c in table_cols if c in df.columns]
     table_df = df[keep].copy()

@@ -44,7 +44,8 @@ PAGE_ID = "sim"
 # ---------------------------------------------------------------------------
 _DEFAULT_DATE_PRESET = "ytd" if pd.Timestamp.now().month > 1 else "3mo"
 _CAP_LEAD = 21          # outlier cap: consult → sim (days)
-_CAP_TIME_TO_TX = 21    # outlier cap: sim → treatment (days)
+_CAP_TIME_TO_TX = 21    # outlier cap: sim → treatment, actual (days)
+_CAP_SCHED_TX = 21      # outlier cap: sim → treatment, as first booked (days)
 _CAP_LEAD_TIME = 21     # outlier cap: lead time / booked → sim (days)
 
 # Duration range filter (minutes). Top handle at max == unbounded (long-tail sims).
@@ -54,9 +55,21 @@ _DURATION_SLIDER_MAX = 180
 # Outlier-panel "Filter" mode: transition day-count columns (order matches the
 # panel transitions) and the range-slider ceiling. Top handle == unbounded.
 _OUTLIER_FILTER_MAX = 60
+# Right-censoring guard for the Sim -> Treatment interval. Lives in the timing
+# chart's gear popover — it is a display choice, not a row filter.
+_SIM_SCHED_TX_COL = "DaysToScheduledTreatment"
+_CENSOR_GUARD_OPTS = [
+    {"value": "km", "label": "Survival"},
+    {"value": "sched", "label": "Scheduled"},
+    {"value": "trim", "label": "Trim"},
+    {"value": "off", "label": "Off"},
+]
+_CENSOR_GUARD_DEFAULT = "km"
+
 _OUTLIER_FILTER_COLS = [
     "DaysFromClinicExamToSimulation",  # Consult → Sim
-    "DaysFromSimToTreatment",          # Sim → Treatment
+    "DaysFromSimToTreatment",          # Sim → Treatment (actual start)
+    "DaysToScheduledTreatment",        # Sim → Treatment (as first scheduled)
     "DaysFromCreatedToAppt",           # Lead Time (booked → sim)
 ]
 
@@ -421,7 +434,8 @@ def _build_sim_filter_bar():
                     ),
                     outlier_panel(PAGE_ID, transitions=[
                         ("Consult \u2192 Sim", _CAP_LEAD),
-                        ("Sim \u2192 Treatment", _CAP_TIME_TO_TX),
+                        ("Sim \u2192 Tx (Actual)", _CAP_TIME_TO_TX),
+                        ("Sim \u2192 Tx (Scheduled)", _CAP_SCHED_TX),
                         ("Lead Time", _CAP_LEAD_TIME),
                     ], allow_filter_mode=True, filter_max=_OUTLIER_FILTER_MAX),
                     # Smoothing
@@ -693,11 +707,43 @@ layout = dmc.Stack(
                     smooth_max=12,
                     smooth_default=2,
                     paper_padding="md",
+                    extra_settings=[
+                        dmc.Stack(gap=4, children=[
+                            dmc.Text("Statistic", size="xs", fw=500, c="#6B7280"),
+                            dmc.SegmentedControl(
+                                id="sim-timing-stat",
+                                data=[
+                                    {"value": "median", "label": "Median"},
+                                    {"value": "mean", "label": "Mean"},
+                                ],
+                                value="median",
+                                size="xs",
+                                fullWidth=True,
+                            ),
+                        ]),
+                        # Sim -> Treatment looks forward from the sim, so recent
+                        # periods are right-censored. Shown only for that metric.
+                        html.Div(
+                            id="sim-timing-censor-wrap",
+                            style={"display": "none"},
+                            children=dmc.Stack(gap=4, children=[
+                                dmc.Text("Censoring Guard", size="xs", fw=500, c="#6B7280"),
+                                dmc.SegmentedControl(
+                                    id="sim-timing-censor",
+                                    data=_CENSOR_GUARD_OPTS,
+                                    value=_CENSOR_GUARD_DEFAULT,
+                                    size="xs",
+                                    fullWidth=True,
+                                ),
+                            ]),
+                        ),
+                    ],
                     extra_controls_left=[
                         dmc.SegmentedControl(
                             id="sim-timing-metric",
                             data=[
                                 {"value": "consult_sim", "label": "Consult \u2192 Sim"},
+                                {"value": "sim_tx", "label": "Sim \u2192 Tx"},
                                 {"value": "lead_time", "label": "Lead Time"},
                             ],
                             value="lead_time",
@@ -1205,7 +1251,8 @@ _register_sim_filter_callbacks()
 register_diagnosis_callbacks("sim")
 
 # Register outlier panel callbacks
-register_outlier_callbacks(PAGE_ID, n_transitions=3, defaults=[_CAP_LEAD, _CAP_TIME_TO_TX, _CAP_LEAD_TIME],
+register_outlier_callbacks(PAGE_ID, n_transitions=4,
+                           defaults=[_CAP_LEAD, _CAP_TIME_TO_TX, _CAP_SCHED_TX, _CAP_LEAD_TIME],
                            allow_filter_mode=True, filter_max=_OUTLIER_FILTER_MAX)
 
 
@@ -1511,6 +1558,7 @@ _SIM_FILTER_INPUTS = [
     Input("sim-outlier-range-0", "value"),
     Input("sim-outlier-range-1", "value"),
     Input("sim-outlier-range-2", "value"),
+    Input("sim-outlier-range-3", "value"),
 ]
 
 # Number of shared filter inputs — per-callback "extra" inputs start at this
@@ -1524,14 +1572,15 @@ def _unpack_sim_filter_args(args):
     (_n, slider_val, departments, physician, sim_types,
      machines, body_sites, diag_mode, volume_scope, inpatient,
      weekend_only, date_preset, physician_role, duration,
-     outlier_mode, orange0, orange1, orange2) = args[:_N_SIM_FILTER]
+     outlier_mode, orange0, orange1, orange2, orange3) = args[:_N_SIM_FILTER]
     return dict(
         slider_val=slider_val, departments=departments, physician=physician,
         sim_types=sim_types, machines=machines, body_sites=body_sites,
         diag_mode=diag_mode, volume_scope=volume_scope, inpatient=inpatient,
         weekend_only=weekend_only, date_preset=date_preset,
         physician_role=physician_role, duration=duration,
-        outlier_mode=outlier_mode, outlier_ranges=[orange0, orange1, orange2],
+        outlier_mode=outlier_mode,
+        outlier_ranges=[orange0, orange1, orange2, orange3],
     )
 
 
@@ -1610,15 +1659,19 @@ def _update_sim_table(*args):
     Input("sim-outlier-cap-0", "value"),
     Input("sim-outlier-cap-1", "value"),
     Input("sim-outlier-cap-2", "value"),
+    Input("sim-outlier-cap-3", "value"),
     Input("sim-table-filter-rows", "data"),
 )
 def _update_sim_kpis(*args):
     ctx = _unpack_sim_filter_args(args)
     resim_scope = args[_N_SIM_FILTER + 0] or "resim"
     outlier_enabled = args[_N_SIM_FILTER + 1]
+    # Cap slider order matches _OUTLIER_FILTER_COLS: consult→sim, sim→tx actual,
+    # sim→tx scheduled, lead time. The KPI row has no scheduled-start card, so
+    # index 4 is consumed but unused.
     cap_lead_raw, cap_tx_raw, cap_lt_raw = (
-        args[_N_SIM_FILTER + 2], args[_N_SIM_FILTER + 3], args[_N_SIM_FILTER + 4])
-    grid_rows = args[_N_SIM_FILTER + 5]
+        args[_N_SIM_FILTER + 2], args[_N_SIM_FILTER + 3], args[_N_SIM_FILTER + 5])
+    grid_rows = args[_N_SIM_FILTER + 6]
     # In filter mode the ranges filter the dataset directly, so disable capping.
     if ctx.get("outlier_mode") == "filter":
         outlier_enabled = False
@@ -1910,10 +1963,13 @@ def _update_sim_volume(*args):
     Input("sim-timing-metric", "value"),
     Input("sim-timing-agg", "value"),
     Input("sim-timing-slice", "value"),
+    Input("sim-timing-stat", "value"),
+    Input("sim-timing-censor", "value"),
     Input("sim-outlier-enabled", "data"),
     Input("sim-outlier-cap-0", "value"),
     Input("sim-outlier-cap-1", "value"),
     Input("sim-outlier-cap-2", "value"),
+    Input("sim-outlier-cap-3", "value"),
     Input("sim-table-filter-rows", "data"),
     running=[(Output("sim-chart-timing-loading", "visible"), True, False)],
 )
@@ -1921,18 +1977,21 @@ def _update_sim_timing(*args):
     ctx = _unpack_sim_filter_args(args)
     timing_metric, timing_agg, timing_slice = (
         args[_N_SIM_FILTER + 0], args[_N_SIM_FILTER + 1], args[_N_SIM_FILTER + 2])
-    outlier_enabled = args[_N_SIM_FILTER + 3]
-    cap_lead_raw, cap_tx_raw, cap_lt_raw = (
-        args[_N_SIM_FILTER + 4], args[_N_SIM_FILTER + 5], args[_N_SIM_FILTER + 6])
-    grid_rows = args[_N_SIM_FILTER + 7]
+    timing_stat, timing_censor = args[_N_SIM_FILTER + 3], args[_N_SIM_FILTER + 4]
+    outlier_enabled = args[_N_SIM_FILTER + 5]
+    cap_lead_raw, cap_tx_raw, cap_sched_raw, cap_lt_raw = (
+        args[_N_SIM_FILTER + 6], args[_N_SIM_FILTER + 7],
+        args[_N_SIM_FILTER + 8], args[_N_SIM_FILTER + 9])
+    grid_rows = args[_N_SIM_FILTER + 10]
     # In filter mode the ranges filter the dataset directly, so disable capping.
     if ctx.get("outlier_mode") == "filter":
         outlier_enabled = False
     if not outlier_enabled:
-        cap_lead, cap_tx, cap_lt = 365, 365, 365
+        cap_lead, cap_tx, cap_sched, cap_lt = 365, 365, 365, 365
     else:
         cap_lead = cap_lead_raw or _CAP_LEAD
         cap_tx = cap_tx_raw or _CAP_TIME_TO_TX
+        cap_sched = cap_sched_raw or _CAP_SCHED_TX
         cap_lt = cap_lt_raw or _CAP_LEAD_TIME
     # Pick the appropriate cap based on which metric is selected
     metric = timing_metric or "consult_sim"
@@ -1943,10 +2002,14 @@ def _update_sim_timing(*args):
     dfu = _dedup_patient_day(_apply_grid_row_filter(data["df"], grid_rows))
     if dfu.empty:
         return None
+    censor = timing_censor or "km"
     return _prepare_timing_data(
         dfu, metric=metric,
         agg=timing_agg or "M", slice_by=timing_slice or "", c2b=data["c2b"],
         cap=cap, diag_mode=data.get("diag_mode", "primary"),
+        stat=timing_stat or "median", censor=censor, cap_sched=cap_sched,
+        tx_cutoff=(_tx_observation_cutoff()
+                   if (metric == "sim_tx" and censor in ("trim", "km")) else None),
     )
 
 
@@ -2110,6 +2173,16 @@ clientside_callback(
     }""",
     Output("sim-timing-agg", "style"),
     Input("sim-timing-settings-type", "value"),
+)
+
+# The censoring guard only applies to Sim -> Treatment (the one interval that
+# looks forward from the sim date and can still be pending).
+clientside_callback(
+    """function(metric) {
+        return metric === "sim_tx" ? {"display": ""} : {"display": "none"};
+    }""",
+    Output("sim-timing-censor-wrap", "style"),
+    Input("sim-timing-metric", "value"),
 )
 
 clientside_callback(
@@ -2944,21 +3017,120 @@ def _timing_groups(df, slice_by, c2b=None, diag_mode="primary"):
     return groups
 
 
-def _prepare_timing_data(df, metric="consult_sim", agg="M", slice_by="", c2b=None, cap=None, diag_mode="primary"):
+def _tx_observation_cutoff():
+    """Latest treatment start actually present in the extract.
+
+    Sims performed after this date cannot yet show a Sim -> Treatment interval
+    even when the patient is on track, so this is the horizon beyond which the
+    observed interval is right-censored. Derived from the full (unfiltered)
+    dataset so page filters can't move it.
+    """
+    from data.loader import load_simulations
+
+    try:
+        df = load_simulations()
+    except Exception:
+        return None
+    if df.empty or "ScheduledDateTime" not in df.columns:
+        return None
+    if "DaysFromSimToTreatment" not in df.columns:
+        return None
+    days = pd.to_numeric(df["DaysFromSimToTreatment"], errors="coerce")
+    starts = df["ScheduledDateTime"].dt.normalize() + pd.to_timedelta(days, unit="D")
+    latest = starts.max()
+    return latest if pd.notna(latest) else None
+
+
+def _km_stat(times, events, stat="median", tau=None):
+    """Kaplan-Meier point estimate from right-censored durations.
+
+    times:  follow-up in days (event time when observed, censoring time when not).
+    events: True where treatment actually started, False where the patient simply
+            hasn't started yet as of the extract cutoff.
+    stat:   "median" -> KM median; "mean" -> restricted mean survival time (RMST),
+            i.e. the mean interval truncated at tau.
+    tau:    truncation horizon in days (the outlier cap).
+
+    Returns None when the statistic is not estimable — for the median that means
+    survival never falls to 0.5 within tau, which is exactly the situation the
+    naive median hides by reporting the handful of fast starters.
+    """
+    t = np.asarray(times, dtype=float)
+    e = np.asarray(events, dtype=bool)
+    keep = np.isfinite(t)
+    t, e = t[keep], e[keep]
+    if t.size == 0:
+        return None
+    horizon = float(tau) if tau else float(np.nanmax(t))
+
+    order = np.argsort(t, kind="mergesort")
+    t, e = t[order], e[order]
+    n = t.size
+
+    surv = 1.0
+    prev = 0.0
+    area = 0.0
+    median = None
+    i = 0
+    while i < n:
+        tj = t[i]
+        j = i
+        deaths = 0
+        while j < n and t[j] == tj:
+            deaths += int(e[j])
+            j += 1
+        at_risk = n - i
+        if deaths:
+            edge = min(tj, horizon)
+            if edge > prev:
+                area += surv * (edge - prev)
+                prev = edge
+            if tj >= horizon:
+                break
+            surv *= 1.0 - deaths / at_risk
+            if median is None and surv <= 0.5:
+                median = tj
+        i = j
+    if prev < horizon:
+        area += surv * (horizon - prev)
+
+    if stat == "mean":
+        # RMST truncated at tau is only estimable when follow-up actually
+        # reaches tau; otherwise survival never drops and the area degenerates
+        # to tau itself, which would read as a fabricated worst case.
+        if t[-1] < horizon:
+            return None
+        return float(area)
+    return float(median) if median is not None else None
+
+
+def _prepare_timing_data(df, metric="consult_sim", agg="M", slice_by="", c2b=None,
+                         cap=None, diag_mode="primary", stat="median",
+                         censor="off", tx_cutoff=None, cap_sched=None):
     """Prepare timing interval data for clientside rendering.
 
-    metric: "consult_sim" (DaysFromClinicExamToSimulation) or
+    metric: "consult_sim" (DaysFromClinicExamToSimulation),
+            "sim_tx" (DaysFromSimToTreatment) or
             "lead_time" (DaysFromCreatedToAppt — booked-to-happened).
     agg: "W", "M", or "Y".
     slice_by: "" (total), "scope", "type", "dept", "physician", "machine", "bodysite".
-    cap: optional outlier cap in days.
+    cap: optional outlier cap in days (also the truncation horizon for censoring).
+    stat: "median" or "mean" — which statistic the time series reports.
+    censor: "off" | "sched" | "trim" | "km" — right-censoring guard, applied to
+            "sim_tx" only. See the censoring block below for what each does.
+    tx_cutoff: latest observed treatment start (from _tx_observation_cutoff()).
+    cap_sched: outlier cap for the scheduled-start column, used only by the
+            "sched" guard. Separate from `cap` because a booking can legitimately
+            sit further out than an actual start ever does.
     """
     col_map = {
         "consult_sim": "DaysFromClinicExamToSimulation",
+        "sim_tx": "DaysFromSimToTreatment",
         "lead_time": "DaysFromCreatedToAppt",
     }
     title_map = {
         "consult_sim": "Consult \u2192 Sim",
+        "sim_tx": "Sim \u2192 Treatment",
         "lead_time": "Lead Time (Booked \u2192 Sim)",
     }
     value_col = col_map.get(metric, col_map["consult_sim"])
@@ -2968,9 +3140,61 @@ def _prepare_timing_data(df, metric="consult_sim", agg="M", slice_by="", c2b=Non
 
     df = df.copy()
     df["_val"] = pd.to_numeric(df[value_col], errors="coerce")
-    df = df.dropna(subset=["_val"])
-    if cap is not None:
-        df = df[(df["_val"] >= 0) & (df["_val"] <= cap)]
+    tau = float(cap) if cap else 365.0
+
+    # --- Right-censoring guard -------------------------------------------
+    # Only Sim -> Treatment is censored: it looks forward from the sim, so a
+    # patient simmed last week who starts on schedule next week has a null
+    # interval today. Dropping those nulls (the "off" path) leaves only the
+    # fast starters and drags the recent end of the series down.
+    #   "sched" — fill the pending sims in from DaysToScheduledTreatment. ARIA
+    #             populates that column only while treatment is still pending and
+    #             nulls it once the patient starts, so the two columns never
+    #             overlap and coalesce exactly. Intent-to-treat: the booking can
+    #             still slip, but it reaches the present, which the others can't.
+    #   "trim"  — hide periods that aren't fully mature (every sim in the period
+    #             has had at least `cap` days to start).
+    #   "km"    — keep the not-yet-started sims as censored observations and use
+    #             a Kaplan-Meier estimate, which stays unbiased for partially
+    #             mature periods and reports nothing where it isn't estimable.
+    censor_mode = censor if metric == "sim_tx" else "off"
+    if censor_mode == "sched":
+        if _SIM_SCHED_TX_COL in df.columns:
+            df["_sched"] = pd.to_numeric(df[_SIM_SCHED_TX_COL], errors="coerce")
+        else:
+            censor_mode = "off"
+    elif censor_mode in ("trim", "km"):
+        if tx_cutoff is None:
+            censor_mode = "off"
+        else:
+            sim_day = df["ScheduledDateTime"].dt.normalize()
+            df["_followup"] = (tx_cutoff - sim_day).dt.days.clip(lower=0)
+
+    if censor_mode == "km":
+        # Event = started within the window we can actually see. Everyone else
+        # is censored at whichever comes first: the extract cutoff or the cap.
+        df = df[df["_followup"].notna()]
+        started = df["_val"].notna() & (df["_val"] >= 0) & (df["_val"] <= df["_followup"])
+        df["_event"] = started
+        df["_time"] = df["_val"].where(started, df["_followup"])
+        over = df["_time"] > tau
+        df.loc[over, "_event"] = False
+        df.loc[over, "_time"] = tau
+        df = df[df["_time"].notna()]
+    elif censor_mode == "sched":
+        # Each source keeps its own cap: actual starts use the Sim -> Tx
+        # (Actual) slider, booked dates the Sim -> Tx (Scheduled) one. A row
+        # only ever carries one of the two, so this is a straight coalesce.
+        sched_tau = float(cap_sched) if cap_sched else tau
+        actual, booked = df["_val"], df["_sched"]
+        df["_val"] = actual.where(
+            actual.notna() & (actual >= 0) & (actual <= tau),
+            booked.where(booked.notna() & (booked >= 0) & (booked <= sched_tau)),
+        )
+        df = df[df["_val"].notna()]
+    else:
+        df = df.dropna(subset=["_val"])
+        df = df[(df["_val"] >= 0) & (df["_val"] <= tau)]
     if df.empty:
         return None
 
@@ -2983,43 +3207,84 @@ def _prepare_timing_data(df, metric="consult_sim", agg="M", slice_by="", c2b=Non
     if not groups:
         return None
 
-    series = []       # time-series (median per period) for line/area/bar
-    hist_series = []  # raw day-counts per group for the histogram view
+    use_mean = stat == "mean"
+
+    # The histogram is a distribution, not a time series, so the guard applies
+    # as a maturity filter: only sims that have had a full `cap` days to start.
+    if censor_mode in ("trim", "km"):
+        hist_df = df[(df["_followup"] >= tau) & df["_val"].notna()
+                     & (df["_val"] >= 0) & (df["_val"] <= tau)]
+        hist_groups = _timing_groups(hist_df, slice_by, c2b, diag_mode)
+    else:
+        hist_df = df
+        hist_groups = groups
+
+    series = []
     for name, color, sub in groups:
         if sub is None or sub.empty:
             continue
         disp_name = name if name is not None else title_map.get(metric, metric)
-        medians = sub.groupby("period")["_val"].median().reindex(all_periods)
-        values = [v if pd.notna(v) else None for v in medians.tolist()]
+        if censor_mode == "km":
+            est = {
+                per: _km_stat(g["_time"].to_numpy(), g["_event"].to_numpy(),
+                              stat=stat, tau=tau)
+                for per, g in sub.groupby("period")
+            }
+            points = pd.Series(est, dtype="float64").reindex(all_periods)
+        else:
+            grouped = sub.groupby("period")["_val"]
+            points = (grouped.mean() if use_mean else grouped.median()).reindex(all_periods)
+            if censor_mode == "trim":
+                # Conservative: the *least* mature sim in the period must clear tau.
+                mature = sub.groupby("period")["_followup"].min().reindex(all_periods)
+                points = points.where(mature >= tau)
+        values = [v if pd.notna(v) else None for v in points.tolist()]
         series.append({"name": disp_name, "values": values, "color": color})
-        hist_series.append({"name": disp_name, "values": sub["_val"].tolist(), "color": color})
 
     if not series:
         return None
 
-    disp_all = df["_val"]
-    hist = {
-        "series": hist_series,
-        "stats": {
-            "n": int(len(disp_all)),
-            "median": float(disp_all.median()),
-            "mean": float(disp_all.mean()),
-            "q1": float(disp_all.quantile(0.25)),
-            "q3": float(disp_all.quantile(0.75)),
-            "suffix": "d",
-            "tickSuffix": "d",
-            "xTitle": "Days",
-            "accentColor": PRIMARY,
-        },
-        "sliced": bool(slice_by),
-    }
+    hist_series = []
+    for name, color, sub in hist_groups:
+        if sub is None or sub.empty:
+            continue
+        vals = sub["_val"].dropna()
+        if vals.empty:
+            continue
+        disp_name = name if name is not None else title_map.get(metric, metric)
+        hist_series.append({"name": disp_name, "values": vals.tolist(), "color": color})
+
+    hist = None
+    disp_all = hist_df["_val"].dropna()
+    if hist_series and not disp_all.empty:
+        hist = {
+            "series": hist_series,
+            "stats": {
+                "n": int(len(disp_all)),
+                "median": float(disp_all.median()),
+                "mean": float(disp_all.mean()),
+                "q1": float(disp_all.quantile(0.25)),
+                "q3": float(disp_all.quantile(0.75)),
+                "suffix": "d",
+                "tickSuffix": "d",
+                "xTitle": "Days",
+                "accentColor": PRIMARY,
+            },
+            "sliced": bool(slice_by),
+        }
+
+    y_title = "Mean Days" if use_mean else "Median Days"
+    if censor_mode == "km":
+        y_title += " (RMST)" if use_mean else " (KM)"
+    elif censor_mode == "sched":
+        y_title += " (incl. Scheduled)"
 
     return {
         "dates": dates,
         "series": series,
         "hist": hist,
         "height": 350,
-        "yTitle": "Median Days",
+        "yTitle": y_title,
         "hideLegend": len(series) <= 1,
     }
 

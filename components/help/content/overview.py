@@ -415,9 +415,12 @@ _PHI_MODE_SECTION = section(
     bullets([
         "On the author's workstation, scripts/sanitize.py reads the raw "
         "OneDrive export, applies per-dataset redaction rules, and writes a "
-        "parallel \u201CAURA_Reports_Sanitized/\u201D directory that mirrors the "
-        "source folder structure exactly — so the existing data loader reads "
-        "it without modification.",
+        "parallel sanitized directory (project-local \u201C.aura_sanitized/\u201D) "
+        "that mirrors the source folder structure exactly — so the existing "
+        "data loader reads it without modification. Mirroring includes "
+        "deletions: sanitized copies of source files that no longer exist "
+        "are pruned on every run, so re-exported datasets never mix with "
+        "stale rows.",
         "A nightly launchd job re-runs the sanitizer and uploads the "
         "tarball to a private Cloudflare R2 bucket. The cloud host (Railway) "
         "downloads it at container startup via scripts/bootstrap_data.py and "

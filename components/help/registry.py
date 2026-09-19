@@ -103,6 +103,14 @@ HELP_PAGES = [
         "ui_module": "simulations",
     },
     {
+        "path": "/sim-timing",
+        "label": "Simulation Timing",
+        "icon": "tabler:stopwatch",
+        "section": "CLINICAL",
+        "sql": ["Simulation_Timing"],
+        "ui_module": "sim_timing",
+    },
+    {
         "path": "/tasks",
         "label": "Tasks",
         "icon": "tabler:checklist",

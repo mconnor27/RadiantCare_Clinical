@@ -553,6 +553,57 @@ SQL_SCRIPTS = {
         "date_range": "120 days back, 30 days forward.",
     },
 
+    "Simulation_Timing": {
+        "total": 980, "sql": 640,
+        "purpose": (
+            "Per-appointment timing detail for CT simulations on the Lacey CT_Sim "
+            "scanner. One row per completed simulation that has at least one CT "
+            "series attributed to it, carrying the appointment clock (booked slot, "
+            "check-in, close-out), the scanner clock (first and last series landing), "
+            "the Simulation Note and Simulation Set Up Note timestamps, and the "
+            "end-to-end intervals built from them. Answers how long a sim takes, "
+            "where the time goes, and whether booked slots are being overrun."
+        ),
+        "unique_logic": [
+            "Requires matched CT imaging — sims with no attributed series are excluded "
+            "entirely, so this is not a volume source (see Simulations).",
+            "CT clock correction: the scanner ran 75-90 min slow and drifting until "
+            "2026-07-27. Pre-fix CT timestamps are algorithmically adjusted with a "
+            "per-month, per-era offset; CTTimestampEra flags the row and "
+            "CTClockOffsetMinutes reports the adjustment applied.",
+            "Note linkage is Patient+window (one-day look-back), not an exact "
+            "note-to-appointment key — no such key exists in the warehouse. "
+            "SimSetupNotesViaActivityLink is near-always 0 as a result.",
+            "Series and notes competed for by two same-day appointments are attributed "
+            "to the nearer one; SeriesLostToNearerAppt / NotesLostToNearerAppt record "
+            "what this row lost.",
+            "Start date is clamped to a 2025-10-01 floor because CT image-to-machine "
+            "attribution effectively began 2025-10-06.",
+            "UniqueRowID is the same key Simulations emits, so the two join 1:1 with "
+            "no transformation.",
+        ],
+        "output_cols": (
+            "UniqueRowID, PatientId, PatientFullName, ActivityName, ActivityStatus, "
+            "SimulationResource, DepartmentName, CompletedByUser, AppointmentNote, "
+            "ScheduledStartDateTime, ScheduledEndDateTime, CheckedInFlag, "
+            "CheckInDateTime, ActualEndDateTime, ScheduledDurationMinutes, "
+            "StartDelayMinutes, ActualDurationMinutes, CTFirstSeriesDateTime, "
+            "CTCompletedDateTime, CTTimestampEra, CTClockOffsetMinutes, StudyCount, "
+            "SeriesCount, CTScanSpanMinutes, CheckInToCTCompleteMinutes, "
+            "ScheduledToCTCompleteMinutes, CTCompleteToApptEndMinutes, "
+            "CTCompleteToScheduledEndMinutes, CT image detail (id/type/status/RT "
+            "type/DICOM UID), SimNote_* and SetupNote_* (DateOfService, DateEntered, "
+            "LastModified, WriteSeconds, LinkMethod), HasSimOrSetupNote, "
+            "LatestSimOrSetupNote*, MinutesCTCompleteToSimNoteEntered, "
+            "MinutesCTCompleteToSetupNoteEntered, MinutesCheckInToSimNoteEntered, "
+            "BothNotes_WriteSecondsTotal, DocumentationCompleteDateTime, "
+            "DocumentationCompletedBy, CheckInToDocCompleteMinutes, "
+            "ScheduledStartToDocCompleteMinutes, CTCompleteToDocCompleteMinutes, "
+            "SeriesLostToNearerAppt, NotesLostToNearerAppt, ImageCount_AnyMachine."
+        ),
+        "date_range": "120 days back by default; clamped to a 2025-10-01 floor.",
+    },
+
     "Tasks": {
         "total": 794, "sql": 413,
         "purpose": (

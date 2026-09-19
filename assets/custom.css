@@ -822,6 +822,8 @@ html[data-theme="dark"] .ag-theme-alpine-dark {
 #wf-date-slider .mantine-Slider-bar,
 #wf-b-date-slider .mantine-Slider-bar,
 #cv-date-slider .mantine-Slider-bar,
+#st-date-slider .mantine-Slider-bar,
+#st-b-date-slider .mantine-Slider-bar,
 #sim-date-slider .mantine-Slider-bar,
 #tasks-date-slider .mantine-Slider-bar,
 #otvs-date-slider .mantine-Slider-bar,
@@ -844,6 +846,8 @@ html[data-theme="dark"] .ag-theme-alpine-dark {
 [data-theme="dark"] #wf-date-slider .mantine-Slider-bar,
 [data-theme="dark"] #wf-b-date-slider .mantine-Slider-bar,
 [data-theme="dark"] #cv-date-slider .mantine-Slider-bar,
+[data-theme="dark"] #st-date-slider .mantine-Slider-bar,
+[data-theme="dark"] #st-b-date-slider .mantine-Slider-bar,
 [data-theme="dark"] #sim-date-slider .mantine-Slider-bar,
 [data-theme="dark"] #tasks-date-slider .mantine-Slider-bar,
 [data-theme="dark"] #otvs-date-slider .mantine-Slider-bar,
@@ -863,6 +867,8 @@ html[data-theme="dark"] .ag-theme-alpine-dark {
 [data-theme="dark"] #wf-date-slider .mantine-Slider-thumb,
 [data-theme="dark"] #wf-b-date-slider .mantine-Slider-thumb,
 [data-theme="dark"] #cv-date-slider .mantine-Slider-thumb,
+[data-theme="dark"] #st-date-slider .mantine-Slider-thumb,
+[data-theme="dark"] #st-b-date-slider .mantine-Slider-thumb,
 [data-theme="dark"] #sim-date-slider .mantine-Slider-thumb,
 [data-theme="dark"] #tasks-date-slider .mantine-Slider-thumb,
 [data-theme="dark"] #otvs-date-slider .mantine-Slider-thumb,
@@ -882,6 +888,8 @@ html[data-theme="dark"] .ag-theme-alpine-dark {
 #wf-date-slider .mantine-Slider-markLabel,
 #wf-b-date-slider .mantine-Slider-markLabel,
 #cv-date-slider .mantine-Slider-markLabel,
+#st-date-slider .mantine-Slider-markLabel,
+#st-b-date-slider .mantine-Slider-markLabel,
 #sim-date-slider .mantine-Slider-markLabel,
 #tasks-date-slider .mantine-Slider-markLabel,
 #otvs-date-slider .mantine-Slider-markLabel,
@@ -903,6 +911,8 @@ html[data-theme="dark"] .ag-theme-alpine-dark {
 #wf-date-slider,
 #wf-b-date-slider,
 #cv-date-slider,
+#st-date-slider,
+#st-b-date-slider,
 #sim-date-slider,
 #tasks-date-slider,
 #otvs-date-slider,
@@ -942,6 +952,8 @@ html[data-theme="dark"] .ag-theme-alpine-dark {
 #wf-date-slider .mantine-Slider-label,
 #wf-b-date-slider .mantine-Slider-label,
 #cv-date-slider .mantine-Slider-label,
+#st-date-slider .mantine-Slider-label,
+#st-b-date-slider .mantine-Slider-label,
 #sim-date-slider .mantine-Slider-label,
 #tasks-date-slider .mantine-Slider-label,
 #otvs-date-slider .mantine-Slider-label,
@@ -1871,4 +1883,12 @@ html[data-mobile-view="true"] .mantine-Select-dropdown {
     fill: var(--text-primary) !important;
     fill-opacity: 1 !important;
     opacity: 1 !important;
+}
+
+/* Simulation Timing charts: Plotly's default crosshair implies box-zoom, which
+   none of these charts use. The heatmap is click-to-drill, so a pointer is the
+   honest affordance; the rest read as static. */
+[id^="st-chart-"] .nsewdrag,
+[id^="st-chart-"] .drag {
+    cursor: pointer !important;
 }

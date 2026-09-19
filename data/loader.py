@@ -1087,6 +1087,295 @@ def load_simulations():
     return df
 
 
+# Technique precedence when a course used more than one. Stereotactic wins
+# because that is what distinguishes the sim; a breast course of "3D, Electron"
+# is labelled 3D (the main plan) with the electron boost still in the set.
+_TECH_PRECEDENCE = ["SRS", "SBRT", "VMAT", "IMRT", "Electron", "3D"]
+
+
+def _attach_sim_technique(df, sims):
+    """Attach the treatment technique of the course each simulation led to.
+
+    The timing extract has no technique of its own; ``Courses.csv`` does, as a
+    clean categorical (3D / Electron / IMRT / VMAT / SBRT / SRS). Two link
+    rules, applied in order:
+
+    A. same ``PatientId`` and an identical ``FirstTreatmentDate`` — matches
+       ~86% of sims with no ambiguity at all.
+    B. for the remainder, the course whose ``CourseStartDate`` falls closest
+       within -3 to +60 days of the sim.
+
+    Together they reach ~91%. The rest are sims no course can be attributed to
+    — most obviously those that never led to treatment — and are left null
+    rather than guessed at.
+
+    Note this is the technique of the course that *followed* the sim, so it is
+    only ever known in hindsight.
+    """
+    if df.empty or sims is None or sims.empty:
+        df["TreatmentTechniques"] = pd.NA
+        df["SimTechnique"] = pd.NA
+        return df
+    need = {"UniqueRowID", "PatientId", "ScheduledDateTime", "FirstTreatmentDate"}
+    if not need.issubset(sims.columns):
+        df["TreatmentTechniques"] = pd.NA
+        df["SimTechnique"] = pd.NA
+        return df
+
+    try:
+        courses = load_courses()
+    except Exception:
+        courses = pd.DataFrame()
+    ccols = {"PatientId", "CourseStartDate", "FirstTreatmentDate", "TreatmentTechniques"}
+    if courses.empty or not ccols.issubset(courses.columns):
+        df["TreatmentTechniques"] = pd.NA
+        df["SimTechnique"] = pd.NA
+        return df
+
+    sim = sims.loc[sims["UniqueRowID"].isin(df["UniqueRowID"]),
+                   ["UniqueRowID", "PatientId", "ScheduledDateTime", "FirstTreatmentDate"]]
+    crs = courses[["PatientId", "CourseStartDate", "FirstTreatmentDate",
+                   "TreatmentTechniques"]]
+    m = sim.merge(crs, on="PatientId", how="inner", suffixes=("_sim", "_crs"))
+    if m.empty:
+        df["TreatmentTechniques"] = pd.NA
+        df["SimTechnique"] = pd.NA
+        return df
+
+    # Rule A — identical first treatment date.
+    same = (m["FirstTreatmentDate_sim"].dt.normalize()
+            .eq(m["FirstTreatmentDate_crs"].dt.normalize()))
+    rule_a = m[same].drop_duplicates("UniqueRowID")
+
+    # Rule B — nearest course start inside the window, for whatever A missed.
+    rest = m[~m["UniqueRowID"].isin(rule_a["UniqueRowID"])].copy()
+    rest["_gap"] = (rest["CourseStartDate"] - rest["ScheduledDateTime"]
+                    ).dt.total_seconds() / 86400.0
+    rule_b = (rest[(rest["_gap"] >= -3) & (rest["_gap"] <= 60)]
+              .sort_values("_gap").drop_duplicates("UniqueRowID"))
+
+    link = pd.concat([rule_a, rule_b])[["UniqueRowID", "TreatmentTechniques"]]
+    df = df.merge(link, on="UniqueRowID", how="left")
+
+    def _primary(v):
+        if pd.isna(v):
+            return pd.NA
+        parts = {x.strip() for x in str(v).split(",") if x.strip()}
+        for tech in _TECH_PRECEDENCE:
+            if tech in parts:
+                return tech
+        return next(iter(parts), pd.NA)
+
+    df["SimTechnique"] = df["TreatmentTechniques"].map(_primary)
+    return df
+
+
+# Setup patterns read off the CT series name. CTLastImageId is the therapist's
+# own label for the last series and is NOT PHI (the PHI columns are PatientId,
+# PatientFullName and AppointmentNote) — so these survive sanitization and
+# behave identically in PHI_MODE.
+_SETUP_PATTERNS = {
+    "APBI": r"apbi|abpi",
+    "DIBH": r"\bbh\b|breath ?hold|\bdibh\b",
+    "Decub": r"decub",
+    "Prone": r"prone",
+    "FreeBreath": r"\bfb\b|free ?breath",
+}
+
+# A 4D CT is acquired as ten respiratory phase bins, so the series count jumps
+# an order of magnitude. The observed distribution is cleanly bimodal with
+# nothing at all between 7 and 11 series, and every row whose series name is a
+# phase bin (CT_00_1 ... CT_90_1) sits above the threshold — so this detects
+# 4D CT far more completely than name-matching, which only fires when the last
+# series happens to be a phase bin.
+_4DCT_MIN_SERIES = 10
+
+
+# ``CTImageIds`` holds every CT series name for the appointment, comma-joined;
+# ``CTLastImageId`` holds only the last one and is the fallback for older
+# exports. Matching runs over the whole string rather than splitting it, so the
+# delimiter never matters.
+#
+# The full list matters because the last series is frequently the least
+# informative: a breast DIBH sim acquires both a free-breathing and a
+# breath-hold scan, and whichever happens to land last is the only one the
+# single-value column ever showed. Reading every name lifts free-breathing
+# detection from 28 rows to 110 and breath-hold from 100 to 113.
+#
+# Note the meaning this gives the flags: "a scan of this kind was acquired
+# during the appointment", not "the final scan was of this kind". For a page
+# about how long sims take, that is the more useful reading — both acquisitions
+# cost time.
+_CT_ALL_SERIES_COLS = (
+    "CTImageIds", "CTAllImageIds", "CTAllSeriesIds", "CTSeriesIds",
+    "CTImageIdList", "AllCTImageIds", "CTAllImageId",
+)
+
+
+def _ct_series_name_blob(df):
+    """Lower-cased searchable text of the CT series name(s) for each row.
+
+    Prefers a column holding every series name, falling back to the single
+    ``CTLastImageId`` emitted by exports before 2026-09-08.
+    """
+    for col in _CT_ALL_SERIES_COLS:
+        if col in df.columns and df[col].notna().any():
+            return df[col].fillna("").astype(str).str.lower()
+    if "CTLastImageId" in df.columns:
+        return df["CTLastImageId"].fillna("").astype(str).str.lower()
+    return pd.Series("", index=df.index)
+
+
+def _attach_sim_setup_flags(df):
+    """Derive setup/technique flags from the CT series name and series count."""
+    if df.empty:
+        return df
+    flags = pd.DataFrame(index=df.index)
+    if "SeriesCount" in df.columns:
+        df["Is4DCT"] = pd.to_numeric(df["SeriesCount"], errors="coerce").ge(
+            _4DCT_MIN_SERIES).fillna(False)
+    else:
+        df["Is4DCT"] = False
+    flags["4DCT"] = df["Is4DCT"]
+
+    name = _ct_series_name_blob(df)
+    for label, pat in _SETUP_PATTERNS.items():
+        flags[label] = name.str.contains(pat, regex=True, na=False)
+
+    # Free breathing is the default state, so an FB series only carries
+    # information when there is no breath-hold to contrast it against. A DIBH
+    # sim acquires both scans by design, and 70% of raw FB matches (77 of 110)
+    # sit on a row that also has a breath-hold — flagging those says nothing
+    # beyond "this was a DIBH sim", which the DIBH flag already says. Masking
+    # them leaves the genuinely informative cases: mostly partial-breast sims
+    # done free-breathing rather than breath-hold.
+    #
+    # This is a deliberate exception to the otherwise inclusive rule that a flag
+    # means "a scan of this kind was acquired".
+    flags["FreeBreath"] &= ~flags["DIBH"]
+
+    df["SetupFlags"] = [
+        ", ".join([c for c in flags.columns if row[c]])
+        for _, row in flags.iterrows()
+    ]
+    df["SetupFlags"] = df["SetupFlags"].replace("", pd.NA)
+    return df
+
+
+@_ttl_cache()
+def load_simulation_timing():
+    """Load Simulation Timing.csv — per-appointment CT-sim timing detail.
+
+    One row per *completed* Lacey CT_Sim simulation that has at least one CT
+    series attributed to it.  Joins 1:1 to Simulations.csv on ``UniqueRowID``.
+
+    Because the report requires matched CT imaging, this is NOT a volume
+    source — real sims without an attributed scan are absent, not blank.
+    Simulation counts come from ``load_simulations()``.
+
+    Derived columns added here
+    --------------------------
+    ``FirstNoteEnteredDateTime``
+        ``min(SimNote_DateEntered, SetupNote_DateEntered)`` — the earliest
+        *system-set* note stamp.  This is the documentation milestone the
+        Sim Timing page anchors on.  The source's own
+        ``DocumentationCompleteDateTime`` is driven by
+        ``SetupNote_LastModified`` on ~93% of rows, and setup notes are
+        reopened and amended a median of ~10 days after entry, so
+        ``CheckInToDocCompleteMinutes`` measures amendment latency rather
+        than visit burden (median ≈ 14,500 min).  Both are kept; the page
+        labels the source column as including amendments.
+    ``CTClockReliable``
+        Boolean form of ``CTTimestampEra == 'Reliable'`` (appointment on or
+        after 2026-07-27).  Pre-fix CT stamps are algorithmically corrected
+        by ``CTClockOffsetMinutes`` — sound for population medians, not for
+        adjudicating an individual case (±10–20 min residual).
+    ``Department``
+        The **patient's** department, merged from Simulations.csv. The
+        extract's own ``DepartmentName`` is the scanner's site (always Lacey)
+        and is kept as ``ScannerDepartment``; Centralia and Aberdeen patients
+        are routinely simulated on the Lacey CT_Sim, so the two differ.
+    ``ConsultPhysician`` / ``AttendingPhysician`` / ``SupervisingPhysician`` /
+    ``DiagnosisCodes`` / ``ProcedureCodes`` / ``InPatientFlag``
+        Merged from Simulations.csv — the timing extract carries no
+        physician, diagnosis or inpatient flag of its own.
+    """
+    _src = _source_files_for_incremental(
+        DATA_INCREMENTAL / "SimulationTiming", "Simulation Timing")
+    cached = _read_parquet_cache("SimulationTiming", _src)
+    if cached is not None:
+        return cached
+
+    df = _load_incremental(
+        DATA_INCREMENTAL / "SimulationTiming", "Simulation Timing", "UniqueRowID")
+    if df.empty:
+        return df
+
+    # DepartmentName here is the *scanner's* department (always Lacey, because
+    # the report is CT_Sim-only) — NOT the patient's. Keep it under an explicit
+    # name and take the real Department from Simulations below, so Centralia
+    # and Aberdeen patients simulated on the Lacey scanner filter under their
+    # own department.
+    df = _normalize_columns(df, {"DepartmentName": "ScannerDepartment"})
+    df = _parse_dates(df, [
+        "ScheduledStartDateTime", "ScheduledEndDateTime", "CheckInDateTime",
+        "ActualEndDateTime", "CTFirstSeriesDateTime", "CTCompletedDateTime",
+        "SimNote_DateOfService", "SimNote_DateEntered",
+        "SetupNote_DateOfService", "SetupNote_DateEntered",
+        "SetupNote_LastModified", "LatestSimOrSetupNoteDateTime",
+        "LatestSimOrSetupNote_DateEntered", "DocumentationCompleteDateTime",
+    ])
+    if "ScannerDepartment" in df.columns:
+        df["ScannerDepartment"] = (
+            df["ScannerDepartment"].str.replace("*", "", regex=False).str.strip())
+
+    # Earliest system-set note stamp — the trustworthy documentation milestone.
+    note_cols = [c for c in ("SimNote_DateEntered", "SetupNote_DateEntered")
+                 if c in df.columns]
+    if note_cols:
+        df["FirstNoteEnteredDateTime"] = df[note_cols].min(axis=1)
+    else:
+        df["FirstNoteEnteredDateTime"] = pd.NaT
+
+    if "CTTimestampEra" in df.columns:
+        df["CTClockReliable"] = df["CTTimestampEra"].eq("Reliable")
+    else:
+        df["CTClockReliable"] = False
+
+    # "Everson, Winter(DNU)" is the same therapist as "Everson, Winter".
+    if "CompletedByUser" in df.columns:
+        df["CompletedByUser"] = (
+            df["CompletedByUser"].astype("string")
+            .str.replace(r"\s*\(DNU\)\s*$", "", regex=True)
+            .str.strip()
+        )
+
+    # Physician + diagnosis come from Simulations.csv (1:1 on UniqueRowID).
+    try:
+        sims = load_simulations()
+    except Exception:
+        sims = pd.DataFrame()
+    if not sims.empty and "UniqueRowID" in sims.columns:
+        carry = [c for c in ("ConsultPhysician", "AttendingPhysician",
+                             "SupervisingPhysician", "DiagnosisCodes",
+                             "DiagnosisDescriptions", "ProcedureCodes",
+                             "TreatmentModality", "InPatientFlag", "Department")
+                 if c in sims.columns and c not in df.columns]
+        if carry:
+            df = df.merge(
+                sims[["UniqueRowID"] + carry].drop_duplicates("UniqueRowID"),
+                on="UniqueRowID", how="left",
+            )
+
+    df = _attach_sim_technique(df, sims)
+    df = _attach_sim_setup_flags(df)
+
+    df = _clean_department(df)
+    df = _rename_generic_physicians(df)
+    _write_parquet_cache("SimulationTiming", df, _src)
+    return df
+
+
 @_ttl_cache()
 def load_workflow():
     """Load Workflow.csv — stage-based format.
@@ -2167,7 +2456,7 @@ def clear_cache():
         load_treatment, load_treatment_detail, load_daily_volume,
         load_daily_volume_future, load_daily_volume_by_resource,
         load_availability, load_clinic_visits,
-        load_simulations, load_workflow, load_tasks, load_otvs,
+        load_simulations, load_simulation_timing, load_workflow, load_tasks, load_otvs,
         load_weekly_visits, load_courses, load_plans, load_machines,
         load_downtime_gaps,
         load_billing, load_cpt_audit, load_procedures, load_machine_statistics,

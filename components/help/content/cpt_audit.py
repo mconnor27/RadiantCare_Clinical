@@ -56,9 +56,10 @@ UI_CONTENT = dmc.Stack(
                 "One row per treatment session (SessionUniqueID). Columns: Date, "
                 "Patient (Last, F.), MRN, Department, Machine, Course, Technique "
                 "(RxTechnique_Day), Isocenters, Gating, Correct CPT, Billed CPT, "
-                "Audit Result, and an inline Review column with OK / Fixed / "
-                "Course OK / Undo buttons rendered by a custom AG Grid cell "
-                "renderer (CptReviewButtons).",
+                "Authed (the CPT codes on the physician note's Tx: line), Audit "
+                "Result, Auth Result, and an inline Review column with OK / "
+                "Fixed / Course OK / Undo buttons rendered by a custom AG Grid "
+                "cell renderer (CptReviewButtons).",
             ),
             bullets([
                 "Table-local date chips (Yesterday, This Week, This Month, YTD, "
@@ -178,6 +179,17 @@ UI_CONTENT = dmc.Stack(
                 "CPT_Billed can contain multiple comma-separated codes when "
                 "IGRT (77387) or gating add-ons are applied. Only the primary "
                 "delivery code is used for pass/fail comparison.",
+                "Auth Result (DeliveryAuthResult) answers a different question "
+                "than Audit Result: whether the delivered code was authorized "
+                "on the physician note's Tx: line — not whether the billed code "
+                "matches the predicted one. A session can PASS the billing "
+                "audit and still be an unauthorized delivery.",
+                "Auth Result values: PASS (CPT_Correct appears on the note's "
+                "Tx: line), FAIL - not authorized (the note lists codes but not "
+                "this one), FAIL - no codes on Tx line (a note was found but "
+                "its Tx: line has no codes), NO AUTH NOTE (no authorization "
+                "note found for the course), or blank when no CPT was "
+                "predicted for the session.",
             ]),
         ),
 

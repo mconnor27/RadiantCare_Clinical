@@ -607,6 +607,223 @@ All incremental files use `UniqueRowID` as the deduplication key. New rows are a
 
 ---
 
+### Simulation Timing
+
+- **File:** `Incremental/SimulationTiming/Simulation Timing_yyyymmdd.csv`
+- **Size:** ~0.9 MB
+- **Used by:** Sim Timing page
+- **Loader:** `load_simulation_timing()` — dedup on `UniqueRowID`
+- **Grain:** one row per **completed Lacey CT_Sim simulation that has at least
+  one CT series attributed to it**. No fan-out, so counts and averages need no
+  de-duplication.
+
+**Scope — this is not a volume source.** The report requires matched CT
+imaging, so completed sims with no attributed scan are *absent, not blank*
+(recent-month matching runs ~110/112 and ~113/116). Sim volume comes from
+`Simulations.csv`. `UniqueRowID` is the same key `Simulations.csv` emits, so
+the two join **1:1 with no transformation**; the loader uses this to carry
+`ConsultPhysician`, `AttendingPhysician`, `SupervisingPhysician`,
+`DiagnosisCodes`, `DiagnosisDescriptions`, `TreatmentModality` and
+`InPatientFlag` onto the timing rows, which have none of their own.
+
+**Constant columns** (the report is CT_Sim-only): `DepartmentName` = `*Lacey`,
+`SimulationResource` = `CT_Sim`, `ActivityStatus` = `Manually Completed`.
+
+**`DepartmentName` is the scanner's site, not the patient's.** Centralia and
+Aberdeen patients are routinely simulated on the Lacey CT_Sim (`Initial
+Centralia-in Lacey`, `Initial Aberdeen Simulation`), so the extract's own
+department column is useless as a cohort filter. The loader keeps it as
+`ScannerDepartment` and takes the real `Department` from `Simulations.csv`,
+which splits Lacey 849 / Centralia 177 / Aberdeen 137.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `UniqueRowID` | int | Primary key. Joins 1:1 to `Simulations.csv` |
+| `PatientId` | string | MRN (PHI — hashed by sanitizer) |
+| `PatientFullName` | string | PHI — dropped by sanitizer |
+| `ActivityName` | string | Sim type (Initial Simulation, Stereotactic Simulation, Re-Simulation, Initial Aberdeen Simulation, Initial Centralia-in Lacey, RE-Simulation-Aberdeen) |
+| `ActivityStatus` | string | Always a completed state — near-constant |
+| `SimulationResource` | string | Constant `CT_Sim` |
+| `DepartmentName` | string | → `ScannerDepartment`; constant `Lacey`. The patient's `Department` is merged from Simulations instead |
+| `CompletedByUser` | string | Therapist who closed the appointment. `"Everson, Winter(DNU)"` is merged into `"Everson, Winter"` by the loader |
+| `AppointmentNote` | string | Free text, unstructured (PHI — dropped by sanitizer) |
+| `ScheduledStartDateTime` | datetime | Booked start — the page's primary time axis |
+| `ScheduledEndDateTime` | datetime | Booked end |
+| `CheckedInFlag` | string | ARIA check-in flag |
+| `CheckInDateTime` | datetime? | Arrival. NULL = never checked in (real, not missing) |
+| `ActualEndDateTime` | datetime? | When the appointment was closed out |
+| `ScheduledDurationMinutes` | int | Booked slot length (median 60) |
+| `StartDelayMinutes` | int? | Scheduled start → check-in. **Median −10; negative on 79%** — patients arrive early |
+| `ActualDurationMinutes` | int? | Check-in → actual end |
+| `CTFirstSeriesDateTime` | datetime | First series landed (scanner clock; corrected when pre-fix) |
+| `CTCompletedDateTime` | datetime | Last series landed (scanner clock) |
+| `CTTimestampEra` | string | `Reliable` (appt ≥ 2026-07-27) or an UNRELIABLE string. → `CTClockReliable` bool |
+| `CTClockOffsetMinutes` | int | Minutes added to this row's CT stamps. 0 post-fix |
+| `StudyCount` / `SeriesCount` | int | Distinct studies / series. **Not slices** |
+| `CTScanSpanMinutes` | int | First → last series. Clock-immune. **0 on 63% of rows** |
+| `CheckInToCTCompleteMinutes` | int? | CROSS-CLOCK |
+| `ScheduledToCTCompleteMinutes` | int? | CROSS-CLOCK |
+| `CTCompleteToApptEndMinutes` | int? | Teardown tail. CROSS-CLOCK |
+| `CTCompleteToScheduledEndMinutes` | int? | Negative = ran past the booked slot. CROSS-CLOCK |
+| `CTLastImageId`, `CTImageType`, `CTImageStatus`, `CTSliceRTType`, `CTDicomUID` | string | Last-image detail — for tracing one case to ARIA, not for charting |
+| `SimNote_DateOfService`, `SetupNote_DateOfService` | datetime? | **User-editable / backdatable — not event times** |
+| `SimNote_DateEntered`, `SetupNote_DateEntered` | datetime? | System-set, never move. The trustworthy note stamps |
+| `SetupNote_LastModified` | datetime? | Set Up Notes only. Median **~10 days after** DateEntered |
+| `SimNote_WriteSeconds`, `SetupNote_WriteSeconds`, `SetupNote_WriteSecondsToLastModified`, `BothNotes_WriteSecondsTotal` | int? | Authoring time. Computed from DateOfService, so negative and hour-scale values appear — screen before use |
+| `HasSimOrSetupNote` | 0/1 | Any in-scope note attached |
+| `LatestSimOrSetupNoteType` / `...DateTime` / `..._DateEntered` | str / datetime? | Whichever note type landed last |
+| `MinutesCTCompleteToSimNoteEntered`, `MinutesCTCompleteToSetupNoteEntered` | int? | CROSS-CLOCK |
+| `MinutesCheckInToSimNoteEntered` | int? | ARIA-side both ends — safe across all history |
+| `SimNote_LinkMethod`, `SetupNote_LinkMethod` | string | Reads `Patient+window` on essentially every row — expected, no exact note↔appointment key exists |
+| `SimSetupNotesFound`, `SimSetupNotesViaActivityLink`, `SimSetupNotesWithSignedDate` | int | Note attribution counts; the latter two are expected ~0 |
+| `DocumentationCompleteDateTime` | datetime? | Last system stamp any in-scope note carries. **See caveat below** |
+| `DocumentationCompletedBy` | string? | Which note closed the chain |
+| `CheckInToDocCompleteMinutes` | int? | **Unusable as visit duration — see caveat** |
+| `ScheduledStartToDocCompleteMinutes` | int? | Same caveat |
+| `CTCompleteToDocCompleteMinutes` | int? | Same caveat. CROSS-CLOCK |
+| `SeriesLostToNearerAppt`, `NotesLostToNearerAppt` | int | >0 = this appointment lost series/notes to a nearer one |
+| `ImageCount_AnyMachine` | int | Volumetric imaging near the appointment on any machine |
+
+**Derived by the loader:**
+
+| Column | Description |
+|--------|-------------|
+| `FirstNoteEnteredDateTime` | `min(SimNote_DateEntered, SetupNote_DateEntered)` — the earliest *system-set* note stamp. The documentation milestone the Sim Timing page uses |
+| `CTClockReliable` | bool form of `CTTimestampEra == 'Reliable'` |
+| `TreatmentTechniques` | Comma-joined technique set of the course this sim led to, from `Courses.csv`. Null on ~9% (no attributable course) |
+| `SimTechnique` | Primary technique, by precedence SRS > SBRT > VMAT > IMRT > Electron > 3D |
+| `Is4DCT` | `SeriesCount >= 10` — see below |
+| `SetupFlags` | Comma-joined subset of `4DCT, APBI, DIBH, Decub, FreeBreath, Prone` |
+| `ScannerDepartment` | The extract's own `DepartmentName`, renamed. Always `Lacey` |
+| `Department` | The **patient's** department, merged from Simulations |
+| `ConsultPhysician`, `AttendingPhysician`, `SupervisingPhysician` | Merged from Simulations |
+| `DiagnosisCodes`, `DiagnosisDescriptions`, `ProcedureCodes` | Merged from Simulations |
+| `InPatientFlag`, `TreatmentModality` | Merged from Simulations |
+
+**Business rules:**
+
+- **The CT clock caveat.** The CT simulator's clock ran **75–90 min slow** for
+  over two years and was corrected the weekend of 2026-07-25/26. It was the
+  scanner, not the warehouse, and the error *drifted* a further 1.5–2 min per
+  month, so no single offset repairs it. Pre-2026-07-27 CT timestamps are
+  algorithmically corrected per month and era; `CTClockOffsetMinutes` reports
+  the adjustment. Corrected values are sound for **population work** (monthly
+  medians, distributions, trends) but **not per-appointment** — residual
+  scatter is ±10–20 min. Gate on `CTTimestampEra` before plotting any absolute
+  CT time or any CROSS-CLOCK interval.
+- **CROSS-CLOCK means one ARIA endpoint and one scanner endpoint.** Intervals
+  built only from appointment stamps (`ScheduledDurationMinutes`,
+  `StartDelayMinutes`, `ActualDurationMinutes`, `MinutesCheckInToSimNoteEntered`)
+  and intervals built only from scanner stamps (`CTScanSpanMinutes`, where the
+  offset cancels exactly) are safe across all history.
+- **`DocumentationCompleteDateTime` is not exposed as a milestone on the Sim
+  Timing page** — it was removed 2026-09-18. See the next point for why.
+- **Do not use `CheckInToDocCompleteMinutes` as visit duration.**
+  `DocumentationCompleteDateTime` resolves to `SetupNote_LastModified` on ~93%
+  of rows, and Set Up Notes are routinely reopened and amended a median of
+  ~10 days after entry, so the column's median is ≈14,500 min (~10 days) — it
+  measures amendment latency, not visit burden. Split by
+  `DocumentationCompletedBy` shows this plainly: "Sim note entered" → 62 min,
+  "Set Up note entered" → 43 min, "Set Up note modified" → 14,898 min. Use
+  `FirstNoteEnteredDateTime` instead (check-in → first note entered ≈ 47 min
+  median, ARIA-side both ends, clock-immune).
+- **A blank Set Up Note has two meanings** — never written, or written outside
+  the one-day look-back (e.g. drafted days ahead as prep). The report cannot
+  tell them apart, so note coverage is **not** a compliance rate.
+- **Overrun depends on the definition.** `CTCompleteToScheduledEndMinutes < 0`
+  fires on ~2% of sims; actual end past booked end fires on ~29%. The latter is
+  ARIA-side on both ends and so valid across all history.
+- **Floor is 2025-10-01.** The extract clamps to that date because CT
+  image-to-machine attribution effectively began 2025-10-06. Requesting earlier
+  returns data from the floor onward rather than erroring.
+- **Documentation usually precedes close-out.** Median offsets from the booked
+  start are: check-in −10, CT first series +20, CT complete +22, note entered
+  +37, appointment end +54, scheduled end +60. The note is typically entered
+  while the appointment is still open, and the appointment is closed out before
+  the booked slot ends on a median sim.
+- **Technique comes from the course, not the sim.** The extract has no
+  technique column. `_attach_sim_technique()` links to `Courses.csv` in two
+  passes — (A) same `PatientId` and identical `FirstTreatmentDate`, 85.6% with
+  **zero** ambiguity; (B) for the remainder, the nearest `CourseStartDate`
+  within −3…+60 days of the sim. Union 91.1%. Unmatched rows are left null.
+  Because it is the *following* course, technique is only known in hindsight,
+  and sims that never led to treatment have none.
+- **This is the only way to separate SBRT from SRS.** `ActivityName`
+  "Stereotactic Simulation" splits 108 SBRT / 34 SRS, and roughly a dozen more
+  stereotactic sims are booked as plain Initial or Re-Simulation — so the
+  activity name both conflates and under-counts them. Observed split across
+  linked sims: VMAT 343, IMRT 249, 3D 228, SBRT 119, Electron 84, SRS 37.
+- **4D CT is detected by `SeriesCount >= 10`, not by name.** A 4D CT is ten
+  respiratory phase bins plus reconstructions. The series-count distribution is
+  cleanly bimodal — 733 rows at 1, 224 at 2, a handful at 3–6, then a cluster at
+  12–16 (mode 13) and a second at 24–26 (two 4D CTs in one appointment) — with
+  **nothing at all between 7 and 11**. Every row whose series name is a phase
+  bin (`CT_00_1` … `CT_90_1`) sits above the threshold, but only 60 rows are
+  named that way versus 191 with ≥10 series, so counting series detects 4D CT
+  3.2× more completely than name-matching. 16.4% of sims, stable 10–21% monthly.
+- **`CTLastImageId` is truncated to 16 characters at source, and this already
+  costs setup flags.** 120 of 1,164 values sit at exactly 16, several visibly
+  cut mid-word (`AC_Pelvis (Femal`, `RtSCF/Mediastinu`). Nothing longer than 16
+  ever appears. The setup keywords are suffix-heavy — mean relative position in
+  the string is 0.76 for `FB` and 0.51 for `BH`, versus 0.29 for `APBI` and 0.12
+  for `Decub` — so truncation removes exactly the part that carries breath-hold
+  and free-breathing. The damage is visible in the flag rate: **4.2% on
+  truncated rows (5/120) against 17-19% on shorter ones**. Longer, more
+  descriptive names should carry *more* flags, not four times fewer, so that
+  inversion is the signature of lost suffixes; at the 17.3% baseline it implies
+  roughly **16 flags lost** among the truncated rows, mostly DIBH/FB on breast
+  cases. This is a DICOM limit, not a warehouse one — Series Description is a
+  Short String (SH), capped at 16 characters at acquisition — so it cannot be
+  widened downstream, and `CTImageIds` inherits the same clipping per element.
+  The full list still recovers most of the loss, because a keyword clipped off
+  one series name usually survives on another.
+- **`CTImageIds` (added 2026-09-08) holds every CT series name**, comma-joined,
+  1,164/1,164 populated, 702 distinct, max length 168; 501 rows carry more than
+  one. `_ct_series_name_blob()` prefers it and falls back to `CTLastImageId` for
+  older exports, matching over the whole string so the delimiter never matters.
+  Reading every name lifts breath-hold detection from 100 rows to **113** and
+  raw free-breathing matches from 28 to 110 (APBI 82→84, prone 2→3, decubitus
+  unchanged); free breathing is then masked where a breath-hold exists, landing
+  at 33.
+- **The flags mean "a scan of this kind was acquired", not "the final scan was
+  of this kind"** — with one deliberate exception, below. The free-breathing
+  jump was almost entirely breast DIBH sims, which acquire *both* a
+  free-breathing and a breath-hold scan (`FB Lt Breast, BH Lt Breast, Decub Lt
+  Breast`); the single-value column only ever showed whichever landed last. For
+  a page about how long sims take the inclusive reading is the more useful one,
+  since both acquisitions cost time.
+- **`FreeBreath` is the exception: it is only flagged when no breath-hold was
+  acquired.** Free breathing is the default state, so an FB series carries
+  information only when there is no breath-hold to contrast it with. 77 of the
+  110 raw FB matches (70%) sat on a row that also had a breath-hold, where the
+  flag added nothing the `DIBH` flag did not already say. Masking those leaves
+  33, of which **23 are APBI** — a partial-breast sim done free-breathing rather
+  than breath-hold, which is a real distinction — plus 4 4D CTs (a 4D CT always
+  includes a free-breathing reference, so those 4 are arguably still noise) and
+  6 others.
+- **`CTImageIds` independently confirms the 4D CT rule.** MIP and average
+  reconstructions appear in the list (`CT_Mip_1`, `CT_Ave_1`) and **zero rows
+  have them without `SeriesCount >= 10`** — two independent signals agreeing
+  exactly. `Is4DCT` is left on the series count, which needs no naming
+  convention to work.
+- **`CTLastImageId` is the therapist's label for the last series** — 491
+  distinct values, informative on ~85% of rows (`AC_APBI_R`, `Lt APBI BH`,
+  `DecubProj`, `Prostate/SV`, `H&N`); ~15% are generic (`CT_1`, `AUTO_IMPORT`).
+  It is **not** PHI and survives sanitization, so the setup flags derived from
+  it work identically in PHI_MODE. `AppointmentNote` is deliberately not parsed:
+  it is PHI, the sanitizer drops it, and the field guide warns against it.
+- **`CTImageType` is constant (`Image`) and `CTSliceRTType` is 100% NULL** —
+  neither carries any signal.
+- **No weekend sims.** Every appointment in the extract falls Mon-Fri, and the
+  booked-start hours run 07:00-17:00. The Sim Timing page carries a Weekend
+  switch for parity with the Simulations page; it returns nothing here.
+- **Booked slots are near-uniform.** `ScheduledDurationMinutes` is 60 on the
+  median and 5th-95th percentile alike (range 30-210), while median actual
+  occupancy runs 61 min for Initial Simulation up to 91 for Re-Simulation
+  Aberdeen — which is what the Booked vs Actual dumbbell exists to show.
+
+---
+
 ### Treatment
 
 - **File:** `Incremental/Treatment/Treatment.csv`
@@ -907,6 +1124,7 @@ Lookup - Patients (PatientId)
   ├── Courses (PatientId)
   ├── Plans (PatientId)
   ├── Simulations (PatientId)
+  ├── Simulation Timing (PatientId)
   ├── Weekly Visits (PatientId)
   ├── Workflow (PatientId)
   ├── Procedures (PatientId)
@@ -928,6 +1146,9 @@ Lookup - Diagnosis (DiagnosisCode)
 
 Courses (CourseId + PatientId)
   └── Plans (CourseId + PatientId)
+
+Simulations (UniqueRowID)
+  └── Simulation Timing (UniqueRowID)   ← 1:1, no transformation
 ```
 
 **Join pitfalls:**
@@ -935,6 +1156,9 @@ Courses (CourseId + PatientId)
 - Referring FK column name varies across tables (see above)
 - `DiagnosisCodes` is comma-separated in transactional tables — split before joining to Lookup
 - `Department` naming: some tables prefix with `*`, some don't — normalize before cross-table joins
+- Simulation Timing → Simulations is 1:1 on `UniqueRowID`, but Simulations is the
+  *left* side: expect unmatched Simulations rows for Centralia, electron CSU,
+  non-completed sims, and sims with no attributed CT
 
 ---
 

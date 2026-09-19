@@ -294,6 +294,7 @@ NAV_SECTIONS = [
             {"label": "Workflow",      "path": "/workflow",      "icon": "tabler:arrows-right-left"},
             {"label": "Clinic Visits", "path": "/clinic-visits", "icon": "tabler:stethoscope"},
             {"label": "Simulations",   "path": "/simulations",   "icon": "tabler:scan"},
+            {"label": "Simulation Timing", "path": "/sim-timing", "icon": "tabler:stopwatch"},
             {"label": "Tasks",         "path": "/tasks",         "icon": "tabler:checklist"},
             {"label": "OTVs",          "path": "/otvs",          "icon": "tabler:clipboard-check"},
             {"label": "Diagnosis",    "path": "/diagnosis",    "icon": "tabler:dna"},

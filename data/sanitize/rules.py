@@ -87,6 +87,14 @@ SIMPLE_RULES: list[dict] = [
         "incremental": True,
     },
     {
+        "name": "SimulationTiming",
+        "subdir": "Incremental/SimulationTiming",
+        "pattern": "Simulation Timing_*.csv",
+        "drop": ["PatientFullName", "PatientName", "AppointmentNote"],
+        "hash": ["PatientId"],
+        "incremental": True,
+    },
+    {
         "name": "Workflow",
         "subdir": "Incremental/Workflow",
         "pattern": "Workflow_*.csv",
@@ -303,6 +311,7 @@ def apply_simple_rule(rule: dict, raw_root: Path, out_root: Path, salt: str) -> 
     rows_in = 0
     rows_out = 0
     dropped_any: list[str] = []
+    written: list[str] = []
 
     if not src_dir.exists():
         return {
@@ -312,6 +321,7 @@ def apply_simple_rule(rule: dict, raw_root: Path, out_root: Path, salt: str) -> 
             "rows_out": 0,
             "dropped": [],
             "hashed": [],
+            "written": [],
             "note": rule.get("note", ""),
             "status": "skipped (source dir missing)",
         }
@@ -350,6 +360,7 @@ def apply_simple_rule(rule: dict, raw_root: Path, out_root: Path, salt: str) -> 
         rows_out += len(df)
         out_path = out_dir / src_path.name
         _write_csv(df, out_path)
+        written.append(out_path.relative_to(out_root).as_posix())
         files_processed += 1
 
     return {
@@ -359,6 +370,7 @@ def apply_simple_rule(rule: dict, raw_root: Path, out_root: Path, salt: str) -> 
         "rows_out": rows_out,
         "dropped": dropped_any,
         "hashed": list(rule.get("hash", [])),
+        "written": written,
         "enriched": enriched_cols,
         "short_code_from": rule.get("add_short_code_from"),
         "note": rule.get("note", ""),
@@ -383,7 +395,8 @@ def sanitize_lookup_patients(raw_root: Path, out_root: Path, salt: str) -> dict:
     out = out_root / "Lookup" / "Lookup - Patients.csv"
 
     if not src.exists():
-        return {"name": "LookupPatients", "status": "skipped (source missing)"}
+        return {"name": "LookupPatients", "written": [],
+                "status": "skipped (source missing)"}
 
     df = _read_csv(src)
     rows_in = len(df)
@@ -421,6 +434,7 @@ def sanitize_lookup_patients(raw_root: Path, out_root: Path, salt: str) -> dict:
         "rows_out": len(df),
         "dropped": dropped,
         "hashed": ["PatientId"],
+        "written": [out.relative_to(out_root).as_posix()],
         "transforms": [
             "Zip → ZIP3 (Safe Harbor restricted prefixes → '000')",
             "DateOfBirth → AgeAtLoad (capped at 90+)",
@@ -450,12 +464,14 @@ def sanitize_referrals(raw_root: Path, out_root: Path, salt: str) -> dict:
     pattern = str(raw_root / "Referrals_Report_RadiantCare_All_*.xlsx")
     matches = sorted(_glob.glob(pattern))
     if not matches:
-        return {"name": "Referrals", "status": "skipped (no xlsx matched)"}
+        return {"name": "Referrals", "written": [],
+                "status": "skipped (no xlsx matched)"}
 
     files_processed = 0
     rows_in = 0
     rows_out = 0
     dropped_any: list[str] = []
+    written: list[str] = []
 
     for src in matches:
         src_path = Path(src)
@@ -478,6 +494,7 @@ def sanitize_referrals(raw_root: Path, out_root: Path, salt: str) -> dict:
         out_path = out_root / src_path.name
         out_path.parent.mkdir(parents=True, exist_ok=True)
         df.to_excel(out_path, index=False)
+        written.append(out_path.relative_to(out_root).as_posix())
         files_processed += 1
 
     return {
@@ -487,6 +504,7 @@ def sanitize_referrals(raw_root: Path, out_root: Path, salt: str) -> dict:
         "rows_out": rows_out,
         "dropped": dropped_any,
         "hashed": ["MRN"],
+        "written": written,
         "transforms": ["DOB → AgeAtReferral (capped at 90+)"],
         "status": "ok",
     }
@@ -510,12 +528,14 @@ def sanitize_medonc_referrals(raw_root: Path, out_root: Path, salt: str) -> dict
     pattern = str(raw_root / "Referrals_Report_PRCS_*.xlsx")
     matches = sorted(_glob.glob(pattern))
     if not matches:
-        return {"name": "MedOncReferrals", "status": "skipped (no xlsx matched)"}
+        return {"name": "MedOncReferrals", "written": [],
+                "status": "skipped (no xlsx matched)"}
 
     files_processed = 0
     rows_in = 0
     rows_out = 0
     dropped_any: list[str] = []
+    written: list[str] = []
 
     for src in matches:
         src_path = Path(src)
@@ -538,6 +558,7 @@ def sanitize_medonc_referrals(raw_root: Path, out_root: Path, salt: str) -> dict
         out_path = out_root / src_path.name
         out_path.parent.mkdir(parents=True, exist_ok=True)
         df.to_excel(out_path, index=False)
+        written.append(out_path.relative_to(out_root).as_posix())
         files_processed += 1
 
     return {
@@ -547,6 +568,7 @@ def sanitize_medonc_referrals(raw_root: Path, out_root: Path, salt: str) -> dict
         "rows_out": rows_out,
         "dropped": dropped_any,
         "hashed": ["MRN"],
+        "written": written,
         "transforms": ["DOB → AgeAtReferral (capped at 90+)"],
         "status": "ok",
     }
@@ -556,8 +578,68 @@ def sanitize_medonc_referrals(raw_root: Path, out_root: Path, salt: str) -> dict
 # Orchestration
 # ---------------------------------------------------------------------------
 
+def prune_orphans(out_root: Path, audit: list[dict]) -> dict:
+    """Delete sanitized files whose source no longer exists.
+
+    The sanitized tree must MIRROR the raw tree: when a raw file (or a whole
+    incremental subfolder) is deleted and re-exported, its old sanitized
+    copies must not linger — the PHI_MODE loader reads every file in the
+    tree, so orphans silently resurrect rows the re-export removed.
+
+    Everything written this run is kept; any other file is an orphan and is
+    removed, along with directories the pruning empties. The tree is fully
+    regenerable from raw, so an over-aggressive prune costs one re-run, not
+    data. Skipped entirely if nothing was written (a wholesale-empty raw
+    root means something is wrong upstream — don't wipe the mirror).
+    """
+    expected = {p for entry in audit for p in entry.get("written", [])}
+    expected.add("_sanitize_audit.json")
+
+    if not (expected - {"_sanitize_audit.json"}):
+        return {"name": "PruneOrphans", "files": 0, "removed": [],
+                "status": "skipped (nothing written this run)"}
+
+    junk = (".DS_Store",)
+    removed: list[str] = []
+    for path in sorted(out_root.rglob("*")):
+        if not path.is_file():
+            continue
+        name = path.name
+        if name in junk or name.startswith("._"):
+            continue  # Finder metadata — already excluded from the tarball
+        rel = path.relative_to(out_root).as_posix()
+        if rel in expected:
+            continue
+        path.unlink()
+        removed.append(rel)
+
+    # Remove directories the prune emptied (deepest first). A dir holding
+    # only Finder junk counts as empty — clear the junk so rmdir succeeds.
+    for d in sorted((p for p in out_root.rglob("*") if p.is_dir()),
+                    key=lambda p: len(p.parts), reverse=True):
+        leftovers = list(d.iterdir())
+        if leftovers and all(
+            f.name in junk or f.name.startswith("._") for f in leftovers
+        ):
+            for f in leftovers:
+                f.unlink()
+            leftovers = []
+        if not leftovers:
+            try:
+                d.rmdir()
+            except OSError:
+                pass
+
+    return {
+        "name": "PruneOrphans",
+        "files": len(removed),
+        "removed": removed,
+        "status": f"ok ({len(removed)} orphan(s) removed)" if removed else "ok (no orphans)",
+    }
+
+
 def sanitize_all(raw_root: Path, out_root: Path, salt: str) -> list[dict]:
-    """Run every rule and return the list of audit entries."""
+    """Run every rule, prune orphaned outputs, and return the audit entries."""
     audit: list[dict] = []
 
     for rule in SIMPLE_RULES:
@@ -566,5 +648,12 @@ def sanitize_all(raw_root: Path, out_root: Path, salt: str) -> list[dict]:
     audit.append(sanitize_lookup_patients(raw_root, out_root, salt))
     audit.append(sanitize_referrals(raw_root, out_root, salt))
     audit.append(sanitize_medonc_referrals(raw_root, out_root, salt))
+
+    audit.append(prune_orphans(out_root, audit))
+
+    # The per-file write lists exist only to drive pruning — drop them so
+    # the printed summary and _sanitize_audit.json stay readable.
+    for entry in audit:
+        entry.pop("written", None)
 
     return audit

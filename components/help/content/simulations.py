@@ -53,9 +53,11 @@ UI_CONTENT = dmc.Stack(
                 "Cumulative Sim Volume — running total with Prior Periods overlay "
                 "and an optional projection line to period end. Toggle between "
                 "calendar and rolling period windows.",
-                "Timing Intervals — median consult→sim, sim→treatment, and "
-                "consult→treatment days over time. Metric toggle picks which "
-                "interval is shown; slice-by splits by department or physician.",
+                "Timing Intervals — consult→sim, sim→treatment, and booked→sim "
+                "lead time over time. Metric toggle picks which interval is "
+                "shown; slice-by splits by department or physician. The gear "
+                "menu switches the statistic between Median and Mean, and — for "
+                "Sim → Tx only — exposes the Censoring Guard (below).",
                 "Schedule Ribbon — per-day sim operating window across the full "
                 "history. Can render as Ribbon (fill between earliest start and "
                 "latest end-of-day), Bar (sim count), or Line. Machine toggle "
@@ -97,6 +99,15 @@ UI_CONTENT = dmc.Stack(
                 "Volume scope — all sims vs. initial-only.",
                 "Inpatient switch — include or exclude inpatient consults.",
                 "Weekend switch — include or exclude weekend sims.",
+                "Outliers panel — four time intervals: Consult → Sim, "
+                "Sim → Tx (Actual, DaysFromSimToTreatment), Sim → Tx "
+                "(Scheduled, DaysToScheduledTreatment — the first booked "
+                "start rather than the realized one), and Lead Time. Cap "
+                "mode trims each interval’s long tail out of the timing "
+                "metrics; Filter mode turns each into a row-inclusion range. "
+                "Note that filtering on Sim → Tx (Scheduled) keeps only sims "
+                "whose treatment is still pending, since ARIA nulls that "
+                "column once the patient actually starts.",
                 "Smoothing slider — shared across all trend charts.",
             ]),
         ),
@@ -151,6 +162,23 @@ UI_CONTENT = dmc.Stack(
                 "Timing medians drop nulls — consults that never reached sim, "
                 "and sims that never reached treatment, don't contribute to the "
                 "denominator.",
+                "Sim → Tx is right-censored: it looks forward from the sim, so a "
+                "patient simmed recently who starts on schedule still has a null "
+                "interval today. Dropping those nulls leaves only the fast "
+                "starters and pulls the last few weeks artificially low. The "
+                "Censoring Guard in the timing chart’s gear menu handles this. "
+                "Survival (default) keeps not-yet-started sims as censored "
+                "observations and reports a Kaplan-Meier median (or restricted "
+                "mean to the outlier cap), leaving a gap where the estimate "
+                "isn’t yet supportable. Scheduled fills the pending sims in "
+                "from DaysToScheduledTreatment, which ARIA populates only while "
+                "treatment is still pending and nulls once the patient starts — "
+                "the two columns never overlap, so they coalesce exactly. That "
+                "reaches the present, but it is intent-to-treat: the booking "
+                "can still slip. Trim hides periods where the least mature sim "
+                "hasn’t had a full cap’s worth of days to start. Off shows the "
+                "raw observed values. Survival and Trim also restrict the "
+                "histogram to sims with complete follow-up.",
             ]),
         ),
 
