@@ -154,8 +154,11 @@ def _resolve_range(range_key, last_date):
     if range_key == "ytd":
         return pd.Timestamp(year=this_year, month=1, day=1), last
     if range_key.startswith("py"):
-        y = this_year - _py_years_back(range_key)
-        return pd.Timestamp(year=y, month=1, day=1), pd.Timestamp(year=y, month=12, day=31)
+        # Trailing 12-month window ending N years before the data anchor
+        # ("go back 1/3/5 years from today"), not a calendar year.
+        end = (last - pd.DateOffset(years=_py_years_back(range_key))).normalize()
+        start = (end - pd.DateOffset(years=1) + pd.Timedelta(days=1)).normalize()
+        return start, end
     if range_key == "12m":
         return last - pd.Timedelta(days=365), last
     if range_key == "6m":
@@ -181,9 +184,9 @@ def _resolve_range_offset(range_key, last_date, offset):
         return (pd.Timestamp(year=y, month=1, day=1),
                 pd.Timestamp(year=y, month=last.month, day=last.day))
     if range_key.startswith("py"):
-        y = this_year - _py_years_back(range_key) - offset
-        return (pd.Timestamp(year=y, month=1, day=1),
-                pd.Timestamp(year=y, month=12, day=31))
+        end = (last - pd.DateOffset(years=_py_years_back(range_key) + offset)).normalize()
+        start = (end - pd.DateOffset(years=1) + pd.Timedelta(days=1)).normalize()
+        return start, end
     if range_key == "12m":
         return last - pd.Timedelta(days=365 * (offset + 1)), last - pd.Timedelta(days=365 * offset)
     if range_key == "6m":
@@ -195,7 +198,7 @@ def _resolve_range_offset(range_key, last_date, offset):
 
 def _period_label(range_key, start, end):
     # Short, single-line labels so they read horizontally on a narrow mobile chart.
-    if range_key == "ytd" or range_key.startswith("py"):
+    if range_key == "ytd":
         return str(start.year)
     # m/yy–m/yy range for 12mo / 6mo / 3mo (e.g. "4/25–4/26").
     return f"{start.month}/{start.strftime('%y')}–{end.month}/{end.strftime('%y')}"
@@ -313,6 +316,21 @@ _RANGE_LABEL = {r["value"]: r["label"] for r in _RANGES}
 # offset → segment label / summary label.
 _PY_LABELS = {1: "Prior Yr", 3: "3 Yrs Ago", 5: "5 Yrs Ago"}
 _RANGE_LABEL.update({"py3": "3 Yrs Ago", "py5": "5 Yrs Ago"})
+
+
+def _py_segment_label(py_off):
+    """Prior-Yr segment label with a muted cycle glyph — the one hint that
+    this segment re-taps to cycle, unlike its neighbors."""
+    return html.Span([
+        _PY_LABELS.get(py_off or 1, "Prior Yr"),
+        html.Span(" ↻", style={"opacity": 0.5, "fontSize": "0.85em"}),
+    ])
+
+
+def _range_segment_data(py_off=1):
+    return [{"value": r["value"],
+             "label": _py_segment_label(py_off) if r["value"] == "py" else r["label"]}
+            for r in _RANGES]
 
 _TITLE_OPTS = dict(
     font=dict(family=FONT_FAMILY, size=15, weight=600),
@@ -984,7 +1002,7 @@ def layout():
             dmc.SegmentedControl(
                 id=f"{PAGE_ID}-range",
                 value="ytd",
-                data=[{"value": r["value"], "label": r["label"]} for r in _RANGES],
+                data=_range_segment_data(),
                 fullWidth=True,
                 color="gray",
                 size="sm",
@@ -1935,10 +1953,7 @@ def cycle_filters(_dept_n, _phys_n, _mod_n, metric, range_key, py_off,
     prevent_initial_call=True,
 )
 def update_py_segment_label(py_off):
-    label = _PY_LABELS.get(py_off or 1, "Prior Yr")
-    return [{"value": r["value"],
-             "label": label if r["value"] == "py" else r["label"]}
-            for r in _RANGES]
+    return _range_segment_data(py_off)
 
 
 # Group C: drawer toggle.
