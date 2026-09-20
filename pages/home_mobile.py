@@ -154,11 +154,10 @@ def _resolve_range(range_key, last_date):
     if range_key == "ytd":
         return pd.Timestamp(year=this_year, month=1, day=1), last
     if range_key.startswith("py"):
-        # Trailing 12-month window ending N years before the data anchor
-        # ("go back 1/3/5 years from today"), not a calendar year.
-        end = (last - pd.DateOffset(years=_py_years_back(range_key))).normalize()
-        start = (end - pd.DateOffset(years=1) + pd.Timedelta(days=1)).normalize()
-        return start, end
+        # Trailing N-year window ending at the data anchor: Prior Yr = last
+        # 12 months, Prior 3yr / 5yr = last 3 / 5 years, all "from today".
+        start = (last - pd.DateOffset(years=_py_years_back(range_key)) + pd.Timedelta(days=1)).normalize()
+        return start, last
     if range_key == "12m":
         return last - pd.Timedelta(days=365), last
     if range_key == "6m":
@@ -184,8 +183,10 @@ def _resolve_range_offset(range_key, last_date, offset):
         return (pd.Timestamp(year=y, month=1, day=1),
                 pd.Timestamp(year=y, month=last.month, day=last.day))
     if range_key.startswith("py"):
-        end = (last - pd.DateOffset(years=_py_years_back(range_key) + offset)).normalize()
-        start = (end - pd.DateOffset(years=1) + pd.Timedelta(days=1)).normalize()
+        # Prior equivalents step back in whole N-year blocks.
+        n = _py_years_back(range_key)
+        end = (last - pd.DateOffset(years=n * offset)).normalize()
+        start = (end - pd.DateOffset(years=n) + pd.Timedelta(days=1)).normalize()
         return start, end
     if range_key == "12m":
         return last - pd.Timedelta(days=365 * (offset + 1)), last - pd.Timedelta(days=365 * offset)
@@ -314,8 +315,8 @@ _RANGE_LABEL = {r["value"]: r["label"] for r in _RANGES}
 
 # Prior-Yr re-tap cycle (assets/py_cycle.js advances the offset store):
 # offset → segment label / summary label.
-_PY_LABELS = {1: "Prior Yr", 3: "3 Yrs Ago", 5: "5 Yrs Ago"}
-_RANGE_LABEL.update({"py3": "3 Yrs Ago", "py5": "5 Yrs Ago"})
+_PY_LABELS = {1: "Prior Yr", 3: "Prior 3yr", 5: "Prior 5yr"}
+_RANGE_LABEL.update({"py3": "Prior 3yr", "py5": "Prior 5yr"})
 
 
 def _py_segment_label(py_off):
