@@ -273,17 +273,15 @@ def _build_trend_fig(counts, label, color, range_key, agg="D"):
 
     # Daily business-day series — drives the smoothed line regardless of agg.
     daily_nz = counts[(counts > 0) & (counts.index.weekday < 5)]
-    zero_weekdays = []
     if agg == "D":
-        nz = daily_nz
-        zero_weekdays = counts[(counts == 0) & (counts.index.weekday < 5)].index
+        # All weekdays, zeros included — zero days (holidays, closures) show
+        # as gaps in the bars but keep their place on the axis.
+        bars = counts[counts.index.weekday < 5]
     elif agg == "W":
-        nz = counts.resample("W-SUN").sum()
-        nz = nz[nz > 0]
+        bars = counts.resample("W-SUN").sum()
     else:  # "M"
-        nz = counts.resample("MS").sum()
-        nz = nz[nz > 0]
-    if nz.empty:
+        bars = counts.resample("MS").sum()
+    if bars.empty or not (bars > 0).any():
         return _empty_fig(title_text)
     fig = go.Figure()
 
@@ -291,13 +289,13 @@ def _build_trend_fig(counts, label, color, range_key, agg="D"):
         # Use numeric x + custom tick labels so bars are perfectly equidistant.
         # (A datetime axis spaces bars by actual day-gap, giving uneven visual
         # spacing for weeks/months of different lengths.)
-        x_idx = list(range(len(nz)))
+        x_idx = list(range(len(bars)))
         if agg == "M":
-            labels = [d.strftime("%b '%y") for d in nz.index]
+            labels = [d.strftime("%b '%y") for d in bars.index]
         else:
-            labels = [d.strftime("%b %d") for d in nz.index]
+            labels = [d.strftime("%b %d") for d in bars.index]
         fig.add_trace(go.Bar(
-            x=x_idx, y=nz.values,
+            x=x_idx, y=bars.values,
             customdata=labels,
             marker_color=color, marker_line_width=0,
             opacity=0.45,
@@ -306,7 +304,7 @@ def _build_trend_fig(counts, label, color, range_key, agg="D"):
         ))
     else:
         fig.add_trace(go.Bar(
-            x=nz.index, y=nz.values,
+            x=bars.index, y=bars.values,
             marker_color=color, marker_line_width=0,
             opacity=0.45,
             hovertemplate="%{x|%b %d}<br>%{y}<extra></extra>",
@@ -317,11 +315,11 @@ def _build_trend_fig(counts, label, color, range_key, agg="D"):
     # smaller font and skip every other label (anchored to the most recent).
     bar_annotations = []
     if agg == "M":
-        n = len(nz)
+        n = len(bars)
         dense = n > 8
         font_size = 10 if dense else 11
         keep = set(range(n)) if not dense else {i for i in range(n) if (n - 1 - i) % 2 == 0}
-        for i, y_val in enumerate(nz.values):
+        for i, y_val in enumerate(bars.values):
             if i not in keep:
                 continue
             bar_annotations.append(dict(
@@ -345,14 +343,11 @@ def _build_trend_fig(counts, label, color, range_key, agg="D"):
     if agg == "D":
         xaxis_opts = dict(
             showgrid=False, title=None, tickformat="%b '%y",
-            rangebreaks=[
-                dict(bounds=["sat", "mon"]),
-                dict(values=[d.strftime("%Y-%m-%d") for d in zero_weekdays]),
-            ],
+            rangebreaks=[dict(bounds=["sat", "mon"])],
         )
     else:
         # Categorical axis — thin out labels when dense so they don't collide.
-        n = len(nz)
+        n = len(bars)
         if n <= 6:
             keep_ticks = list(range(n))
         elif n <= 12:
