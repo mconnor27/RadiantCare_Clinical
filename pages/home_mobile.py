@@ -127,8 +127,8 @@ _METRIC_BY_VALUE = {m["value"]: m for m in _METRICS}
 
 _RANGES = [
     {"value": "ytd", "label": "YTD"},
+    {"value": "ly",  "label": "Last Year"},
     {"value": "py",  "label": "Prior Yr"},
-    {"value": "12m", "label": "12mo"},
     {"value": "6m",  "label": "6mo"},
     {"value": "3m",  "label": "3mo"},
 ]
@@ -153,13 +153,15 @@ def _resolve_range(range_key, last_date):
     this_year = last.year
     if range_key == "ytd":
         return pd.Timestamp(year=this_year, month=1, day=1), last
+    if range_key == "ly":
+        # Prior calendar year.
+        return (pd.Timestamp(year=this_year - 1, month=1, day=1),
+                pd.Timestamp(year=this_year - 1, month=12, day=31))
     if range_key.startswith("py"):
         # Trailing N-year window ending at the data anchor: Prior Yr = last
         # 12 months, Prior 3yr / 5yr = last 3 / 5 years, all "from today".
         start = (last - pd.DateOffset(years=_py_years_back(range_key)) + pd.Timedelta(days=1)).normalize()
         return start, last
-    if range_key == "12m":
-        return last - pd.Timedelta(days=365), last
     if range_key == "6m":
         return last - pd.Timedelta(days=182), last
     if range_key == "3m":
@@ -182,14 +184,16 @@ def _resolve_range_offset(range_key, last_date, offset):
         y = this_year - offset
         return (pd.Timestamp(year=y, month=1, day=1),
                 pd.Timestamp(year=y, month=last.month, day=last.day))
+    if range_key == "ly":
+        y = this_year - 1 - offset
+        return (pd.Timestamp(year=y, month=1, day=1),
+                pd.Timestamp(year=y, month=12, day=31))
     if range_key.startswith("py"):
         # Prior equivalents step back in whole N-year blocks.
         n = _py_years_back(range_key)
         end = (last - pd.DateOffset(years=n * offset)).normalize()
         start = (end - pd.DateOffset(years=n) + pd.Timedelta(days=1)).normalize()
         return start, end
-    if range_key == "12m":
-        return last - pd.Timedelta(days=365 * (offset + 1)), last - pd.Timedelta(days=365 * offset)
     if range_key == "6m":
         return last - pd.Timedelta(days=182 * (offset + 1)), last - pd.Timedelta(days=182 * offset)
     if range_key == "3m":
@@ -199,7 +203,7 @@ def _resolve_range_offset(range_key, last_date, offset):
 
 def _period_label(range_key, start, end):
     # Short, single-line labels so they read horizontally on a narrow mobile chart.
-    if range_key == "ytd":
+    if range_key in ("ytd", "ly"):
         return str(start.year)
     # m/yy–m/yy range for 12mo / 6mo / 3mo (e.g. "4/25–4/26").
     return f"{start.month}/{start.strftime('%y')}–{end.month}/{end.strftime('%y')}"
