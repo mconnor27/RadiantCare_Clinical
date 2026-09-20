@@ -10,6 +10,7 @@ import numpy as np
 
 from config.settings import PRIMARY, PRIMARY_DARK, CHART_COLORWAY, FONT_FAMILY, DEPARTMENTS, PHYSICIANS
 from utils.charts import apply_default_layout
+from utils.holidays import get_holidays
 from utils.permissions import is_admin
 from statsmodels.nonparametric.smoothers_lowess import lowess as _lowess
 
@@ -247,7 +248,10 @@ def _loess_line(counts, frac=0.15):
     effective_frac = max(frac, 3.0 / len(counts))
     effective_frac = min(effective_frac, 1.0)
     try:
-        smoothed = _lowess(y, x, frac=effective_frac, return_sorted=False)
+        # it=0: no robust re-weighting. The series legitimately contains many
+        # zeros (sparse filtered metrics); robust iterations would treat the
+        # non-zero days as outliers and smooth toward zero.
+        smoothed = _lowess(y, x, frac=effective_frac, it=0, return_sorted=False)
         return pd.Series(smoothed, index=counts.index)
     except Exception:
         return None
@@ -271,12 +275,18 @@ def _build_trend_fig(counts, label, color, range_key, agg="D"):
     if counts is None:
         return _empty_fig(title_text)
 
-    # Daily business-day series — drives the smoothed line regardless of agg.
-    daily_nz = counts[(counts > 0) & (counts.index.weekday < 5)]
+    # Business days = weekdays minus zero-count holidays (clinic closures,
+    # from the physician schedule / federal fallback). A zero on a regular
+    # business day is real — it stays in the bars, the smoothing, and the
+    # averages. A holiday WITH activity also stays (external referrals can
+    # arrive on a holiday); only zero-count holidays are dropped, collapsed
+    # off the daily axis like weekends.
+    weekdays = counts[counts.index.weekday < 5]
+    zero_holiday_mask = weekdays.index.isin(get_holidays()) & (weekdays.values == 0)
+    daily_biz = weekdays[~zero_holiday_mask]
+    zero_holidays = weekdays.index[zero_holiday_mask]
     if agg == "D":
-        # All weekdays, zeros included — zero days (holidays, closures) show
-        # as gaps in the bars but keep their place on the axis.
-        bars = counts[counts.index.weekday < 5]
+        bars = daily_biz
     elif agg == "W":
         bars = counts.resample("W-SUN").sum()
     else:  # "M"
@@ -331,7 +341,7 @@ def _build_trend_fig(counts, label, color, range_key, agg="D"):
             ))
     # Smoothed line only in daily mode.
     if agg == "D":
-        line = _loess_line(daily_nz, frac=0.15)
+        line = _loess_line(daily_biz, frac=0.15)
         if line is not None:
             fig.add_trace(go.Scatter(
                 x=line.index, y=line.values,
@@ -343,7 +353,10 @@ def _build_trend_fig(counts, label, color, range_key, agg="D"):
     if agg == "D":
         xaxis_opts = dict(
             showgrid=False, title=None, tickformat="%b '%y",
-            rangebreaks=[dict(bounds=["sat", "mon"])],
+            rangebreaks=[
+                dict(bounds=["sat", "mon"]),
+                dict(values=[d.strftime("%Y-%m-%d") for d in zero_holidays]),
+            ],
         )
     else:
         # Categorical axis — thin out labels when dense so they don't collide.
@@ -669,6 +682,18 @@ _SETTINGS_STORE_ID = f"{PAGE_ID}-settings-store"
 _SETTINGS_DEPT_ID = f"{PAGE_ID}-settings-dept"
 _SETTINGS_PHYS_ID = f"{PAGE_ID}-settings-phys"
 
+# Referral-specific filter drawer — opened by the right cycle button when the
+# Referrals metric is active (that button has no physician to cycle there).
+# (settings key, component id, referrals dataframe column, label)
+_REFS_DRAWER_ID = f"{PAGE_ID}-refs-filter-drawer"
+_REFS_CLEAR_ID = f"{PAGE_ID}-refs-filter-clear"
+_REFS_FILTER_FIELDS = [
+    ("provider",    f"{PAGE_ID}-refs-filter-provider",    "Referred by Provider", "Providers"),
+    ("dx",          f"{PAGE_ID}-refs-filter-dx",          "_DxCat",               "Diagnoses"),
+    ("specialty",   f"{PAGE_ID}-refs-filter-specialty",   "DeptSpecialty",        "Specialties"),
+    ("institution", f"{PAGE_ID}-refs-filter-institution", "DoctorInstitution",    "Institutions"),
+]
+
 
 def layout():
     return dmc.Container(
@@ -803,7 +828,8 @@ def layout():
 
             # Filter row: dept + physician cycle buttons. Each tap advances
             # to the next value; disabled when the filter doesn't apply to
-            # the current metric (Sims has no dept; Referrals has no phys).
+            # the current metric (Sims has no dept). For Referrals the right
+            # button opens the referral-filter drawer instead of cycling.
             html.Div(
                 style={"display": "flex", "gap": "6px", "marginBottom": "6px"},
                 children=[
@@ -1008,6 +1034,42 @@ def layout():
                 children=html.Div(id=f"{PAGE_ID}-cum-info-body"),
             ),
 
+            # Referral filters (bottom sheet) — Providers / Diagnoses /
+            # Specialties / Institutions multi-selects, Referrals metric only.
+            dmc.Drawer(
+                id=_REFS_DRAWER_ID,
+                title="Referral Filters",
+                position="bottom",
+                size="85%",
+                opened=False,
+                padding="md",
+                children=dmc.Stack(gap="sm", children=[
+                    *[
+                        dmc.MultiSelect(
+                            id=field_id,
+                            label=label,
+                            data=[],
+                            value=[],
+                            placeholder=f"All {label}",
+                            searchable=True,
+                            clearable=True,
+                            hidePickedOptions=False,
+                            size="sm",
+                            comboboxProps={"zIndex": 10000},
+                        )
+                        for _key, field_id, _col, label in _REFS_FILTER_FIELDS
+                    ],
+                    dmc.Button(
+                        "Clear All",
+                        id=_REFS_CLEAR_ID,
+                        variant="default",
+                        size="xs",
+                        fullWidth=True,
+                        mt=4,
+                    ),
+                ]),
+            ),
+
             dmc.SegmentedControl(
                 id=f"{PAGE_ID}-avail-view",
                 value="consults",
@@ -1072,6 +1134,15 @@ def _apply_page_filters(df, spec, settings):
     phys_col = spec.get("physician_col")
     if phys and phys != "all" and phys_col and not df.empty and phys_col in df.columns:
         df = df[df[phys_col] == phys]
+    # Referral-specific filters (provider / diagnosis / specialty /
+    # institution) — present in settings only when the Referrals metric is
+    # active; each non-empty selection ANDs an isin() on its column.
+    refs_filters = settings.get("refs") or {}
+    if refs_filters and not df.empty:
+        for key, _fid, col, _label in _REFS_FILTER_FIELDS:
+            vals = refs_filters.get(key)
+            if vals and col in df.columns:
+                df = df[df[col].isin(vals)]
     return df
 
 
@@ -1082,11 +1153,14 @@ def _trend_summary(df, spec, range_key, counts, agg, anchor=None):
         out["total"] = 0
         return out
     out["total"] = int(counts.sum())
-    # Business-day daily counts for average.
-    daily_nz = counts[(counts > 0) & (counts.index.weekday < 5)]
-    out["biz_days"] = int(len(daily_nz))
-    out["daily_avg"] = round(float(daily_nz.mean()), 1) if not daily_nz.empty else 0
-    out["peak_day"] = int(daily_nz.max()) if not daily_nz.empty else 0
+    # Daily stats over business days (weekdays minus zero-count holidays).
+    # Zeros on regular business days count toward the average, so sparse
+    # series average below 1 instead of pinning at "1 per active day".
+    weekdays = counts[counts.index.weekday < 5]
+    biz = weekdays[~(weekdays.index.isin(get_holidays()) & (weekdays.values == 0))]
+    out["biz_days"] = int(len(biz))
+    out["daily_avg"] = round(float(biz.mean()), 1) if not biz.empty else 0
+    out["peak_day"] = int(biz.max()) if not biz.empty else 0
     # Prior-period comparison — anchor on the dataset's latest date so the
     # comparison window matches the (filter-independent) selected range.
     date_col = spec["date_col"]
@@ -1452,11 +1526,17 @@ clientside_callback(
     Input(f"{PAGE_ID}-phys-cycle-btn", "n_clicks"),
     Input(f"{PAGE_ID}-metric", "value"),
     Input(f"{PAGE_ID}-range", "value"),
+    Input(_REFS_FILTER_FIELDS[0][1], "value"),
+    Input(_REFS_FILTER_FIELDS[1][1], "value"),
+    Input(_REFS_FILTER_FIELDS[2][1], "value"),
+    Input(_REFS_FILTER_FIELDS[3][1], "value"),
     State(f"{PAGE_ID}-dept-sel", "data"),
     State(f"{PAGE_ID}-phys-sel", "data"),
 )
-def cycle_filters(_dept_n, _phys_n, metric, range_key, left_cur, phys_cur):
+def cycle_filters(_dept_n, _phys_n, metric, range_key,
+                  ref_prov, ref_dx, ref_spec, ref_inst, left_cur, phys_cur):
     from dash import ctx
+    from dash.exceptions import PreventUpdate
     spec = _METRIC_BY_VALUE.get(metric) or _METRICS[0]
     phys_col = spec.get("physician_col")
     left_values = spec.get("left_values")
@@ -1464,10 +1544,15 @@ def cycle_filters(_dept_n, _phys_n, metric, range_key, left_cur, phys_cur):
     left_labels = spec.get("left_labels") or {}
     left_applies = bool(left_values)
     phys_applies = phys_col is not None
+    refs_mode = metric == "refs"
     date_col = spec["date_col"]
     trig = ctx.triggered_id
     dept_btn = f"{PAGE_ID}-dept-cycle-btn"
     phys_btn = f"{PAGE_ID}-phys-cycle-btn"
+    # In refs mode the right button opens the referral-filter drawer
+    # (clientside) — the tap itself changes no selection, so skip the rerender.
+    if refs_mode and trig == phys_btn:
+        raise PreventUpdate
 
     # Full metric frame (all-time) + the subset within the selected timeframe.
     # Distinction matters: the *universe* (what's a valid selection at all) comes
@@ -1530,9 +1615,19 @@ def cycle_filters(_dept_n, _phys_n, metric, range_key, left_cur, phys_cur):
     # settings["dept"] carries the left-filter value (department OR task-type
     # group); the metric's frame_fn interprets it.
     settings = {"dept": left_sel, "physician": phys}
+    if refs_mode:
+        settings["refs"] = {
+            "provider": ref_prov or [],
+            "dx": ref_dx or [],
+            "specialty": ref_spec or [],
+            "institution": ref_inst or [],
+        }
 
     left_label = "N/A" if not left_applies else left_labels.get(left_sel, left_sel)
-    if not phys_applies:
+    if refs_mode:
+        n_active = sum(len(v) for v in settings["refs"].values())
+        phys_label = f"Filters ({n_active})" if n_active else "Filters"
+    elif not phys_applies:
         phys_label = "N/A"
     elif phys == "all":
         phys_label = phys_all_label
@@ -1542,7 +1637,7 @@ def cycle_filters(_dept_n, _phys_n, metric, range_key, left_cur, phys_cur):
 
     return (left_sel, phys, settings,
             left_label, phys_label,
-            not left_applies, not phys_applies)
+            not left_applies, not (phys_applies or refs_mode))
 
 # Group C: drawer toggle.
 clientside_callback(
@@ -1570,6 +1665,62 @@ clientside_callback(
     State(f"{PAGE_ID}-cum-info-drawer", "opened"),
     prevent_initial_call=True,
 )
+
+
+# Referral-filter drawer — the right cycle button opens it when the Referrals
+# metric is active (for every other metric that button cycles physicians).
+clientside_callback(
+    """function(n, metric, opened) {
+        if (!n || metric !== "refs") { return window.dash_clientside.no_update; }
+        return !opened;
+    }""",
+    Output(_REFS_DRAWER_ID, "opened"),
+    Input(f"{PAGE_ID}-phys-cycle-btn", "n_clicks"),
+    State(f"{PAGE_ID}-metric", "value"),
+    State(_REFS_DRAWER_ID, "opened"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """function(n) { return [[], [], [], []]; }""",
+    Output(_REFS_FILTER_FIELDS[0][1], "value"),
+    Output(_REFS_FILTER_FIELDS[1][1], "value"),
+    Output(_REFS_FILTER_FIELDS[2][1], "value"),
+    Output(_REFS_FILTER_FIELDS[3][1], "value"),
+    Input(_REFS_CLEAR_ID, "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+@callback(
+    Output(_REFS_FILTER_FIELDS[0][1], "data"),
+    Output(_REFS_FILTER_FIELDS[1][1], "data"),
+    Output(_REFS_FILTER_FIELDS[2][1], "data"),
+    Output(_REFS_FILTER_FIELDS[3][1], "data"),
+    Input(_REFS_DRAWER_ID, "opened"),
+    prevent_initial_call=True,
+)
+def populate_refs_filter_options(opened):
+    """Fill the referral-filter multi-selects when the drawer opens. Options
+    come from the full (all-time) referrals frame, busiest value first; the
+    frame is lru-cached so this is cheap after the first open."""
+    if not opened:
+        return no_update, no_update, no_update, no_update
+    spec = _METRIC_BY_VALUE["refs"]
+    try:
+        df = spec["frame_fn"](None)
+    except Exception:
+        df = pd.DataFrame()
+    out = []
+    for _key, _fid, col, _label in _REFS_FILTER_FIELDS:
+        if df is None or df.empty or col not in df.columns:
+            out.append([])
+            continue
+        vals = df[col].dropna().astype(str)
+        vals = vals[vals.str.strip() != ""]
+        out.append([{"value": v, "label": v} for v in vals.value_counts().index])
+    return out[0], out[1], out[2], out[3]
 
 
 def _fmt_int(v):
@@ -1694,9 +1845,10 @@ def update_physician_options(metric, current_phys):
     spec = _METRIC_BY_VALUE.get(metric) or _METRICS[0]
     phys_col = spec.get("physician_col")
     if not phys_col:
-        # Referrals — no physician filter applies.
+        # Referrals — no physician filter; the on-page Filters button opens
+        # the referral-specific filter drawer instead.
         return ([{"value": "all", "label": "N/A for Referrals"}],
-                "all", True, "no physician filter")
+                "all", True, "use the Filters button")
 
     try:
         df = spec["frame_fn"](None)
