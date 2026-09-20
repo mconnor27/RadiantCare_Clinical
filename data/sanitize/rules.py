@@ -129,14 +129,16 @@ SIMPLE_RULES: list[dict] = [
     {
         # One row per patient-course keyed on CourseKey (negative for
         # Pluvicto — the loader must keep those). AuthorName / physician
-        # columns are clinicians, kept per the design decision.
+        # columns are clinicians, kept per the design decision. Nightly
+        # all-history mirror (single Complete/ file) as of 2026-09-20;
+        # the windowed Incremental/EOT feed it replaced is retired.
         "name": "EOT",
-        "subdir": "Incremental/EOT",
-        "pattern": "EOT_*.csv",
+        "subdir": "Complete",
+        "pattern": "EOT.csv",
         "drop": ["PatientName"],
         "hash": ["PatientMRN"],
         "add_short_code_from": "PatientMRN",  # worklist needs a patient handle
-        "incremental": True,
+        "incremental": False,
     },
     {
         "name": "Billing",

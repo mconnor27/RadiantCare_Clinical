@@ -790,14 +790,14 @@ SQL_SCRIPTS = {
             "split(). Column order is part of the feed contract — new columns "
             "append, never reorder. The dashboard loader swaps names back to "
             "'Last, First'.",
-            "Upsert key is CourseKey (ARIA's own ctrCourseSer — survives "
-            "warehouse reloads). Pluvicto pseudo-courses use NEGATIVE keys "
-            "(minus the first injection's serial), so a loader validating "
-            "CourseKey > 0 would silently drop them. Daily export looks back "
-            "365 days (@ReportLookbackDays); the loader accumulates-and-"
-            "overwrites so history persists beyond the window. A 90-day "
-            "late-note catch-up re-emits an aged-out course as DOCUMENTED the "
-            "night after its note is finally written.",
+            "Key is CourseKey (ARIA's own ctrCourseSer — survives warehouse "
+            "reloads). Pluvicto pseudo-courses use NEGATIVE keys (minus the "
+            "first injection's serial), so a loader validating CourseKey > 0 "
+            "would silently drop them. The nightly export runs all-history "
+            "(@ReportLookbackDays = 0, floored at 2021-08-01) into "
+            "Complete/EOT.csv — a full mirror, so every verdict is re-checked "
+            "every night and the windowed-feed catch-up machinery turns "
+            "itself off (@IsAllHistoryRun).",
         ],
         "output_cols": (
             "31 columns: CourseKey, DimCourseID, PatientMRN, PatientName, "
@@ -811,9 +811,9 @@ SQL_SCRIPTS = {
             "DaysUndocumented, ElapsedDays."
         ),
         "date_range": (
-            "365 days back (@ReportLookbackDays) → today; notes matched at any "
-            "date. The warehouse's first End of Treatment note is 2021-08-01 — "
-            "courses before that floor can never resolve."
+            "All history, every run (@ReportLookbackDays = 0) — bounded by "
+            "@ReportFloorDate 2021-08-01, the warehouse's first End of "
+            "Treatment note; courses before that floor can never resolve."
         ),
     },
     "Workflow_Events": {

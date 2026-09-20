@@ -1445,31 +1445,44 @@ def load_otvs():
 
 @_ttl_cache()
 def load_eot():
-    """Load EOT_*.csv — End-of-Treatment documentation audit.
+    """Load Complete/EOT.csv — End-of-Treatment documentation audit.
 
     One row per patient-course from EndOfTreatment_Documentation.sql,
     answering: is the course over, does a treatment summary exist, who
     wrote it, and how long did it take.
 
-    Upsert key is CourseKey (ARIA's own course serial — survives warehouse
+    The nightly export is ALL HISTORY (@ReportLookbackDays = 0; the
+    script's own 2021-08-01 floor bounds the start), so the single
+    Complete/ file is a full mirror: every verdict is re-checked every
+    night, and a row ARIA retracts disappears with it. No incremental
+    assembly, no upsert, no stale-verdict zombies. (The original 365-day
+    windowed feed lived in Incremental/EOT — kept as a fallback until
+    every environment has the mirror file.)
+
+    Key is CourseKey (ARIA's own course serial — survives warehouse
     reloads). Pluvicto pseudo-courses carry NEGATIVE keys by design, so
-    never filter to CourseKey > 0. Daily files look back 365 days;
-    _load_incremental's keep-latest dedup gives accumulate-and-overwrite:
-    every course ever exported stays in the store with its latest verdict
-    (a course reading MISSING one day and DOCUMENTED later is the same
-    row corrected). Courses that age out of the window keep their last
-    verdict.
+    never filter to CourseKey > 0.
 
     Free-text columns are CSV-safe at source (commas → semicolons, per the
     Power Automate feed contract), so 'Tinnel; Brent' → 'Tinnel, Brent' is
     restored here. Departments can list multiple sites — first one wins.
     Dates are ISO (yyyy-mm-dd), not the usual ARIA MM/DD/YYYY.
     """
-    _src = _source_files_for_incremental(DATA_INCREMENTAL / "EOT", "EOT")
-    cached = _read_parquet_cache("EOT", _src)
-    if cached is not None:
-        return cached
-    df = _load_incremental(DATA_INCREMENTAL / "EOT", "EOT", "CourseKey")
+    _mirror = DATA_COMPLETE / "EOT.csv"
+    if _mirror.exists():
+        _src = [_mirror]
+        cached = _read_parquet_cache("EOT", _src)
+        if cached is not None:
+            return cached
+        df = _read_csv_safe(_mirror)
+        if "CourseKey" in df.columns:
+            df = df.drop_duplicates(subset=["CourseKey"], keep="last")
+    else:
+        _src = _source_files_for_incremental(DATA_INCREMENTAL / "EOT", "EOT")
+        cached = _read_parquet_cache("EOT", _src)
+        if cached is not None:
+            return cached
+        df = _load_incremental(DATA_INCREMENTAL / "EOT", "EOT", "CourseKey")
     if df.empty:
         return df
     df = _normalize_columns(df, {

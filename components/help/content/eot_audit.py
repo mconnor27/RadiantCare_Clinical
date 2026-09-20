@@ -144,14 +144,14 @@ UI_CONTENT = dmc.Stack(
             "Data handling",
             "tabler:database",
             bullets([
-                "Source: EOT_yyyymmdd.csv files in Incremental/EOT, exported "
-                "daily with a 365-day lookback.",
-                "The loader upserts on CourseKey (ARIA's own course serial): "
-                "all files concatenate in date order and the newest row per "
-                "course wins, so a course flips Missing → Documented in place "
-                "while courses that age out of the export window keep their "
-                "last verdict. History therefore extends beyond any single "
-                "file's range — the first export seeded back to 2021.",
+                "Source: Complete/EOT.csv, exported nightly as a FULL-HISTORY "
+                "mirror (@ReportLookbackDays = 0; the script's built-in "
+                "2021-08-01 floor bounds the start — the date of the first "
+                "EOT note in the warehouse).",
+                "Mirror semantics: every course's verdict is re-checked every "
+                "night, so late notes, ARIA retractions, and author fixes all "
+                "flow through — and a row the warehouse retracts disappears "
+                "instead of living on with a stale verdict.",
                 "Pluvicto courses carry negative CourseKeys by design (no "
                 "DimCourse row exists); the loader keeps them.",
                 "Free-text fields arrive CSV-safe (commas replaced with "
@@ -160,9 +160,9 @@ UI_CONTENT = dmc.Stack(
                 "Multi-site courses list several departments — the first one "
                 "is used for department filtering.",
                 "Old Missing rows from 2021-2023 are historical compliance "
-                "findings from the all-history seed export; the default "
-                "12-month view scopes the worklist to the actionable set. "
-                "Switch to All Time to see the full history.",
+                "findings that can never resolve (their notes predate the "
+                "warehouse's records) — waive them, or leave the default "
+                "12-month view scoping the worklist to the actionable set.",
             ]),
         ),
     ],

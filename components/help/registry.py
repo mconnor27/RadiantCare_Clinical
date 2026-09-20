@@ -136,9 +136,9 @@ HELP_PAGES = [
             "EOT Audit reads the EndOfTreatment_Documentation extract — one row "
             "per patient-course answering whether the end-of-treatment summary "
             "was written, who wrote it, and how long after the last fraction it "
-            "appeared. The daily export looks back 365 days and the loader "
-            "upserts on CourseKey, so the local store accumulates the full "
-            "history while each course carries its latest verdict."
+            "appeared. The nightly export is a full-history mirror "
+            "(@ReportLookbackDays = 0, floored at 2021-08-01), so every "
+            "verdict is re-checked every night."
         ),
         "ui_module": "eot_audit",
     },
