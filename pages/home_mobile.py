@@ -395,24 +395,6 @@ def _build_trend_fig(counts, label, color, range_key, agg="D"):
             name=_AGG_LABEL[agg],
         ))
 
-    # Monthly-mode: label each bar with its total. When many bars, drop to a
-    # smaller font and skip every other label (anchored to the most recent).
-    bar_annotations = []
-    if agg == "M":
-        n = len(bars)
-        dense = n > 8
-        font_size = 10 if dense else 11
-        keep = set(range(n)) if not dense else {i for i in range(n) if (n - 1 - i) % 2 == 0}
-        for i, y_val in enumerate(bars.values):
-            if i not in keep:
-                continue
-            bar_annotations.append(dict(
-                x=i, y=y_val,
-                text=f"{int(round(y_val)):,}",
-                showarrow=False,
-                yshift=8,
-                font=dict(family=FONT_FAMILY, size=font_size),
-            ))
     # Smoothed trend line — daily fits the business-day series on the date
     # axis; weekly/monthly fit the binned sums on the numeric bar axis
     # (coarser frac since there are far fewer points).
@@ -471,7 +453,6 @@ def _build_trend_fig(counts, label, color, range_key, agg="D"):
         yaxis=dict(title=None, fixedrange=True),
         bargap=0.1,
         dragmode=False,
-        annotations=bar_annotations,
     )
     return fig
 
