@@ -109,6 +109,13 @@ def _metric_df_tx_mod(departments):
 # Treatment page (Electron / 3D Conformal / IMRT / VMAT / SRS/SBRT / Other).
 _MODALITY_VALUES = ["all"] + _TECHNIQUE_ORDER
 
+# Cycle-button styling: content-based widths (flex-basis auto) so a long
+# label like "All MDs (Compare)" gets more room than a short site name.
+# Buttons whose filter doesn't apply to the current metric are hidden
+# entirely rather than shown as disabled "N/A".
+_CYCLE_BTN_STYLE = {"flex": "1 1 auto", "minWidth": 0, "fontWeight": 500}
+_CYCLE_BTN_HIDDEN = {**_CYCLE_BTN_STYLE, "display": "none"}
+
 _METRICS = [
     {"value": "tx",       "label": "Treatments", "color": CHART_COLORWAY[0], "date_col": "ScheduledDateTime", "frame_fn": _metric_df_tx_mod,   "physician_col": "TreatingPhysician",   "left_values": _DEPTS,            "left_labels": _DEPT_LABEL,     "left_col": "Department", "mod_col": "_Modality"},
     {"value": "consults", "label": "Consults",   "color": CHART_COLORWAY[2], "date_col": "ScheduledDateTime", "frame_fn": _metric_df_consults, "physician_col": "AppointmentPhysician","left_values": _DEPTS,            "left_labels": _DEPT_LABEL,     "left_col": "Department"},
@@ -608,6 +615,11 @@ def _build_cum_compare_fig(md_counts, label, cum_mode="line"):
             xanchor="right", yanchor="middle",
             xshift=-4, yshift=int(round(nat_px - px)) + 8,
             font=dict(family=FONT_FAMILY, size=10, color=color),
+            # Translucent paper-colored pill so the label stays readable
+            # where it crosses other lines. assets/02_theme.js swaps this
+            # to the dark paper color in dark mode.
+            bgcolor="rgba(255,255,255,0.75)",
+            borderpad=1,
         ))
     apply_default_layout(fig, title=None)
     fig.update_layout(
@@ -962,15 +974,17 @@ def layout():
                         size="xs",
                         radius="sm",
                         variant="default",
-                        style={"flex": 1, "fontWeight": 500},
+                        px=10,
+                        style=_CYCLE_BTN_STYLE,
                     ),
                     dmc.Button(
-                        "All MDs",
+                        "All MDs (Total)",
                         id=f"{PAGE_ID}-phys-cycle-btn",
                         size="xs",
                         radius="sm",
                         variant="default",
-                        style={"flex": 1, "fontWeight": 500},
+                        px=10,
+                        style=_CYCLE_BTN_STYLE,
                     ),
                     dmc.Button(
                         "All Modalities",
@@ -978,7 +992,8 @@ def layout():
                         size="xs",
                         radius="sm",
                         variant="default",
-                        style={"flex": 1, "fontWeight": 500},
+                        px=10,
+                        style=_CYCLE_BTN_STYLE,
                     ),
                 ],
             ),
@@ -1690,9 +1705,9 @@ clientside_callback(
     Output(f"{PAGE_ID}-dept-cycle-btn", "children"),
     Output(f"{PAGE_ID}-phys-cycle-btn", "children"),
     Output(f"{PAGE_ID}-mod-cycle-btn", "children"),
-    Output(f"{PAGE_ID}-dept-cycle-btn", "disabled"),
-    Output(f"{PAGE_ID}-phys-cycle-btn", "disabled"),
-    Output(f"{PAGE_ID}-mod-cycle-btn", "disabled"),
+    Output(f"{PAGE_ID}-dept-cycle-btn", "style"),
+    Output(f"{PAGE_ID}-phys-cycle-btn", "style"),
+    Output(f"{PAGE_ID}-mod-cycle-btn", "style"),
     Input(f"{PAGE_ID}-dept-cycle-btn", "n_clicks"),
     Input(f"{PAGE_ID}-phys-cycle-btn", "n_clicks"),
     Input(f"{PAGE_ID}-mod-cycle-btn", "n_clicks"),
@@ -1818,12 +1833,12 @@ def cycle_filters(_dept_n, _phys_n, _mod_n, metric, range_key,
             "institution": ref_inst or [],
         }
 
-    left_label = "N/A" if not left_applies else left_labels.get(left_sel, left_sel)
+    left_label = "" if not left_applies else left_labels.get(left_sel, left_sel)
     if refs_mode:
         n_active = sum(len(v) for v in settings["refs"].values())
         phys_label = f"Filters ({n_active})" if n_active else "Filters"
     elif not phys_applies:
-        phys_label = "N/A"
+        phys_label = ""
     elif phys == "all":
         phys_label = f"{phys_all_label} (Total)"
     elif phys == "compare":
@@ -1833,15 +1848,20 @@ def cycle_filters(_dept_n, _phys_n, _mod_n, metric, range_key,
         phys_label = phys.split(",")[0].strip()
 
     if not mod_applies:
-        mod_label = "N/A"
+        mod_label = ""
     elif mod_sel == "all":
         mod_label = "All Modalities"
     else:
         mod_label = mod_sel
 
+    # Inapplicable buttons are hidden, not shown as disabled "N/A".
+    dept_style = _CYCLE_BTN_STYLE if left_applies else _CYCLE_BTN_HIDDEN
+    phys_style = _CYCLE_BTN_STYLE if (phys_applies or refs_mode) else _CYCLE_BTN_HIDDEN
+    mod_style = _CYCLE_BTN_STYLE if mod_applies else _CYCLE_BTN_HIDDEN
+
     return (left_sel, phys, mod_sel, settings,
             left_label, phys_label, mod_label,
-            not left_applies, not (phys_applies or refs_mode), not mod_applies)
+            dept_style, phys_style, mod_style)
 
 # Group C: drawer toggle.
 clientside_callback(

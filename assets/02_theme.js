@@ -136,6 +136,23 @@
             ? 'rgba(' + swap + ', ' + alpha + ')'
             : 'rgb(' + swap + ')';
     }
+    // Swap a paper-colored annotation pill (e.g. the compare-mode line-end
+    // labels use rgba(255,255,255,α) so text stays readable over lines)
+    // between the light and dark paper colors, preserving alpha.
+    function remapPaperBg(color, theme) {
+        if (!color || typeof color !== 'string') return null;
+        var m = color.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\s*\)$/i);
+        if (!m) return null;
+        var triplet = m[1] + ',' + m[2] + ',' + m[3];
+        var alpha = m[4] != null ? m[4] : '1';
+        if (theme === 'dark' && triplet === '255,255,255') {
+            return 'rgba(31,34,42,' + alpha + ')';   // DARK.paper #1F222A
+        }
+        if (theme !== 'dark' && triplet === '31,34,42') {
+            return 'rgba(255,255,255,' + alpha + ')';
+        }
+        return null;
+    }
     function collectAnnotationUpdates(layout, theme) {
         var anns = (layout && layout.annotations) || [];
         var updates = {};
@@ -221,7 +238,8 @@
                     if (fr) ann.font.color = fr;
                 }
                 if (typeof ann.bgcolor === 'string') {
-                    var br = remapTraceColor(ann.bgcolor, theme);
+                    var br = remapTraceColor(ann.bgcolor, theme)
+                        || remapPaperBg(ann.bgcolor, theme);
                     if (br) ann.bgcolor = br;
                 }
                 if (typeof ann.bordercolor === 'string') {
