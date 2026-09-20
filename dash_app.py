@@ -348,6 +348,7 @@ import threading
 # Map page paths to dataset loader names they need
 _PAGE_DATASETS = {
     "/":                ["daily_volume", "treatment_detail", "clinic_visits", "simulations", "schedule_upcoming"],
+    "/mobile":          ["treatment_detail", "clinic_visits", "simulations", "tasks", "referrals", "schedule_upcoming"],
     "/operations":      ["daily_volume", "daily_volume_future", "treatment", "clinic_visits", "simulations", "schedule_upcoming"],
     "/scheduling":      ["schedule_upcoming", "clinic_visits", "simulations"],
     "/workflow":        ["workflow"],
