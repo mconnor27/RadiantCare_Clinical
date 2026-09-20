@@ -375,12 +375,23 @@ def _build_trend_fig(counts, label, color, range_key, agg="D"):
                 yshift=8,
                 font=dict(family=FONT_FAMILY, size=font_size),
             ))
-    # Smoothed line only in daily mode.
+    # Smoothed trend line — daily fits the business-day series on the date
+    # axis; weekly/monthly fit the binned sums on the numeric bar axis
+    # (coarser frac since there are far fewer points).
     if agg == "D":
         line = _loess_line(daily_biz, frac=0.15)
         if line is not None:
             fig.add_trace(go.Scatter(
                 x=line.index, y=line.values,
+                mode="lines", line=dict(color=color, width=2.5),
+                hoverinfo="skip",
+                name="Smoothed",
+            ))
+    else:
+        line = _loess_line(bars, frac=0.3)
+        if line is not None:
+            fig.add_trace(go.Scatter(
+                x=list(range(len(bars))), y=line.values,
                 mode="lines", line=dict(color=color, width=2.5),
                 hoverinfo="skip",
                 name="Smoothed",
@@ -1308,14 +1319,39 @@ def _trend_summary(df, spec, range_key, counts, agg, anchor=None):
         out["total"] = 0
         return out
     out["total"] = int(counts.sum())
-    # Daily stats over business days (weekdays minus zero-count holidays).
-    # Zeros on regular business days count toward the average, so sparse
-    # series average below 1 instead of pinning at "1 per active day".
-    weekdays = counts[counts.index.weekday < 5]
-    biz = weekdays[~(weekdays.index.isin(get_holidays()) & (weekdays.values == 0))]
-    out["biz_days"] = int(len(biz))
-    out["daily_avg"] = round(float(biz.mean()), 1) if not biz.empty else 0
-    out["peak_day"] = int(biz.max()) if not biz.empty else 0
+    # Average / peak respect the selected binning.
+    if agg == "D":
+        # Daily stats over business days (weekdays minus zero-count
+        # holidays). Zeros on regular business days count toward the
+        # average, so sparse series average below 1 instead of pinning
+        # at "1 per active day".
+        weekdays = counts[counts.index.weekday < 5]
+        biz = weekdays[~(weekdays.index.isin(get_holidays()) & (weekdays.values == 0))]
+        out["avg_label"] = "Daily avg (biz days)"
+        out["avg"] = round(float(biz.mean()), 1) if not biz.empty else 0
+        out["avg_sub"] = f"{len(biz)} days"
+        out["peak_label"] = "Peak day"
+        out["peak"] = int(biz.max()) if not biz.empty else 0
+    else:
+        # Weekly / monthly: average over COMPLETE bins only, so a partial
+        # current week/month doesn't drag the average down. Peak still
+        # considers every bin.
+        bins = counts.resample("W-SUN" if agg == "W" else "MS").sum()
+        start, end = counts.index[0], counts.index[-1]
+        if agg == "W":
+            complete = ((bins.index - pd.Timedelta(days=6)) >= start) & (bins.index <= end)
+            unit, name = "weeks", "Weekly"
+        else:
+            complete = (bins.index >= start) & ((bins.index + pd.offsets.MonthEnd(0)) <= end)
+            unit, name = "months", "Monthly"
+        full = bins[complete] if complete.any() else bins
+        out["avg_label"] = f"{name} avg"
+        out["avg"] = round(float(full.mean()), 1) if len(full) else 0
+        out["avg_sub"] = (f"{len(full)} complete {unit}"
+                          if complete.any() and len(full) < len(bins)
+                          else f"{len(full)} {unit}")
+        out["peak_label"] = "Peak week" if agg == "W" else "Peak month"
+        out["peak"] = int(bins.max()) if len(bins) else 0
     # Prior-period comparison — anchor on the dataset's latest date so the
     # comparison window matches the (filter-independent) selected range.
     date_col = spec["date_col"]
@@ -1985,12 +2021,12 @@ def render_trend_info(summary):
     if "prior_total" in summary:
         rows.append(_row("Prior period", _fmt_int(summary["prior_total"]),
                          sub=_fmt_delta(summary.get("prior_delta_pct"))))
-    if "daily_avg" in summary:
-        rows.append(_row("Daily avg (biz days)",
-                         f"{summary['daily_avg']:g}",
-                         sub=f"{summary.get('biz_days', 0)} days"))
-    if "peak_day" in summary:
-        rows.append(_row("Peak day", _fmt_int(summary["peak_day"])))
+    if "avg" in summary:
+        rows.append(_row(summary.get("avg_label", "Avg"),
+                         f"{summary['avg']:g}",
+                         sub=summary.get("avg_sub")))
+    if "peak" in summary:
+        rows.append(_row(summary.get("peak_label", "Peak"), _fmt_int(summary["peak"])))
     return dmc.Stack(gap=8, children=rows)
 
 
