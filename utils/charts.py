@@ -8,7 +8,7 @@ from config.settings import DEFAULT_LAYOUT, DEPARTMENT_COLORS, CHART_COLORWAY
 
 
 # Period-start frequencies matching .dt.to_period(code).dt.to_timestamp()
-_PERIOD_FREQ = {"W": "W-MON", "M": "MS", "Y": "YS"}
+_PERIOD_FREQ = {"W": "W-MON", "M": "MS", "Q": "QS", "Y": "YS"}
 
 
 def full_period_range(periods, agg):

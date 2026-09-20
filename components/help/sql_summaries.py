@@ -743,6 +743,79 @@ SQL_SCRIPTS = {
         "date_range": "2 months back → today.",
     },
 
+    "EndOfTreatment_Documentation": {
+        "total": 0, "sql": 0,
+        "purpose": (
+            "End-of-treatment documentation audit — one row per patient-course "
+            "answering four questions in one grid: is the course over (and when "
+            "did it end), does an End of Treatment note exist for it, who wrote "
+            "that note, and how long did it take from the course ending to the "
+            "note appearing. The anchor is the COURSE, not the note — a course "
+            "with no note is the whole point of the report, so it must be a "
+            "row, not an absence. Feeds this dashboard's EOT Audit page and a "
+            "Power Automate task pipeline (per-physician Planner tasks plus a "
+            "read-only Lists dashboard)."
+        ),
+        "unique_logic": [
+            "Completion is determined by the full 8-tier cascade ported verbatim "
+            "from Course_Completions.sql (ARIA stamp, D/C and LAST activities "
+            "with next-course caps, plan-fulfilled counters, inactivity "
+            "timeouts), so both reports agree on what \"completed\" means. "
+            "Pluvicto courses use a parallel 4-tier cascade.",
+            "A note is matched to a course by PATIENT + DATE WINDOW — there is "
+            "no key in the warehouse (FactVisitNotes' activity link doesn't "
+            "reach appointments, and the note body is an attached document DWH "
+            "can't see). The window opens no earlier than the course's own "
+            "first fraction and closes the day before the patient's next "
+            "course opens ITS window — disjoint by construction, so a note "
+            "belongs to the most recent course that had already ended when it "
+            "was written.",
+            "Author resolution reads every author-bearing column (five "
+            "DimResource keys + DimUserID_Override + OverrideText) with > 0 "
+            "guards against ARIA's zero-not-NULL unpopulated keys, ranked so a "
+            "known clinician outranks a service account. AuthorIsPrimaryOnc / "
+            "AuthorIsTreatingPhysician cross-check the note's author against "
+            "independently-resolved identities.",
+            "The grace clock runs from the LAST FRACTION: the summary is due "
+            "30 days after treatment ends. DaysAfterLastTx is the compliance "
+            "lag for documented courses; DaysUndocumented / ElapsedDays track "
+            "open rows against the same DueDate clock. IsOpenTask (0/1) is "
+            "precomputed for the task pipeline.",
+            "Split-course protection: Dupuytren (5 fx + 8-12 week break + 5 fx) "
+            "and Quadshot (repeating 4-fx cycles) prescriptions get extended "
+            "inactivity clocks so a planned break isn't declared complete "
+            "mid-break and then reported as missing documentation.",
+            "The output is CSV-safe at source: commas in free-text become "
+            "semicolons so the Power Automate flow parses lines with plain "
+            "split(). Column order is part of the feed contract — new columns "
+            "append, never reorder. The dashboard loader swaps names back to "
+            "'Last, First'.",
+            "Upsert key is CourseKey (ARIA's own ctrCourseSer — survives "
+            "warehouse reloads). Pluvicto pseudo-courses use NEGATIVE keys "
+            "(minus the first injection's serial), so a loader validating "
+            "CourseKey > 0 would silently drop them. Daily export looks back "
+            "365 days (@ReportLookbackDays); the loader accumulates-and-"
+            "overwrites so history persists beyond the window. A 90-day "
+            "late-note catch-up re-emits an aged-out course as DOCUMENTED the "
+            "night after its note is finally written.",
+        ],
+        "output_cols": (
+            "31 columns: CourseKey, DimCourseID, PatientMRN, PatientName, "
+            "CourseName, Modality, Departments, TreatingPhysician, "
+            "PrimaryOncologist, DocumentationStatus, IsOpenTask, DueDate, "
+            "FirstTxDate, LastTxDate, TreatmentDays, DeliveredFractions, "
+            "FractionsPrescribed, SessionsPlanned, SessionsDelivered, "
+            "ClinicalStatus, CompletionDate, CompletionBasis, EOTNoteDateTime, "
+            "EOTNoteCount, NotesLostToOtherCourse, AuthorName, "
+            "AuthorIsPrimaryOnc, AuthorIsTreatingPhysician, DaysAfterLastTx, "
+            "DaysUndocumented, ElapsedDays."
+        ),
+        "date_range": (
+            "365 days back (@ReportLookbackDays) → today; notes matched at any "
+            "date. The warehouse's first End of Treatment note is 2021-08-01 — "
+            "courses before that floor can never resolve."
+        ),
+    },
     "Workflow_Events": {
         "total": 2322, "sql": 1677,
         "purpose": (

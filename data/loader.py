@@ -1444,6 +1444,63 @@ def load_otvs():
 
 
 @_ttl_cache()
+def load_eot():
+    """Load EOT_*.csv — End-of-Treatment documentation audit.
+
+    One row per patient-course from EndOfTreatment_Documentation.sql,
+    answering: is the course over, does a treatment summary exist, who
+    wrote it, and how long did it take.
+
+    Upsert key is CourseKey (ARIA's own course serial — survives warehouse
+    reloads). Pluvicto pseudo-courses carry NEGATIVE keys by design, so
+    never filter to CourseKey > 0. Daily files look back 365 days;
+    _load_incremental's keep-latest dedup gives accumulate-and-overwrite:
+    every course ever exported stays in the store with its latest verdict
+    (a course reading MISSING one day and DOCUMENTED later is the same
+    row corrected). Courses that age out of the window keep their last
+    verdict.
+
+    Free-text columns are CSV-safe at source (commas → semicolons, per the
+    Power Automate feed contract), so 'Tinnel; Brent' → 'Tinnel, Brent' is
+    restored here. Departments can list multiple sites — first one wins.
+    Dates are ISO (yyyy-mm-dd), not the usual ARIA MM/DD/YYYY.
+    """
+    _src = _source_files_for_incremental(DATA_INCREMENTAL / "EOT", "EOT")
+    cached = _read_parquet_cache("EOT", _src)
+    if cached is not None:
+        return cached
+    df = _load_incremental(DATA_INCREMENTAL / "EOT", "EOT", "CourseKey")
+    if df.empty:
+        return df
+    df = _normalize_columns(df, {
+        "PatientMRN": "PatientId",
+        "PatientName": "PatientFullName",
+    })
+    for col in ("PatientFullName", "TreatingPhysician", "PrimaryOncologist",
+                "AuthorName"):
+        if col in df.columns and df[col].dtype == object:
+            df[col] = df[col].str.replace(";", ",", regex=False)
+    if "Departments" in df.columns and "Department" not in df.columns:
+        df["Department"] = df["Departments"].str.split(";").str[0].str.strip()
+    df = _clean_department(df)
+    for col in ("DueDate", "FirstTxDate", "LastTxDate", "CompletionDate",
+                "EOTNoteDateTime"):
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], format="ISO8601", errors="coerce")
+    # Short verdict for filtering/coloring; the long form stays in
+    # DocumentationStatus for the table.
+    if "DocumentationStatus" in df.columns:
+        status = df["DocumentationStatus"].astype(str).str.upper()
+        df["DocStatus"] = "Active"
+        df.loc[status.str.startswith("DOCUMENTED"), "DocStatus"] = "Documented"
+        df.loc[status.str.startswith("PENDING"), "DocStatus"] = "Pending"
+        df.loc[status.str.startswith("MISSING"), "DocStatus"] = "Missing"
+    df = _rename_generic_physicians(df)
+    _write_parquet_cache("EOT", df, _src)
+    return df
+
+
+@_ttl_cache()
 def load_weekly_visits():
     """Load Weekly Visits.csv."""
     _src = _source_files_for_incremental(DATA_INCREMENTAL / "WeeklyVisits", "Weekly Visits")

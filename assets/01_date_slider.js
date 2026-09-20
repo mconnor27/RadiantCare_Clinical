@@ -169,6 +169,7 @@
     registerSlider("simDateSlider",       2004, ["sim-date-slider"]);
     registerSlider("tasksDateSlider",     2004, ["tasks-date-slider"]);
     registerSlider("otvsDateSlider",      2004, ["otvs-date-slider"]);
+    registerSlider("eotDateSlider",       2004, ["eot-date-slider"]);
     registerSlider("coursesDateSlider",   2004, ["courses-date-slider"]);
     registerSlider("plansDateSlider",     2004, ["plans-date-slider"]);
     registerSlider("machinesDateSlider",  2004, ["machines-date-slider"]);

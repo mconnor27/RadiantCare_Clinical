@@ -51,6 +51,13 @@ CREATE TABLE IF NOT EXISTS cpt_course_reviews (
     updated_at  TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS eot_overrides (
+    course_key  TEXT PRIMARY KEY,
+    status      TEXT NOT NULL,
+    updated_by  TEXT NOT NULL DEFAULT '',
+    updated_at  TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS referring_physicians (
     npi           TEXT NOT NULL,
     address_key   TEXT NOT NULL DEFAULT '',
@@ -368,6 +375,40 @@ def get_all_reviews() -> dict[str, str]:
     with _connect() as conn:
         rows = conn.execute("SELECT session_id, status FROM cpt_reviews").fetchall()
     return {r["session_id"]: r["status"] for r in rows}
+
+
+def set_eot_override(course_key: str, status: str, updated_by: str = "") -> None:
+    """Insert or update an EOT documentation override.
+
+    status: 'waived' (open task accepted as not needing a note) or
+    'reopened' (documented course flagged back open). Keyed on the feed's
+    CourseKey — ARIA's own course serial, stable across warehouse reloads
+    (negative for Pluvicto pseudo-courses, stored as text either way).
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            """INSERT INTO eot_overrides (course_key, status, updated_by, updated_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(course_key) DO UPDATE SET
+                   status = excluded.status,
+                   updated_by = excluded.updated_by,
+                   updated_at = excluded.updated_at""",
+            (str(course_key), status, updated_by, now),
+        )
+
+
+def remove_eot_override(course_key: str) -> None:
+    """Remove an EOT override (undo — verdict reverts to the feed's)."""
+    with _connect() as conn:
+        conn.execute("DELETE FROM eot_overrides WHERE course_key = ?", (str(course_key),))
+
+
+def get_all_eot_overrides() -> dict[str, str]:
+    """Return {course_key: 'waived'|'reopened'} for all overridden courses."""
+    with _connect() as conn:
+        rows = conn.execute("SELECT course_key, status FROM eot_overrides").fetchall()
+    return {r["course_key"]: r["status"] for r in rows}
 
 
 def get_review_details() -> list[dict]:

@@ -127,6 +127,18 @@ SIMPLE_RULES: list[dict] = [
         "incremental": True,
     },
     {
+        # One row per patient-course keyed on CourseKey (negative for
+        # Pluvicto — the loader must keep those). AuthorName / physician
+        # columns are clinicians, kept per the design decision.
+        "name": "EOT",
+        "subdir": "Incremental/EOT",
+        "pattern": "EOT_*.csv",
+        "drop": ["PatientName"],
+        "hash": ["PatientMRN"],
+        "add_short_code_from": "PatientMRN",  # worklist needs a patient handle
+        "incremental": True,
+    },
+    {
         "name": "Billing",
         "subdir": "Incremental/Billing",
         "pattern": "Billing_*.csv",

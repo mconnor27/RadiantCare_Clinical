@@ -598,6 +598,94 @@ dagcomponentfuncs.CptReviewButtons = function (props) {
 };
 
 /**
+ * EOT Audit override buttons — Waive an open task, Reopen a documented one,
+ * Undo either. Sends {CourseKey, _action} to eot-store-override-action;
+ * the server callback persists it (reviews_db.eot_overrides) and refreshes.
+ */
+dagcomponentfuncs.EotOverrideButtons = function (props) {
+    var data = props.data || {};
+    var status = data.DocStatus || "";
+
+    var btnStyle = {
+        padding: "1px 8px",
+        fontSize: "11px",
+        cursor: "pointer",
+        borderRadius: "4px",
+        background: "transparent",
+        fontWeight: 600,
+        lineHeight: "20px",
+        border: "1px solid",
+    };
+
+    function send(action) {
+        var payload = {
+            CourseKey: data.CourseKey,
+            _action: action,
+            _ts: Date.now(),
+        };
+        if (window.dash_clientside) {
+            window.dash_clientside.set_props("eot-store-override-action", { data: payload });
+        }
+    }
+
+    function undoRow(label, color) {
+        return React.createElement(
+            "div",
+            { style: { display: "flex", gap: "6px", alignItems: "center", height: "100%" } },
+            React.createElement("span", { style: { color: color, fontWeight: 600, fontSize: "12px" } }, label),
+            React.createElement(
+                "button",
+                {
+                    onClick: function () { send("undo"); },
+                    style: Object.assign({}, btnStyle, {
+                        color: "#9CA3AF",
+                        borderColor: "#D1D5DB",
+                        fontSize: "10px",
+                        padding: "0px 6px",
+                    }),
+                },
+                "Undo"
+            )
+        );
+    }
+
+    if (status === "Waived") return undoRow("✓ Waived", "#9E9E9E");
+    if (status === "Reopened") return undoRow("↺ Reopened", "#1976D2");
+
+    if (status === "Missing" || status === "Pending") {
+        return React.createElement(
+            "div",
+            { style: { display: "flex", gap: "4px", alignItems: "center", height: "100%" } },
+            React.createElement(
+                "button",
+                {
+                    onClick: function () { send("waive"); },
+                    style: Object.assign({}, btnStyle, { color: "#9E9E9E", borderColor: "#9E9E9E" }),
+                },
+                "Waive"
+            )
+        );
+    }
+
+    if (status === "Documented") {
+        return React.createElement(
+            "div",
+            { style: { display: "flex", gap: "4px", alignItems: "center", height: "100%" } },
+            React.createElement(
+                "button",
+                {
+                    onClick: function () { send("reopen"); },
+                    style: Object.assign({}, btnStyle, { color: "#1976D2", borderColor: "#1976D2" }),
+                },
+                "Reopen"
+            )
+        );
+    }
+
+    return React.createElement("span", null, "");
+};
+
+/**
  * Diagnosis patient count link — clickable number that triggers detail panel.
  * Works for both referrals page (referrals-rpm-diag-detail-store)
  * and diagnosis page (diag-mgr-detail-store).

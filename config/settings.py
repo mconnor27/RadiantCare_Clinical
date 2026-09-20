@@ -297,6 +297,7 @@ NAV_SECTIONS = [
             {"label": "Simulation Timing", "path": "/sim-timing", "icon": "tabler:stopwatch"},
             {"label": "Tasks",         "path": "/tasks",         "icon": "tabler:checklist"},
             {"label": "OTVs",          "path": "/otvs",          "icon": "tabler:clipboard-check"},
+            {"label": "EOT Audit",     "path": "/eot-audit",     "icon": "tabler:file-check"},
             {"label": "Diagnosis",    "path": "/diagnosis",    "icon": "tabler:dna"},
         ],
     },

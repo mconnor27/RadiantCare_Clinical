@@ -467,6 +467,62 @@ All incremental files use `UniqueRowID` as the deduplication key. New rows are a
 
 ---
 
+### EOT (End-of-Treatment Documentation)
+
+- **File:** `Incremental/EOT/EOT_yyyymmdd.csv` (daily full snapshot, 365-day lookback)
+- **Source script:** `EndOfTreatment_Documentation.sql`
+- **Used by:** EOT Audit page
+
+One row per patient-course: is the course over, does an End of Treatment
+note (treatment summary) exist for it, who wrote it, and how long did it
+take. Also feeds a Power Automate task pipeline (per-physician Planner
+tasks), which is why free-text is CSV-safe and column order is a contract.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `CourseKey` | int | **Upsert key** — ARIA's own course serial (ctrCourseSer). NEGATIVE for Pluvicto pseudo-courses (minus first injection serial); never filter to `> 0` |
+| `DimCourseID` | int | DWH surrogate, for tracing only (renumbered on ETL rebuilds) |
+| `PatientMRN` | string | Patient identifier (loader renames to `PatientId`) |
+| `PatientName` | string | Patient name, CSV-safe (`LAST; FIRST` — loader restores comma) |
+| `CourseName` | string | Course identifier (e.g., C1_Prostate) |
+| `Modality` | string | EBRT or Pluvicto |
+| `Departments` | string | Site(s), semicolon-separated if multiple (loader takes first as `Department`) |
+| `TreatingPhysician` | string | Course-scoped treating physician (most frequent treatment biller, else prior-exam MD) |
+| `PrimaryOncologist` | string | Patient's oncologist of record |
+| `DocumentationStatus` | string | `MISSING - no End of Treatment note` / `PENDING - within grace period` / `DOCUMENTED` / `n/a - course still active` |
+| `IsOpenTask` | int | 1 = a task should exist right now (Missing + Pending) |
+| `DueDate` | date (ISO) | Last fraction + 30-day grace |
+| `FirstTxDate` / `LastTxDate` | date (ISO) | First / last fraction |
+| `TreatmentDays` / `DeliveredFractions` / `FractionsPrescribed` | int | Course extent (DeliveredFractions is the hybrid session count — boost-aware) |
+| `SessionsPlanned` / `SessionsDelivered` | int | ARIA's own counters — the Tier 1 completion evidence, display only |
+| `ClinicalStatus` | string | ACTIVE or COMPLETED (ARIA's flag, not the verdict) |
+| `CompletionDate` | date (ISO) | From the 8-tier completion cascade |
+| `CompletionBasis` | string | Which tier fired (Plan Fulfilled, ARIA stamp, D/C activity, inactivity timeout, …) |
+| `EOTNoteDateTime` | datetime (ISO) | First matched End of Treatment note |
+| `EOTNoteCount` | int | >1 = addenda / duplicate documentation (first note reported) |
+| `NotesLostToOtherCourse` | int | Concurrent-course arbitration losses (rare) |
+| `AuthorName` | string | Resolved note author, CSV-safe. Blank = no note; `(no author recorded)` / `(author key present, no name on file)` are distinct states |
+| `AuthorIsPrimaryOnc` / `AuthorIsTreatingPhysician` | string | Yes/No cross-checks |
+| `DaysAfterLastTx` | int | Compliance lag: last fraction → note |
+| `DaysUndocumented` | int | Last fraction → today, open rows only |
+| `ElapsedDays` | int | Unified deadline clock (equals DaysUndocumented while open, DaysAfterLastTx once documented) |
+
+**Business rules:**
+- Loader dedups on `CourseKey` keeping the latest file's row (accumulate-and-
+  overwrite): a course flips MISSING → DOCUMENTED in place; courses that age
+  out of the 365-day export window keep their last verdict.
+- Grace clock runs from the LAST FRACTION (not completion date): note due 30
+  days after treatment ends.
+- Notes are matched by patient + date window (no key exists in DWH); windows
+  are disjoint by construction between consecutive courses.
+- Loader derives `DocStatus` (Missing / Pending / Documented / Active) from
+  `DocumentationStatus`.
+- First export (2026-09-19) was an all-history seed back to 2021; EOT notes
+  don't exist in the warehouse before 2021-08-01, so older MISSING rows can
+  never resolve.
+
+---
+
 ### Plans
 
 - **File:** `Incremental/Plans/Plans.csv`

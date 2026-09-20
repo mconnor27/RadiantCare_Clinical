@@ -127,6 +127,22 @@ HELP_PAGES = [
         "ui_module": "otvs",
     },
     {
+        "path": "/eot-audit",
+        "label": "EOT Audit",
+        "icon": "tabler:file-check",
+        "section": "CLINICAL",
+        "sql": ["EndOfTreatment_Documentation"],
+        "sql_intro": (
+            "EOT Audit reads the EndOfTreatment_Documentation extract — one row "
+            "per patient-course answering whether the end-of-treatment summary "
+            "was written, who wrote it, and how long after the last fraction it "
+            "appeared. The daily export looks back 365 days and the loader "
+            "upserts on CourseKey, so the local store accumulates the full "
+            "history while each course carries its latest verdict."
+        ),
+        "ui_module": "eot_audit",
+    },
+    {
         "path": "/diagnosis",
         "label": "Diagnosis",
         "icon": "tabler:dna",

@@ -19,7 +19,7 @@ from data.loader import (
     load_treatment_detail, load_billing, load_workflow,
     load_referrals, load_daily_volume, load_clinic_visits,
     load_simulations, load_tasks, load_courses, load_plans,
-    load_weekly_visits, load_rvu_lookup,
+    load_weekly_visits, load_rvu_lookup, load_eot,
 )
 
 
@@ -40,6 +40,7 @@ def main():
         ("plans",            load_plans),
         ("weekly_visits",    load_weekly_visits),
         ("rvu_lookup",       load_rvu_lookup),
+        ("eot",              load_eot),
     ]
 
     total_start = time.time()
