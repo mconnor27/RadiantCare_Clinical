@@ -281,6 +281,11 @@ def _in_range(df, date_col, start, end):
     return df[(d >= start) & (d <= end + pd.Timedelta(days=1))]
 
 
+# Names never offered in the cycle/compare lists regardless of data volume
+# (per user request).
+_EXCLUDED_PHYSICIANS = {"Reece, William"}
+
+
 def _people_options(sub, phys_col, planner_mode, min_rows=10):
     """Names present in `sub`. Planner mode returns every present name ordered
     by volume (busiest first). MD mode lists the canonical radiation
@@ -291,6 +296,7 @@ def _people_options(sub, phys_col, planner_mode, min_rows=10):
     if sub is None or sub.empty or phys_col not in sub.columns:
         return []
     counts = sub[phys_col].dropna().astype(str).value_counts()
+    counts = counts[~counts.index.isin(_EXCLUDED_PHYSICIANS)]
     if counts.empty:
         return []
     if planner_mode:
