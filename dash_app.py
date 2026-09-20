@@ -341,6 +341,51 @@ app.clientside_callback(
     State("global-theme-store", "data"),
 )
 # ---------------------------------------------------------------------------
+# Callback-graph tripwire + self-heal
+# ---------------------------------------------------------------------------
+# The browser refuses to initialize when /_dash-dependencies lists the same
+# output in two callbacks ("Duplicate callback outputs" console error → blank
+# page for every full load). This corruption has been observed in production
+# without a local repro. Until the root cause is caught: scan the callback
+# list before serving it, log any duplicates loudly (the log line identifies
+# the culprit), and drop the later registration so clients always receive a
+# valid graph. allow_duplicate outputs (marked with "@") are exempt.
+import logging as _logging
+
+_dep_logger = _logging.getLogger("radiantcare.depguard")
+
+
+def _dedupe_callback_list():
+    seen = set()
+    kept, dropped = [], []
+    for entry in app._callback_list:
+        outs = [o.strip(".") for o in str(entry.get("output", "")).lstrip(".").split("..")
+                if o.strip(".")]
+        clash = [o for o in outs if o in seen and "@" not in o]
+        if clash:
+            dropped.append(clash)
+            continue
+        seen.update(o for o in outs if "@" not in o)
+        kept.append(entry)
+    if dropped:
+        _dep_logger.error(
+            "Duplicate callback outputs detected; dropped %d later registration(s): %s",
+            len(dropped), dropped[:10],
+        )
+        app._callback_list[:] = kept
+
+
+@server.before_request
+def _guard_dependencies():
+    from flask import request as _req
+    if _req.path.endswith("/_dash-dependencies"):
+        try:
+            _dedupe_callback_list()
+        except Exception:
+            _dep_logger.exception("dependency guard failed")
+
+
+# ---------------------------------------------------------------------------
 # Page-aware preload with progress tracking
 # ---------------------------------------------------------------------------
 import threading
