@@ -128,7 +128,7 @@ _METRIC_BY_VALUE = {m["value"]: m for m in _METRICS}
 _RANGES = [
     {"value": "ytd", "label": "YTD"},
     {"value": "ly",  "label": "Last Year"},
-    {"value": "py",  "label": "Prior Yr"},
+    {"value": "py",  "label": "Prior 12mo"},
     {"value": "6m",  "label": "6mo"},
     {"value": "3m",  "label": "3mo"},
 ]
@@ -281,19 +281,24 @@ def _in_range(df, date_col, start, end):
     return df[(d >= start) & (d <= end + pd.Timedelta(days=1))]
 
 
-def _people_options(sub, phys_col, planner_mode):
+def _people_options(sub, phys_col, planner_mode, min_rows=10):
     """Names present in `sub`. Planner mode returns every present name ordered
-    by volume (busiest first); otherwise the named radiation oncologists that
-    appear, in canonical order (per CLAUDE.md)."""
+    by volume (busiest first). MD mode lists the canonical radiation
+    oncologists first (in roster order), then any other physicians present
+    in the data by volume — longer lookback ranges reach MDs who predate the
+    current roster. MD names with fewer than `min_rows` rows are dropped as
+    noise (stray attributions, one-off locums)."""
     if sub is None or sub.empty or phys_col not in sub.columns:
         return []
-    col = sub[phys_col].dropna().astype(str)
-    if col.empty:
+    counts = sub[phys_col].dropna().astype(str).value_counts()
+    if counts.empty:
         return []
     if planner_mode:
-        return col.value_counts().index.tolist()
-    present = set(col.unique())
-    return [n for n in PHYSICIANS if n in present]
+        return counts.index.tolist()
+    counts = counts[counts >= min_rows]
+    canonical = [n for n in PHYSICIANS if n in counts.index]
+    others = [n for n in counts.index if n not in PHYSICIANS]
+    return canonical + others
 
 
 def _loess_line(counts, frac=0.15):
@@ -319,15 +324,15 @@ _RANGE_LABEL = {r["value"]: r["label"] for r in _RANGES}
 
 # Prior-Yr re-tap cycle (assets/py_cycle.js advances the offset store):
 # offset → segment label / summary label.
-_PY_LABELS = {1: "Prior Yr", 3: "Prior 3yr", 5: "Prior 5yr"}
-_RANGE_LABEL.update({"py3": "Prior 3yr", "py5": "Prior 5yr"})
+_PY_LABELS = {1: "Prior 12mo", 3: "Prior 3yr", 5: "Prior 5yr"}
+_RANGE_LABEL.update({"py": "Prior 12mo", "py3": "Prior 3yr", "py5": "Prior 5yr"})
 
 
 def _py_segment_label(py_off):
-    """Prior-Yr segment label with a muted cycle glyph — the one hint that
-    this segment re-taps to cycle, unlike its neighbors."""
+    """Prior-range segment label with a muted cycle glyph — the one hint
+    that this segment re-taps to cycle, unlike its neighbors."""
     return html.Span([
-        _PY_LABELS.get(py_off or 1, "Prior Yr"),
+        _PY_LABELS.get(py_off or 1, "Prior 12mo"),
         html.Span(" ↻", style={"opacity": 0.5, "fontSize": "0.85em"}),
     ])
 
@@ -1516,8 +1521,9 @@ def update_cum_chart(metric, range_key, py_off, cum_mode, project_on, settings, 
         planner_mode = (metric == "tasks"
                         and (settings or {}).get("dept") == _TASK_PLANNER_GROUP)
         in_range = _in_range(df, date_col, start, end)
-        # Planner lists are open-ended — cap to the 6 busiest for legibility.
-        names = _people_options(in_range, phys_col, planner_mode)[:6]
+        # Both planner and (now-dynamic) MD lists are open-ended — cap to 8
+        # series so the chart and its end labels stay legible.
+        names = _people_options(in_range, phys_col, planner_mode)[:8]
         md_counts = [(n, _counts_between(df[df[phys_col] == n], date_col, start, end))
                      for n in names]
         fig = _build_cum_compare_fig(md_counts, spec["label"], cum_mode=cum_mode)
