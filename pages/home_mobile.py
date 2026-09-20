@@ -134,14 +134,28 @@ _RANGES = [
 ]
 
 
+def _py_years_back(range_key):
+    """Years back for a prior-year range key ("py"→1, "py3"→3, "py5"→5)."""
+    return int(range_key[2:] or 1)
+
+
+def _effective_range_key(range_key, py_off):
+    """Fold the Prior-Yr cycle offset (1/3/5, from the re-tap cycler) into
+    the range key so all resolvers see "py"/"py3"/"py5"."""
+    if range_key == "py" and py_off in (3, 5):
+        return f"py{py_off}"
+    return range_key
+
+
 def _resolve_range(range_key, last_date):
     """Return (start, end) timestamps for the selected range, anchored on data's last date."""
     last = pd.Timestamp(last_date).normalize()
     this_year = last.year
     if range_key == "ytd":
         return pd.Timestamp(year=this_year, month=1, day=1), last
-    if range_key == "py":
-        return pd.Timestamp(year=this_year - 1, month=1, day=1), pd.Timestamp(year=this_year - 1, month=12, day=31)
+    if range_key.startswith("py"):
+        y = this_year - _py_years_back(range_key)
+        return pd.Timestamp(year=y, month=1, day=1), pd.Timestamp(year=y, month=12, day=31)
     if range_key == "12m":
         return last - pd.Timedelta(days=365), last
     if range_key == "6m":
@@ -166,8 +180,8 @@ def _resolve_range_offset(range_key, last_date, offset):
         y = this_year - offset
         return (pd.Timestamp(year=y, month=1, day=1),
                 pd.Timestamp(year=y, month=last.month, day=last.day))
-    if range_key == "py":
-        y = this_year - 1 - offset
+    if range_key.startswith("py"):
+        y = this_year - _py_years_back(range_key) - offset
         return (pd.Timestamp(year=y, month=1, day=1),
                 pd.Timestamp(year=y, month=12, day=31))
     if range_key == "12m":
@@ -181,7 +195,7 @@ def _resolve_range_offset(range_key, last_date, offset):
 
 def _period_label(range_key, start, end):
     # Short, single-line labels so they read horizontally on a narrow mobile chart.
-    if range_key in ("ytd", "py"):
+    if range_key == "ytd" or range_key.startswith("py"):
         return str(start.year)
     # m/yy–m/yy range for 12mo / 6mo / 3mo (e.g. "4/25–4/26").
     return f"{start.month}/{start.strftime('%y')}–{end.month}/{end.strftime('%y')}"
@@ -294,6 +308,11 @@ def _loess_line(counts, frac=0.15):
 
 
 _RANGE_LABEL = {r["value"]: r["label"] for r in _RANGES}
+
+# Prior-Yr re-tap cycle (assets/py_cycle.js advances the offset store):
+# offset → segment label / summary label.
+_PY_LABELS = {1: "Prior Yr", 3: "3 Yrs Ago", 5: "5 Yrs Ago"}
+_RANGE_LABEL.update({"py3": "3 Yrs Ago", "py5": "5 Yrs Ago"})
 
 _TITLE_OPTS = dict(
     font=dict(family=FONT_FAMILY, size=15, weight=600),
@@ -971,6 +990,9 @@ def layout():
                 size="sm",
                 mb=4,
             ),
+            # Prior-Yr cycle offset (1/3/5 years back) — advanced by re-tapping
+            # the selected "Prior Yr" segment (assets/py_cycle.js).
+            dcc.Store(id=f"{PAGE_ID}-py-offset", data=1),
 
             # Filter row: dept + physician cycle buttons. Each tap advances
             # to the next value; disabled when the filter doesn't apply to
@@ -1375,11 +1397,13 @@ def _trend_summary(df, spec, range_key, counts, agg, anchor=None):
     Output(f"{PAGE_ID}-trend-title", "children"),
     Input(f"{PAGE_ID}-metric", "value"),
     Input(f"{PAGE_ID}-range", "value"),
+    Input(f"{PAGE_ID}-py-offset", "data"),
     Input(f"{PAGE_ID}-trend-agg", "data"),
     Input(_SETTINGS_STORE_ID, "data"),
     Input(f"{PAGE_ID}-interval", "n_intervals"),
 )
-def update_trend_chart(metric, range_key, agg, settings, _n):
+def update_trend_chart(metric, range_key, py_off, agg, settings, _n):
+    range_key = _effective_range_key(range_key, py_off)
     spec = _METRIC_BY_VALUE.get(metric) or _METRICS[0]
     df = _apply_page_filters(None, spec, settings)
     anchor = _metric_last_date(spec)
@@ -1464,12 +1488,14 @@ def _cum_summary(df, spec, range_key, counts, cum_mode="line", anchor=None):
     Output(f"{PAGE_ID}-cum-title", "children"),
     Input(f"{PAGE_ID}-metric", "value"),
     Input(f"{PAGE_ID}-range", "value"),
+    Input(f"{PAGE_ID}-py-offset", "data"),
     Input(f"{PAGE_ID}-cum-mode", "data"),
     Input(f"{PAGE_ID}-cum-proj", "data"),
     Input(_SETTINGS_STORE_ID, "data"),
     Input(f"{PAGE_ID}-interval", "n_intervals"),
 )
-def update_cum_chart(metric, range_key, cum_mode, project_on, settings, _n):
+def update_cum_chart(metric, range_key, py_off, cum_mode, project_on, settings, _n):
+    range_key = _effective_range_key(range_key, py_off)
     spec = _METRIC_BY_VALUE.get(metric) or _METRICS[0]
     df = _apply_page_filters(None, spec, settings)
     anchor = _metric_last_date(spec)
@@ -1749,6 +1775,7 @@ clientside_callback(
     Input(f"{PAGE_ID}-mod-cycle-btn", "n_clicks"),
     Input(f"{PAGE_ID}-metric", "value"),
     Input(f"{PAGE_ID}-range", "value"),
+    Input(f"{PAGE_ID}-py-offset", "data"),
     Input(_REFS_FILTER_FIELDS[0][1], "value"),
     Input(_REFS_FILTER_FIELDS[1][1], "value"),
     Input(_REFS_FILTER_FIELDS[2][1], "value"),
@@ -1757,11 +1784,12 @@ clientside_callback(
     State(f"{PAGE_ID}-phys-sel", "data"),
     State(f"{PAGE_ID}-mod-sel", "data"),
 )
-def cycle_filters(_dept_n, _phys_n, _mod_n, metric, range_key,
+def cycle_filters(_dept_n, _phys_n, _mod_n, metric, range_key, py_off,
                   ref_prov, ref_dx, ref_spec, ref_inst,
                   left_cur, phys_cur, mod_cur):
     from dash import ctx
     from dash.exceptions import PreventUpdate
+    range_key = _effective_range_key(range_key, py_off)
     spec = _METRIC_BY_VALUE.get(metric) or _METRICS[0]
     phys_col = spec.get("physician_col")
     left_values = spec.get("left_values")
@@ -1898,6 +1926,20 @@ def cycle_filters(_dept_n, _phys_n, _mod_n, metric, range_key,
     return (left_sel, phys, mod_sel, settings,
             left_label, phys_label, mod_label,
             dept_style, phys_style, mod_style)
+
+# Prior-Yr segment label follows the cycle offset (Prior Yr / 3 Yrs Ago /
+# 5 Yrs Ago) so the control shows which year is displayed.
+@callback(
+    Output(f"{PAGE_ID}-range", "data"),
+    Input(f"{PAGE_ID}-py-offset", "data"),
+    prevent_initial_call=True,
+)
+def update_py_segment_label(py_off):
+    label = _PY_LABELS.get(py_off or 1, "Prior Yr")
+    return [{"value": r["value"],
+             "label": label if r["value"] == "py" else r["label"]}
+            for r in _RANGES]
+
 
 # Group C: drawer toggle.
 clientside_callback(
