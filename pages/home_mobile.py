@@ -15,12 +15,12 @@ from utils.permissions import is_admin
 from statsmodels.nonparametric.smoothers_lowess import lowess as _lowess
 
 from pages.home import (
-    _metric_df_tx,
     _metric_df_consults,
     _metric_df_sims,
     _metric_df_refs,
     _build_availability_calendar,
 )
+from pages.treatment import _TECHNIQUE_ORDER
 
 dash.register_page(__name__, path="/mobile", name="Mobile", order=99)
 
@@ -80,8 +80,37 @@ def _metric_df_tasks(task_groups):
     return df
 
 
+_TX_MOD_CACHE = {}
+
+
+def _metric_df_tx_mod(departments):
+    """Treatment-detail frame with a `_Modality` bucket column added
+    (PlanTechniques' primary entry → Electron / 3D Conformal / IMRT / VMAT /
+    SRS/SBRT / Other, same bucketing as the desktop Treatment page). The
+    bucket pass is cached per data load; `assign` is a shallow copy."""
+    from data.loader import load_treatment_detail
+    from pages.treatment import _bucket_technique
+    raw = load_treatment_detail()
+    key = id(raw)
+    if _TX_MOD_CACHE.get("key") != key:
+        if "PlanTechniques" in raw.columns:
+            mod = raw["PlanTechniques"].map(_bucket_technique)
+        else:
+            mod = pd.Series("Other", index=raw.index)
+        _TX_MOD_CACHE["key"] = key
+        _TX_MOD_CACHE["df"] = raw.assign(_Modality=mod)
+    df = _TX_MOD_CACHE["df"]
+    if departments and "Department" in df.columns:
+        return df[df["Department"].isin(departments)]
+    return df
+
+
+# Modality cycle for the Treatments metric — buckets from the desktop
+# Treatment page (Electron / 3D Conformal / IMRT / VMAT / SRS/SBRT / Other).
+_MODALITY_VALUES = ["all"] + _TECHNIQUE_ORDER
+
 _METRICS = [
-    {"value": "tx",       "label": "Treatments", "color": CHART_COLORWAY[0], "date_col": "ScheduledDateTime", "frame_fn": _metric_df_tx,       "physician_col": "TreatingPhysician",   "left_values": _DEPTS,            "left_labels": _DEPT_LABEL,     "left_col": "Department"},
+    {"value": "tx",       "label": "Treatments", "color": CHART_COLORWAY[0], "date_col": "ScheduledDateTime", "frame_fn": _metric_df_tx_mod,   "physician_col": "TreatingPhysician",   "left_values": _DEPTS,            "left_labels": _DEPT_LABEL,     "left_col": "Department", "mod_col": "_Modality"},
     {"value": "consults", "label": "Consults",   "color": CHART_COLORWAY[2], "date_col": "ScheduledDateTime", "frame_fn": _metric_df_consults, "physician_col": "AppointmentPhysician","left_values": _DEPTS,            "left_labels": _DEPT_LABEL,     "left_col": "Department"},
     {"value": "sims",     "label": "Sims",       "color": CHART_COLORWAY[1], "date_col": "ScheduledDateTime", "frame_fn": _metric_df_sims,     "physician_col": "ConsultPhysician",    "left_values": None,              "left_labels": {},             "left_col": None},
     {"value": "tasks",    "label": "Tasks",      "color": CHART_COLORWAY[4], "date_col": "StartDateTime",     "frame_fn": _metric_df_tasks,    "physician_col": "ResolvedMD",          "left_values": _TASK_LEFT_VALUES, "left_labels": _TASK_LEFT_LABEL,"left_col": "TaskGroup"},
@@ -498,6 +527,100 @@ def _build_cum_line_fig(counts, label, color, range_key, prior_counts, prior_shi
     return fig
 
 
+def _build_cum_compare_fig(md_counts, label, cum_mode="line"):
+    """Per-physician cumulative comparison — replaces the period-comparison
+    view when the physician cycle is on "(Compare)".
+
+    md_counts: list of (name, daily counts Series) tuples. Line mode draws one
+    smoothed cumulative line per person with an end label; bar mode draws one
+    total bar per person."""
+    title_text = f"{label} — Cumulative"
+    md_counts = [(n, c) for n, c in md_counts
+                 if c is not None and not c.empty and c.sum() > 0]
+    if not md_counts:
+        return _empty_fig(title_text)
+    # Busiest first — also fixes each person's color and label stacking order.
+    md_counts = sorted(md_counts, key=lambda t: -t[1].sum())
+    lasts = [n.split(",")[0].strip() for n, _ in md_counts]
+    colors = [CHART_COLORWAY[i % len(CHART_COLORWAY)] for i in range(len(md_counts))]
+    fig = go.Figure()
+
+    if cum_mode == "bar":
+        totals = [int(c.sum()) for _, c in md_counts]
+        idx = list(range(len(totals)))
+        fig.add_trace(go.Bar(
+            x=idx, y=totals,
+            marker_color=colors, marker_line_width=0, opacity=0.85,
+            customdata=lasts,
+            hovertemplate="<b>%{customdata}</b><br>%{y:,}<extra></extra>",
+            name="Total",
+        ))
+        annotations = [dict(
+            x=i, y=v, text=f"<b>{v:,}</b>", showarrow=False, yshift=8,
+            font=dict(family=FONT_FAMILY, size=11),
+        ) for i, v in zip(idx, totals)]
+        apply_default_layout(fig, title=None)
+        fig.update_layout(
+            showlegend=False, height=240,
+            margin=dict(l=10, r=10, t=12, b=28),
+            xaxis=dict(showgrid=False, title=None, tickmode="array",
+                       tickvals=idx, ticktext=lasts, tickangle=0,
+                       range=[-0.5, len(idx) - 0.5], zeroline=False,
+                       fixedrange=True),
+            yaxis=dict(title=None, range=[0, max(totals) * 1.18],
+                       zeroline=False, fixedrange=True),
+            bargap=0.25, dragmode=False,
+            annotations=annotations,
+        )
+        return fig
+
+    # Line mode — smoothed cumulative per person, raw values in hover
+    # (tooltips always show actuals), name+total label at each line end.
+    ymax = 0.0
+    ends = []
+    for (name, counts), last_name, color in zip(md_counts, lasts, colors):
+        cum = counts.cumsum()
+        disp = _smoothed_cum(cum)
+        fig.add_trace(go.Scatter(
+            x=disp.index, y=disp.values,
+            customdata=cum.values,
+            mode="lines", line=dict(color=color, width=2),
+            hovertemplate="%{x|%b %d}<br>%{customdata:,}<extra>" + last_name + "</extra>",
+            name=last_name,
+        ))
+        ends.append((float(cum.iloc[-1]), cum.index[-1], last_name, color))
+        ymax = max(ymax, float(cum.iloc[-1]))
+    y_top = ymax * 1.08 if ymax > 0 else 1
+    # End labels, collision-avoided: ends are value-desc; convert each natural
+    # position to pixels from the top of the ~180px plot area and force a
+    # minimum gap by shifting later (lower-valued) labels further down.
+    plot_px, min_gap = 180.0, 13.0
+    annotations = []
+    prev_px = None
+    for end_y, end_x, last_name, color in ends:
+        nat_px = (1 - end_y / y_top) * plot_px
+        px = nat_px if prev_px is None else max(nat_px, prev_px + min_gap)
+        prev_px = px
+        annotations.append(dict(
+            x=end_x, y=end_y,
+            text=f"{last_name} <b>{int(round(end_y)):,}</b>",
+            showarrow=False,
+            xanchor="right", yanchor="middle",
+            xshift=-4, yshift=int(round(nat_px - px)) + 8,
+            font=dict(family=FONT_FAMILY, size=10, color=color),
+        ))
+    apply_default_layout(fig, title=None)
+    fig.update_layout(
+        showlegend=False, height=240,
+        margin=dict(l=10, r=10, t=12, b=28),
+        xaxis=dict(showgrid=False, title=None, tickformat="%b '%y", fixedrange=True),
+        yaxis=dict(title=None, range=[0, y_top], fixedrange=True),
+        dragmode=False,
+        annotations=annotations,
+    )
+    return fig
+
+
 def _build_cum_bar_fig(df, date_col, label, color, range_key, n_periods=4, project=True, anchor=None):
     """Totals for current + (n_periods-1) prior equivalents as bars, with YTD projection stack."""
     title_text = f"{label} — Cumulative"
@@ -849,10 +972,19 @@ def layout():
                         variant="default",
                         style={"flex": 1, "fontWeight": 500},
                     ),
+                    dmc.Button(
+                        "All Modalities",
+                        id=f"{PAGE_ID}-mod-cycle-btn",
+                        size="xs",
+                        radius="sm",
+                        variant="default",
+                        style={"flex": 1, "fontWeight": 500},
+                    ),
                 ],
             ),
             dcc.Store(id=f"{PAGE_ID}-dept-sel", data="all"),
             dcc.Store(id=f"{PAGE_ID}-phys-sel", data="all"),
+            dcc.Store(id=f"{PAGE_ID}-mod-sel", data="all"),
 
             dmc.Paper(
                 withBorder=True, radius="md", shadow="xs", p=4, mb="sm",
@@ -1131,9 +1263,17 @@ def _apply_page_filters(df, spec, settings):
     except Exception:
         df = pd.DataFrame()
     # Physician filter — applied post-load on the metric's designated column.
+    # "compare" behaves like "all" here (no row filter); the cumulative chart
+    # callback splits the frame per person itself.
     phys_col = spec.get("physician_col")
-    if phys and phys != "all" and phys_col and not df.empty and phys_col in df.columns:
+    if (phys and phys not in ("all", "compare") and phys_col
+            and not df.empty and phys_col in df.columns):
         df = df[df[phys_col] == phys]
+    # Modality filter (Treatments only) — bucket column attached by frame_fn.
+    mod = settings.get("modality", "all")
+    mod_col = spec.get("mod_col")
+    if mod and mod != "all" and mod_col and not df.empty and mod_col in df.columns:
+        df = df[df[mod_col] == mod]
     # Referral-specific filters (provider / diagnosis / specialty /
     # institution) — present in settings only when the Referrals metric is
     # active; each non-empty selection ANDs an isin() on its column.
@@ -1284,8 +1424,36 @@ def update_cum_chart(metric, range_key, cum_mode, project_on, settings, _n):
     anchor = _metric_last_date(spec)
     counts, rng = _daily_counts(df, spec["date_col"], range_key, anchor=anchor)
     project_on = bool(project_on) if project_on is not None else True
-    summary = _cum_summary(df, spec, range_key, counts, cum_mode=cum_mode, anchor=anchor)
     title = f"{spec['label']} — Cumulative"
+
+    # "(Compare)" physician mode — one cumulative series per MD/planner
+    # instead of the current-vs-prior period comparison.
+    phys_col = spec.get("physician_col")
+    if (settings or {}).get("physician") == "compare" and phys_col and rng is not None:
+        start, end = rng
+        date_col = spec["date_col"]
+        planner_mode = (metric == "tasks"
+                        and (settings or {}).get("dept") == _TASK_PLANNER_GROUP)
+        in_range = _in_range(df, date_col, start, end)
+        # Planner lists are open-ended — cap to the 6 busiest for legibility.
+        names = _people_options(in_range, phys_col, planner_mode)[:6]
+        md_counts = [(n, _counts_between(df[df[phys_col] == n], date_col, start, end))
+                     for n in names]
+        fig = _build_cum_compare_fig(md_counts, spec["label"], cum_mode=cum_mode)
+        summary = {
+            "metric": spec["label"],
+            "range": _RANGE_LABEL.get(range_key, ""),
+            "mode": "compare",
+            "current_total": int(counts.sum()) if counts is not None else 0,
+            "people": sorted(
+                [{"label": n.split(",")[0].strip(),
+                  "total": int(c.sum()) if c is not None else 0}
+                 for n, c in md_counts],
+                key=lambda p: -p["total"]),
+        }
+        return fig, summary, title
+
+    summary = _cum_summary(df, spec, range_key, counts, cum_mode=cum_mode, anchor=anchor)
     if cum_mode == "bar":
         fig = _build_cum_bar_fig(df, spec["date_col"], spec["label"], spec["color"],
                                  range_key, project=project_on, anchor=anchor)
@@ -1517,13 +1685,17 @@ clientside_callback(
 @callback(
     Output(f"{PAGE_ID}-dept-sel", "data"),
     Output(f"{PAGE_ID}-phys-sel", "data"),
+    Output(f"{PAGE_ID}-mod-sel", "data"),
     Output(_SETTINGS_STORE_ID, "data"),
     Output(f"{PAGE_ID}-dept-cycle-btn", "children"),
     Output(f"{PAGE_ID}-phys-cycle-btn", "children"),
+    Output(f"{PAGE_ID}-mod-cycle-btn", "children"),
     Output(f"{PAGE_ID}-dept-cycle-btn", "disabled"),
     Output(f"{PAGE_ID}-phys-cycle-btn", "disabled"),
+    Output(f"{PAGE_ID}-mod-cycle-btn", "disabled"),
     Input(f"{PAGE_ID}-dept-cycle-btn", "n_clicks"),
     Input(f"{PAGE_ID}-phys-cycle-btn", "n_clicks"),
+    Input(f"{PAGE_ID}-mod-cycle-btn", "n_clicks"),
     Input(f"{PAGE_ID}-metric", "value"),
     Input(f"{PAGE_ID}-range", "value"),
     Input(_REFS_FILTER_FIELDS[0][1], "value"),
@@ -1532,9 +1704,11 @@ clientside_callback(
     Input(_REFS_FILTER_FIELDS[3][1], "value"),
     State(f"{PAGE_ID}-dept-sel", "data"),
     State(f"{PAGE_ID}-phys-sel", "data"),
+    State(f"{PAGE_ID}-mod-sel", "data"),
 )
-def cycle_filters(_dept_n, _phys_n, metric, range_key,
-                  ref_prov, ref_dx, ref_spec, ref_inst, left_cur, phys_cur):
+def cycle_filters(_dept_n, _phys_n, _mod_n, metric, range_key,
+                  ref_prov, ref_dx, ref_spec, ref_inst,
+                  left_cur, phys_cur, mod_cur):
     from dash import ctx
     from dash.exceptions import PreventUpdate
     spec = _METRIC_BY_VALUE.get(metric) or _METRICS[0]
@@ -1544,11 +1718,14 @@ def cycle_filters(_dept_n, _phys_n, metric, range_key,
     left_labels = spec.get("left_labels") or {}
     left_applies = bool(left_values)
     phys_applies = phys_col is not None
+    mod_col = spec.get("mod_col")
+    mod_applies = mod_col is not None
     refs_mode = metric == "refs"
     date_col = spec["date_col"]
     trig = ctx.triggered_id
     dept_btn = f"{PAGE_ID}-dept-cycle-btn"
     phys_btn = f"{PAGE_ID}-phys-cycle-btn"
+    mod_btn = f"{PAGE_ID}-mod-cycle-btn"
     # In refs mode the right button opens the referral-filter drawer
     # (clientside) — the tap itself changes no selection, so skip the rerender.
     if refs_mode and trig == phys_btn:
@@ -1593,6 +1770,22 @@ def cycle_filters(_dept_n, _phys_n, metric, range_key,
     if not left_applies:
         left_sel = "all"
 
+    # ---- Modality selection (Treatments only) ----
+    # Same semantics as the left button: the selection stays valid across
+    # ranges (even at 0), cycling only steps through modalities with data
+    # in the current timeframe.
+    mod_sel = mod_cur if (mod_applies and mod_cur in _MODALITY_VALUES) else "all"
+    if mod_applies and trig == mod_btn:
+        avail = ["all"]
+        if full_r is not None and not full_r.empty and mod_col in full_r.columns:
+            present_r = set(full_r[mod_col].dropna().astype(str).unique())
+            avail += [v for v in _MODALITY_VALUES if v != "all" and v in present_r]
+        else:
+            avail = list(_MODALITY_VALUES)
+        mod_sel = _advance(mod_sel, avail)
+    if not mod_applies:
+        mod_sel = "all"
+
     # ---- Physician / planner selection (depends on the final left_sel) ----
     planner_mode = (metric == "tasks" and left_sel == _TASK_PLANNER_GROUP)
     phys_all_label = "All Planners" if planner_mode else "All MDs"
@@ -1605,16 +1798,18 @@ def cycle_filters(_dept_n, _phys_n, metric, range_key,
                 return frame[frame[left_col].astype(str) == left_sel]
             return frame
         universe = set(_people_options(_sub(full), phys_col, planner_mode))
-        avail = ["all"] + _people_options(_sub(full_r), phys_col, planner_mode)
+        # "compare" sits between "all" (total) and the individual people:
+        # it keeps the unfiltered total but the cumulative chart splits per MD.
+        avail = ["all", "compare"] + _people_options(_sub(full_r), phys_col, planner_mode)
         # Keep the current person if valid for this context (even at 0 in range);
         # only reset when they don't belong (e.g. an MD when switched to planners).
-        phys = phys_cur if (phys_cur == "all" or phys_cur in universe) else "all"
+        phys = phys_cur if (phys_cur in ("all", "compare") or phys_cur in universe) else "all"
         if trig == phys_btn:
             phys = _advance(phys, avail)
 
     # settings["dept"] carries the left-filter value (department OR task-type
     # group); the metric's frame_fn interprets it.
-    settings = {"dept": left_sel, "physician": phys}
+    settings = {"dept": left_sel, "physician": phys, "modality": mod_sel}
     if refs_mode:
         settings["refs"] = {
             "provider": ref_prov or [],
@@ -1630,14 +1825,23 @@ def cycle_filters(_dept_n, _phys_n, metric, range_key,
     elif not phys_applies:
         phys_label = "N/A"
     elif phys == "all":
-        phys_label = phys_all_label
+        phys_label = f"{phys_all_label} (Total)"
+    elif phys == "compare":
+        phys_label = f"{phys_all_label} (Compare)"
     else:
         # Show last name only (names are usually "Last, First").
         phys_label = phys.split(",")[0].strip()
 
-    return (left_sel, phys, settings,
-            left_label, phys_label,
-            not left_applies, not (phys_applies or refs_mode))
+    if not mod_applies:
+        mod_label = "N/A"
+    elif mod_sel == "all":
+        mod_label = "All Modalities"
+    else:
+        mod_label = mod_sel
+
+    return (left_sel, phys, mod_sel, settings,
+            left_label, phys_label, mod_label,
+            not left_applies, not (phys_applies or refs_mode), not mod_applies)
 
 # Group C: drawer toggle.
 clientside_callback(
@@ -1778,6 +1982,26 @@ def render_cum_info(summary):
     summary = summary or {}
     title = f"{summary.get('metric', '')} — {summary.get('range', '')}"
     blocks = [dmc.Text(title, size="sm", c="dimmed", mb="xs")]
+
+    # Compare mode: per-physician totals for the selected range.
+    if summary.get("mode") == "compare" and summary.get("people"):
+        rows = [dmc.Group(gap=8, children=[
+            dmc.Text("Physician", size="xs", c="dimmed", fw=600, style={"flex": 2}),
+            dmc.Text("Total", size="xs", c="dimmed", fw=600, ta="right", style={"flex": 1}),
+        ])]
+        for p in summary["people"]:
+            rows.append(dmc.Group(gap=8, children=[
+                dmc.Text(p.get("label", ""), size="sm", style={"flex": 2}),
+                dmc.Text(_fmt_int(p.get("total")), size="sm", fw=500,
+                         ta="right", style={"flex": 1}),
+            ]))
+        rows.append(dmc.Group(gap=8, children=[
+            dmc.Text("All", size="sm", fw=700, style={"flex": 2}),
+            dmc.Text(_fmt_int(summary.get("current_total")), size="sm", fw=700,
+                     ta="right", style={"flex": 1}),
+        ]))
+        blocks.append(dmc.Stack(gap=4, children=rows))
+        return dmc.Stack(gap=8, children=blocks)
 
     # Bar mode: per-period breakdown.
     if summary.get("mode") == "bar" and summary.get("periods"):
