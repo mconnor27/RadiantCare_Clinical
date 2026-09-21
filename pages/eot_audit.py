@@ -40,10 +40,12 @@ import datetime as _dt
 _DEFAULT_DATE_PRESET = "12mo"
 _GRACE_DAYS = 30
 
-# The warehouse's first End of Treatment note is dated 2021-08-01 (the seed
-# export's earliest course ends 2021-07-14), so the timeline floors there —
-# a slider reaching back to 2004 would be 17 years of guaranteed emptiness.
-_EOT_MIN_IDX = month_idx(2021, 7)
+# The warehouse's first End of Treatment note is dated 2021-08-01, so the
+# timeline floors there — a slider reaching back to 2004 would be 17 years
+# of guaranteed emptiness. The feed's single July-2021 course (last fraction
+# 07/14, completed after the floor) is deliberately clipped with it: one
+# course makes a meaningless 0% trend point.
+_EOT_MIN_IDX = month_idx(2021, 8)
 _EOT_SLIDER_MARKS = (
     [{"value": _EOT_MIN_IDX, "label": "'21"}]
     + [{"value": month_idx(y, 1), "label": f"'{y % 100:02d}"}
