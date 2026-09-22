@@ -63,9 +63,9 @@ UI_CONTENT = dmc.Stack(
                 "(done at all, any lag), or Median Days over time (weekly / "
                 "monthly / yearly), with optional smoothing.",
                 "By Treating Physician — horizontal bars of Open Tasks (Missing "
-                "/ Pending, stacked or grouped via the gear menu), On-Time %, or "
-                "Median Days per physician. Rate and lag views require ≥3 "
-                "courses per physician.",
+                "/ Pending, stacked or grouped via the gear menu), Documented %, "
+                "On-Time %, or Median Days per physician. Rate and lag views "
+                "require ≥3 courses per physician.",
                 "Days From Last Fraction to Note — 5-day-bin histogram of "
                 "documentation lag; bins past the 30-day due line are red, and "
                 "everything beyond 120 days pools into a 120+ bin. The All / "
@@ -113,6 +113,25 @@ UI_CONTENT = dmc.Stack(
                 "The Waived quick filter lists everything waived, where the "
                 "Undo button restores it.",
             ]),
+        ),
+
+        section(
+            "Generic MD resolution",
+            "tabler:user-question",
+            body(
+                "A few courses carry a site-placeholder treating physician "
+                "(\"Centralia MD\" / \"Aberdeen MD\") — ARIA's billing records "
+                "name only the site, so the SQL's treating cascade can't do "
+                "better. The Generic MD toggle's Documenting option "
+                "re-attributes those rows to whoever signed the treatment "
+                "summary (typically the covering physician), falling back to "
+                "the oncologist of record for a note-less row — together that "
+                "resolves every placeholder. A placeholder is only replaced "
+                "when the resolver holds a real name; the toggle feeds every "
+                "chart, filter, and the worklist. (Joining ConsultPhysician "
+                "from Courses.csv was tried and rejected: it carries the same "
+                "site placeholder for these courses.)",
+            ),
         ),
 
         section(

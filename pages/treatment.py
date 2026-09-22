@@ -176,6 +176,13 @@ def _build_tx_filter_bar():
                     ),
                     # Diagnosis accordion
                     diagnosis_accordion("tx"),
+                    # Inpatient toggle
+                    dmc.Switch(
+                        id="tx-inpatient-switch",
+                        label="Inpatient",
+                        size="xs",
+                        checked=False,
+                    ),
                     # Smoothing slider
                     dmc.Group(
                         children=[
@@ -1504,6 +1511,7 @@ _TX_FILTER_INPUTS = [
     Input("tx-diag-store", "data"),
     Input("tx-diag-mode", "data"),
     Input("tx-physician-role", "data"),
+    Input("tx-inpatient-switch", "checked"),
 ]
 
 
@@ -1517,7 +1525,7 @@ def _apply_grid_row_filter(df, grid_rows):
 
 def _apply_filters(_n, slider_val, date_preset, departments, physician,
                    machines, diagnosis_cats, diag_mode, physician_role,
-                   business_days_only=True):
+                   inpatient, business_days_only=True):
     """Load and filter both Treatment and Treatment-Detail DataFrames.
 
     When `business_days_only` is True (default), weekends and observed
@@ -1572,6 +1580,9 @@ def _apply_filters(_n, slider_val, date_preset, departments, physician,
             df_det_f = df_det_f[(df_det_f["Department"] != "Lacey") | df_det_f["Machine"].isin(machines)]
         if diagnosis_cats:
             df_det_f = filter_by_diagnosis(df_det_f, diagnosis_cats, c2b, mode=diag_mode or "primary")
+        if inpatient and "InPatientFlag" in df_det_f.columns:
+            ip = df_det_f["InPatientFlag"].astype(str).str.strip().str.lower()
+            df_det_f = df_det_f[ip.isin({"yes", "1", "true"})]
         if business_days_only:
             df_det_f = df_det_f[df_det_f["ScheduledDateTime"].dt.weekday < 5]
             if holidays:

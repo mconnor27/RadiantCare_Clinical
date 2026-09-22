@@ -75,6 +75,48 @@ _STATUS_COLORS = {
 # override no longer matches its precondition and is ignored.
 _OPEN_STATUSES = ("Missing", "Pending", "Reopened")
 
+# Site-level placeholder treating physicians (loader renders ARIA's
+# "Physician, Centralia" as "Centralia MD"). The Generic-MD toggle can
+# resolve these to the oncologist of record or the note's author.
+_GENERIC_MDS = ("Centralia MD", "Aberdeen MD", "Lacey MD")
+
+
+def _resolve_generic_mds(df, mode):
+    """Replace generic 'X MD' treating physicians with a real name.
+
+    mode 'author' resolves via the documenting MD (AuthorName — who signed
+    the treatment summary), falling back to PrimaryOncologist for the rare
+    note-less generic row; together those attribute every placeholder in
+    the current data. A value is only used when it's a real 'Last, First'
+    name — '(none on file)' or another site generic keeps the original.
+    (ConsultPhysician from Courses.csv was tried and rejected: it carries
+    the same site placeholder for these courses — same billing root cause
+    that made the SQL's treating cascade go generic.)
+    """
+    if mode in (None, "keep") or "TreatingPhysician" not in df.columns:
+        return df
+    generic = df["TreatingPhysician"].isin(_GENERIC_MDS)
+    if not generic.any():
+        return df
+
+    def _valid(src):
+        return (src.str.contains(", ", regex=False)
+                & ~src.str.startswith("(")
+                & ~src.isin(_GENERIC_MDS))
+
+    df = df.copy()
+    remaining = generic
+    for col in ("AuthorName", "PrimaryOncologist"):
+        if not remaining.any():
+            break
+        if col not in df.columns:
+            continue
+        src = df[col].fillna("")
+        mask = remaining & _valid(src)
+        df.loc[mask, "TreatingPhysician"] = src[mask]
+        remaining = remaining & ~mask
+    return df
+
 _AGING_BUCKETS = ["0–30", "31–60", "61–90", "90+"]
 _AGING_COLORS = {
     "0–30": SEMANTIC_COLORS["warning"],
@@ -136,6 +178,23 @@ def _build_eot_filter_bar():
                             ),
                         ],
                         style={"position": "relative", "display": "inline-block"},
+                    ),
+                    # Resolve site-placeholder treating MDs to a real name
+                    dmc.Group(
+                        children=[
+                            dmc.Text("Generic MD", size="xs", c="#6B7280", fw=500),
+                            dmc.SegmentedControl(
+                                id="eot-generic-md",
+                                data=[
+                                    {"value": "keep", "label": "Keep"},
+                                    {"value": "author", "label": "Documenting"},
+                                ],
+                                value="keep",
+                                size="xs",
+                            ),
+                        ],
+                        gap=6,
+                        align="center",
                     ),
                 ],
                 gap="md",
@@ -317,6 +376,7 @@ layout = dmc.Stack(
                             id="eot-phys-mode",
                             data=[
                                 {"value": "open", "label": "Open Tasks"},
+                                {"value": "done", "label": "Documented %"},
                                 {"value": "ontime", "label": "On-Time %"},
                                 {"value": "lag", "label": "Median Days"},
                             ],
@@ -542,9 +602,10 @@ clientside_callback(
     Input("eot-interval", "n_intervals"),
     Input("eot-date-slider", "value"),
     Input("eot-filter-department", "value"),
+    Input("eot-generic-md", "value"),
     State("eot-filter-physician", "value"),
 )
-def _populate_physician_chips(_n, slider_val, departments, current_val):
+def _populate_physician_chips(_n, slider_val, departments, generic_md, current_val):
     from data.loader import load_eot
 
     try:
@@ -556,6 +617,7 @@ def _populate_physician_chips(_n, slider_val, departments, current_val):
 
     if "DocStatus" in df.columns:
         df = df[df["DocStatus"] != "Active"]
+    df = _resolve_generic_mds(df, generic_md)
 
     if "LastTxDate" in df.columns:
         start, end = _get_date_range(slider_val, None)
@@ -752,6 +814,7 @@ def _apply_overrides(df, overrides):
     Input("eot-filter-department", "value"),
     Input("eot-filter-physician", "value"),
     Input("eot-store-overrides", "data"),
+    Input("eot-generic-md", "value"),
     running=[
         (Output("eot-chart-trend-loading", "visible"), True, False),
         (Output("eot-chart-physician-loading", "visible"), True, False),
@@ -759,7 +822,7 @@ def _apply_overrides(df, overrides):
         (Output("eot-chart-aging-loading", "visible"), True, False),
     ],
 )
-def _prep_data(_n, slider_val, date_preset, departments, physician, overrides):
+def _prep_data(_n, slider_val, date_preset, departments, physician, overrides, generic_md):
     from data.loader import load_eot
 
     empty_meta = {"date_preset": date_preset, "trend_label": None}
@@ -778,6 +841,7 @@ def _prep_data(_n, slider_val, date_preset, departments, physician, overrides):
         df = df[df["DocStatus"] != "Active"]
 
     df = _apply_overrides(df, overrides)
+    df = _resolve_generic_mds(df, generic_md)
 
     if physician and "TreatingPhysician" in df.columns:
         df = df[df["TreatingPhysician"] == physician]
@@ -1334,12 +1398,17 @@ def _build_physician_chart(df, mode="open", stack_mode="stacked"):
             barmode="group" if stack_mode == "grouped" else "stack",
             xaxis_title="Open Tasks",
         )
-    elif mode == "ontime":
+    elif mode in ("ontime", "done"):
         resolved = df[_resolved_mask(df)].copy()
         if resolved.empty:
             return empty_figure("No resolved courses")
-        resolved["_ontime"] = _ontime_mask(resolved)
-        grp = resolved.groupby("_md").agg(rate=("_ontime", "mean"), n=("_ontime", "size"))
+        if mode == "done":
+            resolved["_flag"] = resolved["DocStatus"] == "Documented"
+            x_title, threshold, hover_word = "Documented %", 95, "documented"
+        else:
+            resolved["_flag"] = _ontime_mask(resolved)
+            x_title, threshold, hover_word = "On-Time %", 90, "on time"
+        grp = resolved.groupby("_md").agg(rate=("_flag", "mean"), n=("_flag", "size"))
         grp = grp[grp["n"] >= 3]
         if grp.empty:
             return empty_figure("Not enough courses per physician")
@@ -1347,12 +1416,12 @@ def _build_physician_chart(df, mode="open", stack_mode="stacked"):
         grp = grp.sort_values("rate", ascending=True)
         fig.add_trace(go.Bar(
             y=grp.index, x=grp["rate"], orientation="h",
-            marker_color=[SEMANTIC_COLORS["success"] if v >= 90 else SEMANTIC_COLORS["warning"]
+            marker_color=[SEMANTIC_COLORS["success"] if v >= threshold else SEMANTIC_COLORS["warning"]
                           for v in grp["rate"]],
             customdata=grp["n"],
-            hovertemplate="%{y}: %{x:.1f}% on time (%{customdata} courses)<extra></extra>",
+            hovertemplate="%{y}: %{x:.1f}% " + hover_word + " (%{customdata} courses)<extra></extra>",
         ))
-        fig.update_layout(xaxis_title="On-Time %", xaxis_range=[0, 105])
+        fig.update_layout(xaxis_title=x_title, xaxis_range=[0, 105])
     else:  # lag
         doc = df[df["DocStatus"] == "Documented"].copy()
         if doc.empty:

@@ -153,11 +153,20 @@ def register_diagnosis_callbacks(page_id: str) -> None:
     clear_id = f"{page_id}-diag-clear"
     n_cats = len(CATEGORIES)
 
-    # Mode toggle → store sync
+    # Mode toggle → store sync. Only propagate when a diagnosis selection is
+    # active — with nothing selected the mode has no effect on filtering, and
+    # writing the store would needlessly rerun every page callback. Categories/
+    # subcategories are Inputs so the store re-syncs when a selection is made.
     clientside_callback(
-        """function(val) { return val; }""",
+        """function(val, cats, subs) {
+            var has = (cats && cats.length > 0) || (subs && subs.length > 0);
+            if (!has) return window.dash_clientside.no_update;
+            return val;
+        }""",
         Output(mode_store_id, "data"),
         Input(mode_ctrl_id, "value"),
+        Input(store_id, "data"),
+        Input(subcat_id, "value"),
     )
 
     # Checkbox → Store sync
