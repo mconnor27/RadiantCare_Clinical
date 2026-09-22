@@ -361,11 +361,17 @@ def _dedupe_callback_list():
     for entry in app._callback_list:
         outs = [o.strip(".") for o in str(entry.get("output", "")).lstrip(".").split("..")
                 if o.strip(".")]
-        clash = [o for o in outs if o in seen and "@" not in o]
+        # An "@hash" suffix marks allow_duplicate — two DIFFERENT callbacks
+        # legitimately writing one output carry distinct hashes, so those are
+        # compared as full strings. The SAME string appearing twice (hash and
+        # all) is a true double registration — the racy _setup_server double
+        # transfer produces exactly that, and the renderer hard-fails on it,
+        # so it must be dropped here too.
+        clash = [o for o in outs if o in seen]
         if clash:
             dropped.append(clash)
             continue
-        seen.update(o for o in outs if "@" not in o)
+        seen.update(outs)
         kept.append(entry)
     if dropped:
         _dep_logger.error(
@@ -793,6 +799,36 @@ def _prioritize_page_datasets(pathname):
             if ds not in _preload_state["loaded"] and ds not in _priority_queue:
                 _priority_queue.insert(0, ds)
     return ""
+
+# ---------------------------------------------------------------------------
+# Eager first-request setup — closes the gthread race that blanked production
+# ---------------------------------------------------------------------------
+# Dash defers two pieces of setup to the FIRST request, each guarded by an
+# unlocked check-then-set flag (dash/dash.py _got_first_request):
+#   * _setup_server() — transfers the global callback registry into
+#     app._callback_list via extend() and rebinds the list to normalize the
+#     "hidden" field;
+#   * the Pages router() before_request hook — registers the routing callback.
+# Under gunicorn gthread, a burst of concurrent first requests can pass the
+# flag check together: the registry transfer runs twice (every callback
+# output duplicated — the depguard tripwire's "dropped N later
+# registration(s)"), duplicated allow_duplicate outputs carry identical
+# "@hash" suffixes that the tripwire exempts and the renderer then rejects
+# ("Duplicate callback outputs" → blank page for every client until the
+# worker restarts), and requests served mid-rebind see a half-built graph
+# (reproduced locally: same graph, "hidden": null vs false). Running both
+# initializers here — at import, single-threaded, before gunicorn accepts
+# traffic — turns the racy lazy paths into no-ops.
+try:
+    app._setup_server()
+    for _f in server.before_request_funcs.get(None, []):
+        if getattr(_f, "__name__", "") == "router":
+            with server.test_request_context("/"):
+                _f()
+            break
+except Exception:
+    _dep_logger.exception("eager first-request setup failed; falling back to lazy")
+
 
 # ---------------------------------------------------------------------------
 # Run
