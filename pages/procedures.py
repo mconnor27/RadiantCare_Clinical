@@ -281,6 +281,80 @@ def _pluvicto_panel():
             shadow="xs",
             withBorder=True,
         ),
+        # 3-month appointment calendar
+        dmc.Paper(
+            children=[
+                dmc.Group(
+                    justify="space-between", align="center", mb=8,
+                    children=[
+                        dmc.Text("Pluvicto Appointment Calendar", size="sm", fw=500,
+                                 c=NEUTRAL["text_secondary"]),
+                        dmc.Group(
+                            gap=12, align="center",
+                            children=[
+                                # Legend
+                                dmc.Group(gap=4, align="center", children=[
+                                    html.Span(style={
+                                        "width": "7px", "height": "7px", "borderRadius": "50%",
+                                        "backgroundColor": SEMANTIC_COLORS["success"],
+                                        "display": "inline-block",
+                                    }),
+                                    dmc.Text("Completed", size="xs", c=NEUTRAL["text_muted"]),
+                                ]),
+                                dmc.Group(gap=4, align="center", children=[
+                                    html.Span(style={
+                                        "width": "7px", "height": "7px", "borderRadius": "50%",
+                                        "backgroundColor": "#6B7280",
+                                        "display": "inline-block",
+                                    }),
+                                    dmc.Text("Scheduled", size="xs", c=NEUTRAL["text_muted"]),
+                                ]),
+                                dmc.Group(gap=4, align="center", children=[
+                                    html.Span(style={
+                                        "width": "7px", "height": "7px", "borderRadius": "50%",
+                                        "backgroundColor": SEMANTIC_COLORS["warning"],
+                                        "display": "inline-block",
+                                    }),
+                                    dmc.Text("Hold", size="xs", c=NEUTRAL["text_muted"]),
+                                ]),
+                                dmc.Group(gap=4, align="center", children=[
+                                    html.Span(style={
+                                        "width": "7px", "height": "7px", "borderRadius": "50%",
+                                        "border": f"1px dashed {NEUTRAL['text_muted']}",
+                                        "display": "inline-block",
+                                    }),
+                                    dmc.Text("Open Slot", size="xs", c=NEUTRAL["text_muted"]),
+                                ]),
+                                # Navigation
+                                dmc.Group(gap=4, align="center", children=[
+                                    dmc.ActionIcon(
+                                        DashIconify(icon="mdi:chevron-left", width=18),
+                                        id=f"{PAGE_ID}-pluvicto-cal-prev",
+                                        variant="default", size="sm",
+                                    ),
+                                    dmc.Button(
+                                        "Today",
+                                        id=f"{PAGE_ID}-pluvicto-cal-today",
+                                        variant="default", size="compact-xs",
+                                    ),
+                                    dmc.ActionIcon(
+                                        DashIconify(icon="mdi:chevron-right", width=18),
+                                        id=f"{PAGE_ID}-pluvicto-cal-next",
+                                        variant="default", size="sm",
+                                    ),
+                                ]),
+                            ],
+                        ),
+                    ],
+                ),
+                html.Div(id=f"{PAGE_ID}-pluvicto-calendar"),
+                dcc.Store(id=f"{PAGE_ID}-pluvicto-cal-offset", data=0),
+            ],
+            p="md",
+            radius="md",
+            shadow="xs",
+            withBorder=True,
+        ),
         detail_table(
             f"{PAGE_ID}-tab-grid-pluvicto",
             title="Detail Records",
@@ -818,6 +892,11 @@ def _build_upcoming_card(df_all, cat_name, accent_color, n=3):
     cat_df = df_all[df_all["ProcedureCategory"] == cat_name]
     if "ActivityStatus" in cat_df.columns:
         upcoming = cat_df[cat_df["ActivityStatus"] == "Open"].copy()
+        # "Upcoming" means today or later — past rows still marked Open are
+        # scheduling artifacts (rebooked visits never cancelled/closed out)
+        if "ScheduledDateTime" in upcoming.columns:
+            today = pd.Timestamp.now().normalize()
+            upcoming = upcoming[upcoming["ScheduledDateTime"].dt.normalize() >= today]
     else:
         upcoming = pd.DataFrame()
 
@@ -1374,6 +1453,7 @@ def _build_pluvicto_queue(status_filter="all"):
         return dmc.Text("No data available", size="sm", c=NEUTRAL["text_muted"])
 
     plv_procs = procs[procs["ProcedureCategory"] == "Pluvicto"] if "ProcedureCategory" in procs.columns else pd.DataFrame()
+    plv_procs = _drop_stale_open_pluvicto(plv_procs)
     patients = {}
 
     # From workflow: consult date and stage
@@ -1527,6 +1607,238 @@ def _build_pluvicto_queue(status_filter="all"):
         verticalSpacing=4,
         style={"tableLayout": "fixed", "width": "100%"},
     )
+
+
+# ---------------------------------------------------------------------------
+# Pluvicto Calendar
+# ---------------------------------------------------------------------------
+
+_CAL_DONE_COLOR = SEMANTIC_COLORS["success"]  # green — completed / past
+_CAL_SCHED_COLOR = "#6B7280"                  # gray — scheduled / future
+_CAL_HOLD_COLOR = SEMANTIC_COLORS["warning"]  # amber — HOLD placeholder, not firm
+
+
+def _drop_stale_open_pluvicto(plv):
+    """Drop past-dated Pluvicto appointments not marked completed.
+
+    Historic days should only show completed records — a leftover "Open" row
+    in the past is a scheduling artifact (e.g. rebooked to another MD with
+    the original never cancelled). Today's appointments are kept regardless
+    of status since they may not be completed yet. Cancelled bookings are
+    dropped entirely (past or future).
+    """
+    if plv.empty or "ScheduledDateTime" not in plv.columns or "ActivityStatus" not in plv.columns:
+        return plv
+    today = pd.Timestamp.now().normalize()
+    dt = plv["ScheduledDateTime"]
+    cancelled = plv["ActivityStatus"].eq("Cancelled")
+    stale = dt.notna() & (dt.dt.normalize() < today) & plv["ActivityStatus"].ne("Manually Completed")
+    return plv[~cancelled & ~stale]
+
+
+def _build_pluvicto_calendar(offset=0):
+    """Build a strip of three month calendars showing Pluvicto appointments.
+
+    offset: months to shift the first displayed month from the current month
+    (nav buttons step in multiples of 3).
+    """
+    import calendar as calmod
+    from data.loader import load_procedures
+
+    try:
+        procs = load_procedures()
+    except Exception:
+        procs = pd.DataFrame()
+
+    today = pd.Timestamp.now().normalize()
+    base = today.replace(day=1) + pd.DateOffset(months=int(offset or 0))
+
+    # Collect Pluvicto appointments keyed by normalized date
+    appts = {}
+    if not procs.empty and "ProcedureCategory" in procs.columns and "ScheduledDateTime" in procs.columns:
+        plv = procs[
+            procs["ProcedureCategory"].isin(
+                ["Pluvicto", "Pluvicto (Hold)", "Pluvicto (Open Hold)"])
+            & procs["ScheduledDateTime"].notna()
+        ]
+        # HOLD TIME slots assigned to Reece are scheduling errors — exclude
+        if "AppointmentPhysician" in plv.columns:
+            _hold_cat = plv["ProcedureCategory"].isin(
+                ["Pluvicto (Hold)", "Pluvicto (Open Hold)"])
+            _reece = plv["AppointmentPhysician"].astype(str).str.startswith("Reece")
+            plv = plv[~(_hold_cat & _reece)]
+        plv = _drop_stale_open_pluvicto(plv)
+        for _, row in plv.iterrows():
+            dt = row["ScheduledDateTime"].normalize()
+            status = row.get("ActivityStatus", "")
+            note = row.get("AppointmentNotes", "")
+            cat = row.get("ProcedureCategory", "")
+            # Open slot: unassigned HOLD TIME placeholder (no real patient).
+            # Hold: patient-attached placeholder — the dedicated feed category,
+            # plus injection rows used as placeholders via a "hold" note.
+            # Neither is ever rendered as completed.
+            is_open_slot = cat == "Pluvicto (Open Hold)"
+            is_hold = not is_open_slot and (
+                cat == "Pluvicto (Hold)"
+                or (status != "Manually Completed" and pd.notna(note)
+                    and "hold" in str(note).lower())
+            )
+            done = (not is_hold and not is_open_slot) and (
+                (status == "Manually Completed") or (dt <= today))
+            md = row.get("AppointmentPhysician", "")
+            md_short = md.split(", ")[0] if md and pd.notna(md) else ""
+            if is_open_slot:
+                name, last = "(open slot)", "Open"
+            else:
+                name = row.get("PatientFullName", "")
+                name = str(name) if pd.notna(name) and name else "Unknown"
+                last = name.split(",")[0].strip()
+            appts.setdefault(dt, []).append({
+                "patient": name,
+                "last": last,
+                "md": md_short,
+                "done": done,
+                "hold": is_hold,
+                "open_slot": is_open_slot,
+            })
+
+    # Real appointments first, open slots last within each day
+    for day_list in appts.values():
+        day_list.sort(key=lambda a: a["open_slot"])
+
+    def _appt_pill(a):
+        if a["done"]:
+            color, bg = _CAL_DONE_COLOR, "rgba(16,185,129,0.14)"
+            border = "1px solid transparent"
+        elif a.get("open_slot"):
+            color, bg = NEUTRAL["text_muted"], "transparent"
+            border = f"1px dashed {NEUTRAL['border']}"
+        elif a.get("hold"):
+            color, bg = _CAL_HOLD_COLOR, "rgba(245,158,11,0.12)"
+            border = f"1px dashed {_CAL_HOLD_COLOR}"
+        else:
+            color, bg = _CAL_SCHED_COLOR, "rgba(107,114,128,0.16)"
+            border = "1px solid transparent"
+        return html.Div(a["last"], style={
+            "fontSize": "9px", "lineHeight": "13px", "fontWeight": 600,
+            "color": color, "backgroundColor": bg, "borderRadius": "3px",
+            "border": border,
+            "padding": "0 3px", "marginTop": "1px",
+            "whiteSpace": "nowrap", "overflow": "hidden", "textOverflow": "ellipsis",
+        })
+
+    month_boxes = []
+    for m in range(3):
+        month_start = base + pd.DateOffset(months=m)
+        y, mo = month_start.year, month_start.month
+        weeks = calmod.Calendar(firstweekday=6).monthdayscalendar(y, mo)
+
+        cells = [
+            html.Div(w, style={
+                "fontSize": "10px", "fontWeight": 600, "textAlign": "center",
+                "textTransform": "uppercase", "color": NEUTRAL["text_muted"],
+                "padding": "2px 0",
+            })
+            for w in ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"]
+        ]
+
+        for week in weeks:
+            for day in week:
+                if day == 0:
+                    cells.append(html.Div(style={"minHeight": "58px"}))
+                    continue
+                d = pd.Timestamp(year=y, month=mo, day=day)
+                day_appts = appts.get(d, [])
+                is_today = d == today
+
+                cell_children = [
+                    html.Div(str(day), style={
+                        "fontSize": "10px", "lineHeight": "12px",
+                        "fontWeight": 700 if is_today else 400,
+                        "color": PRIMARY if is_today else NEUTRAL["text_muted"],
+                    }),
+                ]
+                for a in day_appts:
+                    cell_children.append(_appt_pill(a))
+
+                cell = html.Div(cell_children, style={
+                    "minHeight": "58px", "padding": "2px 3px",
+                    "borderRadius": "4px", "overflow": "hidden",
+                    "border": f"1px solid {PRIMARY}" if is_today
+                              else "1px solid transparent",
+                })
+                if day_appts:
+                    cell = dmc.Tooltip(
+                        children=cell,
+                        label=dmc.Stack(gap=2, children=[
+                            dmc.Text(
+                                ("Open Pluvicto slot" if a.get("open_slot")
+                                 else a["patient"])
+                                + (f" — {a['md']}" if a["md"] else "")
+                                + ("" if a.get("open_slot")
+                                   else " · Completed" if a["done"]
+                                   else " · Hold" if a.get("hold")
+                                   else " · Scheduled"),
+                                size="xs",
+                            )
+                            for a in day_appts
+                        ]),
+                        withArrow=True,
+                        position="top",
+                        multiline=True,
+                    )
+                cells.append(cell)
+
+        month_boxes.append(html.Div(
+            children=[
+                dmc.Text(month_start.strftime("%B %Y"), size="sm", fw=600,
+                         ta="center", c=NEUTRAL["text_primary"], mb=4),
+                html.Div(cells, style={
+                    "display": "grid",
+                    "gridTemplateColumns": "repeat(7, 1fr)",
+                    "gap": "2px",
+                }),
+            ],
+            style={
+                "border": f"1px solid {NEUTRAL['border_light']}",
+                "borderRadius": "8px",
+                "padding": "8px",
+                "minWidth": 0,
+            },
+        ))
+
+    return html.Div(month_boxes, style={
+        "display": "grid",
+        "gridTemplateColumns": "repeat(3, minmax(0, 1fr))",
+        "gap": "12px",
+    })
+
+
+@callback(
+    Output(f"{PAGE_ID}-pluvicto-cal-offset", "data"),
+    Input(f"{PAGE_ID}-pluvicto-cal-prev", "n_clicks"),
+    Input(f"{PAGE_ID}-pluvicto-cal-next", "n_clicks"),
+    Input(f"{PAGE_ID}-pluvicto-cal-today", "n_clicks"),
+    State(f"{PAGE_ID}-pluvicto-cal-offset", "data"),
+    prevent_initial_call=True,
+)
+def _pluvicto_cal_nav(_prev, _next, _today, offset):
+    trig = dash.callback_context.triggered_id
+    offset = int(offset or 0)
+    if trig == f"{PAGE_ID}-pluvicto-cal-prev":
+        return offset - 3
+    if trig == f"{PAGE_ID}-pluvicto-cal-next":
+        return offset + 3
+    return 0  # Today
+
+
+@callback(
+    Output(f"{PAGE_ID}-pluvicto-calendar", "children"),
+    Input(f"{PAGE_ID}-pluvicto-cal-offset", "data"),
+    Input(f"{PAGE_ID}-interval", "n_intervals"),
+)
+def _render_pluvicto_calendar(offset, _n):
+    return _build_pluvicto_calendar(int(offset or 0))
 
 
 # ---------------------------------------------------------------------------

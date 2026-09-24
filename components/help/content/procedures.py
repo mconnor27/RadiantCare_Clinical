@@ -68,7 +68,10 @@ UI_CONTENT = dmc.Stack(
             bullets([
                 "Pluvicto tab — patient queue table (All / In Progress / Completed "
                 "filter) built from Workflow_Events filtered to ModalityType = "
-                "\"Pluvicto\", plus a detail grid of underlying Procedure rows.",
+                "\"Pluvicto\", a three-month appointment calendar (navigate in "
+                "steps of three months; green = completed, gray = scheduled, "
+                "amber dashed = HOLD placeholder), plus a detail grid of "
+                "underlying Procedure rows.",
                 "Rectal Spacer tab — upcoming patient queue (scheduled Open "
                 "Spacer appointments, sorted by ScheduledDateTime) plus a detail "
                 "grid.",
@@ -109,9 +112,25 @@ UI_CONTENT = dmc.Stack(
                 "Lead-time KPI: days from consult activity to procedure activity, "
                 "averaged across the category set. Uses paired Workflow_Events "
                 "rows (consult → procedure) where both timestamps are present.",
-                "Upcoming counts filter to ActivityStatus = \"Open\" and sort "
-                "ascending by ScheduledDateTime, taking the next N for the "
-                "KPI-card display.",
+                "Upcoming counts filter to ActivityStatus = \"Open\" with a "
+                "scheduled date of today or later (past rows still marked Open "
+                "are scheduling artifacts) and sort ascending by "
+                "ScheduledDateTime, taking the next N for the KPI-card display.",
+                "Pluvicto calendar and patient queue drop Cancelled bookings and "
+                "past-dated appointments still marked Open (scheduling "
+                "artifacts, e.g. a visit rebooked to another MD with the "
+                "original never cancelled) — historic days show completed "
+                "records only. HOLD placeholders come from the feed's hold "
+                "categories — future-dated Centralia HOLD TIME slots that "
+                "Procedures.sql admits when the note mentions Pluvicto or the "
+                "patient has an active Pluvicto course (injection within 90 "
+                "days). \"Pluvicto (Hold)\" = a real patient is in the slot "
+                "(amber on the calendar); \"Pluvicto (Open Hold)\" = an "
+                "unassigned reserved slot (dashed \"Open\" pill). Injection "
+                "rows used as placeholders via a \"hold\" note are also "
+                "flagged as holds. Neither class counts toward procedure "
+                "volume, KPIs, or the detail grid. Hold slots assigned to "
+                "Reece are excluded as scheduling errors.",
                 "Dates are data-relative — the filter anchors to the most recent "
                 "ScheduledDateTime, not wall-clock today.",
                 "Server callbacks populate proc-store-trend and proc-store-cumul; "
