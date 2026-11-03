@@ -1693,14 +1693,22 @@ def _build_pluvicto_calendar(offset=0):
                 name = row.get("PatientFullName", "")
                 name = str(name) if pd.notna(name) and name else "Unknown"
                 last = name.split(",")[0].strip()
-            appts.setdefault(dt, []).append({
-                "patient": name,
-                "last": last,
-                "md": md_short,
-                "done": done,
-                "hold": is_hold,
-                "open_slot": is_open_slot,
-            })
+            # A HOLD TIME block encodes capacity by duration: 60 min = one
+            # procedure slot, 120 min = two, etc.
+            n_slots = 1
+            if is_open_slot:
+                dur = row.get("DurationMinutes")
+                if pd.notna(dur) and dur > 0:
+                    n_slots = max(1, int(round(dur / 60)))
+            for _ in range(n_slots):
+                appts.setdefault(dt, []).append({
+                    "patient": name,
+                    "last": last,
+                    "md": md_short,
+                    "done": done,
+                    "hold": is_hold,
+                    "open_slot": is_open_slot,
+                })
 
     # Real appointments first, open slots last within each day
     for day_list in appts.values():
