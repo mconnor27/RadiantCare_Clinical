@@ -167,12 +167,15 @@ UI_CONTENT = dmc.Stack(
             "Known quirks and limitations",
             "tabler:alert-triangle",
             bullets([
-                "ScheduleUpcoming uses a dedicated live-refresh path: a Power "
-                "Automate flow uploads each ARIA export straight to R2 (no "
-                "sanitize, no daily tarball) and the loader fetches it with a "
-                "5-minute TTL. If an upload arrives empty or unreadable, the "
-                "page keeps showing the last good snapshot, and the \"Last "
-                "updated\" time stays on that snapshot. The booked-overlay datasets (Clinic "
+                "ScheduleUpcoming uses a dedicated live-refresh path: each ARIA "
+                "export lands in OneDrive, and a sync job on the data Mac "
+                "uploads it to R2 within about 5 minutes (no sanitize, no "
+                "daily tarball). The loader fetches it with a 5-minute TTL. "
+                "The sync job skips empty or malformed exports, and if R2 "
+                "ever holds an empty or unreadable file, the page keeps "
+                "showing the last good snapshot. Either way the \"Last "
+                "updated\" time stays on that snapshot, and updates pause "
+                "while the data Mac is off. The booked-overlay datasets (Clinic "
                 "Visits, Simulations) still come from the daily sanitized "
                 "tarball — so newly opened slots appear within minutes, but "
                 "new bookings against existing slots may take up to a day to "
