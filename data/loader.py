@@ -824,6 +824,23 @@ def _schedule_upcoming_r2_config():
 # Set by whichever fetch path (R2 / disk) actually returned data.
 _SCHEDULE_UPCOMING_META = {"last_modified": None, "source": None}
 
+# Last non-empty R2 snapshot. The upload flow can PUT an empty or truncated
+# body (e.g. an ARIA export that produced no attachment), which would
+# otherwise blank every forward-schedule view until the next good upload.
+_SCHEDULE_UPCOMING_LAST_GOOD = {"df": None, "last_modified": None}
+
+
+def _schedule_upcoming_last_good(reason):
+    """Return the last good R2 snapshot (restoring its timestamp), or None."""
+    good = _SCHEDULE_UPCOMING_LAST_GOOD
+    if good["df"] is None:
+        print(f"[schedule_upcoming] {reason}; no previous snapshot to fall back to")
+        return None
+    print(f"[schedule_upcoming] {reason}; serving snapshot from {good['last_modified']}")
+    _SCHEDULE_UPCOMING_META["last_modified"] = good["last_modified"]
+    _SCHEDULE_UPCOMING_META["source"] = "r2"
+    return good["df"]
+
 
 def _load_schedule_upcoming_from_r2():
     """Pull the latest ScheduleUpcoming CSV from R2. Returns DataFrame or None."""
@@ -854,6 +871,9 @@ def _load_schedule_upcoming_from_r2():
         resp = s3.get_object(Bucket=bucket, Key=key)
         body = resp["Body"].read()
         last_modified = resp.get("LastModified")  # tz-aware UTC
+        if not body.strip():
+            return _schedule_upcoming_last_good(
+                f"R2 object is empty (key={key}, modified {last_modified})")
         try:
             df = pd.read_csv(BytesIO(body), encoding="utf-8-sig", engine="pyarrow")
         except Exception:
@@ -863,12 +883,16 @@ def _load_schedule_upcoming_from_r2():
             )
         while len(df) > 0 and df.iloc[-1].isna().all():
             df = df.iloc[:-1]
+        if df.empty or "ScheduledDateTime" not in df.columns:
+            return _schedule_upcoming_last_good(
+                f"R2 object has no usable rows (key={key}, modified {last_modified})")
+        _SCHEDULE_UPCOMING_LAST_GOOD["df"] = df
+        _SCHEDULE_UPCOMING_LAST_GOOD["last_modified"] = last_modified
         _SCHEDULE_UPCOMING_META["last_modified"] = last_modified
         _SCHEDULE_UPCOMING_META["source"] = "r2"
         return df
     except Exception as exc:
-        print(f"[schedule_upcoming] R2 fetch failed (key={key}): {exc}")
-        return None
+        return _schedule_upcoming_last_good(f"R2 fetch failed (key={key}): {exc}")
 
 
 def _load_schedule_upcoming_from_disk():

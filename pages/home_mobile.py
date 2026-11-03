@@ -291,8 +291,9 @@ def _people_options(sub, phys_col, planner_mode, min_rows=10):
     by volume (busiest first). MD mode lists the canonical radiation
     oncologists first (in roster order), then any other physicians present
     in the data by volume — longer lookback ranges reach MDs who predate the
-    current roster. MD names with fewer than `min_rows` rows are dropped as
-    noise (stray attributions, one-off locums)."""
+    current roster. Off-roster names with fewer than `min_rows` rows are
+    dropped as noise (stray attributions, one-off locums); roster MDs are
+    always kept so low-volume metrics (e.g. SRS draws) still list everyone."""
     if sub is None or sub.empty or phys_col not in sub.columns:
         return []
     counts = sub[phys_col].dropna().astype(str).value_counts()
@@ -301,9 +302,8 @@ def _people_options(sub, phys_col, planner_mode, min_rows=10):
         return []
     if planner_mode:
         return counts.index.tolist()
-    counts = counts[counts >= min_rows]
     canonical = [n for n in PHYSICIANS if n in counts.index]
-    others = [n for n in counts.index if n not in PHYSICIANS]
+    others = [n for n in counts[counts >= min_rows].index if n not in PHYSICIANS]
     return canonical + others
 
 
