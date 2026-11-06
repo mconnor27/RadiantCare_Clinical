@@ -56,9 +56,12 @@ UI_CONTENT = dmc.Stack(
                 "Cumulative Task Volume — running total with Prior Periods "
                 "overlay and projection option. Calendar or rolling period "
                 "windows.",
-                "Time Distribution — histogram or density of MinutesToComplete. "
-                "Slice by Task, MD, or Planner. Density mode exposes a "
-                "bandwidth slider.",
+                "Time Distribution — histogram or density of MinutesToComplete "
+                "(Actual) or MinutesAllowed (Allowed, the SLA; Isodose tasks "
+                "and tasks without an allowed time are excluded). Slice by "
+                "Task, MD, or Planner. The stats line shows Total — the sum "
+                "of every task's time in the distribution. Density mode "
+                "exposes a bandwidth slider.",
                 "Actual vs Allowed Time — comparison of MinutesToComplete "
                 "against MinutesAllowed (the SLA threshold) per task, MD, or "
                 "planner.",

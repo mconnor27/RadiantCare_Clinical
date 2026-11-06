@@ -875,6 +875,15 @@ layout = dmc.Stack(
                     ],
                     extra_controls=[
                         dmc.SegmentedControl(
+                            id="tasks-hist-measure",
+                            data=[
+                                {"value": "actual", "label": "Actual"},
+                                {"value": "allowed", "label": "Allowed"},
+                            ],
+                            value="actual",
+                            size="xs",
+                        ),
+                        dmc.SegmentedControl(
                             id="tasks-histogram-settings-type",
                             data=[
                                 {"value": "histogram", "label": "Histogram"},
@@ -2397,22 +2406,25 @@ def _prepare_sla_data(df, is_completed, agg="W", slice_by="", c2b=None, accent_c
     }
 
 
-def _prepare_histogram_data(df, is_completed, slice_by="", c2b=None, accent_color=None):
-    """Prepare histogram data for clientside rendering.
+def _fmt_total_minutes(total_min):
+    """Human-readable total duration for the histogram stats line."""
+    if total_min >= 3 * 1440:
+        return f"{total_min / 1440:,.0f} days"
+    if total_min >= 60:
+        return f"{total_min / 60:,.1f} hr"
+    return f"{total_min:,.0f} min"
 
-    Returns a dict with series of raw values, stats, and display config.
-    """
-    if "MinutesToComplete" not in df.columns:
-        return None
 
-    completed = df[is_completed].copy()
-    completed["MinutesToComplete"] = pd.to_numeric(completed["MinutesToComplete"], errors="coerce")
-    completed = completed.dropna(subset=["MinutesToComplete"])
+def _build_histogram_block(completed, value_col, slice_by, c2b, accent_color):
+    """Build {series, stats, sliced} for one measure (actual or allowed)."""
+    completed = completed.copy()
+    completed[value_col] = pd.to_numeric(completed[value_col], errors="coerce")
+    completed = completed.dropna(subset=[value_col])
     if completed.empty:
         return None
 
     # --- Auto-detect display unit based on data range ---
-    all_vals = completed["MinutesToComplete"]
+    all_vals = completed[value_col]
     max_val = float(all_vals.max())
     if max_val > 3 * 1440:
         suffix, scale = "d", 1 / 1440
@@ -2424,7 +2436,7 @@ def _prepare_histogram_data(df, is_completed, slice_by="", c2b=None, accent_colo
         suffix, scale = "m", 1
         tick_suffix, x_title = "m", "Minutes"
 
-    completed["_display_val"] = completed["MinutesToComplete"] * scale
+    completed["_display_val"] = completed[value_col] * scale
 
     # --- Stats ---
     disp = completed["_display_val"]
@@ -2434,6 +2446,8 @@ def _prepare_histogram_data(df, is_completed, slice_by="", c2b=None, accent_colo
         "mean": float(disp.mean()),
         "q1": float(disp.quantile(0.25)),
         "q3": float(disp.quantile(0.75)),
+        # Sum of per-task durations across every task in the distribution
+        "totalText": _fmt_total_minutes(float(all_vals.sum())),
         "suffix": suffix,
         "tickSuffix": tick_suffix,
         "xTitle": x_title,
@@ -2472,12 +2486,53 @@ def _prepare_histogram_data(df, is_completed, slice_by="", c2b=None, accent_colo
             _add_series(completed[completed["CompletingUser"] == p], p,
                         CHART_COLORWAY[i % len(CHART_COLORWAY)])
 
+    if not series:
+        return None
+
     # When only one series and we have an accent color, use it
     if len(series) == 1 and accent_color:
         series[0]["color"] = accent_color
         stats["accentColor"] = accent_color
 
     return {"series": series, "stats": stats, "sliced": bool(slice_by)}
+
+
+def _prepare_histogram_data(df, is_completed, slice_by="", c2b=None, accent_color=None):
+    """Prepare histogram data for clientside rendering.
+
+    Returns {"actual": block, "allowed": block} where each block is
+    {series, stats, sliced} (or None). The clientside callback picks one
+    based on the Actual/Allowed toggle, so switching is instant.
+
+    Allowed uses MinutesAllowed (SLA) on the same completed tasks, excluding
+    Isodose rows (ARIA SLA data is unreliable for planning tasks) and rows
+    without a positive allowed time — same rules as the Actual vs Allowed chart.
+    """
+    if "MinutesToComplete" not in df.columns:
+        return None
+
+    completed = df[is_completed]
+    if completed.empty:
+        return None
+
+    actual = _build_histogram_block(completed, "MinutesToComplete",
+                                    slice_by, c2b, accent_color)
+
+    allowed = None
+    if "MinutesAllowed" in completed.columns:
+        _iso_types = _TASK_TYPE_GROUPS.get("Create Isodose Plan", [])
+        is_iso = (completed["ActivityName"].isin(_iso_types)
+                  if "ActivityName" in completed.columns
+                  else pd.Series(False, index=completed.index))
+        _allowed = pd.to_numeric(completed["MinutesAllowed"], errors="coerce")
+        allowed_rows = completed[(_allowed > 0) & ~is_iso]
+        if not allowed_rows.empty:
+            allowed = _build_histogram_block(allowed_rows, "MinutesAllowed",
+                                             slice_by, c2b, accent_color)
+
+    if actual is None and allowed is None:
+        return None
+    return {"actual": actual, "allowed": allowed}
 
 
 def _prepare_time_compare_data(df, is_time_valid, slice_by="", c2b=None, accent_color=None):
@@ -2857,14 +2912,22 @@ for _sid in ["tasks-volume-slice", "tasks-hist-slice", "tasks-time-compare-slice
     )
 
 # Histogram: clientside rendering from store
-clientside_callback("""function() {
-        var fig = window.dash_clientside.histogram.render.apply(null, arguments);
+clientside_callback("""function(data, chartType, bw, measure, currentFig) {
+        var fig;
+        var block = data ? data[measure || "actual"] : null;
+        if (data && !block && measure === "allowed") {
+            fig = Object.assign({}, window.dash_clientside.census._emptyFig(
+                "No allowed time (SLA) data for these tasks"));
+        } else {
+            fig = window.dash_clientside.histogram.render(block, chartType, bw, currentFig);
+        }
         return window.dash_clientside.chartDeferred.wrap("tasks-chart-histogram", fig, true);
     }""",
     Output("tasks-chart-histogram", "figure"),
     Input("tasks-store-histogram", "data"),
     Input("tasks-histogram-settings-type", "value"),
     Input("tasks-hist-bw", "value"),
+    Input("tasks-hist-measure", "value"),
     State("tasks-chart-histogram", "figure"),
     prevent_initial_call=True,
 )

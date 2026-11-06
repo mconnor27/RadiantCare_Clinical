@@ -142,7 +142,8 @@ window.dash_clientside.histogram = {
                 },
                 {
                     text: "n=" + stats.n.toLocaleString() + "  Mean: " + fmtVal(stats.mean) + stats.suffix +
-                          "  (IQR: " + fmtVal(stats.q1) + "\u2013" + fmtVal(stats.q3) + stats.suffix + ")",
+                          "  (IQR: " + fmtVal(stats.q1) + "\u2013" + fmtVal(stats.q3) + stats.suffix + ")" +
+                          (stats.totalText ? "  Total: " + stats.totalText : ""),
                     xref: "paper", yref: "paper",
                     x: 0.5, y: 0, xanchor: "center", yanchor: "top",
                     yshift: -18, showarrow: false,
