@@ -2,7 +2,7 @@
 <!--
   Every 5 minutes: forward the live schedule exports from OneDrive.
     Complete/ScheduleUpcoming.csv   -> R2 (Clinical dashboard)
-    Complete/Physician Schedule.csv -> Scheduling app /api/aria/upload
+    (Physician Schedule.csv is uploaded by the flow itself, not here)
   Uploads only when a file changed and passes validation.
   See scripts/sync_schedules.py.
 

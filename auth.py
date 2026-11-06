@@ -66,6 +66,9 @@ _PUBLIC_PATH_PREFIXES = (
     "/favicon.ico",
     "/health",
     "/_auth/",   # includes /_auth/debug and /_auth/me
+    # Power Automate schedule upload; checks its own Bearer token
+    # (see data/schedule_upload.py).
+    "/api/schedule-upload",
     # Static assets: JS bundles and user assets. Hash-versioned URLs are safe
     # to expose — Dash appends ``?m=<timestamp>`` / ``.v<ver>m<build>`` so the
     # filename changes on every deploy. Making these public lets Fastly cache

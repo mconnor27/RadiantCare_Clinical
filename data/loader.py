@@ -871,6 +871,16 @@ def _load_schedule_upcoming_from_r2():
         resp = s3.get_object(Bucket=bucket, Key=key)
         body = resp["Body"].read()
         last_modified = resp.get("LastModified")  # tz-aware UTC
+        # scripts/sync_schedules.py records when ARIA wrote the export
+        # (OneDrive mtime) as object metadata. Prefer it: R2's own
+        # LastModified is the upload time, which lags if the Mac was asleep.
+        source_modified = (resp.get("Metadata") or {}).get("source-modified")
+        if source_modified:
+            try:
+                ts = pd.Timestamp(source_modified)
+                last_modified = ts.tz_convert("UTC") if ts.tzinfo else ts.tz_localize("UTC")
+            except (ValueError, TypeError):
+                pass
         if not body.strip():
             return _schedule_upcoming_last_good(
                 f"R2 object is empty (key={key}, modified {last_modified})")
@@ -928,6 +938,18 @@ def schedule_upcoming_last_modified():
         _SCHEDULE_UPCOMING_META["last_modified"],
         _SCHEDULE_UPCOMING_META["source"],
     )
+
+
+def schedule_upcoming_updated_label(prefix="Schedule updated"):
+    """Human-readable freshness of the open-slot schedule, e.g.
+    "Schedule updated Mon Nov 2, 6:45 PM". Empty string before the first load.
+    Shared by the Home, Mobile and Scheduling views.
+    """
+    ts, _source = schedule_upcoming_last_modified()
+    if ts is None:
+        return ""
+    local = pd.Timestamp(ts).tz_convert("America/Los_Angeles")
+    return f"{prefix} {local.strftime('%a %b %-d, %-I:%M %p')}"
 
 
 _SCHEDULE_UPCOMING_TTL = int(

@@ -129,6 +129,11 @@ def _healthz():
     return ("ok", 200, {"Content-Type": "text/plain"})
 
 
+# Power Automate posts each ScheduleUpcoming export here; it's written to R2.
+from data.schedule_upload import register_schedule_upload  # noqa: E402
+register_schedule_upload(server)
+
+
 # Set Mapbox token globally
 if MAPBOX_TOKEN:
     import plotly.express

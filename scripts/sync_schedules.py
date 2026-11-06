@@ -1,15 +1,18 @@
-"""Push the two live schedule exports from OneDrive to where the apps read them.
+"""Push the live ScheduleUpcoming export from OneDrive to R2.
 
-Power Automate used to upload these with its HTTP action, but since late
-October 2026 those requests arrive with the body stripped (Content-Length 0,
-only Host + Authorization headers survive). The flow still writes correct
-copies to OneDrive, which syncs to this Mac, so this job forwards them:
+Power Automate used to upload it with an HTTP PUT to the Cloudflare Worker,
+but since late October 2026 those requests arrive with the body stripped
+(Content-Length 0, only Host + Authorization headers survive). The flow
+still writes a correct copy to OneDrive, which syncs to this Mac, so this
+job forwards it:
 
     Complete/ScheduleUpcoming.csv    -> R2 (key R2_SCHEDULE_UPCOMING_KEY),
                                         read by the Clinical dashboard
-    Complete/Physician Schedule.csv  -> Scheduling app POST /api/aria/upload
 
-Each run checks both files and uploads only when a file's content has
+The Scheduling app uploader (_upload_scheduling) is kept for the physician
+schedule but disabled in TARGETS; see the note there.
+
+Each run checks each target file and uploads only when its content has
 changed since the last successful upload and it passes validation (enough
 bytes, required columns, at least one data row). Files modified in the last
 minute are left for the next run in case OneDrive is still writing them.
@@ -29,22 +32,20 @@ SCHEDULING_UPLOAD_URL.
 from __future__ import annotations
 
 import argparse
-import csv
 import hashlib
-import io
 import json
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config.settings import DATA_DIR_RAW, PROJECT_ROOT  # noqa: E402  (also loads .env)
+from data.schedule_upload import put_schedule_upcoming, validate_csv  # noqa: E402
 
 STATE_PATH = PROJECT_ROOT / ".schedule_sync_state.json"
-MIN_BYTES = 200
 SETTLE_SECONDS = 60
 SCHEDULING_UPLOAD_URL = os.environ.get(
     "SCHEDULING_UPLOAD_URL",
@@ -68,45 +69,12 @@ def _with_retries(fn, what: str, attempts: int = 3):
             time.sleep(5 * i)
 
 
-def _validate(data: bytes, required: list[str]) -> tuple[bool, str, int]:
-    if len(data) < MIN_BYTES:
-        return False, f"only {len(data)} bytes", 0
-    text = data.decode("utf-8-sig", errors="replace")
-    reader = csv.reader(io.StringIO(text))
-    header = next(reader, [])
-    missing = [c for c in required if c not in header]
-    if missing:
-        return False, f"missing columns {missing}", 0
-    rows = sum(1 for row in reader if any(cell.strip() for cell in row))
-    if rows == 0:
-        return False, "header only, no data rows", 0
-    return True, "ok", rows
+def _upload_r2(data: bytes, file_modified: str) -> str:
+    # file_modified (OneDrive mtime, UTC) becomes the "Schedule updated" time.
+    return "R2 " + _with_retries(lambda: put_schedule_upcoming(data, file_modified), "r2")
 
 
-def _upload_r2(data: bytes) -> str:
-    import boto3
-
-    key = os.environ.get("R2_SCHEDULE_UPCOMING_KEY", "ScheduleUpcoming.csv").strip()
-    bucket = os.environ.get("R2_BUCKET", "radiantcare-sanitized").strip()
-    s3 = boto3.client(
-        "s3",
-        endpoint_url=f"https://{os.environ['R2_ACCOUNT_ID'].strip()}.r2.cloudflarestorage.com",
-        aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"].strip(),
-        aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"].strip(),
-        region_name="auto",
-    )
-
-    def put():
-        s3.put_object(Bucket=bucket, Key=key, Body=data, ContentType="text/csv")
-        size = s3.head_object(Bucket=bucket, Key=key)["ContentLength"]
-        if size != len(data):
-            raise RuntimeError(f"R2 holds {size} bytes after upload, expected {len(data)}")
-
-    _with_retries(put, "r2")
-    return f"R2 {bucket}/{key}"
-
-
-def _upload_scheduling(data: bytes) -> str:
+def _upload_scheduling(data: bytes, file_modified: str) -> str:  # noqa: ARG001
     import requests
 
     api_key = os.environ["ARIA_UPLOAD_API_KEY"].strip()
@@ -138,12 +106,12 @@ TARGETS = [
         "required": ["ScheduledDateTime", "AssignedResource", "BookingStatus"],
         "send": _upload_r2,
     },
-    {
-        "name": "PhysicianSchedule",
-        "file": "Physician Schedule.csv",
-        "required": ["ScheduledDate", "PhysicianName"],
-        "send": _upload_scheduling,
-    },
+    # Physician Schedule.csv -> Scheduling app is NOT synced here: the flow's
+    # own multipart POST to /api/aria/upload still arrives intact (201 nightly
+    # at ~1:45 AM), so a second upload would only duplicate snapshots. Re-add
+    # {"name": "PhysicianSchedule", "file": "Physician Schedule.csv",
+    #  "required": ["ScheduledDate", "PhysicianName"], "send": _upload_scheduling}
+    # if that flow step ever starts arriving empty too.
 ]
 
 
@@ -182,8 +150,9 @@ def sync(dry_run: bool = False, force: bool = False) -> int:
         if digest == entry.get("sha256") and not force:
             continue
 
-        ok, reason, rows = _validate(data, t["required"])
+        ok, reason, rows = validate_csv(data, t["required"])
         file_time = datetime.fromtimestamp(mtime).isoformat(timespec="seconds")
+        file_time_utc = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat(timespec="seconds")
         if not ok:
             if entry.get("rejected_sha256") != digest:  # log each bad file once
                 _log(f"[{name}] NOT uploaded: {reason} (file modified {file_time}); previous upload kept")
@@ -195,7 +164,7 @@ def sync(dry_run: bool = False, force: bool = False) -> int:
             continue
 
         try:
-            where = t["send"](data)
+            where = t["send"](data, file_time_utc)
         except Exception as e:  # noqa: BLE001
             _log(f"[{name}] upload FAILED: {type(e).__name__}: {e}")
             failures += 1

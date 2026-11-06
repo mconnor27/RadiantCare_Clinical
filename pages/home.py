@@ -868,6 +868,10 @@ layout = dmc.Stack(
                         show_smooth=False,
                         show_grouping=False,
                         paper_height="466px",
+                        sub_header=dmc.Text(
+                            id="home-avail-updated",
+                            size="xs", c="dimmed", ta="center",
+                        ),
                         extra_controls_left=[
                             dmc.SegmentedControl(
                                 id="home-avail-scope",
@@ -2039,6 +2043,7 @@ def update_hours_data(_n, site_filter):
 
 @callback(
     Output("home-chart-availability", "figure"),
+    Output("home-avail-updated", "children"),
     Input("home-interval", "n_intervals"),
     Input("home-filter-department", "value"),
     Input("home-avail-scope", "value"),
@@ -2046,8 +2051,12 @@ def update_hours_data(_n, site_filter):
 )
 def update_availability_calendar(_n, departments, scope):
     """Update slot availability calendar (shows both Exam and Sim)."""
+    from data.loader import schedule_upcoming_updated_label
+
     consults_only = scope != "all"
-    return _build_availability_calendar(departments, consults_only=consults_only)
+    fig = _build_availability_calendar(departments, consults_only=consults_only)
+    # Read after the build so the loader has populated the timestamp.
+    return fig, schedule_upcoming_updated_label()
 
 
 # Hover highlight on availability heatmap cells

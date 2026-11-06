@@ -16,7 +16,7 @@ from config.settings import (
 )
 from data.loader import (
     load_schedule_upcoming, load_clinic_visits, load_simulations,
-    schedule_upcoming_last_modified,
+    schedule_upcoming_updated_label,
 )
 
 dash.register_page(__name__, path="/scheduling", name="Scheduling", order=20)
@@ -930,11 +930,5 @@ def _update_content(depts, phys, appts, view, show_mode, mode,
 
 
 def _format_last_updated():
-    """Format the ScheduleUpcoming source's last-modified time for display."""
-    ts, source = schedule_upcoming_last_modified()
-    if ts is None:
-        return ""
-    local = pd.Timestamp(ts).tz_convert("America/Los_Angeles")
-    when = local.strftime("%b %-d, %Y at %-I:%M %p PT")
-    where = "live R2 feed" if source == "r2" else "local file"
-    return f"Last updated: {when} ({where})"
+    """Format the ScheduleUpcoming export time for display."""
+    return schedule_upcoming_updated_label("Open slots last updated")

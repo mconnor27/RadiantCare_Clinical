@@ -1310,6 +1310,10 @@ def layout():
                     style={"height": "300px", "backgroundColor": "transparent"},
                 ),
             ),
+            dmc.Text(
+                id=f"{PAGE_ID}-avail-updated",
+                size="xs", c="dimmed", ta="center", mt=4,
+            ),
         ],
     )
 
@@ -1665,6 +1669,16 @@ clientside_callback(
     Output(f"{PAGE_ID}-avail-dept-wrap", "style"),
     Input(f"{PAGE_ID}-avail-view", "value"),
 )
+
+
+@callback(
+    Output(f"{PAGE_ID}-avail-updated", "children"),
+    Input(f"{PAGE_ID}-avail", "figure"),
+)
+def update_availability_updated(_fig):
+    """Schedule freshness label under the calendar; refreshes with the figure."""
+    from data.loader import schedule_upcoming_updated_label
+    return schedule_upcoming_updated_label()
 
 
 @callback(
