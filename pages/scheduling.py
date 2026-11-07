@@ -98,11 +98,27 @@ def _blocked_flag(df):
     return notes.fillna("").astype(str).str.strip() != ""
 
 
+def _snapshot_window(snapshot):
+    """Date span covered by the whole ScheduleUpcoming snapshot.
+
+    The booked overlays (Clinic Visits / Simulations) are clipped to this
+    span. It must come from every row, not just the open HOLD rows: a fully
+    booked day has no open holds, and windowing on those would hide its
+    bookings (e.g. Mon-Wed showing empty because the first open sim slot
+    is Thursday).
+    """
+    ts = pd.to_datetime(snapshot["AppointmentDateTime"]).dropna()
+    if ts.empty:
+        return None, None
+    return ts.min().normalize(), ts.max().normalize() + pd.Timedelta(days=1)
+
+
 def _sim_slots():
     """Sim-mode slots: HOLD SIM TIME from ScheduleUpcoming + booked Sims (gray)."""
     avail = load_schedule_upcoming()
     if avail.empty:
         return _empty_slots()
+    win_start, win_end = _snapshot_window(avail)
     avail = avail[avail["ActivityName"] == "HOLD SIM TIME"].copy()
     avail["AppointmentDateTime"] = pd.to_datetime(avail["AppointmentDateTime"])
     avail["ScheduledEndTime"] = pd.to_datetime(avail.get("ScheduledEndTime"))
@@ -116,9 +132,7 @@ def _sim_slots():
     ]]
 
     sim_extra = pd.DataFrame()
-    if not avail.empty:
-        win_start = avail["AppointmentDateTime"].min()
-        win_end = avail["AppointmentDateTime"].max() + pd.Timedelta(days=1)
+    if win_start is not None:
         sim = load_simulations()
         if not sim.empty and "ScheduledDateTime" in sim.columns:
             sim = sim.copy()
@@ -158,8 +172,10 @@ def _sim_slots():
 def _physician_slots():
     avail = load_schedule_upcoming()
     if avail.empty:
+        win_start = win_end = None
         avail = _empty_slots()
     else:
+        win_start, win_end = _snapshot_window(avail)
         avail = avail[avail["ActivityName"].isin(APPT_TYPES.keys())].copy()
         avail["AppointmentDateTime"] = pd.to_datetime(avail["AppointmentDateTime"])
         avail["ScheduledEndTime"] = pd.to_datetime(avail.get("ScheduledEndTime"))
@@ -175,11 +191,9 @@ def _physician_slots():
             "ActivityName", "AssignedResource", "Department", "IsTaken", "IsBlocked",
         ]]
 
-    # Window for clinic visits = same span as availability snapshot
+    # Window for clinic visits = same span as the whole schedule snapshot
     cv_extra = pd.DataFrame()
-    if not avail.empty:
-        win_start = avail["AppointmentDateTime"].min()
-        win_end = avail["AppointmentDateTime"].max() + pd.Timedelta(days=1)
+    if win_start is not None:
         cv = load_clinic_visits()
         if not cv.empty and "ScheduledDateTime" in cv.columns:
             cv = cv.copy()

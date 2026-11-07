@@ -119,8 +119,10 @@ UI_CONTENT = dmc.Stack(
                 "signal — e.g. ActivityStatus — can plug in without touching "
                 "the call sites.)",
                 "Booked overlays are joined by date window, not by id: the "
-                "page takes ScheduleUpcoming's min/max AppointmentDateTime "
-                "and pulls Clinic Visits / Simulations rows whose "
+                "page takes the date span of the whole ScheduleUpcoming "
+                "snapshot (every row, booked or open — so a fully booked day "
+                "with no open holds still shows its bookings) and pulls "
+                "Clinic Visits / Simulations rows whose "
                 "ScheduledDateTime falls inside that window, with Status = "
                 "open and matching ActivityName. This means booked rows from "
                 "outside the ScheduleUpcoming snapshot's two-month window "
