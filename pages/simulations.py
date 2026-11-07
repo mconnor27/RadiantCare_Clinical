@@ -45,7 +45,11 @@ PAGE_ID = "sim"
 _DEFAULT_DATE_PRESET = "ytd" if pd.Timestamp.now().month > 1 else "3mo"
 _CAP_LEAD = 21          # outlier cap: consult → sim (days)
 _CAP_TIME_TO_TX = 21    # outlier cap: sim → treatment, actual (days)
-_CAP_SCHED_TX = 21      # outlier cap: sim → treatment, as first booked (days)
+_CAP_SCHED_TX = 21      # booked-start cap for the "Scheduled" censoring guard (days)
+# A booked start this many days before the latest observed treatment start is
+# stale: ARIA never nulled DaysToScheduledTreatment after the patient started
+# (seen on ~40 legacy rows, 2004-2026). Live bookings sit at or after the cutoff.
+_SCHED_STALE_DAYS = 14
 _CAP_LEAD_TIME = 21     # outlier cap: lead time / booked → sim (days)
 
 # Duration range filter (minutes). Top handle at max == unbounded (long-tail sims).
@@ -69,7 +73,6 @@ _CENSOR_GUARD_DEFAULT = "km"
 _OUTLIER_FILTER_COLS = [
     "DaysFromClinicExamToSimulation",  # Consult → Sim
     "DaysFromSimToTreatment",          # Sim → Treatment (actual start)
-    "DaysToScheduledTreatment",        # Sim → Treatment (as first scheduled)
     "DaysFromCreatedToAppt",           # Lead Time (booked → sim)
 ]
 
@@ -434,8 +437,7 @@ def _build_sim_filter_bar():
                     ),
                     outlier_panel(PAGE_ID, transitions=[
                         ("Consult \u2192 Sim", _CAP_LEAD),
-                        ("Sim \u2192 Tx (Actual)", _CAP_TIME_TO_TX),
-                        ("Sim \u2192 Tx (Scheduled)", _CAP_SCHED_TX),
+                        ("Sim \u2192 Tx", _CAP_TIME_TO_TX),
                         ("Lead Time", _CAP_LEAD_TIME),
                     ], allow_filter_mode=True, filter_max=_OUTLIER_FILTER_MAX),
                     # Smoothing
@@ -721,6 +723,24 @@ layout = dmc.Stack(
                                 fullWidth=True,
                             ),
                         ]),
+                        # Histogram y-axis: raw count vs share of sims.
+                        html.Div(
+                            id="sim-timing-yscale-wrap",
+                            style={"display": "none"},
+                            children=dmc.Stack(gap=4, children=[
+                                dmc.Text("Y Axis", size="xs", fw=500, c="#6B7280"),
+                                dmc.SegmentedControl(
+                                    id="sim-timing-yscale",
+                                    data=[
+                                        {"value": "count", "label": "Count"},
+                                        {"value": "percent", "label": "%"},
+                                    ],
+                                    value="count",
+                                    size="xs",
+                                    fullWidth=True,
+                                ),
+                            ]),
+                        ),
                         # Sim -> Treatment looks forward from the sim, so recent
                         # periods are right-censored. Shown only for that metric.
                         html.Div(
@@ -734,6 +754,26 @@ layout = dmc.Stack(
                                     value=_CENSOR_GUARD_DEFAULT,
                                     size="xs",
                                     fullWidth=True,
+                                ),
+                                # Cap on booked starts — only used by "Scheduled".
+                                dmc.Box(
+                                    id="sim-timing-sched-cap-wrap",
+                                    style={"display": "none"},
+                                    mt=4,
+                                    children=[
+                                        dmc.Group(justify="space-between", children=[
+                                            dmc.Text("Booked Start Cap", size="xs", c="#6B7280"),
+                                            dmc.Text(f"{_CAP_SCHED_TX}d",
+                                                     id="sim-timing-sched-cap-val",
+                                                     size="xs", fw=600, c="#7C2A83"),
+                                        ]),
+                                        dmc.Slider(
+                                            id="sim-timing-sched-cap",
+                                            min=1, max=_OUTLIER_FILTER_MAX, step=1,
+                                            value=_CAP_SCHED_TX, size="xs", color="violet",
+                                            showLabelOnHover=True,
+                                        ),
+                                    ],
                                 ),
                             ]),
                         ),
@@ -1251,8 +1291,8 @@ _register_sim_filter_callbacks()
 register_diagnosis_callbacks("sim")
 
 # Register outlier panel callbacks
-register_outlier_callbacks(PAGE_ID, n_transitions=4,
-                           defaults=[_CAP_LEAD, _CAP_TIME_TO_TX, _CAP_SCHED_TX, _CAP_LEAD_TIME],
+register_outlier_callbacks(PAGE_ID, n_transitions=3,
+                           defaults=[_CAP_LEAD, _CAP_TIME_TO_TX, _CAP_LEAD_TIME],
                            allow_filter_mode=True, filter_max=_OUTLIER_FILTER_MAX)
 
 
@@ -1406,6 +1446,24 @@ def _apply_duration_filter(df, duration):
     return df[mask]
 
 
+def _booked_sim_tx(df, tx_cutoff):
+    """Days from sim to the booked treatment start, for sims not yet started.
+
+    ARIA fills DaysToScheduledTreatment only while treatment is pending, so it
+    never overlaps DaysFromSimToTreatment. Stale bookings — a booked start more
+    than _SCHED_STALE_DAYS before the latest observed treatment start, left
+    behind because ARIA never cleared the column — are returned as NaN.
+    """
+    if _SIM_SCHED_TX_COL not in df.columns:
+        return pd.Series(np.nan, index=df.index)
+    booked = pd.to_numeric(df[_SIM_SCHED_TX_COL], errors="coerce")
+    if tx_cutoff is not None and "ScheduledTreatmentDate" in df.columns:
+        booked_day = pd.to_datetime(df["ScheduledTreatmentDate"], errors="coerce").dt.normalize()
+        stale = booked_day < (tx_cutoff - pd.Timedelta(days=_SCHED_STALE_DAYS))
+        booked = booked.mask(stale)
+    return booked
+
+
 def _apply_outlier_range_filters(df, ranges):
     """Filter-mode of the outlier panel: keep rows whose transition day-counts
     fall within the selected [low, high] range for each transition.
@@ -1414,7 +1472,9 @@ def _apply_outlier_range_filters(df, ranges):
     A range spanning the full slider ([0, _OUTLIER_FILTER_MAX]) is inactive.
     The high handle at _OUTLIER_FILTER_MAX means unbounded above (keeps long tail).
     Rows with a missing value in a filtered column are excluded when that
-    transition's range is active.
+    transition's range is active — except Sim -> Tx, where a sim that hasn't
+    started yet is judged by its booked start, so recent pending sims aren't
+    dropped from the whole page just for being recent.
     """
     if not ranges:
         return df
@@ -1427,6 +1487,8 @@ def _apply_outlier_range_filters(df, ranges):
         if lo <= 0 and hi >= _OUTLIER_FILTER_MAX:
             continue  # full span → inactive
         d = pd.to_numeric(df[col], errors="coerce")
+        if col == "DaysFromSimToTreatment":
+            d = d.fillna(_booked_sim_tx(df, _tx_observation_cutoff()))
         mask = d.notna() & (d >= lo)
         if hi < _OUTLIER_FILTER_MAX:
             mask &= d <= hi
@@ -1558,7 +1620,6 @@ _SIM_FILTER_INPUTS = [
     Input("sim-outlier-range-0", "value"),
     Input("sim-outlier-range-1", "value"),
     Input("sim-outlier-range-2", "value"),
-    Input("sim-outlier-range-3", "value"),
 ]
 
 # Number of shared filter inputs — per-callback "extra" inputs start at this
@@ -1572,7 +1633,7 @@ def _unpack_sim_filter_args(args):
     (_n, slider_val, departments, physician, sim_types,
      machines, body_sites, diag_mode, volume_scope, inpatient,
      weekend_only, date_preset, physician_role, duration,
-     outlier_mode, orange0, orange1, orange2, orange3) = args[:_N_SIM_FILTER]
+     outlier_mode, orange0, orange1, orange2) = args[:_N_SIM_FILTER]
     return dict(
         slider_val=slider_val, departments=departments, physician=physician,
         sim_types=sim_types, machines=machines, body_sites=body_sites,
@@ -1580,7 +1641,7 @@ def _unpack_sim_filter_args(args):
         weekend_only=weekend_only, date_preset=date_preset,
         physician_role=physician_role, duration=duration,
         outlier_mode=outlier_mode,
-        outlier_ranges=[orange0, orange1, orange2, orange3],
+        outlier_ranges=[orange0, orange1, orange2],
     )
 
 
@@ -1659,19 +1720,16 @@ def _update_sim_table(*args):
     Input("sim-outlier-cap-0", "value"),
     Input("sim-outlier-cap-1", "value"),
     Input("sim-outlier-cap-2", "value"),
-    Input("sim-outlier-cap-3", "value"),
     Input("sim-table-filter-rows", "data"),
 )
 def _update_sim_kpis(*args):
     ctx = _unpack_sim_filter_args(args)
     resim_scope = args[_N_SIM_FILTER + 0] or "resim"
     outlier_enabled = args[_N_SIM_FILTER + 1]
-    # Cap slider order matches _OUTLIER_FILTER_COLS: consult→sim, sim→tx actual,
-    # sim→tx scheduled, lead time. The KPI row has no scheduled-start card, so
-    # index 4 is consumed but unused.
+    # Cap slider order matches _OUTLIER_FILTER_COLS: consult→sim, sim→tx, lead time.
     cap_lead_raw, cap_tx_raw, cap_lt_raw = (
-        args[_N_SIM_FILTER + 2], args[_N_SIM_FILTER + 3], args[_N_SIM_FILTER + 5])
-    grid_rows = args[_N_SIM_FILTER + 6]
+        args[_N_SIM_FILTER + 2], args[_N_SIM_FILTER + 3], args[_N_SIM_FILTER + 4])
+    grid_rows = args[_N_SIM_FILTER + 5]
     # In filter mode the ranges filter the dataset directly, so disable capping.
     if ctx.get("outlier_mode") == "filter":
         outlier_enabled = False
@@ -1965,11 +2023,11 @@ def _update_sim_volume(*args):
     Input("sim-timing-slice", "value"),
     Input("sim-timing-stat", "value"),
     Input("sim-timing-censor", "value"),
+    Input("sim-timing-sched-cap", "value"),
     Input("sim-outlier-enabled", "data"),
     Input("sim-outlier-cap-0", "value"),
     Input("sim-outlier-cap-1", "value"),
     Input("sim-outlier-cap-2", "value"),
-    Input("sim-outlier-cap-3", "value"),
     Input("sim-table-filter-rows", "data"),
     running=[(Output("sim-chart-timing-loading", "visible"), True, False)],
 )
@@ -1978,20 +2036,21 @@ def _update_sim_timing(*args):
     timing_metric, timing_agg, timing_slice = (
         args[_N_SIM_FILTER + 0], args[_N_SIM_FILTER + 1], args[_N_SIM_FILTER + 2])
     timing_stat, timing_censor = args[_N_SIM_FILTER + 3], args[_N_SIM_FILTER + 4]
-    outlier_enabled = args[_N_SIM_FILTER + 5]
-    cap_lead_raw, cap_tx_raw, cap_sched_raw, cap_lt_raw = (
-        args[_N_SIM_FILTER + 6], args[_N_SIM_FILTER + 7],
-        args[_N_SIM_FILTER + 8], args[_N_SIM_FILTER + 9])
+    # Booked-start cap lives with the censoring guard in the gear menu and is
+    # independent of the outlier panel — it only feeds the "Scheduled" guard.
+    cap_sched = args[_N_SIM_FILTER + 5] or _CAP_SCHED_TX
+    outlier_enabled = args[_N_SIM_FILTER + 6]
+    cap_lead_raw, cap_tx_raw, cap_lt_raw = (
+        args[_N_SIM_FILTER + 7], args[_N_SIM_FILTER + 8], args[_N_SIM_FILTER + 9])
     grid_rows = args[_N_SIM_FILTER + 10]
     # In filter mode the ranges filter the dataset directly, so disable capping.
     if ctx.get("outlier_mode") == "filter":
         outlier_enabled = False
     if not outlier_enabled:
-        cap_lead, cap_tx, cap_sched, cap_lt = 365, 365, 365, 365
+        cap_lead, cap_tx, cap_lt = 365, 365, 365
     else:
         cap_lead = cap_lead_raw or _CAP_LEAD
         cap_tx = cap_tx_raw or _CAP_TIME_TO_TX
-        cap_sched = cap_sched_raw or _CAP_SCHED_TX
         cap_lt = cap_lt_raw or _CAP_LEAD_TIME
     # Pick the appropriate cap based on which metric is selected
     metric = timing_metric or "consult_sim"
@@ -2009,7 +2068,7 @@ def _update_sim_timing(*args):
         cap=cap, diag_mode=data.get("diag_mode", "primary"),
         stat=timing_stat or "median", censor=censor, cap_sched=cap_sched,
         tx_cutoff=(_tx_observation_cutoff()
-                   if (metric == "sim_tx" and censor in ("trim", "km")) else None),
+                   if (metric == "sim_tx" and censor in ("trim", "km", "sched")) else None),
     )
 
 
@@ -2150,10 +2209,10 @@ clientside_callback(
 )
 
 clientside_callback(
-    """function(rawData, smoothPct, chartType, currentFig) {
+    """function(rawData, smoothPct, chartType, yScale, currentFig) {
         if (chartType === "histogram") {
             return window.dash_clientside.histogram.render(
-                rawData ? rawData.hist : null, "histogram", null, currentFig);
+                rawData ? rawData.hist : null, "histogram", null, currentFig, yScale);
         }
         return window.dash_clientside.census.smoothChartWithType(rawData, smoothPct, chartType, currentFig);
     }""",
@@ -2161,6 +2220,7 @@ clientside_callback(
     Input("sim-store-timing", "data"),
     Input("sim-timing-settings-smooth", "value"),
     Input("sim-timing-settings-type", "value"),
+    Input("sim-timing-yscale", "value"),
     State("sim-chart-timing", "figure"),
     prevent_initial_call=True,
 )
@@ -2175,6 +2235,14 @@ clientside_callback(
     Input("sim-timing-settings-type", "value"),
 )
 
+clientside_callback(
+    """function(chartType) {
+        return chartType === "histogram" ? {"display": ""} : {"display": "none"};
+    }""",
+    Output("sim-timing-yscale-wrap", "style"),
+    Input("sim-timing-settings-type", "value"),
+)
+
 # The censoring guard only applies to Sim -> Treatment (the one interval that
 # looks forward from the sim date and can still be pending).
 clientside_callback(
@@ -2183,6 +2251,20 @@ clientside_callback(
     }""",
     Output("sim-timing-censor-wrap", "style"),
     Input("sim-timing-metric", "value"),
+)
+
+clientside_callback(
+    """function(censor) {
+        return censor === "sched" ? {"display": ""} : {"display": "none"};
+    }""",
+    Output("sim-timing-sched-cap-wrap", "style"),
+    Input("sim-timing-censor", "value"),
+)
+
+clientside_callback(
+    """function(v) { return v + "d"; }""",
+    Output("sim-timing-sched-cap-val", "children"),
+    Input("sim-timing-sched-cap", "value"),
 )
 
 clientside_callback(
@@ -3160,7 +3242,7 @@ def _prepare_timing_data(df, metric="consult_sim", agg="M", slice_by="", c2b=Non
     censor_mode = censor if metric == "sim_tx" else "off"
     if censor_mode == "sched":
         if _SIM_SCHED_TX_COL in df.columns:
-            df["_sched"] = pd.to_numeric(df[_SIM_SCHED_TX_COL], errors="coerce")
+            df["_sched"] = _booked_sim_tx(df, tx_cutoff)
         else:
             censor_mode = "off"
     elif censor_mode in ("trim", "km"):
@@ -3182,8 +3264,8 @@ def _prepare_timing_data(df, metric="consult_sim", agg="M", slice_by="", c2b=Non
         df.loc[over, "_time"] = tau
         df = df[df["_time"].notna()]
     elif censor_mode == "sched":
-        # Each source keeps its own cap: actual starts use the Sim -> Tx
-        # (Actual) slider, booked dates the Sim -> Tx (Scheduled) one. A row
+        # Each source keeps its own cap: actual starts use the outlier panel's
+        # Sim -> Tx slider, booked dates the gear menu's Booked Start Cap. A row
         # only ever carries one of the two, so this is a straight coalesce.
         sched_tau = float(cap_sched) if cap_sched else tau
         actual, booked = df["_val"], df["_sched"]
@@ -3457,7 +3539,8 @@ def _prepare_cancel_data(dff_all, start, end, agg="M", slice_by=""):
                     "color": DEPARTMENT_COLORS.get(dept, CHART_COLORWAY[0]),
                 })
 
-    return {"dates": dates, "series": series, "height": 320, "yTitle": "Cancellation Rate (%)", "stacked": False, "hideLegend": len(series) <= 1}
+    return {"dates": dates, "series": series, "height": 320, "yTitle": "Cancellation Rate (%)", "stacked": False, "hideLegend": len(series) <= 1,
+            "compactX": True}  # 1/3-width card: short, sparse date ticks
 
 
 def _build_diagnosis_mix(dff, c2b=None, slice_by="", mode="count",

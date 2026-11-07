@@ -49,6 +49,8 @@ OUTLIER_DEFAULTS = [
     OUTLIER_CAPS["review_to_tx"],
 ]
 OUTLIER_SLIDER_MAX = 120  # workflow gaps can be longer than task durations
+# Overall Sim -> Treatment span filter (days). Top handle == no upper bound.
+SIMTX_SPAN_MAX = 60
 
 
 # ---------------------------------------------------------------------------
@@ -512,6 +514,62 @@ def _build_filter_bar(prefix, label=None):
                                 radius="md",
                                 className="wf-chip-dropdown",
                                 style={"display": "none", "minWidth": "260px"},
+                            ),
+                        ],
+                        style={"position": "relative", "display": "inline-block"},
+                    ),
+                    # Overall Sim -> Treatment span (row filter on whole chains)
+                    html.Div(
+                        children=[
+                            html.Div(
+                                children=[
+                                    dmc.Button(
+                                        "Sim \u2192 Tx",
+                                        id=_id(prefix, "simtx-trigger"),
+                                        variant="default",
+                                        size="sm",
+                                        rightSection=DashIconify(icon="mdi:chevron-down", width=14),
+                                    ),
+                                    dmc.ActionIcon(
+                                        DashIconify(icon="mdi:close-circle", width=18),
+                                        id=_id(prefix, "simtx-clear"),
+                                        variant="subtle",
+                                        color="gray",
+                                        size="sm",
+                                        className="wf-filter-clear-btn",
+                                        style={"display": "none"},
+                                    ),
+                                ],
+                                style={"position": "relative", "display": "inline-block"},
+                            ),
+                            dmc.Paper(
+                                dmc.Stack(gap="xs", w=340, children=[
+                                    dmc.Text("Sim \u2192 Treatment Start (days)",
+                                             size="xs", fw=500, c="#6B7280"),
+                                    dmc.Box(px=12, children=dmc.RangeSlider(
+                                        id=_id(prefix, "filter-simtx-span"),
+                                        min=0, max=SIMTX_SPAN_MAX, step=1,
+                                        minRange=1,
+                                        value=[0, SIMTX_SPAN_MAX],
+                                        marks=[{"value": v, "label": f"{v}d"} for v in (0, 7, 14, 21, 30)]
+                                              + [{"value": SIMTX_SPAN_MAX, "label": "\u221e"}],
+                                        color="violet",
+                                        size="sm",
+                                        mb="lg",
+                                    )),
+                                    dmc.Text(
+                                        "While active, the date range picks courses by sim "
+                                        "date. A booked first treatment counts by its booked "
+                                        "date; courses with no treatment are left out.",
+                                        size="xs", c="dimmed",
+                                    ),
+                                ]),
+                                p="sm",
+                                shadow="md",
+                                withBorder=True,
+                                radius="md",
+                                className="wf-chip-dropdown wf-range-panel",
+                                style={"display": "none"},
                             ),
                         ],
                         style={"position": "relative", "display": "inline-block"},
@@ -1581,6 +1639,28 @@ def _register_filter_callbacks(prefix):
             return dash.no_update
         return kept
 
+    # --- Sim -> Tx span: trigger label, clear button ---
+    clientside_callback(
+        f"""function(rng) {{
+            var max = {SIMTX_SPAN_MAX};
+            var hide = {{"display": "none"}};
+            if (!rng || (rng[0] <= 0 && rng[1] >= max)) return ["Sim \\u2192 Tx", hide];
+            var t = rng[1] >= max ? "\\u2265 " + rng[0] + "d"
+                  : rng[0] <= 0 ? "\\u2264 " + rng[1] + "d"
+                  : rng[0] + "\\u2013" + rng[1] + "d";
+            return ["Sim \\u2192 Tx " + t, {{"display": "inline-flex"}}];
+        }}""",
+        Output(_id(prefix, "simtx-trigger"), "children"),
+        Output(_id(prefix, "simtx-clear"), "style"),
+        Input(_id(prefix, "filter-simtx-span"), "value"),
+    )
+    clientside_callback(
+        f"""function(n) {{ return [0, {SIMTX_SPAN_MAX}]; }}""",
+        Output(_id(prefix, "filter-simtx-span"), "value", allow_duplicate=True),
+        Input(_id(prefix, "simtx-clear"), "n_clicks"),
+        prevent_initial_call=True,
+    )
+
     # --- Outlier caps ---
     outlier_enabled_id = _id(prefix, "outlier-enabled") if prefix != "wf" else "wf-outlier-enabled"
 
@@ -1785,7 +1865,7 @@ def _load_and_filter_wf(slider_val, departments, physician, techniques,
                         body_systems, subcategories=None, diag_mode="primary",
                         show_loopbacks=False,
                         use_business_days=False, inpatient_only=False,
-                        outlier_enabled=True, caps=None):
+                        outlier_enabled=True, caps=None, simtx_span=None):
     """Load workflow data, apply all filters, pivot to courses.
 
     Returns a dict with keys: pivot, wf_full, filter_options, bdays, start, end.
@@ -1817,6 +1897,13 @@ def _load_and_filter_wf(slider_val, departments, physician, techniques,
     _today = pd.Timestamp.now().normalize()
     if "StageDateTime" in wf.columns and "StageStatus" in wf.columns:
         wf = wf[~((wf["StageDateTime"] > _today) & (wf["StageStatus"] == "Open"))]
+
+    # Date anchor: courses are picked by consult (Exam) date, except while the
+    # Sim -> Tx span filter is active — then by simulation date, since that
+    # filter is a question about sims ("sims this month that started within 5d").
+    simtx_active = bool(simtx_span and len(simtx_span) == 2
+                        and not (simtx_span[0] <= 0 and simtx_span[1] >= SIMTX_SPAN_MAX))
+    anchor_stage = "Simulation" if simtx_active else "Exam"
 
     # Get date range from Exam rows
     exam_dates = wf.loc[wf["StageName"] == "Exam", "StageDateTime"].dropna()
@@ -1859,10 +1946,10 @@ def _load_and_filter_wf(slider_val, departments, physician, techniques,
     except Exception:
         diag_df = None
 
-    # Date filter: apply to Exam rows and keep all stages for matching patients
+    # Date filter: apply to anchor-stage rows and keep all stages for matching patients
     if "StageDateTime" in wf.columns:
         exam_in_range = wf[
-            (wf["StageName"] == "Exam") &
+            (wf["StageName"] == anchor_stage) &
             (wf["StageDateTime"] >= start) &
             (wf["StageDateTime"] <= end)
         ]
@@ -1915,9 +2002,9 @@ def _load_and_filter_wf(slider_val, departments, physician, techniques,
         return {"pivot": None, "wf_full": None, "filter_options": filter_options,
                 "bdays": bool(use_business_days), "start": start, "end": end}
 
-    # Enforce date range on pivoted Exam dates
-    if "Exam" in pivot.columns:
-        pivot = pivot[(pivot["Exam"] >= start) & (pivot["Exam"] <= end)]
+    # Enforce date range on the pivoted anchor-stage dates
+    if anchor_stage in pivot.columns:
+        pivot = pivot[(pivot[anchor_stage] >= start) & (pivot[anchor_stage] <= end)]
         pivot = pivot.reset_index(drop=True)
         if pivot.empty:
             return {"pivot": None, "wf_full": None, "filter_options": filter_options,
@@ -1956,6 +2043,27 @@ def _load_and_filter_wf(slider_val, departments, physician, techniques,
 
     bdays = bool(use_business_days)
 
+    # Booked-but-not-started treatment: the chain's first treatment row is
+    # still "Scheduled" with a future date. Keep the booked date in TxBooked
+    # (the Sim -> Tx span filter uses it), then clear Treatment so the flow,
+    # gap stats, outlier caps and censoring all see the course as not yet
+    # treated — it lands in the "pending" drop-off after Review.
+    pivot["TxBooked"] = pd.NaT
+    if "Treatment" in pivot.columns and "StageStatus" in wf.columns:
+        _tx = wf[(wf["StageName"] == "Treatment")
+                 & ~wf["StageStatus"].isin(["Cancelled", "Deleted"])]
+        if "StageOccurrence" in _tx.columns:
+            _tx = _tx[_tx["StageOccurrence"].fillna(1) == 1]
+        _tx = _tx.sort_values("StageDateTime").drop_duplicates("UniqueRowID", keep="first")
+        booked_ids = set(_tx.loc[(_tx["StageStatus"] == "Scheduled")
+                                 & (_tx["StageDateTime"] > pd.Timestamp.now()),
+                                 "UniqueRowID"])
+        is_booked = pivot["UniqueRowID"].isin(booked_ids) & pivot["Treatment"].notna()
+        pivot.loc[is_booked, "TxBooked"] = pivot.loc[is_booked, "Treatment"]
+        pivot.loc[is_booked, "Treatment"] = pd.NaT
+        if "Treatment_baseline" in pivot.columns:
+            pivot.loc[is_booked, "Treatment_baseline"] = pd.NaT
+
     # Outlier exclusion
     cap0, cap1, cap2, cap3, cap4 = caps
     if outlier_enabled:
@@ -1981,6 +2089,21 @@ def _load_and_filter_wf(slider_val, departments, physician, techniques,
             dur = _duration_days(_start, pivot[col_to], bdays)
             keep_mask &= ~(both & (dur > cap))
         pivot = pivot[keep_mask].reset_index(drop=True)
+        if pivot.empty:
+            return {"pivot": None, "wf_full": None, "filter_options": filter_options,
+                    "bdays": bdays, "start": start, "end": end}
+
+    # Overall Sim -> Treatment span filter (whole-chain row filter). Courses
+    # without both stages have no span, so they drop out while it's active.
+    # A booked (not yet started) first treatment counts here by its booked date.
+    if simtx_active and "Simulation" in pivot.columns and "Treatment" in pivot.columns:
+        span = _duration_days(pivot["Simulation"],
+                              pivot["Treatment"].fillna(pivot["TxBooked"]), bdays)
+        lo, hi = simtx_span
+        m = span.notna() & (span >= lo)
+        if hi < SIMTX_SPAN_MAX:
+            m &= span < hi + 1  # whole-day upper bound: "<= 14d" keeps 14.9
+        pivot = pivot[m].reset_index(drop=True)
         if pivot.empty:
             return {"pivot": None, "wf_full": None, "filter_options": filter_options,
                     "bdays": bdays, "start": start, "end": end}
@@ -2022,21 +2145,23 @@ _WF_FILTER_INPUTS = [
     Input("wf-outlier-cap-2", "value"),
     Input("wf-outlier-cap-3", "value"),
     Input("wf-outlier-cap-4", "value"),
+    Input(_id("wf", "filter-simtx-span"), "value"),
 ]
+_N_WF = len(_WF_FILTER_INPUTS)
 
 
 def _unpack_wf_filter_args(args):
-    """Unpack the 17 common filter args into kwargs for _load_and_filter_wf."""
+    """Unpack the common filter args into kwargs for _load_and_filter_wf."""
     (_n, departments, slider_val, physician, techniques, body_systems,
      subcategories, diag_mode, show_loopbacks, use_business_days, inpatient_only,
-     outlier_enabled, cap0, cap1, cap2, cap3, cap4) = args[:17]
+     outlier_enabled, cap0, cap1, cap2, cap3, cap4, simtx_span) = args[:_N_WF]
     return dict(
         slider_val=slider_val, departments=departments, physician=physician,
         techniques=techniques, body_systems=body_systems,
         subcategories=subcategories, diag_mode=diag_mode,
         show_loopbacks=show_loopbacks, use_business_days=use_business_days,
         inpatient_only=inpatient_only, outlier_enabled=outlier_enabled,
-        caps=[cap0, cap1, cap2, cap3, cap4],
+        caps=[cap0, cap1, cap2, cap3, cap4], simtx_span=simtx_span,
     )
 
 
@@ -2060,14 +2185,17 @@ _WF_B_FILTER_INPUTS = [
     Input(_id("wf-b", "outlier-cap-2"), "value"),
     Input(_id("wf-b", "outlier-cap-3"), "value"),
     Input(_id("wf-b", "outlier-cap-4"), "value"),
+    Input(_id("wf-b", "filter-simtx-span"), "value"),
 ]
+_N_WF_B = len(_WF_B_FILTER_INPUTS)
 
 
 def _unpack_wf_b_filter_args(args):
-    """Unpack the 18 common filter args for Dataset B into kwargs."""
+    """Unpack the common filter args for Dataset B into kwargs."""
     (compare_mode, _n, departments, slider_val, physician, techniques,
      body_systems, subcategories, diag_mode, show_loopbacks, use_business_days,
-     inpatient_only, outlier_enabled, cap0, cap1, cap2, cap3, cap4) = args[:18]
+     inpatient_only, outlier_enabled, cap0, cap1, cap2, cap3, cap4,
+     simtx_span) = args[:_N_WF_B]
     return dict(
         compare_mode=compare_mode,
         slider_val=slider_val, departments=departments, physician=physician,
@@ -2075,7 +2203,7 @@ def _unpack_wf_b_filter_args(args):
         subcategories=subcategories, diag_mode=diag_mode,
         show_loopbacks=show_loopbacks, use_business_days=use_business_days,
         inpatient_only=inpatient_only, outlier_enabled=outlier_enabled,
-        caps=[cap0, cap1, cap2, cap3, cap4],
+        caps=[cap0, cap1, cap2, cap3, cap4], simtx_span=simtx_span,
     )
 
 
@@ -2116,8 +2244,8 @@ def _update_wf_table_and_filters(*args):
 )
 def _update_wf_sankey(*args):
     ctx = _unpack_wf_filter_args(args)
-    agg_func = args[17]
-    grid_rows = args[18]
+    agg_func = args[_N_WF]
+    grid_rows = args[_N_WF + 1]
     data = _load_and_filter_wf(**ctx)
     if data is None or data["pivot"] is None:
         return None
@@ -2141,8 +2269,8 @@ def _update_wf_sankey(*args):
 )
 def _update_wf_flow_details(*args):
     ctx = _unpack_wf_filter_args(args)
-    agg_func = args[17]
-    grid_rows = args[18]
+    agg_func = args[_N_WF]
+    grid_rows = args[_N_WF + 1]
     data = _load_and_filter_wf(**ctx)
     if data is None or data["pivot"] is None:
         return None
@@ -2166,8 +2294,8 @@ def _update_wf_flow_details(*args):
 )
 def _update_wf_trend(*args):
     ctx = _unpack_wf_filter_args(args)
-    agg_func = args[17]
-    grid_rows = args[18]
+    agg_func = args[_N_WF]
+    grid_rows = args[_N_WF + 1]
     data = _load_and_filter_wf(**ctx)
     if data is None or data["pivot"] is None:
         return None
@@ -2266,7 +2394,7 @@ def _update_wfb_sankey(*args):
     compare_mode = ctx.pop("compare_mode")
     if not compare_mode:
         return None
-    agg_func = args[18]
+    agg_func = args[_N_WF_B]
     data = _load_and_filter_wf(**ctx)
     if data is None or data["pivot"] is None:
         return None
@@ -2288,7 +2416,7 @@ def _update_wfb_flow_details(*args):
     compare_mode = ctx.pop("compare_mode")
     if not compare_mode:
         return None
-    agg_func = args[18]
+    agg_func = args[_N_WF_B]
     data = _load_and_filter_wf(**ctx)
     if data is None or data["pivot"] is None:
         return None
@@ -2310,7 +2438,7 @@ def _update_wfb_trend(*args):
     compare_mode = ctx.pop("compare_mode")
     if not compare_mode:
         return None
-    agg_func = args[18]
+    agg_func = args[_N_WF_B]
     data = _load_and_filter_wf(**ctx)
     if data is None or data["pivot"] is None:
         return None
@@ -2771,6 +2899,10 @@ def _build_table_data(pivot, use_business_days=False):
         table["status"] = table["Treatment"].apply(
             lambda x: "Complete" if pd.notna(x) else "In Progress"
         )
+        if "TxBooked" in table.columns:
+            booked = table["Treatment"].isna() & table["TxBooked"].notna()
+            table.loc[booked, "status"] = (
+                "Tx Scheduled " + table.loc[booked, "TxBooked"].dt.strftime("%m/%d"))
 
     # Include row index so grid filters can map back to the pivot
     table["_row_idx"] = table.index

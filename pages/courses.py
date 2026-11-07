@@ -4218,7 +4218,8 @@ clientside_callback(
             series: series,
             yTitle: "Quit Rate (%)",
             hideLegend: series.length <= 1,
-            stacked: false
+            stacked: false,
+            compactX: true  // 1/3-width card: short, sparse date ticks
         };
         var __fig = (window.dash_clientside.census.smoothChartWithType(data, smoothVal, ct, currentFig));
         return window.dash_clientside.chartDeferred.wrap("courses-chart-quit-trend", __fig);

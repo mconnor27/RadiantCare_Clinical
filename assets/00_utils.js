@@ -201,6 +201,31 @@ function parseIsoDate(dateStr) {
 }
 
 /**
+ * Blank Plotly figure with a centered message — the shared empty state for
+ * clientside chart renderers (histogram, timeCompare, tasks). Transparent
+ * background and a mid-gray label read correctly in light and dark themes.
+ */
+function emptyFigure(msg, height) {
+    return {
+        data: [],
+        layout: Object.assign({}, window.dmc_default_layout || {}, {
+            xaxis: {visible: false},
+            yaxis: {visible: false},
+            annotations: [{
+                text: msg || "No data for selected filters",
+                xref: "paper", yref: "paper", x: 0.5, y: 0.5,
+                showarrow: false,
+                font: {size: 14, color: "#9CA3AF"},
+            }],
+            paper_bgcolor: "rgba(0,0,0,0)",
+            plot_bgcolor: "rgba(0,0,0,0)",
+            height: height || 350,
+            margin: {l: 40, r: 20, t: 20, b: 40},
+        }),
+    };
+}
+
+/**
  * Format a local Date object as an ISO date string (YYYY-MM-DD).
  * Avoids the UTC shift that toISOString() causes on local-time Dates.
  */

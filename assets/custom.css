@@ -999,6 +999,11 @@ html[data-theme="dark"] .ag-theme-alpine-dark {
     min-width: 220px;
     max-width: 320px;
 }
+/* Range-slider panels (Tasks Time, Workflow Sim -> Tx): wider than chip lists
+   so the slider marks have room; content sets the width. */
+.wf-range-panel.wf-chip-dropdown {
+    max-width: none;
+}
 
 /* ─── Workflow dcc.DatePickerRange compact styling ─────────── */
 /* Match Mantine Select size="xs" input: same height, border, radius */

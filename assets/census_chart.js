@@ -562,6 +562,17 @@ window.dash_clientside.census = {
                 // Yearly: force year-only tick format
                 layout.xaxis.tickformat = "%Y";
                 layout.xaxis.dtick = "M12";
+            } else if (rawData.compactX) {
+                // Opt-in for narrow cards (3+ per row): Plotly's default month
+                // label ("Jan 2026") on up to 12 ticks collides there. Cap the
+                // count and shorten the label to match whatever tick spacing
+                // Plotly picks — this stays correct when the user zooms.
+                layout.xaxis.nticks = 8;
+                layout.xaxis.tickformatstops = [
+                    {dtickrange: [null, 20 * 86400000], value: "%b %d"},
+                    {dtickrange: [20 * 86400000, "M11"], value: "%b '%y"},
+                    {dtickrange: ["M12", null], value: "%Y"}
+                ];
             }
             layout.xaxis.tickangle = 0;
             layout.xaxis.automargin = true;

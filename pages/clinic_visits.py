@@ -3064,7 +3064,8 @@ def _prepare_cancel_data(dff_all, agg="M", slice_by="type"):
                     "color": DEPARTMENT_COLORS.get(dept, CHART_COLORWAY[0]),
                 })
 
-    return {"dates": dates, "series": series, "height": 320, "yTitle": "Cancellation Rate (%)", "stacked": False, "hideLegend": len(series) <= 1}
+    return {"dates": dates, "series": series, "height": 320, "yTitle": "Cancellation Rate (%)", "stacked": False, "hideLegend": len(series) <= 1,
+            "compactX": True}  # 1/3-width card: short, sparse date ticks
 
 
 def _build_diagnosis_mix(dff, c2b=None, slice_by="", mode="count", prior_df=None,

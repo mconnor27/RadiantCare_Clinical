@@ -56,8 +56,11 @@ UI_CONTENT = dmc.Stack(
                 "Timing Intervals — consult→sim, sim→treatment, and booked→sim "
                 "lead time over time. Metric toggle picks which interval is "
                 "shown; slice-by splits by department or physician. The gear "
-                "menu switches the statistic between Median and Mean, and — for "
-                "Sim → Tx only — exposes the Censoring Guard (below).",
+                "menu switches the statistic between Median and Mean, offers a "
+                "Count / % y-axis toggle in Histogram mode (% is each series’ "
+                "share of its own sims, so sliced groups of different size "
+                "compare directly), and — for Sim → Tx only — exposes the "
+                "Censoring Guard (below).",
                 "Schedule Ribbon — per-day sim operating window across the full "
                 "history. Can render as Ribbon (fill between earliest start and "
                 "latest end-of-day), Bar (sim count), or Line. Machine toggle "
@@ -99,15 +102,18 @@ UI_CONTENT = dmc.Stack(
                 "Volume scope — all sims vs. initial-only.",
                 "Inpatient switch — include or exclude inpatient consults.",
                 "Weekend switch — include or exclude weekend sims.",
-                "Outliers panel — four time intervals: Consult → Sim, "
-                "Sim → Tx (Actual, DaysFromSimToTreatment), Sim → Tx "
-                "(Scheduled, DaysToScheduledTreatment — the first booked "
-                "start rather than the realized one), and Lead Time. Cap "
-                "mode trims each interval’s long tail out of the timing "
-                "metrics; Filter mode turns each into a row-inclusion range. "
-                "Note that filtering on Sim → Tx (Scheduled) keeps only sims "
-                "whose treatment is still pending, since ARIA nulls that "
-                "column once the patient actually starts.",
+                "Outliers panel — three time intervals: Consult → Sim, "
+                "Sim → Tx (DaysFromSimToTreatment, the actual start), and "
+                "Lead Time. Cap mode trims each interval’s long tail out of "
+                "the timing metrics; Filter mode turns each into a "
+                "row-inclusion range. In Filter mode, a sim that hasn't "
+                "started treatment yet is judged on Sim → Tx by its booked "
+                "start date, so recent pending sims stay on the page instead "
+                "of dropping out; sims with no booking yet are still "
+                "excluded while that range is active. The cap on booked (not-yet-started) "
+                "treatment dates is not here — it sits with the Censoring "
+                "Guard in the timing chart’s gear menu, because that is the "
+                "only place it is used.",
                 "Smoothing slider — shared across all trend charts.",
             ]),
         ),
@@ -175,7 +181,9 @@ UI_CONTENT = dmc.Stack(
                 "treatment is still pending and nulls once the patient starts — "
                 "the two columns never overlap, so they coalesce exactly. That "
                 "reaches the present, but it is intent-to-treat: the booking "
-                "can still slip. Trim hides periods where the least mature sim "
+                "can still slip. Booked starts are capped by the Booked Start "
+                "Cap slider that appears under the guard when Scheduled is "
+                "picked. Trim hides periods where the least mature sim "
                 "hasn’t had a full cap’s worth of days to start. Off shows the "
                 "raw observed values. Survival and Trim also restrict the "
                 "histogram to sims with complete follow-up.",
@@ -187,9 +195,14 @@ UI_CONTENT = dmc.Stack(
             "tabler:alert-triangle",
             bullets([
                 "DaysToScheduledTreatment is a newer column — sim rows from "
-                "earlier periods may have it null. The timing chart's "
-                "\"scheduled\" metric falls back to the delivered equivalent "
-                "when null.",
+                "earlier periods may have it null. The Scheduled censoring "
+                "guard uses the actual start whenever one exists.",
+                "About 40 older sims (mostly 2004–2021) still carry a booked "
+                "treatment date even though the patient started long ago — "
+                "ARIA never cleared it. The Scheduled guard ignores any booked "
+                "start more than 14 days before the latest treatment start in "
+                "the extract, which drops those stale rows while keeping every "
+                "live booking.",
                 "Sim type \"Initial Centralia-in-Lacey\" is a workflow label — "
                 "it identifies Centralia patients simmed on the Lacey CT. These "
                 "count as Lacey sims for volume purposes but follow the "

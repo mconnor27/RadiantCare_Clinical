@@ -24,7 +24,7 @@ window.dash_clientside.timeCompare = {
      */
     render: function(rawData, currentFig) {
         if (!rawData || !rawData.rows || rawData.rows.length === 0) {
-            return Object.assign({}, window.dash_clientside.census._emptyFig("No time comparison data"));
+            return emptyFigure("No time comparison data");
         }
 
         var rows = rawData.rows;

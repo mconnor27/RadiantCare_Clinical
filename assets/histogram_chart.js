@@ -22,10 +22,12 @@ window.dash_clientside.histogram = {
      * @param {string} chartType - "histogram" or "density"
      * @param {number} bwFactor - KDE bandwidth factor (Scott's rule multiplier)
      * @param {Object} currentFig - existing figure (unused, for Dash wiring)
+     * @param {string} yMode - "count" (default) or "percent". Percent normalizes
+     *     each series to its own total, so sliced distributions compare fairly.
      */
-    render: function(rawData, chartType, bwSlider, currentFig) {
+    render: function(rawData, chartType, bwSlider, currentFig, yMode) {
         if (!rawData || !rawData.series || rawData.series.length === 0) {
-            return Object.assign({}, window.dash_clientside.census._emptyFig("No completion time data"));
+            return emptyFigure((rawData && rawData.emptyMessage) || "No data for selected filters");
         }
 
         var stats = rawData.stats;
@@ -33,6 +35,7 @@ window.dash_clientside.histogram = {
         var sliced = rawData.sliced;
         chartType = chartType || "histogram";
         var bwValue = bwSlider || 0.12;
+        var isPct = yMode === "percent";
 
         // Collect global range for bandwidth calculation
         var allVals = [];
@@ -79,9 +82,11 @@ window.dash_clientside.histogram = {
                     x: vals,
                     marker: {color: fillColor, line: {color: color, width: 1}},
                     xbins: {size: 1},
+                    histnorm: isPct ? "percent" : "",
                     name: s.name,
                     showlegend: showLegend,
-                    hovertemplate: stats.xTitle + ": %{x}<br>Count: %{y}<extra></extra>",
+                    hovertemplate: stats.xTitle + ": %{x}<br>" +
+                        (isPct ? "Share: %{y:.1f}%" : "Count: %{y}") + "<extra></extra>",
                     hoverlabel: {bgcolor: color, font: {color: "white"}}
                 });
             }
@@ -116,6 +121,7 @@ window.dash_clientside.histogram = {
             yaxis: {
                 gridcolor: theme.grid, gridwidth: 1,
                 tickfont: {color: theme.font},
+                ticksuffix: (isPct && chartType !== "density") ? "%" : "",
             },
             paper_bgcolor: "rgba(0,0,0,0)",
             plot_bgcolor: "rgba(0,0,0,0)",

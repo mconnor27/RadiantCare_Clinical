@@ -103,6 +103,15 @@ for _kg in _KPI_GROUPS:
 # Map task group display name → KPI card color (for consistent chart colors)
 _TASK_GROUP_COLORS = {kg["name"]: kg["color"] for kg in _KPI_GROUPS}
 
+# Time filter (top bar): range slider over these stops, in minutes. Task times
+# span minutes to weeks, so the stops are roughly log-spaced. The last stop is
+# "no upper bound".
+_TIME_STOPS = [0, 60, 120, 240, 480, 1440, 2880, 4320, 5760, 7200,
+               10080, 14400, 20160, 30240, None]
+_TIME_STOP_LABELS = ["0", "1h", "2h", "4h", "8h", "1d", "2d", "3d", "4d", "5d",
+                     "7d", "10d", "14d", "21d", "\u221e"]
+_TIME_MAX_IDX = len(_TIME_STOPS) - 1
+
 
 # ---------------------------------------------------------------------------
 # Business-hours computation (reuse workflow logic)
@@ -347,6 +356,72 @@ def _build_tasks_filter_bar():
                                 withBorder=True,
                                 radius="md",
                                 className="wf-chip-dropdown",
+                                style={"display": "none"},
+                            ),
+                        ],
+                        style={"position": "relative", "display": "inline-block"},
+                    ),
+                    # Time dropdown — drill to tasks by actual OR allowed time
+                    html.Div(
+                        children=[
+                            html.Div(
+                                children=[
+                                    dmc.Button(
+                                        "Time",
+                                        id="tasks-time-trigger",
+                                        variant="default",
+                                        size="sm",
+                                        rightSection=DashIconify(icon="mdi:chevron-down", width=14),
+                                    ),
+                                    dmc.ActionIcon(
+                                        DashIconify(icon="mdi:close-circle", width=18),
+                                        id="tasks-time-clear",
+                                        variant="subtle",
+                                        color="gray",
+                                        size="sm",
+                                        className="wf-filter-clear-btn",
+                                        style={"display": "none"},
+                                    ),
+                                ],
+                                style={"position": "relative", "display": "inline-block"},
+                            ),
+                            dmc.Paper(
+                                dmc.Stack(gap="xs", w=380, children=[
+                                    dmc.SegmentedControl(
+                                        id="tasks-filter-time-measure",
+                                        data=[
+                                            {"value": "actual", "label": "Actual Time"},
+                                            {"value": "allowed", "label": "Allowed Time"},
+                                        ],
+                                        value="actual",
+                                        size="xs",
+                                        fullWidth=True,
+                                    ),
+                                    # Side padding keeps the end labels ("0", "\u221e")
+                                    # inside the panel instead of hanging off its edge.
+                                    dmc.Box(px=12, children=dmc.RangeSlider(
+                                        id="tasks-filter-time-range",
+                                        min=0, max=_TIME_MAX_IDX, step=1,
+                                        minRange=1,
+                                        value=[0, _TIME_MAX_IDX],
+                                        marks=[{"value": i, "label": _TIME_STOP_LABELS[i]}
+                                               for i in (0, 2, 5, 7, 10, 12, _TIME_MAX_IDX)],
+                                        label=None,
+                                        color="violet",
+                                        size="sm",
+                                        mb="lg",
+                                    )),
+                                    dmc.Text(
+                                        "Allowed excludes Isodose and tasks with no allowed "
+                                        "time. Actual excludes open tasks.",
+                                        size="xs", c="dimmed",
+                                    ),
+                                ]),
+                                p="sm",
+                                shadow="md",
+                                withBorder=True,
+                                radius="md",
+                                className="wf-chip-dropdown wf-range-panel",
                                 style={"display": "none"},
                             ),
                         ],
@@ -749,6 +824,48 @@ layout = dmc.Stack(
                      children=[html.Div(kpi_placeholder(), id="tasks-kpi-review")]),
         ]),
 
+        # Workload — open tasks per day (full width, top of the chart stack)
+        chart_card(
+            "tasks-chart-backlog",
+            "Open Tasks per Day",
+            settings_id="tasks-backlog",
+            chart_types=[
+                {"value": "area", "label": "Area"},
+                {"value": "line", "label": "Line"},
+                {"value": "bar", "label": "Bar"},
+            ],
+            show_smooth=True,
+            smooth_max=12,
+            smooth_default=0,
+            paper_padding="md",
+            extra_controls_left=[
+                dmc.SegmentedControl(
+                    id="tasks-backlog-slice",
+                    data=[
+                        {"value": "", "label": "Total"},
+                        {"value": "task", "label": "Task"},
+                        {"value": "physician", "label": "MD"},
+                        {"value": "planner", "label": "Planner"},
+                        {"value": "bodysite", "label": "Dx"},
+                    ],
+                    value="task",
+                    size="xs",
+                ),
+            ],
+            extra_controls=[
+                dmc.SegmentedControl(
+                    id="tasks-backlog-agg",
+                    data=[
+                        {"value": "D", "label": "Daily"},
+                        {"value": "W", "label": "Weekly"},
+                        {"value": "M", "label": "Monthly"},
+                    ],
+                    value="D",
+                    size="xs",
+                ),
+            ],
+        ),
+
         # Row 1: Volume Trend + Cumulative
         dmc.Grid(gutter="md", children=[
             dmc.GridCol(
@@ -1070,6 +1187,7 @@ layout = dmc.Stack(
         dcc.Store(id="tasks-store-histogram"),
         dcc.Store(id="tasks-store-time-compare"),
         dcc.Store(id="tasks-store-volume"),
+        dcc.Store(id="tasks-store-backlog"),
         dcc.Store(id="tasks-store-cumulative"),
         dcc.Store(id="tasks-store-time-trend"),
         dcc.Store(id="tasks-store-sla"),
@@ -1192,6 +1310,31 @@ def _register_tasks_filter_callbacks():
         "}",
         Output("tasks-tasktype-trigger", "children"),
         Input("tasks-filter-type", "value"),
+    )
+
+    # --- Time filter: trigger label + clear button ---
+    _labels_js = "[" + ", ".join(f'"{l}"' for l in _TIME_STOP_LABELS) + "]"
+    clientside_callback(
+        f"""function(measure, rng) {{
+            var L = {_labels_js}, max = {_TIME_MAX_IDX};
+            var clear = {{"display": "none"}};
+            if (!rng || (rng[0] <= 0 && rng[1] >= max)) return ["Time", clear];
+            var name = measure === "allowed" ? "Allowed" : "Actual";
+            var txt = rng[1] >= max ? name + " \u2265 " + L[rng[0]]
+                    : rng[0] <= 0 ? name + " \u2264 " + L[rng[1]]
+                    : name + " " + L[rng[0]] + "\u2013" + L[rng[1]];
+            return [txt, {{"display": "inline-flex"}}];
+        }}""",
+        Output("tasks-time-trigger", "children"),
+        Output("tasks-time-clear", "style"),
+        Input("tasks-filter-time-measure", "value"),
+        Input("tasks-filter-time-range", "value"),
+    )
+    clientside_callback(
+        f"""function(n) {{ return [0, {_TIME_MAX_IDX}]; }}""",
+        Output("tasks-filter-time-range", "value", allow_duplicate=True),
+        Input("tasks-time-clear", "n_clicks"),
+        prevent_initial_call=True,
     )
 
     # --- Clear-button visibility ---
@@ -1455,11 +1598,39 @@ def _populate_planner_chips(_n, slider_val, task_types, diagnosis_cats, diag_mod
 # Shared filter helper — load data, apply filters, return dict or None
 # ---------------------------------------------------------------------------
 
+def _apply_time_filter(df, measure, rng):
+    """Keep tasks whose actual (MinutesToComplete) or allowed (MinutesAllowed)
+    time falls within the Time filter's range. Inactive at the full span.
+
+    Allowed follows the page-wide rule for allowed time: Isodose tasks and
+    tasks without a positive allowed time are excluded, since ARIA's due dates
+    for them aren't meaningful. Open tasks have no actual time, so an active
+    Actual range excludes them.
+    """
+    if not rng or len(rng) != 2 or df.empty:
+        return df
+    lo, hi = int(rng[0] or 0), int(rng[1] if rng[1] is not None else _TIME_MAX_IDX)
+    if lo <= 0 and hi >= _TIME_MAX_IDX:
+        return df
+    col = "MinutesAllowed" if measure == "allowed" else "MinutesToComplete"
+    if col not in df.columns:
+        return df
+    v = pd.to_numeric(df[col], errors="coerce")
+    mask = v.notna() & (v >= _TIME_STOPS[lo])
+    if hi < _TIME_MAX_IDX:
+        mask &= v <= _TIME_STOPS[hi]
+    if measure == "allowed":
+        mask &= v > 0
+        if "ActivityName" in df.columns:
+            mask &= ~df["ActivityName"].isin(_TASK_TYPE_GROUPS.get("Create Isodose Plan", []))
+    return df[mask]
+
+
 def _load_and_filter_tasks(slider_val, physician, planner, task_types,
                            diagnosis_cats,
                            diag_mode, status, use_business_hours,
                            outlier_enabled, cap0, cap1, cap2, cap3, cap4,
-                           date_preset):
+                           date_preset, time_measure="actual", time_range=None):
     """Load tasks data, apply all dimension/date/status filters.
 
     Returns a dict with shared dataframes and metadata, or None if empty.
@@ -1491,6 +1662,10 @@ def _load_and_filter_tasks(slider_val, physician, planner, task_types,
     # Recalculate MinutesToComplete using business hours only
     if use_business_hours:
         tasks = _compute_business_minutes(tasks)
+
+    # Top-bar Time filter (actual or allowed). Applied to the base frame so
+    # every KPI, chart, prior-period comparison and the table see it.
+    tasks = _apply_time_filter(tasks, time_measure, time_range)
 
     # Resolve physician: CompletingMD → AssignedMD → TreatingPhysician
     known_mds = _load_known_physicians()
@@ -1610,6 +1785,9 @@ def _load_and_filter_tasks(slider_val, physician, planner, task_types,
         for g in task_types:
             raw_types.extend(_TASK_TYPE_GROUPS.get(g, [g]))
         df_all_dates = df_all_dates[df_all_dates["ActivityName"].isin(raw_types)]
+    # Workload (open tasks per day) needs every task regardless of the status
+    # filter — "Completed only" would otherwise erase the current backlog.
+    df_backlog = df_all_dates
     # Apply status filter to cumulative data too
     is_comp_all = _task_is_completed(df_all_dates)
     if status == "open":
@@ -1629,6 +1807,7 @@ def _load_and_filter_tasks(slider_val, physician, planner, task_types,
         "df": df,
         "df_in_range": df_in_range,
         "df_all_dates": df_all_dates,
+        "df_backlog": df_backlog,
         "is_completed": is_completed,
         "is_completed_in_range": is_completed_in_range,
         "is_time_valid": is_time_valid,
@@ -1661,6 +1840,8 @@ _TASKS_FILTER_INPUTS = [
     Input(f"{PAGE_ID}-outlier-cap-3", "value"),
     Input(f"{PAGE_ID}-outlier-cap-4", "value"),
     Input("tasks-filter-planner", "value"),
+    Input("tasks-filter-time-measure", "value"),
+    Input("tasks-filter-time-range", "value"),
 ]
 
 _N_FILTER_INPUTS = len(_TASKS_FILTER_INPUTS)
@@ -1670,7 +1851,8 @@ def _unpack_tasks_filter_args(args):
     """Unpack the common filter args into kwargs for _load_and_filter_tasks."""
     (_n, date_preset, physician, task_types, diagnosis_cats, diag_mode,
      status, slider_val, use_business_hours,
-     outlier_enabled, cap0, cap1, cap2, cap3, cap4, planner) = args[:_N_FILTER_INPUTS]
+     outlier_enabled, cap0, cap1, cap2, cap3, cap4, planner,
+     time_measure, time_range) = args[:_N_FILTER_INPUTS]
     return dict(
         slider_val=slider_val, physician=physician, planner=planner,
         task_types=task_types,
@@ -1679,6 +1861,7 @@ def _unpack_tasks_filter_args(args):
         outlier_enabled=outlier_enabled, cap0=cap0, cap1=cap1,
         cap2=cap2, cap3=cap3, cap4=cap4,
         date_preset=date_preset,
+        time_measure=time_measure, time_range=time_range,
     )
 
 
@@ -1766,6 +1949,30 @@ def _update_tasks_volume(*args):
     return _prepare_volume_data(
         data["df_in_range"], agg or "W", volume_slice or "",
         data["c2b"], accent_color=data["accent"],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Callback 2B: Workload (open tasks per day) Store
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("tasks-store-backlog", "data"),
+    *_TASKS_FILTER_INPUTS,
+    Input("tasks-backlog-agg", "value"),
+    Input("tasks-backlog-slice", "value"),
+    running=[(Output("tasks-chart-backlog-loading", "visible"), True, False)],
+)
+def _update_tasks_backlog(*args):
+    ctx = _unpack_tasks_filter_args(args)
+    agg, slice_by = args[_N_FILTER_INPUTS], args[_N_FILTER_INPUTS + 1]
+    data = _load_and_filter_tasks(**ctx)
+    if data is None:
+        return None
+    return _prepare_backlog_data(
+        data["df_backlog"], data["start"], data["end"], data["tasks"],
+        agg=agg or "D", slice_by=slice_by or "", c2b=data["c2b"],
+        cap_minutes=data["cap_minutes"], accent_color=data["accent"],
     )
 
 
@@ -1930,32 +2137,13 @@ def _task_group_label(activity_name):
     return _TASK_TYPE_TO_GROUP.get(activity_name, activity_name)
 
 
-def _slice_series(df, slice_by, period_col, all_periods, c2b, agg_func="count", value_col=None, accent_color=None):
-    """Generic slicer — returns list of {name, values, color} series dicts.
+def _iter_slices(df, slice_by, c2b, accent_color=None):
+    """Yield (name, color, sub_df) for each group of a slice-by dimension.
 
-    agg_func: "count" for counting rows, "median" for median of value_col.
-    accent_color: override for single-trace "Total" color (e.g. selected KPI card color).
+    slice_by "" yields a single ("Total", accent-or-primary, df) group.
     """
-    series = []
-
-    def _make_series(sub, name, color, idx):
-        if agg_func == "count":
-            vals = sub.groupby(period_col).size().reindex(all_periods, fill_value=0)
-            return {"name": name, "values": _trim_edges(vals.tolist()), "color": color}
-        else:
-            medians = sub.groupby(period_col)[value_col].median().reindex(all_periods)
-            vals = [v if pd.notna(v) else None for v in medians.tolist()]
-            return {"name": name, "values": vals, "color": color}
-
-    _total_color = accent_color or PRIMARY
     if not slice_by:
-        if agg_func == "count":
-            vals = df.groupby(period_col).size().reindex(all_periods, fill_value=0)
-            series.append({"name": "Total", "values": _trim_edges(vals.tolist()), "color": _total_color})
-        else:
-            medians = df.groupby(period_col)[value_col].median().reindex(all_periods)
-            vals = [v if pd.notna(v) else None for v in medians.tolist()]
-            series.append({"name": "Total", "values": vals, "color": _total_color})
+        yield "Total", accent_color or PRIMARY, df
 
     elif slice_by == "task" and "ActivityName" in df.columns:
         df = df.copy()
@@ -1963,24 +2151,21 @@ def _slice_series(df, slice_by, period_col, all_periods, c2b, agg_func="count", 
         groups = sorted(df["_TaskGroup"].dropna().unique(),
                         key=lambda g: _TASK_GROUP_ORDER.get(g, 999))
         for i, grp in enumerate(groups):
-            sub = df[df["_TaskGroup"] == grp]
             color = _TASK_GROUP_COLORS.get(grp, CHART_COLORWAY[i % len(CHART_COLORWAY)])
-            series.append(_make_series(sub, grp, color, i))
+            yield grp, color, df[df["_TaskGroup"] == grp]
 
     elif slice_by == "physician" and "ResolvedMD" in df.columns:
         known_mds = _load_known_physicians()
         for i, md in enumerate(sorted(m for m in df["ResolvedMD"].dropna().unique() if m in known_mds)):
-            sub = df[df["ResolvedMD"] == md]
             name = md.split(",")[0] if "," in md else md
-            series.append(_make_series(sub, name, CHART_COLORWAY[i % len(CHART_COLORWAY)], i))
+            yield name, CHART_COLORWAY[i % len(CHART_COLORWAY)], df[df["ResolvedMD"] == md]
 
     elif slice_by == "planner" and "CompletingUser" in df.columns:
         known_mds = _load_known_physicians()
         planners = sorted(p for p in df["CompletingUser"].dropna().unique()
                           if p.strip() and p.upper() != "NA" and p not in known_mds)
         for i, p in enumerate(planners):
-            sub = df[df["CompletingUser"] == p]
-            series.append(_make_series(sub, p, CHART_COLORWAY[i % len(CHART_COLORWAY)], i))
+            yield p, CHART_COLORWAY[i % len(CHART_COLORWAY)], df[df["CompletingUser"] == p]
 
     elif slice_by == "bodysite" and "DiagnosisCodes" in df.columns and c2b:
         df = df.copy()
@@ -1988,8 +2173,24 @@ def _slice_series(df, slice_by, period_col, all_periods, c2b, agg_func="count", 
         for i, bs in enumerate(sorted(df["_bs"].dropna().unique())):
             if bs == "Unknown":
                 continue
-            sub = df[df["_bs"] == bs]
-            series.append(_make_series(sub, bs, CHART_COLORWAY[i % len(CHART_COLORWAY)], i))
+            yield bs, CHART_COLORWAY[i % len(CHART_COLORWAY)], df[df["_bs"] == bs]
+
+
+def _slice_series(df, slice_by, period_col, all_periods, c2b, agg_func="count", value_col=None, accent_color=None):
+    """Generic slicer — returns list of {name, values, color} series dicts.
+
+    agg_func: "count" for counting rows, "median" for median of value_col.
+    accent_color: override for single-trace "Total" color (e.g. selected KPI card color).
+    """
+    series = []
+    for name, color, sub in _iter_slices(df, slice_by, c2b, accent_color):
+        if agg_func == "count":
+            vals = sub.groupby(period_col).size().reindex(all_periods, fill_value=0)
+            series.append({"name": name, "values": _trim_edges(vals.tolist()), "color": color})
+        else:
+            medians = sub.groupby(period_col)[value_col].median().reindex(all_periods)
+            vals = [v if pd.notna(v) else None for v in medians.tolist()]
+            series.append({"name": name, "values": vals, "color": color})
 
     # When only one series produced and we have an accent color, use it
     if len(series) == 1 and accent_color:
@@ -2017,6 +2218,97 @@ def _prepare_volume_data(df, agg, slice_by="", c2b=None, accent_color=None):
         "stacked": len(series) > 1,
         "height": 350,
         "yTitle": "Tasks",
+        "hideLegend": len(series) <= 1,
+    }
+
+
+def _prepare_backlog_data(df, start, end, tasks_all, agg="D", slice_by="",
+                          c2b=None, cap_minutes=None, accent_color=None):
+    """Open tasks per weekday — the end-of-day backlog — for clientside rendering.
+
+    A task is open from when it became actionable (PriorStepBaseline, i.e. the
+    prior step finished; falls back to StartDateTime) until CompletedDateTime,
+    or until the end of the data if still open. That is the same clock the
+    page's actual time uses. Tasks still waiting on their prior step have no
+    baseline and aren't counted. With outlier caps on, a task counts toward
+    the backlog for at most its group's cap (the days just before it closed),
+    which neutralizes stale baselines (some open tasks carry a prior-step time
+    from years ago) without hiding a genuinely overdue task.
+
+    agg "D" plots each weekday; "W" / "M" plot the mean daily backlog.
+    """
+    if df is None or df.empty or "CompletedDateTime" not in df.columns:
+        return None
+
+    # Data-relative "now": the latest event anywhere in the extract.
+    data_end = pd.Series([
+        tasks_all["CompletedDateTime"].max() if "CompletedDateTime" in tasks_all else pd.NaT,
+        tasks_all["StartDateTime"].max() if "StartDateTime" in tasks_all else pd.NaT,
+    ]).max()
+    if pd.isna(data_end):
+        return None
+
+    open_from = (df["PriorStepBaseline"] if "PriorStepBaseline" in df.columns
+                 else pd.Series(pd.NaT, index=df.index))
+    if "StartDateTime" in df.columns:
+        open_from = open_from.fillna(df["StartDateTime"])
+    closed = df["CompletedDateTime"]
+    w = pd.DataFrame({"open": open_from, "close": closed.fillna(data_end)}, index=df.index)
+    keep = w["open"].notna() & (w["close"] >= w["open"])
+    df, w = df[keep], w[keep]
+    if df.empty:
+        return None
+
+    if cap_minutes and "ActivityName" in df.columns:
+        cap = df["ActivityName"].map(_TASK_TYPE_TO_GROUP).map(cap_minutes)
+        floor = w["close"] - pd.to_timedelta(cap, unit="m")
+        w["open"] = w["open"].where(cap.isna() | (w["open"] >= floor), floor)
+
+    # Still-open tasks stay open through the last snapshot.
+    w.loc[closed[keep].isna(), "close"] = pd.Timestamp.max
+
+    last_day = min(pd.Timestamp(end).normalize(), data_end.normalize())
+    days = pd.bdate_range(pd.Timestamp(start).normalize(), last_day)
+    if len(days) == 0:
+        return None
+    # Snapshot at end of day; the latest day is cut at the extract's last event.
+    snaps = (days + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)).to_series()
+    snaps = snaps.clip(upper=data_end).values
+
+    period_code = agg if agg in ("W", "M") else None
+    if period_code:
+        periods = days.to_period(period_code).to_timestamp()
+        dates_idx = pd.DatetimeIndex(periods.unique())
+    else:
+        dates_idx = days
+
+    def _counts(sub_w):
+        o = np.sort(sub_w["open"].values)
+        c = np.sort(sub_w["close"].values)
+        n = (np.searchsorted(o, snaps, side="right")
+             - np.searchsorted(c, snaps, side="right"))
+        s = pd.Series(n, index=days, dtype=float)
+        if period_code:
+            s = s.groupby(periods).mean().reindex(dates_idx)
+            return [round(v, 1) for v in s.tolist()]
+        return [int(v) for v in s.tolist()]
+
+    series = []
+    for name, color, sub in _iter_slices(df, slice_by, c2b, accent_color):
+        vals = _counts(w.loc[sub.index])
+        if any(vals):
+            series.append({"name": name, "values": vals, "color": color})
+    if not series:
+        return None
+    if len(series) == 1 and accent_color:
+        series[0]["color"] = accent_color
+
+    return {
+        "dates": [d.isoformat() for d in dates_idx],
+        "series": series,
+        "stacked": len(series) > 1,
+        "height": 350,
+        "yTitle": "Open Tasks" if not period_code else "Avg Open Tasks",
         "hideLegend": len(series) <= 1,
     }
 
@@ -2822,6 +3114,17 @@ def _build_day_index_ticks(start_norm, n_days, max_ticks=12):
 clientside_callback("""function() {
         return window.dash_clientside.census.smoothChartWithType.apply(null, arguments);
     }""",
+    Output("tasks-chart-backlog", "figure"),
+    Input("tasks-store-backlog", "data"),
+    Input("tasks-backlog-settings-smooth", "value"),
+    Input("tasks-backlog-settings-type", "value"),
+    State("tasks-chart-backlog", "figure"),
+    prevent_initial_call=True,
+)
+
+clientside_callback("""function() {
+        return window.dash_clientside.census.smoothChartWithType.apply(null, arguments);
+    }""",
     Output("tasks-chart-volume", "figure"),
     Input("tasks-store-volume", "data"),
     Input("tasks-volume-settings-smooth", "value"),
@@ -2955,6 +3258,7 @@ for _kg in _KPI_GROUPS:
 # Register settings toggle + PNG export callbacks for charts with settings
 # ---------------------------------------------------------------------------
 register_chart_callbacks([
+    ("tasks-backlog", "tasks-chart-backlog"),
     ("tasks-volume", "tasks-chart-volume"),
     {"sid": "tasks-cumulative", "gid": "tasks-chart-cumulative", "store_id": "tasks-store-cumulative", "show_grouping": False},
     ("tasks-histogram", "tasks-chart-histogram"),
@@ -2970,7 +3274,7 @@ _SLICE_CLASS_JS = """function(val) {
     return (val && val !== "total") ? "slice-group-active" : "slice-total-active";
 }"""
 
-for _sid in ["tasks-volume-slice", "tasks-hist-slice", "tasks-time-compare-slice", "tasks-time-slice", "tasks-sla-slice", "tasks-cumulative-slice"]:
+for _sid in ["tasks-backlog-slice", "tasks-volume-slice", "tasks-hist-slice", "tasks-time-compare-slice", "tasks-time-slice", "tasks-sla-slice", "tasks-cumulative-slice"]:
     clientside_callback(
         _SLICE_CLASS_JS,
         Output(_sid, "className"),
@@ -2982,8 +3286,7 @@ clientside_callback("""function(data, chartType, bw, measure, currentFig) {
         var fig;
         var block = data ? data[measure || "actual"] : null;
         if (data && !block && measure === "allowed") {
-            fig = Object.assign({}, window.dash_clientside.census._emptyFig(
-                "No allowed time (SLA) data for these tasks"));
+            fig = emptyFigure("No allowed time (SLA) data for these tasks");
         } else {
             fig = window.dash_clientside.histogram.render(block, chartType, bw, currentFig);
         }
@@ -3025,6 +3328,7 @@ _HIDE_STACK_JS = """function(sliceVal, chartType) {
 }"""
 
 for _slice_id, _settings_id in [
+    ("tasks-backlog-slice", "tasks-backlog"),
     ("tasks-volume-slice", "tasks-volume"),
     ("tasks-time-slice", "tasks-time-trend"),
     ("tasks-sla-slice", "tasks-sla"),
@@ -3057,7 +3361,7 @@ clientside_callback(
 # Dynamic MD / Planner slice options based on task type filter
 # ---------------------------------------------------------------------------
 clientside_callback(
-    """function(taskTypes, volVal, histVal, tcVal, timeVal, slaVal) {
+    """function(taskTypes, volVal, histVal, tcVal, timeVal, slaVal, blVal) {
         var none = !taskTypes || taskTypes.length === 0;
         var hasIso = none || taskTypes.indexOf("Create Isodose Plan") >= 0;
         var isoOnly = !none && taskTypes.length === 1 && taskTypes[0] === "Create Isodose Plan";
@@ -3089,7 +3393,8 @@ clientside_callback(
             noDxOpts, validVal(noDxOpts, histVal),
             dxOpts,   validVal(dxOpts, tcVal),
             dxOpts,   validVal(dxOpts, timeVal),
-            dxOpts,   validVal(dxOpts, slaVal)
+            dxOpts,   validVal(dxOpts, slaVal),
+            dxOpts,   validVal(dxOpts, blVal)
         ];
     }""",
     Output("tasks-volume-slice", "data"),
@@ -3102,12 +3407,15 @@ clientside_callback(
     Output("tasks-time-slice", "value"),
     Output("tasks-sla-slice", "data"),
     Output("tasks-sla-slice", "value"),
+    Output("tasks-backlog-slice", "data"),
+    Output("tasks-backlog-slice", "value"),
     Input("tasks-filter-type", "value"),
     State("tasks-volume-slice", "value"),
     State("tasks-hist-slice", "value"),
     State("tasks-time-compare-slice", "value"),
     State("tasks-time-slice", "value"),
     State("tasks-sla-slice", "value"),
+    State("tasks-backlog-slice", "value"),
 )
 
 # ---------------------------------------------------------------------------

@@ -37,7 +37,8 @@ UI_CONTENT = dmc.Stack(
 
             dmc.Text("Filter bar (sticky header)", fw=600, size="xs", mb=4),
             bullets([
-                "Date preset + slider + manual range — anchored to exam date.",
+                "Date preset + slider + manual range — anchored to exam (consult) "
+                "date, or to simulation date while the Sim → Tx filter is active.",
                 "Department chips (Lacey / Centralia / Aberdeen).",
                 "Physician — single-select; pulls the list from Exam rows only.",
                 "Technique — multi-select Electron / 3D / IMRT / VMAT / SBRT / SRS.",
@@ -52,6 +53,19 @@ UI_CONTENT = dmc.Stack(
                 "Inpatient switch — include or exclude inpatient consults.",
                 "Outlier caps panel — None / Default presets plus per-gap sliders "
                 "(0–120 days). Drops chains where an individual gap exceeds the cap.",
+                "Sim → Tx span — range filter (0 to 60+ days) on each course's "
+                "overall simulation-to-first-treatment span. While it's active "
+                "the date range selects courses by simulation date instead of "
+                "consult date. A first treatment that is booked but hasn't "
+                "happened yet counts by its booked date; courses with no "
+                "treatment at all drop out. Follows the Business Days switch. "
+                "Available on both sides of Compare.",
+                "Booked treatments — when a course's first treatment is still "
+                "Scheduled for a future date, the pipeline treats it as not yet "
+                "treated: it shows as pending after Review in the flow, is "
+                "excluded from the Review → Tx gap and its outlier cap, counts "
+                "as not-yet-started in the Consult → Tx survival estimate, and "
+                "the table status reads \"Tx Scheduled\" with the booked date.",
             ]),
 
             dmc.Space(h="xs"),

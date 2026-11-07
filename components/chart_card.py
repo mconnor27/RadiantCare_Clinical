@@ -160,7 +160,9 @@ def chart_card(
 
     # --- Assemble Paper ---
     paper_children = [header]
-    if sub_header:
+    # `is not None`, not truthiness: a Dash component with no children (e.g. an
+    # empty dmc.Text that a callback fills in) is falsy and would be dropped.
+    if sub_header is not None:
         paper_children.append(sub_header)
     paper_children.append(graph_box)
     if store_data:

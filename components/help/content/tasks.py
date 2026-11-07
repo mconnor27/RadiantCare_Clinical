@@ -24,8 +24,9 @@ UI_CONTENT = dmc.Stack(
             "tabler:layout-dashboard",
             body(
                 "A 5-tile KPI row (one card per task type, each clickable to "
-                "filter the rest of the page), six chart cards across three "
-                "rows, and a full-width detail table. The clickable KPI cards "
+                "filter the rest of the page), a full-width Open Tasks per Day "
+                "workload chart, six chart cards across three rows, and a "
+                "full-width detail table. The clickable KPI cards "
                 "act as a quick way to drill into a single task type without "
                 "opening the task-type filter panel.",
             ),
@@ -50,6 +51,17 @@ UI_CONTENT = dmc.Stack(
 
             dmc.Text("Charts", fw=600, size="xs", mb=4),
             bullets([
+                "Open Tasks per Day — the workload backlog: how many tasks were "
+                "open at the end of each weekday. A task is open from when it "
+                "became actionable (its prior step finished — the same start "
+                "point actual time uses) until it was completed; tasks still "
+                "waiting on their prior step aren't counted. With outlier caps "
+                "on, a task counts for at most its cap's worth of days before "
+                "it closed, so a stale prior-step timestamp can't add a task to "
+                "every day for years. Daily, or Weekly / Monthly as the average "
+                "daily backlog. Slice by Total, Task, MD, Planner, or Dx. "
+                "Ignores the Status filter, since Completed-only would erase "
+                "the current backlog.",
                 "Task Volume Trend — bar / line / area, weekly / monthly / "
                 "yearly. Slice by Total, Task type, MD, Planner, or Diagnosis "
                 "body site. Smoothing slider.",
@@ -101,6 +113,14 @@ UI_CONTENT = dmc.Stack(
                 "Contour Review, Isodose Plan, Review Plan) matched by "
                 "ActivityName substring.",
                 "Status — Completed / Open / All (Open = CompletingMD is null).",
+                "Time — narrows every KPI, chart and the table to tasks whose "
+                "Actual time (MinutesToComplete, following the Business Hours "
+                "switch) or Allowed time (MinutesAllowed, the SLA) falls in a "
+                "range from 0 to 21 days or more. Allowed leaves out Isodose "
+                "tasks and tasks with no allowed time; an active Actual range "
+                "leaves out open tasks, which have no actual time yet. This is "
+                "a row filter, unlike the per-task outlier caps, which only "
+                "trim the long tail out of time statistics.",
                 "Business hours switch — restrict counts and SLA to 8 AM – 5 PM "
                 "weekdays only, or include 24×7 activity.",
                 "Smoothing slider — shared across trend charts.",
