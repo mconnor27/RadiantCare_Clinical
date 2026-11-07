@@ -1844,9 +1844,10 @@ window.dash_clientside.cumulative = {
         var traces = [];
         var yTitle = rawData.yTitle || "Cumulative Visits";
         var isDollar = yTitle.indexOf('$') >= 0;
+        var valueSuffix = rawData.valueSuffix || "";
         function fmtVal(v) {
-            if (v === null || v === undefined || isNaN(v)) return isDollar ? "$0" : "0";
-            return isDollar ? "$" + Math.round(v).toLocaleString() : Math.round(v).toLocaleString();
+            if (v === null || v === undefined || isNaN(v)) return isDollar ? "$0" : "0" + valueSuffix;
+            return isDollar ? "$" + Math.round(v).toLocaleString() : Math.round(v).toLocaleString() + valueSuffix;
         }
 
         // LOESS smoothing for cumulative charts: pin endpoints to raw values,

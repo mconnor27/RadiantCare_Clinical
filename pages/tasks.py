@@ -813,6 +813,18 @@ layout = dmc.Stack(
                     smooth_default=0.1,
                     prior_periods_default=3,
                     paper_padding="md",
+                    extra_controls_left=[
+                        dmc.SegmentedControl(
+                            id="tasks-cumulative-measure",
+                            data=[
+                                {"value": "count", "label": "Count"},
+                                {"value": "actual", "label": "Actual Time"},
+                                {"value": "allowed", "label": "Allowed Time"},
+                            ],
+                            value="count",
+                            size="xs",
+                        ),
+                    ],
                     extra_controls=[
                         dmc.SegmentedControl(
                             id="tasks-cumulative-mode",
@@ -1767,11 +1779,12 @@ def _update_tasks_volume(*args):
     Input("tasks-cumulative-mode", "value"),
     Input("tasks-cumulative-period-type", "value"),
     Input("tasks-cumulative-slice", "value"),
+    Input("tasks-cumulative-measure", "value"),
     running=[(Output("tasks-chart-cumulative-loading", "visible"), True, False)],
 )
 def _update_tasks_cumulative(*args):
     ctx = _unpack_tasks_filter_args(args)
-    cumul_mode, cumul_period_type, cumul_slice = args[_N_FILTER_INPUTS], args[_N_FILTER_INPUTS + 1], args[_N_FILTER_INPUTS + 2]
+    cumul_mode, cumul_period_type, cumul_slice, cumul_measure = args[_N_FILTER_INPUTS:_N_FILTER_INPUTS + 4]
     data = _load_and_filter_tasks(**ctx)
     if data is None:
         return None
@@ -1783,6 +1796,8 @@ def _update_tasks_cumulative(*args):
         c2b=data["c2b"],
         accent_color=data["accent"],
         max_prior=10,
+        measure=cumul_measure or "count",
+        cap_minutes=data["cap_minutes"],
     )
 
 
@@ -2009,8 +2024,19 @@ def _prepare_volume_data(df, agg, slice_by="", c2b=None, accent_color=None):
 def _prepare_cumulative_data(df_all, start, end, date_preset,
                               mode="prior", period_type="calendar",
                               slice_by="task", c2b=None, accent_color=None,
-                              max_prior=10):
-    """Prepare cumulative task volume data for overlay chart."""
+                              max_prior=10, measure="count", cap_minutes=None):
+    """Prepare cumulative task volume data for overlay chart.
+
+    measure:
+      "count"   — cumulative number of tasks (default)
+      "actual"  — cumulative sum of MinutesToComplete on completed tasks
+                  (same time-valid rules as the histogram: >0, under the
+                  per-group outlier cap)
+      "allowed" — cumulative sum of MinutesAllowed (SLA) on completed tasks,
+                  excluding Isodose and tasks without an allowed time
+    Time measures are shown in hours, or days when the current period's
+    total reaches 3 days.
+    """
     if df_all.empty or "StartDateTime" not in df_all.columns:
         return None
 
@@ -2032,15 +2058,53 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
     if dff_all.empty:
         return None
 
+    # Per-row weight: 1 per task for counts, duration for time measures.
+    # Every aggregation below sums "_w" so all modes share one code path.
+    measure = measure or "count"
+    value_suffix = ""
+    y_title = "Cumulative Tasks"
+    if measure in ("actual", "allowed"):
+        is_comp = _task_is_completed(dff_all)
+        if measure == "actual":
+            if "MinutesToComplete" not in dff_all.columns:
+                return None
+            w = pd.to_numeric(dff_all["MinutesToComplete"], errors="coerce")
+            keep = is_comp & (w > 0)
+            if cap_minutes and "ActivityName" in dff_all.columns:
+                row_cap = dff_all["ActivityName"].map(_TASK_TYPE_TO_GROUP).map(cap_minutes)
+                keep = keep & (w <= row_cap.fillna(np.inf))
+        else:
+            if "MinutesAllowed" not in dff_all.columns:
+                return None
+            w = pd.to_numeric(dff_all["MinutesAllowed"], errors="coerce")
+            _iso_types = _TASK_TYPE_GROUPS.get("Create Isodose Plan", [])
+            is_iso = (dff_all["ActivityName"].isin(_iso_types)
+                      if "ActivityName" in dff_all.columns
+                      else pd.Series(False, index=dff_all.index))
+            keep = is_comp & (w > 0) & ~is_iso
+        dff_all = dff_all[keep].copy()
+        if dff_all.empty:
+            return None
+        in_cur = (dff_all["StartDateTime"] >= start) & (dff_all["StartDateTime"] <= end)
+        cur_total = float(w[keep][in_cur].sum())
+        if cur_total >= 3 * 1440:
+            scale, unit, value_suffix = 1 / 1440, "Days", " d"
+        else:
+            scale, unit, value_suffix = 1 / 60, "Hours", " hr"
+        dff_all["_w"] = w[keep] * scale
+        y_title = f"Cumulative {'Actual' if measure == 'actual' else 'Allowed'} Time ({unit})"
+    else:
+        dff_all["_w"] = 1
+
     def _cumulative_for_window(df, w_start, w_end):
         mask = (df["StartDateTime"] >= w_start) & (df["StartDateTime"] <= w_end)
         sub = df.loc[mask]
         if sub.empty:
             return []
-        daily = sub.groupby(sub["StartDateTime"].dt.normalize()).size()
+        daily = sub.groupby(sub["StartDateTime"].dt.normalize())["_w"].sum()
         idx = pd.date_range(w_start.normalize(), w_end.normalize(), freq="D")
         daily = daily.reindex(idx, fill_value=0)
-        return daily.cumsum().tolist()
+        return daily.cumsum().round(2).tolist()
 
     def _slice_totals_for_window(df, w_start, w_end, sb):
         mask = (df["StartDateTime"] >= w_start) & (df["StartDateTime"] <= w_end)
@@ -2048,14 +2112,14 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
         if sub.empty:
             return {}
         if sb == "total":
-            return {"Total": len(sub)}
+            return {"Total": round(float(sub["_w"].sum()), 2)}
         if sb == "task" and "ActivityName" in sub.columns:
             sub_c = sub.copy()
             sub_c["_TaskGroup"] = sub_c["ActivityName"].map(_TASK_TYPE_TO_GROUP).fillna(sub_c["ActivityName"])
-            return sub_c.groupby("_TaskGroup").size().to_dict()
+            return sub_c.groupby("_TaskGroup")["_w"].sum().round(2).to_dict()
         elif sb == "physician" and "ResolvedMD" in sub.columns:
             known_mds = _load_known_physicians()
-            counts = sub[sub["ResolvedMD"].isin(known_mds)].groupby("ResolvedMD").size()
+            counts = sub[sub["ResolvedMD"].isin(known_mds)].groupby("ResolvedMD")["_w"].sum().round(2)
             return {(k.split(",")[0] if "," in k else k): v for k, v in counts.items()}
         elif sb == "planner" and "CompletingUser" in sub.columns:
             known_mds = _load_known_physicians()
@@ -2063,12 +2127,12 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
                        & ~sub["CompletingUser"].isin(known_mds)
                        & (sub["CompletingUser"].str.strip() != "")
                        & (sub["CompletingUser"].str.upper() != "NA")]
-            return psub.groupby("CompletingUser").size().to_dict() if not psub.empty else {}
+            return psub.groupby("CompletingUser")["_w"].sum().round(2).to_dict() if not psub.empty else {}
         elif sb == "bodysite" and "DiagnosisCodes" in sub.columns and c2b:
             sub_bs = sub.copy()
             sub_bs["_bs"] = sub_bs["DiagnosisCodes"].apply(lambda v: primary_category(v, c2b))
             sub_bs = sub_bs[sub_bs["_bs"] != "Unknown"]
-            return sub_bs.groupby("_bs").size().to_dict() if not sub_bs.empty else {}
+            return sub_bs.groupby("_bs")["_w"].sum().round(2).to_dict() if not sub_bs.empty else {}
         return {}
 
     n_days = period_days
@@ -2177,7 +2241,8 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
             "prior": prior,
             "sliceBreakdown": slice_breakdown,
             "height": 350,
-            "yTitle": "Cumulative Tasks",
+            "yTitle": y_title,
+            "valueSuffix": value_suffix,
             **_prior_meta,
         }
         if _cy_last_actual is not None:
@@ -2190,7 +2255,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
     dates_range = pd.date_range(start.normalize(), end.normalize(), freq="D")
 
     def _trimmed_cumsum(daily_counts):
-        cumvals = daily_counts.cumsum().tolist()
+        cumvals = daily_counts.cumsum().round(2).tolist()
         raw = daily_counts.tolist()
         first_idx = next((i for i, v in enumerate(raw) if v > 0), None)
         if first_idx is None:
@@ -2210,7 +2275,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
         for i, grp in enumerate(sorted(dff_period["_TaskGroup"].dropna().unique(),
                                        key=lambda g: _TASK_GROUP_ORDER.get(g, 999))):
             sub = dff_period[dff_period["_TaskGroup"] == grp]
-            daily = sub.groupby(sub["StartDateTime"].dt.normalize()).size()
+            daily = sub.groupby(sub["StartDateTime"].dt.normalize())["_w"].sum()
             daily = daily.reindex(dates_range, fill_value=0)
             series.append({
                 "name": grp,
@@ -2222,7 +2287,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
         known_mds = _load_known_physicians()
         for i, md in enumerate(sorted(m for m in dff_period["ResolvedMD"].dropna().unique() if m in known_mds)):
             sub = dff_period[dff_period["ResolvedMD"] == md]
-            daily = sub.groupby(sub["StartDateTime"].dt.normalize()).size()
+            daily = sub.groupby(sub["StartDateTime"].dt.normalize())["_w"].sum()
             daily = daily.reindex(dates_range, fill_value=0)
             series.append({
                 "name": md.split(",")[0] if "," in md else md,
@@ -2236,7 +2301,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
                           if p.strip() and p.upper() != "NA" and p not in known_mds)
         for i, p in enumerate(planners):
             sub = dff_period[dff_period["CompletingUser"] == p]
-            daily = sub.groupby(sub["StartDateTime"].dt.normalize()).size()
+            daily = sub.groupby(sub["StartDateTime"].dt.normalize())["_w"].sum()
             daily = daily.reindex(dates_range, fill_value=0)
             series.append({
                 "name": p,
@@ -2250,7 +2315,7 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
         dff_period = dff_period[dff_period["_bs"] != "Unknown"]
         for i, bs in enumerate(sorted(dff_period["_bs"].dropna().unique())):
             sub = dff_period[dff_period["_bs"] == bs]
-            daily = sub.groupby(sub["StartDateTime"].dt.normalize()).size()
+            daily = sub.groupby(sub["StartDateTime"].dt.normalize())["_w"].sum()
             daily = daily.reindex(dates_range, fill_value=0)
             series.append({
                 "name": bs,
@@ -2266,7 +2331,8 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
         "series": series,
         "sliceBreakdown": slice_breakdown,
         "height": 350,
-        "yTitle": "Cumulative Tasks",
+        "yTitle": y_title,
+        "valueSuffix": value_suffix,
         **_prior_meta,
     }
 

@@ -55,7 +55,13 @@ UI_CONTENT = dmc.Stack(
                 "body site. Smoothing slider.",
                 "Cumulative Task Volume — running total with Prior Periods "
                 "overlay and projection option. Calendar or rolling period "
-                "windows.",
+                "windows. Count / Actual Time / Allowed Time switches what "
+                "accumulates: number of tasks, summed MinutesToComplete on "
+                "completed tasks (outlier caps apply), or summed "
+                "MinutesAllowed (Isodose and tasks without an allowed time "
+                "excluded). Time is shown in hours, or days for larger "
+                "totals. Note this is summed turnaround time, not hands-on "
+                "effort.",
                 "Time Distribution — histogram or density of MinutesToComplete "
                 "(Actual) or MinutesAllowed (Allowed, the SLA; Isodose tasks "
                 "and tasks without an allowed time are excluded). Slice by "
