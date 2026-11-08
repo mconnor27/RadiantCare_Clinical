@@ -89,7 +89,7 @@ _SIM_TYPE_EXCLUDE = frozenset({"HOLD SIM TIME", "MD Needed in Sim"})
 # Sim machine display names and colors (keyed by SimulationResource)
 _SIM_MACHINE_DISPLAY = {
     "CT_Sim": "CT Sim (Lacey)",
-    "CT_Cen": "CT Sim (Centralia)",
+    "CT_CEN": "CT Sim (Centralia)",
     "TrueBeamNorth": "TrueBeam",
     "21EX": "21EX",
     "21iX_CEN": "21iX CEN",
@@ -97,7 +97,7 @@ _SIM_MACHINE_DISPLAY = {
 }
 _SIM_MACHINE_COLORS = {
     "CT_Sim": DEPARTMENT_COLORS.get("Lacey", "#2196F3"),
-    "CT_Cen": DEPARTMENT_COLORS.get("Centralia", "#F44336"),
+    "CT_CEN": DEPARTMENT_COLORS.get("Centralia", "#F44336"),
     "TrueBeamNorth": "#1976D2",
     "21EX": "#64B5F6",
     "21iX_CEN": "#E57373",
@@ -175,7 +175,7 @@ _SIM_CPT_ALL = set(_SIM_CPT_LABELS.keys())
 _RIBBON_MACHINE_OPTS = [
     {"value": "all", "label": "All"},
     {"value": "CT_Sim", "label": "Lacey"},
-    {"value": "CT_Cen", "label": "Centralia"},
+    {"value": "CT_CEN", "label": "Centralia"},
 ]
 
 
@@ -2484,9 +2484,15 @@ def update_ribbon(_n, ribbon_machine, slider_val):
     if "ActivityName" in df.columns:
         df = df[~df["ActivityName"].isin(_SIM_TYPE_EXCLUDE)]
 
-    # Machine filter (ribbon-specific)
-    if ribbon_machine and ribbon_machine != "all" and "SimulationResource" in df.columns:
-        df = df[df["SimulationResource"] == ribbon_machine]
+    # Machine filter (ribbon-specific). The ribbon is the CT operating window,
+    # so "All" means both CT sims — linac sims (electron CSUs, CBCT sims) are
+    # excluded rather than stretching the window.
+    if "SimulationResource" in df.columns:
+        if ribbon_machine and ribbon_machine != "all":
+            df = df[df["SimulationResource"] == ribbon_machine]
+        else:
+            ct = [o["value"] for o in _RIBBON_MACHINE_OPTS if o["value"] != "all"]
+            df = df[df["SimulationResource"].isin(ct)]
 
     # Date range from slider
     start, end = _get_date_range(slider_val)

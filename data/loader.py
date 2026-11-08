@@ -1470,6 +1470,7 @@ def load_tasks():
         "PriorStepBaseline",
         "DrawCreationDateTime", "SimulationDateTime",
         "SimScheduledEndDateTime", "SimActualEndDateTime",
+        "DrawPrepDoneDateTime", "DrawFirstActivationDateTime",
     ])
     if "UniqueRowID" in df.columns:
         df = df.drop_duplicates(subset=["UniqueRowID"], keep="last")

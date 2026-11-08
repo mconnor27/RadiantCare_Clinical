@@ -52,7 +52,8 @@ UI_CONTENT = dmc.Stack(
                 "StageOccurrence > 1 (resims, replans).",
                 "Inpatient switch — include or exclude inpatient consults.",
                 "Outlier caps panel — None / Default presets plus per-gap sliders "
-                "(0–120 days). Drops chains where an individual gap exceeds the cap.",
+                "(0–120 days). Trims per step: a course over a step's cap is left "
+                "out of that step's time stats only; flow counts keep every course.",
                 "Sim → Tx span — range filter (0 to 60+ days) on each course's "
                 "overall simulation-to-first-treatment span. While it's active "
                 "the date range selects courses by simulation date instead of "
@@ -78,6 +79,38 @@ UI_CONTENT = dmc.Stack(
                 "and loopback counts at that stage. Loopback arcs render on top for "
                 "the top 10 most frequent backward transitions (e.g., Isodose → Draw "
                 "when contours get reworked).",
+                "Line above the flow — the real end-to-end time from the first "
+                "shown stage to the last (e.g. Consult → Tx), median or mean per "
+                "course, over courses that reached both. It is not the sum of the "
+                "per-step medians, which understates the whole span.",
+                "Stages dropdown (flow card, top right) — choose which stages the "
+                "flow shows: All, Core (the original six), Consult → Sim → Tx, or "
+                "any mix of chips. A hidden stage merges into the gap around it, "
+                "so Consult → Sim → Tx shows one Sim → Tx gap measured from sim "
+                "end. Applies to both datasets and to the distribution and trend "
+                "charts. The by-owner summary line shows only when every step "
+                "from Sim to Tx is visible.",
+                "Optional stages (lighter bars) appear when the extract has them. "
+                "Prep sits between Simulation and Contour: sim end to the moment "
+                "the Draw became the MD's (see MD ready below), i.e. dosimetry "
+                "prep plus any physics Fusion Review. After Review, Sign Plan/Rx "
+                "(MD), Physics QA (Check Plan Physics, or the IMRT QA sign-off) and "
+                "Therapist Review lead to first treatment. These run partly in "
+                "parallel, so each gets only the time after the latest earlier "
+                "milestone, and together they add up to Review → Tx exactly. A "
+                "course without one of them passes through it at zero time; "
+                "per-step medians count only courses that had the step.",
+                "Share of Sim → Tx time — the small % under each gap's days label, "
+                "from Simulation onward. It's that step's total days divided by "
+                "the total days of every step from sim to first treatment, using "
+                "only courses that reached first treatment, so the steps add to "
+                "100%. It's a share of total time (mean-based), so it won't match "
+                "ratios of the median labels. The line above the total groups the "
+                "steps by owner: MD (Contour + Review + Sign Plan/Rx), Prep, "
+                "Dosimetry (Plan), Physics QA, Therapist Review, and Wait for Tx "
+                "(last milestone → first fraction). When milestones are shown, "
+                "only courses whose extract has milestone rows are counted. "
+                "Hover a gap for its exact share and the number of courses used.",
                 "Stage Duration Distribution — histogram or density view of the "
                 "days-between for a selectable stage pair. Kaplan-Meier adjust "
                 "switch handles right-censored chains (patients still in progress); "
@@ -112,17 +145,27 @@ UI_CONTENT = dmc.Stack(
             subheading("Baseline resolution, per stage"),
             bullets([
                 "Simulation_baseline → Exam date (consult).",
-                "Draw Volumes_baseline → task creation time "
-                "(from DimActivityTransactionHistory) if present; else sim's "
-                "ActivityEndDateTime; else sim's ScheduledEndTime; else the draw "
-                "task's own StartDateTime. Creation-time is preferred because "
-                "replans and new care paths often assign Draw before the sim "
-                "actually ends.",
+                "Draw Volumes_baseline → MD ready: when the Draw became the "
+                "MD's to do. (1) The latest completed Dosi Prep or Fusion Review "
+                "in this Draw's cycle (either order; Fusion Review usually "
+                "finishes ~2 h after Dosi Prep). (2) Else the Draw task's first "
+                "activation: the earliest reset of its scheduled start while "
+                "Open, more than 5 min after creation (skips the burst of history "
+                "rows written at creation). (3) Else the later of sim end and "
+                "task creation, so a Draw created well after the sim (including "
+                "a redraw) starts at creation. Dosi Prep became standard on "
+                "2026-05-18, so earlier courses mostly use (2) or (3). ARIA's "
+                "In Progress status is not used because opening a task can set "
+                "it without work starting. The Contour gap is MD time; the time "
+                "before it is the Prep stage.",
                 "Contour Review_baseline → Draw Volumes completion.",
                 "Isodose Plan_baseline → Contour Review completion (preferred) or "
                 "Draw Volumes completion as fallback.",
                 "Review Plan_baseline → Isodose completion.",
-                "First Fraction_baseline → Review Plan completion.",
+                "First Fraction_baseline → Review Plan completion; when "
+                "post-review milestones are shown, the last milestone's time.",
+                "Sign Plan/Rx, Physics QA, Therapist Review → the latest earlier "
+                "milestone (critical path), starting from Review Plan completion.",
             ]),
 
             subheading("Duration formula"),
@@ -140,12 +183,16 @@ UI_CONTENT = dmc.Stack(
             body(
                 "Each gap has its own cap (consult→sim default 21, sim→contour "
                 "default 8, contour→plan 8, plan→review 5, review→tx 8, SRS draw "
-                "7 — from config/settings.OUTLIER_CAPS). Chains with any gap "
-                "exceeding the cap are excluded from the distribution and trend "
-                "charts to prevent long-tail outliers from skewing medians. The "
-                "cap panel in the filter bar lets you adjust or disable caps per-"
-                "gap; the Flow-Gantt uses the filtered set so apparent medians "
-                "match what's on the other two charts.",
+                "7 — from config/settings.OUTLIER_CAPS). Caps trim per step: a "
+                "course whose time for one step is over that step's cap is left "
+                "out of that step's median, distribution and trend only. Every "
+                "course still counts in the flow (stage counts, Pending, "
+                "Cancelled) and the table. A step inside a core gap (e.g. Review "
+                "→ Sign Plan/Rx) uses that gap's cap; a merged gap from hidden "
+                "stages uses the sum of the caps it spans (Sim → Tx 29d, Consult → "
+                "Tx 50d). The Sim → Tx % shares leave out courses with any step "
+                "over its cap so their steps still add to 100%. The cap panel in "
+                "the filter bar adjusts or disables caps per gap.",
             ),
         ),
 

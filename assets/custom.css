@@ -1004,6 +1004,11 @@ html[data-theme="dark"] .ag-theme-alpine-dark {
 .wf-range-panel.wf-chip-dropdown {
     max-width: none;
 }
+/* Dropdown anchored at a card's right edge (Workflow flow "Stages"): open leftward */
+.wf-panel-right.wf-chip-dropdown {
+    left: auto;
+    right: 0;
+}
 
 /* ─── Workflow dcc.DatePickerRange compact styling ─────────── */
 /* Match Mantine Select size="xs" input: same height, border, radius */
@@ -1387,6 +1392,9 @@ div:has(> .wf-filter-clear-btn[style*="inline-flex"]) > .mantine-Button-root .ma
 .tasks-kpi-active .tasks-kpi-paper-contour { outline-color: #2196F3; background-color: #2196F308; }
 .tasks-kpi-active .tasks-kpi-paper-isodose { outline-color: #4CAF50; background-color: #4CAF5008; }
 .tasks-kpi-active .tasks-kpi-paper-review  { outline-color: #F44336; background-color: #F4433608; }
+.tasks-kpi-active .tasks-kpi-paper-dosiprep { outline-color: #00BCD4; background-color: #00BCD408; }
+.tasks-kpi-active .tasks-kpi-paper-sign    { outline-color: #9C27B0; background-color: #9C27B008; }
+.tasks-kpi-active .tasks-kpi-paper-physics { outline-color: #795548; background-color: #79554808; }
 
 /* ─── Machine Downtime Page ──────────────────────────────── */
 #machines-level1-container {

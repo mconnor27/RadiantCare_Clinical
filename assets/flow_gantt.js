@@ -369,6 +369,9 @@ window.dash_clientside.flowGantt = {
         var aggLabel   = aggFunc === "mean" ? "Mean" : "Median";
         var aDays      = rawData.allottedDays || [];
         var otPcts     = rawData.onTimePcts || [];
+        var spanShares = rawData.spanShares || [];
+        var spanGroups = rawData.spanGroups || [];
+        var spanN      = rawData.spanN || 0;
         var xPos       = rawData.xPositions;
         var colors     = rawData.colors;
         var loopbacks  = rawData.loopbacks || [];
@@ -648,6 +651,11 @@ window.dash_clientside.flowGantt = {
                     flowTip += " — <span style='color:" + pctColor + "'>"
                         + otPcts[i] + "% on time</span>";
                 }
+            }
+            if (spanShares[i] != null) {
+                flowTip += "<br>Share of Sim → Tx time: " + spanShares[i] + "%"
+                    + " <span style='opacity:0.7'>(" + spanN.toLocaleString()
+                    + " courses that reached Tx)</span>";
             }
             attachHover(path, flowTip, colors[i]);
 
@@ -1182,6 +1190,35 @@ window.dash_clientside.flowGantt = {
                     daysLabel.textContent = daysText;
                     gConnectors.appendChild(daysLabel);
                 }
+
+                // Subtle share-of-Sim→Tx label tucked under the days pill
+                if (spanShares[i] != null) {
+                    var shareText = Math.round(spanShares[i]) + "%";
+                    var pillHalf = twoLine ? 15 : 10;
+                    var shY = dtY + pillHalf + 9;
+                    var shW = shareText.length * 6 + 8;
+                    gConnectors.appendChild(svgEl("rect", {
+                        x: (dtX - shW / 2).toFixed(1),
+                        y: (shY - 7).toFixed(1),
+                        width: shW.toFixed(1),
+                        height: "14",
+                        fill: _flowGanttTheme().pillBg,
+                        rx: "7",
+                        "pointer-events": "none",
+                    }));
+                    var shareLabel = svgEl("text", {
+                        x: dtX.toFixed(1),
+                        y: shY.toFixed(1),
+                        "text-anchor": "middle",
+                        "dominant-baseline": "central",
+                        "font-size": "10",
+                        fill: _flowGanttTheme().mutedText,
+                        "fill-opacity": "0.8",
+                        "pointer-events": "none",
+                    });
+                    shareLabel.textContent = shareText;
+                    gConnectors.appendChild(shareLabel);
+                }
             }
         }
 
@@ -1205,8 +1242,30 @@ window.dash_clientside.flowGantt = {
             fill: _flowGanttTheme().mutedText,
             "pointer-events": "none",
         });
-        totalLabel.textContent = "Total: " + totalDays + " days";
+        // Workflow sends a real end-to-end median (totalLabel); other users of
+        // this chart fall back to the sum of per-step values.
+        totalLabel.textContent = rawData.totalLabel || ("Total: " + totalDays + " days");
         gLabels.appendChild(totalLabel);
+
+        // Sim → Tx time split by owner, one quiet line above the total
+        if (spanGroups.length > 0) {
+            var parts = [];
+            for (var gi = 0; gi < spanGroups.length; gi++) {
+                parts.push(spanGroups[gi].label + " " + Math.round(spanGroups[gi].pct) + "%");
+            }
+            var groupLabel = svgEl("text", {
+                x: sx(totalMidX).toFixed(1),
+                y: (sy(totalRowY) - 20).toFixed(1),
+                "text-anchor": "middle",
+                "dominant-baseline": "auto",
+                "font-size": "11",
+                fill: _flowGanttTheme().mutedText,
+                "fill-opacity": "0.8",
+                "pointer-events": "none",
+            });
+            groupLabel.textContent = "Sim → Tx time: " + parts.join("  ·  ");
+            gLabels.appendChild(groupLabel);
+        }
 
         // ─── 5. LOOPBACK FLOW BANDS ─────────────────────────────────────
         if (showLoopbacks && rawData.loopbackPairs && rawData.loopbackPairs.length > 0) {

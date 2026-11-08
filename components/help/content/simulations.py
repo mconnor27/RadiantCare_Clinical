@@ -63,8 +63,9 @@ UI_CONTENT = dmc.Stack(
                 "Censoring Guard (below).",
                 "Schedule Ribbon — per-day sim operating window across the full "
                 "history. Can render as Ribbon (fill between earliest start and "
-                "latest end-of-day), Bar (sim count), or Line. Machine toggle "
-                "filters to a single sim machine (CT_Sim, CT_CEN).",
+                "latest end-of-day), Bar (sim count), or Line. CT sims only — "
+                "sims on treatment machines are left out. Machine toggle "
+                "filters to a single CT (CT_Sim, CT_CEN).",
                 "Cancellation Rate — cancelled-sim fraction over time.",
                 "Diagnosis Mix — body-system distribution of the filtered sims "
                 "with a current-vs-prior compare mode.",
@@ -87,15 +88,19 @@ UI_CONTENT = dmc.Stack(
             bullets([
                 "Date preset + slider + manual DatePickerRange — anchored to "
                 "ScheduledDateTime.",
-                "Department chips — Lacey / Centralia / Aberdeen.",
+                "Department chips — Lacey / Centralia / Aberdeen. This is the "
+                "patient's treatment site, not where the sim happened: most "
+                "Aberdeen patients are simmed on the Lacey CT.",
                 "Physician — single-select. Role toggle switches between the "
                 "consult physician (who saw the patient) and the supervising "
                 "physician on the sim.",
                 "Sim Type — multi-select of ActivityName values (Initial "
                 "Simulation, Stereotactic Simulation, Re-Simulation, Initial "
                 "Centralia-in-Lacey, Initial Aberdeen Simulation).",
-                "Machine — multi-select of SimulationResource values (CT_Sim, "
-                "CT_CEN).",
+                "Machine — multi-select of SimulationResource values: the two "
+                "CTs (CT_Sim, CT_CEN) plus treatment machines used for sims "
+                "(electron CSUs, CBCT sims). Pick 21iX AB to see sims "
+                "physically done in Aberdeen.",
                 "Re-sim scope — toggles whether re-sims are counted as "
                 "\"resim of the original consult\" or as \"new sim with a "
                 "separate lead time\".",

@@ -45,12 +45,18 @@ _CAP_SRS = OUTLIER_CAPS["draw_srs"]
 _CAP_CONTOUR = OUTLIER_CAPS["contour_to_plan"]
 _CAP_ISODOSE = OUTLIER_CAPS["contour_to_plan"]
 _CAP_REVIEW = OUTLIER_CAPS["plan_to_review"]
+_CAP_DOSIPREP = OUTLIER_CAPS["dosi_prep"]
+_CAP_SIGN = OUTLIER_CAPS["sign_plan"]
+_CAP_PHYSICS = OUTLIER_CAPS["physics_qa"]
 
 
 # ---------------------------------------------------------------------------
 # Task type consolidation — raw ARIA ActivityNames → display groups
 # ---------------------------------------------------------------------------
 _TASK_TYPE_GROUPS = {
+    "Dosi Prep": [
+        "Dosi Prep",
+    ],
     "Draw Volumes": [
         "Draw Volumes",
         "Draw Volumes / Add Rx",
@@ -70,7 +76,23 @@ _TASK_TYPE_GROUPS = {
         "Review Plan/Chart Rounds",
         "Review Plan/Rounds",
     ],
+    "Sign Plan/Rx": [
+        "Sign Plan / Approve Rx",
+        "Sign Plan",
+        "Sign Rx",
+    ],
+    # One physics sign-off per course: 3D plan check or IMRT QA sign-off.
+    # Timed from plan review, so IMRT acquisition/analysis fall inside it.
+    "Physics QA": [
+        "Check Plan Physics",
+        "Sign IMRT Verfication",  # ARIA's spelling
+    ],
 }
+
+# Task groups completed by non-MD staff: attributed to CompletingUser and
+# filtered with the Staff dropdown instead of the Physician one.
+_STAFF_TASK_GROUPS = ["Dosi Prep", "Create Isodose Plan", "Physics QA"]
+_STAFF_RAW_TYPES = [t for g in _STAFF_TASK_GROUPS for t in _TASK_TYPE_GROUPS[g]]
 
 # Reverse lookup: raw ActivityName → group label
 _TASK_TYPE_TO_GROUP = {}
@@ -84,6 +106,8 @@ _TASK_GROUP_ORDER = {name: i for i, name in enumerate(_TASK_GROUP_NAMES)}
 
 # KPI card groups — each shows completed / open / median time
 _KPI_GROUPS = [
+    {"name": "Dosi Prep", "key": "dosiprep", "task_groups": ["Dosi Prep"],
+     "color": CHART_COLORWAY[5]},
     {"name": "Draw Volumes", "key": "draw", "task_groups": ["Draw Volumes"],
      "color": CHART_COLORWAY[0]},
     {"name": "Draw Volumes (SRS)", "key": "srs", "task_groups": ["Draw Volumes (SRS)"],
@@ -94,6 +118,10 @@ _KPI_GROUPS = [
      "color": CHART_COLORWAY[3]},
     {"name": "Review Plan", "key": "review", "task_groups": ["Review Plan"],
      "color": CHART_COLORWAY[2]},
+    {"name": "Sign Plan/Rx", "key": "sign", "task_groups": ["Sign Plan/Rx"],
+     "color": CHART_COLORWAY[6]},
+    {"name": "Physics QA", "key": "physics", "task_groups": ["Physics QA"],
+     "color": CHART_COLORWAY[7]},
 ]
 for _kg in _KPI_GROUPS:
     _kg["raw_types"] = []
@@ -168,7 +196,8 @@ def _resolve_md(df, known_mds=None):
     """Add 'ResolvedMD' column: first MD-verified name from
     CompletingMD → AssignedMD → TreatingPhysician cascade.
 
-    For 'Create Isodose Plan' tasks, uses CompletingUser (planner) instead.
+    For staff tasks (Dosi Prep, Create Isodose Plan, Physics QA), uses
+    CompletingUser (dosimetrist / physicist) instead.
     """
     if known_mds is None:
         known_mds = _load_known_physicians()
@@ -189,9 +218,9 @@ def _resolve_md(df, known_mds=None):
     df = df.copy()
     df["ResolvedMD"] = df[candidates].apply(_pick, axis=1)
 
-    # For Isodose Plan tasks, the completer is a planner, not an MD
+    # For staff tasks, the completer is a dosimetrist / physicist, not an MD
     if "CompletingUser" in df.columns and "ActivityName" in df.columns:
-        iso_mask = df["ActivityName"] == "Create Isodose Plan"
+        iso_mask = df["ActivityName"].isin(_STAFF_RAW_TYPES)
         user_vals = df.loc[iso_mask, "CompletingUser"]
         valid = user_vals.notna() & (user_vals.astype(str).str.strip() != "") & (user_vals.astype(str).str.upper() != "NA")
         df.loc[iso_mask & valid, "ResolvedMD"] = df.loc[iso_mask & valid, "CompletingUser"]
@@ -275,14 +304,15 @@ def _build_tasks_filter_bar():
                         ],
                         style={"position": "relative", "display": "inline-block"},
                     ),
-                    # Planner dropdown (visible when Isodose tasks are in scope)
+                    # Staff dropdown (visible when staff tasks are in scope:
+                    # Dosi Prep, Create Isodose Plan, Physics QA)
                     html.Div(
                         id="tasks-planner-wrap",
                         children=[
                             html.Div(
                                 children=[
                                     dmc.Button(
-                                        "Planner",
+                                        "Staff",
                                         id="tasks-planner-trigger",
                                         variant="default",
                                         size="sm",
@@ -450,6 +480,9 @@ def _build_tasks_filter_bar():
                         ("Contour Review", _CAP_CONTOUR),
                         ("Create Isodose Plan", _CAP_ISODOSE),
                         ("Review Plan", _CAP_REVIEW),
+                        ("Dosi Prep", _CAP_DOSIPREP),
+                        ("Sign Plan/Rx", _CAP_SIGN),
+                        ("Physics QA", _CAP_PHYSICS),
                     ], slider_max=OUTLIER_SLIDER_MAX),
                     # Smoothing
                     dmc.Group(
@@ -806,22 +839,11 @@ layout = dmc.Stack(
         ),
 
         # KPI row — one group card per task type (clickable to filter)
-        dmc.SimpleGrid(cols={"base": 1, "sm": 2, "md": 5}, spacing="md", children=[
-            html.Div(id="tasks-kpi-click-draw", n_clicks=0,
+        dmc.SimpleGrid(cols={"base": 1, "sm": 2, "md": 4}, spacing="md", children=[
+            html.Div(id=f"tasks-kpi-click-{kg['key']}", n_clicks=0,
                      style={"cursor": "pointer"},
-                     children=[html.Div(kpi_placeholder(), id="tasks-kpi-draw")]),
-            html.Div(id="tasks-kpi-click-srs", n_clicks=0,
-                     style={"cursor": "pointer"},
-                     children=[html.Div(kpi_placeholder(), id="tasks-kpi-srs")]),
-            html.Div(id="tasks-kpi-click-contour", n_clicks=0,
-                     style={"cursor": "pointer"},
-                     children=[html.Div(kpi_placeholder(), id="tasks-kpi-contour")]),
-            html.Div(id="tasks-kpi-click-isodose", n_clicks=0,
-                     style={"cursor": "pointer"},
-                     children=[html.Div(kpi_placeholder(), id="tasks-kpi-isodose")]),
-            html.Div(id="tasks-kpi-click-review", n_clicks=0,
-                     style={"cursor": "pointer"},
-                     children=[html.Div(kpi_placeholder(), id="tasks-kpi-review")]),
+                     children=[html.Div(kpi_placeholder(), id=f"tasks-kpi-{kg['key']}")])
+            for kg in _KPI_GROUPS
         ]),
 
         # Workload — open tasks per day (full width, top of the chart stack)
@@ -836,7 +858,7 @@ layout = dmc.Stack(
             ],
             show_smooth=True,
             smooth_max=12,
-            smooth_default=0,
+            smooth_default=10,
             paper_padding="md",
             extra_controls_left=[
                 dmc.SegmentedControl(
@@ -845,7 +867,7 @@ layout = dmc.Stack(
                         {"value": "", "label": "Total"},
                         {"value": "task", "label": "Task"},
                         {"value": "physician", "label": "MD"},
-                        {"value": "planner", "label": "Planner"},
+                        {"value": "planner", "label": "Staff"},
                         {"value": "bodysite", "label": "Dx"},
                     ],
                     value="task",
@@ -889,7 +911,7 @@ layout = dmc.Stack(
                                 {"value": "", "label": "Total"},
                                 {"value": "task", "label": "Task"},
                                 {"value": "physician", "label": "MD"},
-                                {"value": "planner", "label": "Planner"},
+                                {"value": "planner", "label": "Staff"},
                                 {"value": "bodysite", "label": "Dx"},
                             ],
                             value="task",
@@ -966,7 +988,7 @@ layout = dmc.Stack(
                             data=[
                                 {"value": "task", "label": "Task"},
                                 {"value": "physician", "label": "MD"},
-                                {"value": "planner", "label": "Planner"},
+                                {"value": "planner", "label": "Staff"},
                                 {"value": "bodysite", "label": "Dx"},
                             ],
                             value="task",
@@ -996,7 +1018,7 @@ layout = dmc.Stack(
                                 {"value": "", "label": "Total"},
                                 {"value": "task", "label": "Task"},
                                 {"value": "physician", "label": "MD"},
-                                {"value": "planner", "label": "Planner"},
+                                {"value": "planner", "label": "Staff"},
                             ],
                             value="",
                             size="xs",
@@ -1062,7 +1084,7 @@ layout = dmc.Stack(
                                 {"value": "", "label": "Total"},
                                 {"value": "task", "label": "Task"},
                                 {"value": "physician", "label": "MD"},
-                                {"value": "planner", "label": "Planner"},
+                                {"value": "planner", "label": "Staff"},
                                 {"value": "bodysite", "label": "Dx"},
                             ],
                             value="",
@@ -1097,7 +1119,7 @@ layout = dmc.Stack(
                                 {"value": "", "label": "Total"},
                                 {"value": "task", "label": "Task"},
                                 {"value": "physician", "label": "MD"},
-                                {"value": "planner", "label": "Planner"},
+                                {"value": "planner", "label": "Staff"},
                                 {"value": "bodysite", "label": "Dx"},
                             ],
                             value="",
@@ -1140,7 +1162,7 @@ layout = dmc.Stack(
                                 {"value": "", "label": "Total"},
                                 {"value": "task", "label": "Task"},
                                 {"value": "physician", "label": "MD"},
-                                {"value": "planner", "label": "Planner"},
+                                {"value": "planner", "label": "Staff"},
                                 {"value": "bodysite", "label": "Dx"},
                             ],
                             value="",
@@ -1296,7 +1318,7 @@ def _register_tasks_filter_callbacks():
     )
     clientside_callback(
         """function(val) {
-            if (!val) return "Planner";
+            if (!val) return "Staff";
             return val.split(", ")[0];
         }""",
         Output("tasks-planner-trigger", "children"),
@@ -1375,7 +1397,7 @@ def _register_tasks_filter_callbacks():
     )
 
     # --- Physician/Planner dropdown visibility based on task type filter ---
-    # No filter: both visible. Isodose only: planner only. Non-Isodose only: physician only.
+    # No filter: both visible. Staff tasks only: Staff only. No staff task: Physician only.
     _WRAP_VISIBLE = {"position": "relative", "display": "inline-block"}
     _WRAP_HIDDEN = {"position": "relative", "display": "none"}
     clientside_callback(
@@ -1383,8 +1405,9 @@ def _register_tasks_filter_callbacks():
             var vis = {"position": "relative", "display": "inline-block"};
             var hid = {"position": "relative", "display": "none"};
             var none = !taskTypes || taskTypes.length === 0;
-            var hasIso = none || (taskTypes.indexOf("Create Isodose Plan") >= 0);
-            var isoOnly = taskTypes && taskTypes.length === 1 && taskTypes[0] === "Create Isodose Plan";
+            var staff = ["Dosi Prep", "Create Isodose Plan", "Physics QA"];  // keep in sync with _STAFF_TASK_GROUPS
+            var hasIso = none || taskTypes.some(function(t) { return staff.indexOf(t) >= 0; });
+            var isoOnly = !none && taskTypes.every(function(t) { return staff.indexOf(t) >= 0; });
             var phys = isoOnly ? hid : vis;
             var plan = hasIso ? vis : hid;
             var clearPhys = isoOnly ? null : window.dash_clientside.no_update;
@@ -1404,22 +1427,20 @@ def _register_tasks_filter_callbacks():
 _register_tasks_filter_callbacks()
 
 # Register outlier panel callbacks
-register_outlier_callbacks(PAGE_ID, n_transitions=5,
-                           defaults=[_CAP_DRAW, _CAP_SRS, _CAP_CONTOUR, _CAP_ISODOSE, _CAP_REVIEW])
+register_outlier_callbacks(PAGE_ID, n_transitions=8,
+                           defaults=[_CAP_DRAW, _CAP_SRS, _CAP_CONTOUR, _CAP_ISODOSE, _CAP_REVIEW,
+                                     _CAP_DOSIPREP, _CAP_SIGN, _CAP_PHYSICS])
 
 # KPI card click → toggle task type filter
+_KPI_CLICK_MAP_JS = "{" + ", ".join(
+    f'"tasks-kpi-click-{kg["key"]}": "{kg["name"]}"' for kg in _KPI_GROUPS) + "}"
 clientside_callback(
-    """function(n1, n2, n3, n4, n5, currentTypes) {
+    """function() {
         const ctx = dash_clientside.callback_context;
         if (!ctx.triggered.length) return dash_clientside.no_update;
         const tid = ctx.triggered_id;
-        const map = {
-            "tasks-kpi-click-draw": "Draw Volumes",
-            "tasks-kpi-click-srs": "Draw Volumes (SRS)",
-            "tasks-kpi-click-contour": "Contour Review",
-            "tasks-kpi-click-isodose": "Create Isodose Plan",
-            "tasks-kpi-click-review": "Review Plan"
-        };
+        const map = """ + _KPI_CLICK_MAP_JS + """;
+        const currentTypes = arguments[arguments.length - 1];
         const group = map[tid];
         if (!group) return dash_clientside.no_update;
         const current = currentTypes || [];
@@ -1429,26 +1450,19 @@ clientside_callback(
         return [group];
     }""",
     Output("tasks-filter-type", "value", allow_duplicate=True),
-    Input("tasks-kpi-click-draw", "n_clicks"),
-    Input("tasks-kpi-click-srs", "n_clicks"),
-    Input("tasks-kpi-click-contour", "n_clicks"),
-    Input("tasks-kpi-click-isodose", "n_clicks"),
-    Input("tasks-kpi-click-review", "n_clicks"),
+    *[Input(f"tasks-kpi-click-{kg['key']}", "n_clicks") for kg in _KPI_GROUPS],
     State("tasks-filter-type", "value"),
     prevent_initial_call=True,
 )
 
 # Instant KPI card highlight — outputs className on static wrapper divs
+_KPI_NAME_TO_KEY_JS = "{" + ", ".join(
+    f'"{kg["name"]}": "{kg["key"]}"' for kg in _KPI_GROUPS) + "}"
+_KPI_KEYS_JS = "[" + ", ".join(f'"{kg["key"]}"' for kg in _KPI_GROUPS) + "]"
 clientside_callback(
     """function(taskTypes) {
-        const map = {
-            "Draw Volumes": "draw",
-            "Draw Volumes (SRS)": "srs",
-            "Contour Review": "contour",
-            "Create Isodose Plan": "isodose",
-            "Review Plan": "review"
-        };
-        const keys = ["draw", "srs", "contour", "isodose", "review"];
+        const map = """ + _KPI_NAME_TO_KEY_JS + """;
+        const keys = """ + _KPI_KEYS_JS + """;
         const selected = new Set();
         if (taskTypes && taskTypes.length > 0) {
             taskTypes.forEach(function(t) { if (map[t]) selected.add(map[t]); });
@@ -1457,11 +1471,7 @@ clientside_callback(
             return selected.has(k) ? "tasks-kpi-click tasks-kpi-active" : "tasks-kpi-click";
         });
     }""",
-    Output("tasks-kpi-click-draw", "className"),
-    Output("tasks-kpi-click-srs", "className"),
-    Output("tasks-kpi-click-contour", "className"),
-    Output("tasks-kpi-click-isodose", "className"),
-    Output("tasks-kpi-click-review", "className"),
+    *[Output(f"tasks-kpi-click-{kg['key']}", "className") for kg in _KPI_GROUPS],
     Input("tasks-filter-type", "value"),
 )
 
@@ -1547,7 +1557,8 @@ def _populate_physician_chips(_n, slider_val, task_types, diagnosis_cats, diag_m
     Input("tasks-filter-status", "value"),
 )
 def _populate_planner_chips(_n, slider_val, task_types, diagnosis_cats, diag_mode, status):
-    """Populate planner filter with CompletingUser names from Isodose tasks."""
+    """Populate the Staff filter with CompletingUser names from staff tasks
+    (Dosi Prep, Create Isodose Plan, Physics QA)."""
     from data.loader import load_tasks, load_diagnosis
 
     try:
@@ -1579,11 +1590,12 @@ def _populate_planner_chips(_n, slider_val, task_types, diagnosis_cats, diag_mod
     elif status == "done":
         tasks = tasks[is_comp]
 
-    # Get planners: CompletingUser from Isodose tasks, excluding MDs
+    # Staff: CompletingUser from staff tasks in scope, excluding MDs
     if "CompletingUser" not in tasks.columns or "ActivityName" not in tasks.columns:
         return []
-    iso_types = _TASK_TYPE_GROUPS.get("Create Isodose Plan", [])
-    iso_tasks = tasks[tasks["ActivityName"].isin(iso_types)]
+    staff_groups = [g for g in _STAFF_TASK_GROUPS if not task_types or g in task_types]
+    staff_types = [t for g in staff_groups for t in _TASK_TYPE_GROUPS[g]]
+    iso_tasks = tasks[tasks["ActivityName"].isin(staff_types)]
     planners = iso_tasks["CompletingUser"].dropna().unique()
     planners = sorted([p for p in planners
                        if p.strip() and p.upper() != "NA" and p not in known_mds])
@@ -1630,7 +1642,8 @@ def _load_and_filter_tasks(slider_val, physician, planner, task_types,
                            diagnosis_cats,
                            diag_mode, status, use_business_hours,
                            outlier_enabled, cap0, cap1, cap2, cap3, cap4,
-                           date_preset, time_measure="actual", time_range=None):
+                           date_preset, time_measure="actual", time_range=None,
+                           cap5=None, cap6=None, cap7=None):
     """Load tasks data, apply all dimension/date/status filters.
 
     Returns a dict with shared dataframes and metadata, or None if empty.
@@ -1682,6 +1695,9 @@ def _load_and_filter_tasks(slider_val, physician, planner, task_types,
             "Contour Review": (cap2 or _CAP_CONTOUR) * 24 * 60,
             "Create Isodose Plan": (cap3 or _CAP_ISODOSE) * 24 * 60,
             "Review Plan": (cap4 or _CAP_REVIEW) * 24 * 60,
+            "Dosi Prep": (cap5 or _CAP_DOSIPREP) * 24 * 60,
+            "Sign Plan/Rx": (cap6 or _CAP_SIGN) * 24 * 60,
+            "Physics QA": (cap7 or _CAP_PHYSICS) * 24 * 60,
         }
     else:
         _cap_minutes = {}  # no capping
@@ -1842,6 +1858,9 @@ _TASKS_FILTER_INPUTS = [
     Input("tasks-filter-planner", "value"),
     Input("tasks-filter-time-measure", "value"),
     Input("tasks-filter-time-range", "value"),
+    Input(f"{PAGE_ID}-outlier-cap-5", "value"),
+    Input(f"{PAGE_ID}-outlier-cap-6", "value"),
+    Input(f"{PAGE_ID}-outlier-cap-7", "value"),
 ]
 
 _N_FILTER_INPUTS = len(_TASKS_FILTER_INPUTS)
@@ -1852,7 +1871,7 @@ def _unpack_tasks_filter_args(args):
     (_n, date_preset, physician, task_types, diagnosis_cats, diag_mode,
      status, slider_val, use_business_hours,
      outlier_enabled, cap0, cap1, cap2, cap3, cap4, planner,
-     time_measure, time_range) = args[:_N_FILTER_INPUTS]
+     time_measure, time_range, cap5, cap6, cap7) = args[:_N_FILTER_INPUTS]
     return dict(
         slider_val=slider_val, physician=physician, planner=planner,
         task_types=task_types,
@@ -1860,6 +1879,7 @@ def _unpack_tasks_filter_args(args):
         use_business_hours=use_business_hours,
         outlier_enabled=outlier_enabled, cap0=cap0, cap1=cap1,
         cap2=cap2, cap3=cap3, cap4=cap4,
+        cap5=cap5, cap6=cap6, cap7=cap7,
         date_preset=date_preset,
         time_measure=time_measure, time_range=time_range,
     )
@@ -1870,11 +1890,7 @@ def _unpack_tasks_filter_args(args):
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output("tasks-kpi-draw", "children"),
-    Output("tasks-kpi-srs", "children"),
-    Output("tasks-kpi-contour", "children"),
-    Output("tasks-kpi-isodose", "children"),
-    Output("tasks-kpi-review", "children"),
+    *[Output(f"tasks-kpi-{kg['key']}", "children") for kg in _KPI_GROUPS],
     Output("tasks-detail-grid", "rowData"),
     Output("tasks-detail-grid", "columnDefs"),
     Output("tasks-store-kpi-sparklines", "data"),
@@ -1886,7 +1902,7 @@ def _update_tasks_kpis(*args):
 
     na_card = dmc.Text("\u2014", ta="center")
     if data is None:
-        return na_card, na_card, na_card, na_card, na_card, [], [], {}
+        return (*[na_card] * len(_KPI_GROUPS), [], [], {})
 
     df_base = data["df_base"]
     df_prior_base = data["df_prior_base"]
@@ -3206,12 +3222,13 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
-# Hide "Total" slice option in line/area mode; swap MD↔Planner for Isodose
+# Hide "Total" slice option in line/area mode; swap MD↔Staff for staff tasks
 clientside_callback(
     """function(chartType, taskTypes, sliceVal) {
         var none = !taskTypes || taskTypes.length === 0;
-        var hasIso = none || taskTypes.indexOf("Create Isodose Plan") >= 0;
-        var isoOnly = !none && taskTypes.length === 1 && taskTypes[0] === "Create Isodose Plan";
+        var staff = ["Dosi Prep", "Create Isodose Plan", "Physics QA"];  // = _STAFF_TASK_GROUPS
+        var hasIso = none || taskTypes.some(function(t) { return staff.indexOf(t) >= 0; });
+        var isoOnly = !none && taskTypes.every(function(t) { return staff.indexOf(t) >= 0; });
         var hasMD = !isoOnly;
         var hasPlanner = hasIso;
         var noUpdate = window.dash_clientside.no_update;
@@ -3220,7 +3237,7 @@ clientside_callback(
         if (chartType === "bar") opts.push({value: "total", label: "Total"});
         opts.push({value: "task", label: "Task"});
         if (hasMD) opts.push({value: "physician", label: "MD"});
-        if (hasPlanner) opts.push({value: "planner", label: "Planner"});
+        if (hasPlanner) opts.push({value: "planner", label: "Staff"});
         opts.push({value: "bodysite", label: "Dx"});
 
         var valid = false;
@@ -3358,13 +3375,14 @@ clientside_callback(
 )
 
 # ---------------------------------------------------------------------------
-# Dynamic MD / Planner slice options based on task type filter
+# Dynamic MD / Staff slice options based on task type filter
 # ---------------------------------------------------------------------------
 clientside_callback(
     """function(taskTypes, volVal, histVal, tcVal, timeVal, slaVal, blVal) {
         var none = !taskTypes || taskTypes.length === 0;
-        var hasIso = none || taskTypes.indexOf("Create Isodose Plan") >= 0;
-        var isoOnly = !none && taskTypes.length === 1 && taskTypes[0] === "Create Isodose Plan";
+        var staff = ["Dosi Prep", "Create Isodose Plan", "Physics QA"];  // = _STAFF_TASK_GROUPS
+        var hasIso = none || taskTypes.some(function(t) { return staff.indexOf(t) >= 0; });
+        var isoOnly = !none && taskTypes.every(function(t) { return staff.indexOf(t) >= 0; });
         var hasMD = !isoOnly;
         var hasPlanner = hasIso;
         var singleTask = !none && taskTypes.length === 1;
@@ -3375,7 +3393,7 @@ clientside_callback(
             if (includeTotal) opts.push({value: "", label: "Total"});
             opts.push({value: "task", label: "Task"});
             if (hasMD) opts.push({value: "physician", label: "MD"});
-            if (hasPlanner) opts.push({value: "planner", label: "Planner"});
+            if (hasPlanner) opts.push({value: "planner", label: "Staff"});
             if (includeDx) opts.push({value: "bodysite", label: "Dx"});
             return opts;
         }

@@ -607,10 +607,12 @@ SQL_SCRIPTS = {
     "Tasks": {
         "total": 794, "sql": 413,
         "purpose": (
-            "Physician and dosimetrist planning-task tracking — the four major "
-            "treatment-planning steps: Draw Volumes (contouring), Contour Review "
+            "Physician, dosimetrist and physicist planning-task tracking: Dosi "
+            "Prep (dosimetry prep after sim), Draw Volumes (contouring), Contour Review "
             "(peer review, often assigned to multiple MDs simultaneously), Create "
-            "Isodose Plan (dosimetry), Review Plan (MD sign-off). Each row shows who "
+            "Isodose Plan (dosimetry), Review Plan (MD review), Sign Plan / Approve Rx "
+            "(MD sign-off) and the physics QA sign-off (Check Plan Physics or Sign IMRT "
+            "Verfication). Each row shows who "
             "the task is assigned to, who completed it, when it was started/due/"
             "completed, how many minutes it took from the prior-step baseline, and "
             "whether the prior step is complete. Powers workload dashboards and "
@@ -624,9 +626,10 @@ SQL_SCRIPTS = {
             "#PriorExams, #PriorSteps, and #DrawCreation are each materialized for reuse (one scan, indexed).",
             "Prior-step baselines are pre-computed via UPDATE statements on #BaseActivities (self-joins "
             "on a small indexed table instead of correlated subqueries in the final SELECT).",
-            "Draw baseline priority cascade: task creation datetime from DimActivityTransactionHistory > "
-            "sim actual end > sim scheduled end > draw task start. Creation datetime is most accurate for "
-            "replans and new care paths where the sim-to-draw gap is misleading.",
+            "Draw baseline = MD ready (2026-11): latest completed Dosi Prep / Fusion Review in the Draw's "
+            "cycle > the Draw's first activation (earliest scheduled-start reset while Open, > 5 min after "
+            "creation, from DimActivityTransactionHistory) > later of sim end and task creation > task "
+            "start. Exposed as DrawPrepDoneDateTime, DrawFirstActivationDateTime, DrawMDReadySource.",
             "Isodose baseline: Contour Review end > Draw end > task start — matches Workflow_Events.sql "
             "(always prefers Contour Review when available).",
             "3-tier prior-exam physician fallback: Completed appointments > billing physician > any status "
@@ -856,6 +859,10 @@ SQL_SCRIPTS = {
             "SimVisitRank handles shared-sim dedup: 1 = closest exam before the sim, NULL = no completed sim.",
             "Four status states — Completed / Open / Scheduled / Cancelled — emitted as event rows instead "
             "of cascade CASE logic.",
+            "Optional stages (v1.9): DosiPrep, FusionReview, SignPlanRx, PhysicsQA, TherapistReview rows "
+            "come through the same task pipeline; courses without them simply have no row.",
+            "Draw BaselineDateTime = MD ready (v1.10): latest Dosi Prep / Fusion Review done > first Draw "
+            "activation > later of sim end and task creation.",
         ],
         "output_cols": (
             "36 columns: UniqueRowID (ExamActivityTransactionID), PatientId, PatientName, StageName, "

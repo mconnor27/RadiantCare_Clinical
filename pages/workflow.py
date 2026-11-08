@@ -1,6 +1,7 @@
 """Workflow page — Flow-Gantt pipeline, stage duration violins, pipeline trend."""
 
 import dash
+import json as _json_mod
 import dash_mantine_components as dmc
 from dash import callback, Input, Output, State, ALL, dcc, html, clientside_callback, ClientsideFunction
 from dash_iconify import DashIconify
@@ -35,7 +36,91 @@ STAGE_LABELS = {
     "Isodose": "Plan",
     "ReviewPlan": "Review",
     "Treatment": "Treatment",
+    # Optional stages (Workflow_Events v1.9+), shown in the flow only
+    "Prep": "Prep",
+    "SignPlanRx": "Sign Plan/Rx",
+    "PhysicsQA": "Physics QA",
+    "TherapistReview": "Therapist Rev",
 }
+# Optional stages layered onto the core pivot after filtering (_add_optional_stages):
+#   Prep            sim end -> "MD ready" (Draw BaselineDateTime, Workflow_Events v1.10)
+#   post-review     Sign Plan/Rx -> Physics QA -> Therapist Review, attributed
+#                   critical-path style (each gets only the time after the latest
+#                   earlier milestone), so they tile Review -> Treatment exactly.
+PREP_STAGE = "Prep"
+POST_STAGES = ["SignPlanRx", "PhysicsQA", "TherapistReview"]
+OPTIONAL_STAGES = [PREP_STAGE] + POST_STAGES
+FLOW_STAGES = [
+    "Exam", "Simulation", PREP_STAGE, "Draw", "Isodose", "ReviewPlan",
+    *POST_STAGES, "Treatment",
+]
+# Stage-selector presets (flow card "Stages" dropdown). Hidden stages merge into
+# the gap around them; see _flow_stages / _merged_gap_start.
+FLOW_STAGE_PRESETS = {
+    "all": list(FLOW_STAGES),
+    "core": list(STAGES),
+    "cst": ["Exam", "Simulation", "Treatment"],
+}
+
+
+def _flow_stage_selector():
+    """Flow card "Stages" dropdown: pick which stages the flow shows.
+
+    Shared by datasets A and B. Hidden stages merge into the surrounding gap
+    (e.g. Consult -> Sim -> Tx keeps Sim -> Tx measured from sim end).
+    """
+    preset_btn = lambda label, key: dmc.Button(
+        label, id=f"wf-flow-stages-{key}", size="compact-xs", variant="light", color="violet")
+    return html.Div(
+        children=[
+            html.Div(
+                children=[
+                    dmc.Button(
+                        "Stages: All",
+                        id="wf-flow-stages-trigger",
+                        variant="default",
+                        size="xs",
+                        rightSection=DashIconify(icon="mdi:chevron-down", width=14),
+                    ),
+                ],
+                style={"position": "relative", "display": "inline-block"},
+            ),
+            dmc.Paper(
+                dmc.Stack(gap="xs", w=300, children=[
+                    dmc.Text("Stages shown in the flow", size="xs", fw=500, c="#6B7280"),
+                    dmc.Group(gap=4, children=[
+                        preset_btn("All", "all"),
+                        preset_btn("Core", "core"),
+                        preset_btn("Consult \u2192 Sim \u2192 Tx", "cst"),
+                    ]),
+                    dmc.ChipGroup(
+                        id="wf-flow-stages",
+                        multiple=True,
+                        value=list(FLOW_STAGES),
+                        children=dmc.Group(gap=4, children=[
+                            dmc.Chip(STAGE_LABELS.get(st, st), value=st,
+                                     size="xs", variant="filled")
+                            for st in FLOW_STAGES
+                        ]),
+                    ),
+                    dmc.Text(
+                        "Hidden stages merge into the gap around them. Optional "
+                        "stages (Prep, Sign Plan/Rx, Physics QA, Therapist Rev) "
+                        "appear only when the extract has them. Applies to the "
+                        "flow, distribution and trend.",
+                        size="xs", c="dimmed",
+                    ),
+                ]),
+                p="sm",
+                shadow="md",
+                withBorder=True,
+                radius="md",
+                className="wf-chip-dropdown wf-range-panel wf-panel-right",
+                style={"display": "none"},
+            ),
+        ],
+        style={"position": "relative", "display": "inline-block"},
+    )
 INTER_STAGE_LABELS = [
     "Consult→Sim", "Sim→Contour", "Contour→Plan", "Plan→Review", "Review→Tx",
 ]
@@ -725,7 +810,7 @@ layout = dmc.Stack(
                     justify="space-between", mb="sm",
                     children=[
                         dmc.Text("Patient Treatment Pipeline", size="sm", fw=500, c="#6B7280"),
-                        dmc.Group(gap="sm", children=[]),
+                        dmc.Group(gap="sm", children=[_flow_stage_selector()]),
                     ],
                 ),
                 dmc.Box(
@@ -1218,9 +1303,222 @@ def _enrich_pivot_with_baselines(pivot, wf_full):
     return result
 
 
-def _compute_flow_data(pivot, wf_full, use_business_days=False, agg_func="median"):
-    """Compute Flow-Gantt data structure for clientside rendering."""
-    stages = [s for s in STAGES if s in pivot.columns]
+def _flow_stages(pivot, selected=None):
+    """(available, shown) flow stages. Fewer than 2 selected -> show all."""
+    avail = [st for st in FLOW_STAGES if st in pivot.columns]
+    if selected:
+        shown = [st for st in avail if st in selected]
+        if len(shown) >= 2:
+            return avail, shown
+    return avail, avail
+
+
+def _merged_gap_start(pivot, avail, a, b):
+    """Start of the shown gap a -> b when stages between them are hidden:
+    the start of a's gap to its next available stage (so Sim -> Tx starts at
+    sim end, Review -> Tx at review completion)."""
+    i = avail.index(a)
+    nxt = avail[i + 1] if i + 1 < len(avail) else b
+    return _gap_start(pivot, a, nxt)
+
+
+# Position of each flow stage on the core-gap axis: core stage i sits at i;
+# optional stages sit inside the core gap that contains them.
+_STAGE_COORD = {**{st: float(i) for i, st in enumerate(STAGES)},
+                PREP_STAGE: STAGES.index("Simulation") + 0.5,
+                **{st: STAGES.index("ReviewPlan") + 0.5 for st in POST_STAGES}}
+
+
+def _gap_cap(a, b, gap_caps):
+    """Outlier cap (days) for the shown gap a -> b, or None (no cap).
+
+    gap_caps holds the 5 core-gap caps (Consult->Sim ... Review->Tx). A step
+    inside one core gap (e.g. Review -> Sign Plan/Rx) uses that gap's cap; a
+    merged gap spanning several (e.g. Sim -> Tx) uses the sum of their caps.
+    """
+    if not gap_caps or a not in _STAGE_COORD or b not in _STAGE_COORD:
+        return None
+    lo = int(np.floor(_STAGE_COORD[a]))
+    hi = int(np.ceil(_STAGE_COORD[b]))
+    if hi <= lo:
+        hi = lo + 1
+    parts = [gap_caps[k] for k in range(lo, min(hi, len(gap_caps)))]
+    if not parts or any(c is None for c in parts):
+        return None
+    return float(sum(parts))
+
+
+def _add_sim_end(pivot, wf_full):
+    """Add Simulation_end: end time of the chain's first non-cancelled sim."""
+    if ("Simulation" not in pivot.columns or "StageEndDateTime" not in wf_full.columns
+            or "UniqueRowID" not in pivot.columns):
+        return pivot
+    sims = wf_full[(wf_full["StageName"] == "Simulation")
+                   & ~wf_full["StageStatus"].isin(["Cancelled", "Deleted"])]
+    if sims.empty:
+        return pivot
+    first = (sims.sort_values("StageDateTime")
+             .drop_duplicates("UniqueRowID", keep="first")[["UniqueRowID", "StageEndDateTime"]]
+             .rename(columns={"StageEndDateTime": "Simulation_end"}))
+    out = pivot.merge(first, on="UniqueRowID", how="left")
+    # Guard: an end before the pivot's sim start belongs to another sim row
+    bad = out["Simulation_end"] < out["Simulation"]
+    out.loc[bad, "Simulation_end"] = pd.NaT
+    return out
+
+
+def _rowwise_max(a, b):
+    """Elementwise max of two datetime Series, ignoring NaT on either side."""
+    return a.where(b.isna() | (a >= b), b)
+
+
+def _rowwise_min(a, b):
+    """Elementwise min of two datetime Series, ignoring NaT on either side."""
+    return a.where(b.isna() | (a <= b), b)
+
+
+def _add_optional_stages(pivot, wf_full):
+    """Layer the optional flow stages onto the core pivot.
+
+    Prep: Simulation_end -> "MD ready" (Draw_baseline, Workflow_Events v1.10:
+      latest Dosi Prep / Fusion Review done, else the Draw's first activation,
+      else later of sim end / Draw creation). Clipped into [sim end, Draw].
+      Prep_baseline = sim end; Draw_baseline is reset to Prep so the Contour
+      gap is MD time only and the two tile Sim -> Contour.
+
+    Post-review milestones (SignPlanRx, PhysicsQA, TherapistReview): latest
+      completion per chain, attributed critical-path style -- each milestone's
+      effective time is max(its completion, previous effective time), clipped to
+      first treatment. A missing milestone is filled with the previous effective
+      time (zero duration) when any later stage was reached, so courses without
+      it still flow through. _real_<stage> marks rows with an actual task;
+      _post_tracked marks chains with at least one (older extracts have none).
+      Tracked chains get Treatment_baseline = last milestone so the final gap
+      is the true wait for the first fraction.
+    """
+    if pivot is None or pivot.empty:
+        return pivot
+    pv = pivot.copy()
+
+    # ---- Prep ----
+    if "Draw" in pv.columns and "Simulation" in pv.columns:
+        sim_end = (pv["Simulation_end"] if "Simulation_end" in pv.columns
+                   else pd.Series(pd.NaT, index=pv.index)).fillna(pv["Simulation"])
+        ready = (pv["Draw_baseline"] if "Draw_baseline" in pv.columns
+                 else pd.Series(pd.NaT, index=pv.index)).fillna(sim_end)
+        ready = _rowwise_min(_rowwise_max(ready, sim_end), pv["Draw"])
+        has_draw = pv["Draw"].notna()
+        # Show Prep only when the extract carries "MD ready" baselines
+        # (Workflow_Events v1.10+): some chain must have > 15 min of prep.
+        prep_min = (ready - sim_end).dt.total_seconds() / 60
+        if bool((has_draw & (prep_min > 15)).any()):
+            pv[PREP_STAGE] = ready.where(has_draw)
+            pv[f"{PREP_STAGE}_baseline"] = _rowwise_min(sim_end, pv[PREP_STAGE]).where(has_draw)
+            pv["Draw_baseline"] = pv[PREP_STAGE].where(has_draw, pv.get("Draw_baseline"))
+            pv[f"_real_{PREP_STAGE}"] = has_draw
+
+    # ---- Post-review milestones ----
+    if "ReviewPlan" not in pv.columns or "UniqueRowID" not in pv.columns:
+        return pv
+    rows = wf_full[wf_full["StageName"].isin(POST_STAGES)
+                   & (wf_full["StageStatus"] == "Completed")]
+    raw = {}
+    if not rows.empty:
+        done = rows["StageEndDateTime"].fillna(rows["StageDateTime"]) \
+            if "StageEndDateTime" in rows.columns else rows["StageDateTime"]
+        r = pd.DataFrame({"UniqueRowID": rows["UniqueRowID"].values,
+                          "StageName": rows["StageName"].astype(str).values,
+                          "Done": done.values})
+        latest = r.groupby(["UniqueRowID", "StageName"])["Done"].max().unstack()
+        for st in POST_STAGES:
+            if st in latest.columns:
+                raw[st] = pv["UniqueRowID"].map(latest[st])
+    tx = pv["Treatment"] if "Treatment" in pv.columns else pd.Series(pd.NaT, index=pv.index)
+    empty = pd.Series(pd.NaT, index=pv.index, dtype="datetime64[ns]")
+    raw = {st: pd.to_datetime(raw.get(st, empty)) for st in POST_STAGES}
+    # A milestone after first treatment belongs to a later cycle
+    for st in POST_STAGES:
+        raw[st] = raw[st].where(tx.isna() | (raw[st] <= tx))
+
+    # Show milestones only when the extract has them (Workflow_Events v1.9+)
+    if not any(raw[st].notna().any() for st in POST_STAGES):
+        return pv
+    eff_prev = pv["ReviewPlan"]
+    tracked = pd.Series(False, index=pv.index)
+    for k, st in enumerate(POST_STAGES):
+        later_reached = tx.notna()
+        for st2 in POST_STAGES[k + 1:]:
+            later_reached |= raw[st2].notna()
+        real = raw[st].notna() & eff_prev.notna()
+        eff = _rowwise_max(raw[st], eff_prev)
+        eff = _rowwise_min(eff, tx)
+        filled = ~real & eff_prev.notna() & later_reached
+        pv[st] = eff.where(real).fillna(eff_prev.where(filled))
+        pv[f"_real_{st}"] = real
+        tracked |= real
+        eff_prev = pv[st]  # unreached milestone -> later ones stay unreached too
+    pv["_post_tracked"] = tracked
+    if "Treatment" in pv.columns:
+        last = pv[POST_STAGES[-1]]
+        if "Treatment_baseline" not in pv.columns:
+            pv["Treatment_baseline"] = pd.NaT
+        set_tb = tracked & pv["Treatment"].notna() & last.notna()
+        pv.loc[set_tb, "Treatment_baseline"] = last[set_tb]
+    return pv
+
+
+def _interval_mask(pivot, a, b):
+    """Rows where gap a -> b is a real, measurable step for per-step stats.
+
+    Excludes zero-filled milestones (b filled) and, for gaps touching the
+    post-review milestones, chains from extracts without milestone rows.
+    """
+    m = pivot[a].notna() & pivot[b].notna()
+    if f"_real_{b}" in pivot.columns and b in OPTIONAL_STAGES:
+        m &= pivot[f"_real_{b}"].fillna(False).astype(bool)
+    touches_post = a in POST_STAGES or b in POST_STAGES
+    if touches_post and "_post_tracked" in pivot.columns:
+        m &= pivot["_post_tracked"].fillna(False).astype(bool)
+    return m
+
+
+def _gap_start(pivot, a, b):
+    """Start time of gap a -> b: b's baseline when present, else a's time."""
+    bcol = f"{b}_baseline"
+    if bcol in pivot.columns:
+        return pivot[bcol].fillna(pivot[a])
+    return pivot[a]
+
+
+def _stage_colors(stages):
+    """Core stages keep their historical palette slot; optional stages get a
+    lightened shade of the core stage they sit next to."""
+    def _mix(hex_color, amt):
+        h = hex_color.lstrip("#")
+        rgb = [int(h[i:i + 2], 16) for i in (0, 2, 4)]
+        return "#" + "".join(f"{round(c + (255 - c) * amt):02x}" for c in rgb)
+    core_idx = {s: i for i, s in enumerate(STAGES)}
+    out = []
+    for s in stages:
+        if s in core_idx:
+            out.append(CHART_COLORWAY[core_idx[s] % len(CHART_COLORWAY)])
+        elif s == PREP_STAGE:
+            out.append(_mix(CHART_COLORWAY[core_idx["Draw"] % len(CHART_COLORWAY)], 0.45))
+        else:
+            k = POST_STAGES.index(s) if s in POST_STAGES else 0
+            out.append(_mix(CHART_COLORWAY[core_idx["ReviewPlan"] % len(CHART_COLORWAY)],
+                            0.3 + 0.15 * k))
+    return out
+
+
+def _compute_flow_data(pivot, wf_full, use_business_days=False, agg_func="median",
+                       selected_stages=None, gap_caps=None):
+    """Compute Flow-Gantt data structure for clientside rendering.
+
+    selected_stages: stages to show (flow "Stages" dropdown); hidden stages
+    merge into the surrounding gap.
+    """
+    avail, stages = _flow_stages(pivot, selected_stages)
     if len(stages) < 2:
         return None
 
@@ -1280,28 +1578,26 @@ def _compute_flow_data(pivot, wf_full, use_business_days=False, agg_func="median
             pending_counts.append(n_pending)
             cancelled_counts.append(n_unscheduled)
 
-            # Median inter-stage duration (use BaselineDateTime when available)
-            baseline_col = f"{next_stage}_baseline"
-            both_mask = reached_current & reached_next
-            if baseline_col in pivot.columns:
-                days = _duration_days(
-                    pivot.loc[both_mask, baseline_col].fillna(pivot.loc[both_mask, stage]),
-                    pivot.loc[both_mask, next_stage],
-                    use_business_days,
-                )
-            else:
-                days = _duration_days(
-                    pivot.loc[both_mask, stage],
-                    pivot.loc[both_mask, next_stage],
-                    use_business_days,
-                )
+            # Median inter-stage duration (next stage's baseline when available).
+            # Optional milestones: only chains with a real task for the step.
+            both_mask = _interval_mask(pivot, stage, next_stage)
+            days = _duration_days(
+                _merged_gap_start(pivot, avail, stage, next_stage)[both_mask],
+                pivot.loc[both_mask, next_stage],
+                use_business_days,
+            )
             days = days[(days >= 0) & (days < 365)]
+            _cap = _gap_cap(stage, next_stage, gap_caps)
+            if _cap is not None:
+                days = days[days <= _cap]
             median_days.append(round(float(days.median()), 1) if len(days) > 0 else 0)
             mean_days.append(round(float(days.mean()), 1) if len(days) > 0 else 0)
 
             # Median allotted time (StageDueDateTime - BaselineDateTime) for next stage
-            # Skip for Isodose — ARIA has no reliable allotted time for planning
-            if next_stage == "Isodose":
+            # Skip for Isodose — ARIA has no reliable allotted time for planning.
+            # Skip optional stages: their gaps are derived, not task-to-due.
+            merged = avail.index(next_stage) != avail.index(stage) + 1
+            if next_stage == "Isodose" or next_stage in OPTIONAL_STAGES or merged:
                 allotted_median = None
             elif ("StageDueDateTime" in wf_full.columns
                     and "BaselineDateTime" in wf_full.columns):
@@ -1331,7 +1627,8 @@ def _compute_flow_data(pivot, wf_full, use_business_days=False, agg_func="median
             # independent of the business-day toggle.
             # Skip for Isodose — no reliable SLA from ARIA
             on_time_pct = None
-            if next_stage != "Isodose" and "StageDueDateTime" in wf_full.columns:
+            if (next_stage != "Isodose" and next_stage not in OPTIONAL_STAGES
+                    and not merged and "StageDueDateTime" in wf_full.columns):
                 next_due = wf_full[
                     (wf_full["StageName"] == next_stage)
                     & wf_full["StageDueDateTime"].notna()
@@ -1356,6 +1653,34 @@ def _compute_flow_data(pivot, wf_full, use_business_days=False, agg_func="median
                             )
             on_time_pcts.append(on_time_pct)
 
+    # Real end-to-end time: first shown stage -> last shown stage, per course,
+    # then median (or mean). Summing per-step medians understates it badly.
+    total_days_val, total_n = None, 0
+    _a, _z = stages[0], stages[-1]
+    _both = pivot[_a].notna() & pivot[_z].notna()
+    if _both.any():
+        _tot = _duration_days(_merged_gap_start(pivot, avail, _a, stages[1])[_both],
+                              pivot.loc[_both, _z], use_business_days)
+        _tot = _tot[(_tot >= 0) & (_tot < 730)].dropna()
+        _tcap = _gap_cap(_a, _z, gap_caps)
+        if _tcap is not None:
+            _tot = _tot[_tot <= _tcap]
+        if len(_tot):
+            total_days_val = round(float(_tot.mean() if agg_func == "mean" else _tot.median()), 1)
+            total_n = int(len(_tot))
+    _short = {"Exam": "Consult", "Simulation": "Sim", "Treatment": "Tx"}
+    total_label = (
+        f"{_short.get(_a, STAGE_LABELS.get(_a, _a))} \u2192 "
+        f"{_short.get(_z, STAGE_LABELS.get(_z, _z))}: "
+        f"{'mean' if agg_func == 'mean' else 'median'} {total_days_val} "
+        f"{'business days' if use_business_days else 'days'} ({total_n:,} courses)"
+        if total_days_val is not None else None
+    )
+
+    span_shares, span_groups, span_n = _compute_span_shares(
+        pivot, stages, use_business_days, avail=avail, gap_caps=gap_caps
+    )
+
     # Compute x-positions: guarantee minimum spacing + proportional bonus
     display_days = mean_days if agg_func == "mean" else median_days
     n_gaps = len(display_days)
@@ -1378,6 +1703,9 @@ def _compute_flow_data(pivot, wf_full, use_business_days=False, agg_func="median
     loopbacks = []
     if "StageOccurrence" in wf_full.columns:
         for stage in stages:
+            if stage in OPTIONAL_STAGES:
+                loopbacks.append(0)
+                continue
             lb = wf_full[(wf_full["StageName"] == stage) & (wf_full["StageOccurrence"] > 1)]
             loopbacks.append(int(len(lb)))
     else:
@@ -1388,12 +1716,16 @@ def _compute_flow_data(pivot, wf_full, use_business_days=False, agg_func="median
     if ("StageOccurrence" in wf_full.columns
             and "StageDateTime" in wf_full.columns):
         stage_to_idx = {s: i for i, s in enumerate(stages)}
-        sorted_wf = wf_full.sort_values(["UniqueRowID", "StageDateTime"])
-        prev_stages = sorted_wf.groupby("UniqueRowID")["StageName"].shift(1)
+        # Core stage rows only: optional-stage rows (DosiPrep, SignPlanRx, ...)
+        # interleave and would otherwise hide the real previous stage.
+        _core = [st for st in stages if st in STAGES]
+        sorted_wf = (wf_full[wf_full["StageName"].isin(_core)]
+                     .sort_values(["UniqueRowID", "StageDateTime"]))
+        prev_stages = sorted_wf.groupby("UniqueRowID", observed=True)["StageName"].shift(1)
         mask = (
             (sorted_wf["StageOccurrence"] > 1)
-            & sorted_wf["StageName"].isin(stages)
-            & prev_stages.isin(stages)
+            & sorted_wf["StageName"].isin(_core)
+            & prev_stages.isin(_core)
             & (sorted_wf["StageName"] != prev_stages)
         )
         if mask.any():
@@ -1414,7 +1746,7 @@ def _compute_flow_data(pivot, wf_full, use_business_days=False, agg_func="median
                         "count": int(row["count"]),
                     })
 
-    colors = [CHART_COLORWAY[i % len(CHART_COLORWAY)] for i in range(len(stages))]
+    colors = _stage_colors(stages)
     labels = [STAGE_LABELS.get(s, s) for s in stages]
 
     return {
@@ -1435,8 +1767,97 @@ def _compute_flow_data(pivot, wf_full, use_business_days=False, agg_func="median
         "loopbacks": loopbacks,
         "loopbackPairs": loopback_pairs,
         "totalPatients": total,
+        "totalMedianDays": total_days_val,
+        "totalLabel": total_label,
+        "spanShares": span_shares,
+        "spanGroups": span_groups,
+        "spanN": span_n,
         "height": 600,
     }
+
+
+# Who owns each Sim → Tx interval, keyed by the interval's END stage.
+# Prep (sim end → MD ready) is dosimetry prep + physics fusion review, so the
+# Contour gap is MD time from Workflow_Events v1.10 on.
+_SPAN_GROUPS = [
+    ("MD", "MD (Contour + Review + Sign)", ("Draw", "ReviewPlan", "SignPlanRx")),
+    ("Prep", "Prep", (PREP_STAGE,)),
+    ("Dosi", "Dosimetry (Plan)", ("Isodose",)),
+    ("Phys", "Physics QA", ("PhysicsQA",)),
+    ("RTT", "Therapist Review", ("TherapistReview",)),
+    ("Wait", "Wait for Tx", ("Treatment",)),
+]
+_SPAN_MIN_COURSES = 5
+
+
+def _compute_span_shares(pivot, stages, use_business_days=False, avail=None, gap_caps=None):
+    """Share of total Sim → first-Tx time spent in each interval.
+
+    Uses only courses that reached every stage from Simulation through
+    Treatment, so each course contributes the same set of intervals.
+    Share = interval's summed days / all intervals' summed days (a ratio of
+    means). The shares add to 100%, which shares of medians would not.
+    Intervals use the same start as the flow labels (next stage's
+    BaselineDateTime, falling back to the prior stage's date).
+
+    Returns (shares, groups, n): shares aligned to the flow's interval index
+    (None outside the Sim → Tx span), group summaries, and course count.
+    """
+    n_int = max(len(stages) - 1, 0)
+    shares = [None] * n_int
+    if "Simulation" not in stages or "Treatment" not in stages:
+        return shares, [], 0
+    i0, i1 = stages.index("Simulation"), stages.index("Treatment")
+    if i1 <= i0:
+        return shares, [], 0
+    span_stages = stages[i0:i1 + 1]
+    sub = pivot[pivot[span_stages].notna().all(axis=1)]
+    # With post-review milestones in the flow, use only chains whose extract
+    # carries milestone rows (older extracts would book everything as wait).
+    if (any(st in span_stages for st in POST_STAGES) and "_post_tracked" in sub.columns):
+        tracked = sub[sub["_post_tracked"].fillna(False).astype(bool)]
+        if len(tracked) >= _SPAN_MIN_COURSES:
+            sub = tracked
+    if len(sub) < _SPAN_MIN_COURSES:
+        return shares, [], int(len(sub))
+
+    avail = avail or stages
+    durs = {}
+    for k in range(i0, i1):
+        a, b = stages[k], stages[k + 1]
+        durs[k] = _duration_days(_merged_gap_start(sub, avail, a, b), sub[b],
+                                 use_business_days)
+    d = pd.DataFrame(durs)
+    d = d[((d >= 0) & (d < 365)).all(axis=1)]
+    # Shares must tile per course: leave out courses with any step over its cap
+    for k in range(i0, i1):
+        _cap = _gap_cap(stages[k], stages[k + 1], gap_caps)
+        if _cap is not None:
+            d = d[d[k] <= _cap]
+    total = float(d.to_numpy().sum()) if len(d) else 0.0
+    if len(d) < _SPAN_MIN_COURSES or total <= 0:
+        return shares, [], int(len(d))
+
+    for k in range(i0, i1):
+        shares[k] = round(float(d[k].sum()) / total * 100, 1)
+
+    groups = []
+    # The owner summary only makes sense when every step from Sim to Tx is shown
+    a0, a1 = avail.index("Simulation"), avail.index("Treatment")
+    if avail[a0:a1 + 1] != stages[i0:i1 + 1]:
+        return shares, groups, int(len(d))
+    for key, label, end_stages in _SPAN_GROUPS:
+        present = [s for s in end_stages if s in stages and i0 < stages.index(s) <= i1]
+        ks = [stages.index(s) - 1 for s in present]
+        if ks:
+            if key == "MD":  # name only the MD steps this flow actually has
+                label = "MD (" + " + ".join(STAGE_LABELS.get(s, s) for s in present) + ")"
+            groups.append({
+                "key": key,
+                "label": label,
+                "pct": round(sum(shares[k] for k in ks), 0),
+            })
+    return shares, groups, int(len(d))
 
 
 # ---------------------------------------------------------------------------
@@ -2040,6 +2461,7 @@ def _load_and_filter_wf(slider_val, departments, physician, techniques,
 
     # Enrich pivot with per-stage BaselineDateTime
     pivot = _enrich_pivot_with_baselines(pivot, wf_full)
+    pivot = _add_sim_end(pivot, wf_full)
 
     bdays = bool(use_business_days)
 
@@ -2064,34 +2486,13 @@ def _load_and_filter_wf(slider_val, departments, physician, techniques,
         if "Treatment_baseline" in pivot.columns:
             pivot.loc[is_booked, "Treatment_baseline"] = pd.NaT
 
-    # Outlier exclusion
-    cap0, cap1, cap2, cap3, cap4 = caps
-    if outlier_enabled:
-        outlier_caps = [cap0, cap1, cap2, cap3, cap4]
-        _stage_pairs = [
-            ("Exam", "Simulation"),
-            ("Simulation", "Draw"),
-            ("Draw", "Isodose"),
-            ("Isodose", "ReviewPlan"),
-            ("ReviewPlan", "Treatment"),
-        ]
-        keep_mask = pd.Series(True, index=pivot.index)
-        for (col_from, col_to), cap in zip(_stage_pairs, outlier_caps):
-            if (col_from not in pivot.columns or col_to not in pivot.columns
-                    or cap is None or cap >= OUTLIER_SLIDER_MAX):
-                continue
-            both = pivot[col_from].notna() & pivot[col_to].notna()
-            baseline_col = f"{col_to}_baseline"
-            if baseline_col in pivot.columns:
-                _start = pivot[baseline_col].fillna(pivot[col_from])
-            else:
-                _start = pivot[col_from]
-            dur = _duration_days(_start, pivot[col_to], bdays)
-            keep_mask &= ~(both & (dur > cap))
-        pivot = pivot[keep_mask].reset_index(drop=True)
-        if pivot.empty:
-            return {"pivot": None, "wf_full": None, "filter_options": filter_options,
-                    "bdays": bdays, "start": start, "end": end}
+    # Outlier caps: trim per step, don't drop courses. Each step's time stats
+    # leave out only the courses over that step's cap (see _gap_cap); the
+    # funnel counts (stage counts, pending / cancelled) keep every course.
+    gap_caps = None
+    if outlier_enabled and caps:
+        gap_caps = [None if (c is None or c >= OUTLIER_SLIDER_MAX) else float(c)
+                    for c in caps]
 
     # Overall Sim -> Treatment span filter (whole-chain row filter). Courses
     # without both stages have no span, so they drop out while it's active.
@@ -2108,9 +2509,13 @@ def _load_and_filter_wf(slider_val, departments, physician, techniques,
             return {"pivot": None, "wf_full": None, "filter_options": filter_options,
                     "bdays": bdays, "start": start, "end": end}
 
+    # Optional flow stages (Prep, post-review milestones). Added last so the
+    # core filters above (gaps, caps, span) keep their original meaning.
+    pivot = _add_optional_stages(pivot, wf_full)
+
     return {
         "pivot": pivot, "wf_full": wf_full, "filter_options": filter_options,
-        "bdays": bdays, "start": start, "end": end,
+        "bdays": bdays, "start": start, "end": end, "gap_caps": gap_caps,
     }
 
 
@@ -2237,6 +2642,7 @@ def _update_wf_table_and_filters(*args):
     *_WF_FILTER_INPUTS,
     Input("wf-agg-toggle", "value"),
     Input("wf-table-filter-rows", "data"),
+    Input("wf-flow-stages", "value"),
     # Keep overlay visible after the server returns — the clientside SVG
     # renderer below hides it once the chart is actually committed to DOM,
     # so the user doesn't see a blank gap between server completion and render.
@@ -2253,7 +2659,9 @@ def _update_wf_sankey(*args):
     if pivot.empty:
         return None
     agg = agg_func or "median"
-    return _compute_flow_data(pivot, data["wf_full"], data["bdays"], agg)
+    return _compute_flow_data(pivot, data["wf_full"], data["bdays"], agg,
+                              selected_stages=args[_N_WF + 2],
+                              gap_caps=data.get("gap_caps"))
 
 
 # ---------------------------------------------------------------------------
@@ -2265,6 +2673,7 @@ def _update_wf_sankey(*args):
     *_WF_FILTER_INPUTS,
     Input("wf-agg-toggle", "value"),
     Input("wf-table-filter-rows", "data"),
+    Input("wf-flow-stages", "value"),
     running=[(Output("wf-dist-loading", "visible"), True, False)],
 )
 def _update_wf_flow_details(*args):
@@ -2278,7 +2687,9 @@ def _update_wf_flow_details(*args):
     if pivot.empty:
         return None
     agg = agg_func or "median"
-    return _compute_flow_details(pivot, data["wf_full"], data["bdays"], agg)
+    return _compute_flow_details(pivot, data["wf_full"], data["bdays"], agg,
+                                 selected_stages=args[_N_WF + 2],
+                                 gap_caps=data.get("gap_caps"))
 
 
 # ---------------------------------------------------------------------------
@@ -2303,7 +2714,7 @@ def _update_wf_trend(*args):
     if pivot.empty:
         return None
     agg = agg_func or "median"
-    return _prepare_trend_data(pivot, data["bdays"], agg)
+    return _prepare_trend_data(pivot, data["bdays"], agg, gap_caps=data.get("gap_caps"))
 
 
 # ---------------------------------------------------------------------------
@@ -2387,6 +2798,7 @@ def _update_wfb_filters(*args):
     Output("wf-b-store-sankey", "data"),
     *_WF_B_FILTER_INPUTS,
     Input(_id("wf-b", "agg-toggle"), "value"),
+    Input("wf-flow-stages", "value"),
     running=[(Output("wf-sankey-loading", "visible", allow_duplicate=True), True, True)],
 )
 def _update_wfb_sankey(*args):
@@ -2399,7 +2811,9 @@ def _update_wfb_sankey(*args):
     if data is None or data["pivot"] is None:
         return None
     agg = agg_func or "median"
-    return _compute_flow_data(data["pivot"], data["wf_full"], data["bdays"], agg)
+    return _compute_flow_data(data["pivot"], data["wf_full"], data["bdays"], agg,
+                              selected_stages=args[_N_WF_B + 1],
+                              gap_caps=data.get("gap_caps"))
 
 
 # ---------------------------------------------------------------------------
@@ -2410,6 +2824,7 @@ def _update_wfb_sankey(*args):
     Output("wf-b-store-flow-details", "data"),
     *_WF_B_FILTER_INPUTS,
     Input(_id("wf-b", "agg-toggle"), "value"),
+    Input("wf-flow-stages", "value"),
 )
 def _update_wfb_flow_details(*args):
     ctx = _unpack_wf_b_filter_args(args)
@@ -2421,7 +2836,9 @@ def _update_wfb_flow_details(*args):
     if data is None or data["pivot"] is None:
         return None
     agg = agg_func or "median"
-    return _compute_flow_details(data["pivot"], data["wf_full"], data["bdays"], agg)
+    return _compute_flow_details(data["pivot"], data["wf_full"], data["bdays"], agg,
+                                 selected_stages=args[_N_WF_B + 1],
+                                 gap_caps=data.get("gap_caps"))
 
 
 # ---------------------------------------------------------------------------
@@ -2443,7 +2860,7 @@ def _update_wfb_trend(*args):
     if data is None or data["pivot"] is None:
         return None
     agg = agg_func or "median"
-    return _prepare_trend_data(data["pivot"], data["bdays"], agg)
+    return _prepare_trend_data(data["pivot"], data["bdays"], agg, gap_caps=data.get("gap_caps"))
 
 
 # ---------------------------------------------------------------------------
@@ -2595,33 +3012,38 @@ def _kaplan_meier_median(durations, events):
     return None
 
 
-def _compute_flow_details(pivot, wf_full=None, use_business_days=False, agg_func="median"):
-    """Compute per-transition detail data for clientside distribution & trend."""
+def _compute_flow_details(pivot, wf_full=None, use_business_days=False, agg_func="median",
+                          selected_stages=None, gap_caps=None):
+    """Compute per-transition detail data for clientside distribution & trend.
+
+    One transition per consecutive pair of flow stages (same order as the
+    Flow-Gantt bands, so a band click index selects its transition).
+    """
+    _avail, _flow = _flow_stages(pivot, selected_stages)
+    _short = {"Exam": "Consult", "Simulation": "Sim", "Draw": "Contour",
+              "Isodose": "Plan", "ReviewPlan": "Review", "Treatment": "Tx"}
     pairs = [
-        ("Exam", "Simulation", "Consult → Sim"),
-        ("Simulation", "Draw", "Sim → Contour"),
-        ("Draw", "Isodose", "Contour → Plan"),
-        ("Isodose", "ReviewPlan", "Plan → Review"),
-        ("ReviewPlan", "Treatment", "Review → Tx"),
+        (a, b, f"{_short.get(a, STAGE_LABELS.get(a, a))} → {_short.get(b, STAGE_LABELS.get(b, b))}")
+        for a, b in zip(_flow, _flow[1:])
     ]
     transitions = []
     for idx, (col_from, col_to, label) in enumerate(pairs):
         if col_from not in pivot.columns or col_to not in pivot.columns:
             transitions.append(None)
             continue
-        mask = pivot[col_from].notna() & pivot[col_to].notna()
+        mask = _interval_mask(pivot, col_from, col_to)
         if mask.sum() == 0:
             transitions.append(None)
             continue
         sub = pivot.loc[mask].copy()
-        # Use BaselineDateTime of col_to when available (handles hidden stages)
+        # Start = col_to's baseline when available (hidden steps, Prep, MD ready)
         baseline_col = f"{col_to}_baseline"
-        if baseline_col in sub.columns:
-            start = sub[baseline_col].fillna(sub[col_from])
-        else:
-            start = sub[col_from]
+        start = _merged_gap_start(sub, _avail, col_from, col_to)
         days = _duration_days(start, sub[col_to], use_business_days)
         days = days[(days >= 0) & (days < 365)].dropna()
+        _cap = _gap_cap(col_from, col_to, gap_caps)
+        if _cap is not None:
+            days = days[days <= _cap]
         if len(days) == 0:
             transitions.append(None)
             continue
@@ -2631,18 +3053,20 @@ def _compute_flow_details(pivot, wf_full=None, use_business_days=False, agg_func
 
         # All courses that reached col_from (for completion rate + KM)
         all_reached = pivot[pivot[col_from].notna()].copy()
+        if ((col_from in POST_STAGES or col_to in POST_STAGES)
+                and "_post_tracked" in all_reached.columns):
+            all_reached = all_reached[all_reached["_post_tracked"].fillna(False).astype(bool)]
         _ref_date = pd.Timestamp.now().normalize()
 
         # Build combined completed + censored observations for KM
-        completed_obs = all_reached[all_reached[col_to].notna()].copy()
-        if baseline_col in completed_obs.columns:
-            c_start = completed_obs[baseline_col].fillna(completed_obs[col_from])
-        else:
-            c_start = completed_obs[col_from]
+        completed_obs = all_reached[_interval_mask(all_reached, col_from, col_to)].copy()
+        c_start = _merged_gap_start(completed_obs, _avail, col_from, col_to)
         completed_obs["_obs_days"] = _duration_days(
             c_start, completed_obs[col_to], use_business_days,
         )
         completed_obs["_event"] = True
+        if _cap is not None:  # over-cap completions are trimmed, like the stats above
+            completed_obs = completed_obs[~(completed_obs["_obs_days"] > _cap)]
         censored_obs = all_reached[all_reached[col_to].isna()].copy()
         censored_obs["_obs_days"] = _duration_days(
             censored_obs[col_from],
@@ -2728,6 +3152,9 @@ def _compute_flow_details(pivot, wf_full=None, use_business_days=False, agg_func
             tsub = pivot.loc[tmask].copy()
             tdays = _duration_days(tsub["Exam"], tsub["Treatment"], use_business_days)
             tdays = tdays[(tdays >= 0) & (tdays < 365)].dropna()
+            _tcap = _gap_cap("Exam", "Treatment", gap_caps)
+            if _tcap is not None:
+                tdays = tdays[tdays <= _tcap]
             if len(tdays) > 0:
                 tdays_arr = tdays.values
                 tkde_x, tkde_y = _simple_kde(tdays_arr)
@@ -2814,7 +3241,7 @@ def _compute_flow_details(pivot, wf_full=None, use_business_days=False, agg_func
     return {"transitions": transitions, "total": total_data, "aggFunc": agg_func}
 
 
-def _prepare_trend_data(pivot, use_business_days=False, agg_func="median"):
+def _prepare_trend_data(pivot, use_business_days=False, agg_func="median", gap_caps=None):
     """Prepare trend data for clientside rendering."""
     if "Exam" not in pivot.columns or "Treatment" not in pivot.columns:
         return None
@@ -2822,6 +3249,9 @@ def _prepare_trend_data(pivot, use_business_days=False, agg_func="median"):
     temp = pivot[["Exam", "Treatment"]].reset_index(drop=True).copy()
     temp["total_days"] = _duration_days(temp["Exam"], temp["Treatment"], use_business_days)
     temp = temp[(temp["total_days"] >= 0) & (temp["total_days"] < 365)].dropna(subset=["total_days", "Exam"])
+    _tcap = _gap_cap("Exam", "Treatment", gap_caps)
+    if _tcap is not None:
+        temp = temp[temp["total_days"] <= _tcap]
 
     if temp.empty:
         return None
@@ -2848,6 +3278,9 @@ def _prepare_trend_data(pivot, use_business_days=False, agg_func="median"):
             stage_temp = pivot[cols_needed].reset_index(drop=True).copy()
             stage_temp["_days"] = _duration_days(stage_temp[col_from], stage_temp[col_to], use_business_days)
             stage_temp = stage_temp[(stage_temp["_days"] >= 0) & (stage_temp["_days"] < 365)]
+            _scap = _gap_cap(col_from, col_to, gap_caps)
+            if _scap is not None:
+                stage_temp = stage_temp[stage_temp["_days"] <= _scap]
             stage_temp = stage_temp.dropna(subset=["_days", "Exam"])
             if not stage_temp.empty:
                 stage_temp["month"] = stage_temp["Exam"].dt.to_period("M").dt.to_timestamp()
@@ -3020,4 +3453,35 @@ clientside_callback(
     Output("wf-grid-filter-badge", "n_clicks"),
     Input("wf-grid-filter-badge", "n_clicks"),
     prevent_initial_call=True,
+)
+
+
+# ---------------------------------------------------------------------------
+# Flow "Stages" dropdown: presets + trigger label
+# ---------------------------------------------------------------------------
+clientside_callback(
+    """function(nAll, nCore, nCst) {
+        var presets = """ + _json_mod.dumps(FLOW_STAGE_PRESETS) + """;
+        var ctx = window.dash_clientside.callback_context;
+        var trig = (ctx.triggered && ctx.triggered[0]) ? ctx.triggered[0].prop_id : "";
+        if (trig.indexOf("wf-flow-stages-core") === 0) return presets.core;
+        if (trig.indexOf("wf-flow-stages-cst") === 0) return presets.cst;
+        return presets.all;
+    }""",
+    Output("wf-flow-stages", "value", allow_duplicate=True),
+    Input("wf-flow-stages-all", "n_clicks"),
+    Input("wf-flow-stages-core", "n_clicks"),
+    Input("wf-flow-stages-cst", "n_clicks"),
+    prevent_initial_call=True,
+)
+clientside_callback(
+    """function(vals) {
+        var total = """ + str(len(FLOW_STAGES)) + """;
+        var n = (vals || []).length;
+        if (n === 0 || n >= total) return "Stages: All";
+        if (n < 2) return "Stages: All (pick 2+)";
+        return "Stages: " + n + " of " + total;
+    }""",
+    Output("wf-flow-stages-trigger", "children"),
+    Input("wf-flow-stages", "value"),
 )

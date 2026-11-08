@@ -227,6 +227,9 @@ OUTLIER_CAPS = {
     "review_to_tx": 8,         # ≈ Review Plan task
     # Task-specific (where task ≠ workflow gap)
     "draw_srs": 7,             # Draw Volumes (SRS) — fewer cases, tighter cap
+    "dosi_prep": 3,            # Dosi Prep (sim end -> prep done; median ~2.5 h)
+    "sign_plan": 5,            # Sign Plan / Approve Rx (review -> sign; median ~1 d)
+    "physics_qa": 8,           # Physics QA sign-off (review -> QA signed; ~2 d)
 }
 OUTLIER_SLIDER_MAX = 30        # max slider value (days) for task outlier panels
 

@@ -11,9 +11,10 @@ UI_CONTENT = dmc.Stack(
     gap="md",
     children=[
         dmc.Text(
-            "The Tasks page tracks physician and planner task workload — Draw "
-            "Volumes, SRS contouring, Contour Review, Isodose Plan, and Review "
-            "Plan — against their SLA deadlines. Source data is the ARIA Tasks "
+            "The Tasks page tracks physician and staff task workload — Dosi "
+            "Prep, Draw Volumes, SRS contouring, Contour Review, Isodose Plan, "
+            "Review Plan, Sign Plan/Rx and Physics QA — against their SLA "
+            "deadlines. Source data is the ARIA Tasks "
             "extract; the Physician Schedule extract provides cross-reference "
             "data for identifying after-hours and off-day work.",
             size="sm", c="dimmed", style={"lineHeight": 1.6},
@@ -23,7 +24,7 @@ UI_CONTENT = dmc.Stack(
             "What's on this page",
             "tabler:layout-dashboard",
             body(
-                "A 5-tile KPI row (one card per task type, each clickable to "
+                "An 8-tile KPI row (one card per task type, each clickable to "
                 "filter the rest of the page), a full-width Open Tasks per Day "
                 "workload chart, six chart cards across three rows, and a "
                 "full-width detail table. The clickable KPI cards "
@@ -33,13 +34,22 @@ UI_CONTENT = dmc.Stack(
 
             dmc.Space(h="xs"),
 
-            dmc.Text("KPI row (5 clickable group cards)", fw=600, size="xs", mb=4),
+            dmc.Text("KPI row (8 clickable group cards)", fw=600, size="xs", mb=4),
             bullets([
+                "Dosi Prep — dosimetry prep after sim, timed from sim end "
+                "(standard since 2026-05-18).",
                 "Draw — Draw Volumes tasks.",
                 "SRS — SRS-specific contouring tasks.",
                 "Contour — Contour Review tasks.",
                 "Isodose — Isodose Plan tasks.",
                 "Review — Review Plan tasks.",
+                "Sign Plan/Rx — the MD's plan and prescription sign-off (older "
+                "courses: separate Sign Plan and Sign Rx tasks), timed from "
+                "Review Plan completion.",
+                "Physics QA — one physics sign-off per course: Check Plan "
+                "Physics (3D) or Sign IMRT Verification (IMRT), timed from "
+                "Review Plan completion, so IMRT acquisition and analysis fall "
+                "inside it.",
             ]),
             body(
                 "Each card shows count, median time to complete, SLA compliance, "
@@ -108,10 +118,13 @@ UI_CONTENT = dmc.Stack(
                 "Physician — single-select. Drawn from a known-MD list rather "
                 "than raw AssignedMD values so residents and admin accounts "
                 "stay out of the picker.",
-                "Planner — single-select. Drawn from CompletingMD values.",
-                "Task type — multi-select (Draw Volumes, SRS contouring, "
-                "Contour Review, Isodose Plan, Review Plan) matched by "
-                "ActivityName substring.",
+                "Staff — single-select. Who completed the staff tasks (Dosi "
+                "Prep, Isodose Plan, Physics QA). Shown when those task types "
+                "are in scope; those tasks are credited to the completing "
+                "staff member rather than an MD.",
+                "Task type — multi-select (Dosi Prep, Draw Volumes, SRS "
+                "contouring, Contour Review, Isodose Plan, Review Plan, Sign "
+                "Plan/Rx, Physics QA), matched by ActivityName.",
                 "Status — Completed / Open / All (Open = CompletingMD is null).",
                 "Time — narrows every KPI, chart and the table to tasks whose "
                 "Actual time (MinutesToComplete, following the Business Hours "
@@ -189,6 +202,14 @@ UI_CONTENT = dmc.Stack(
                 "completed on Saturday afternoon during business hours will "
                 "NOT flag as after-hours, even though it was a weekend. "
                 "Cross-referencing Physician Schedule would fix this.",
+                "Draw task times start when the Draw became the MD's to do "
+                "(same rule as the Workflow page): the latest completed Dosi "
+                "Prep or Fusion Review, else the Draw task's first activation, "
+                "else the later of sim end and task creation. Dosi Prep began "
+                "2026-05-18, so older Draws mostly use the fallbacks and can "
+                "still include informal prep. The extract's DrawMDReadySource "
+                "column says which rule applied. ARIA's In Progress status is "
+                "not used.",
                 "SLA thresholds (MinutesAllowed) come from the source extract "
                 "per task type. If a task type has no allowed-minutes policy "
                 "configured in ARIA, compliance for that type will be "
