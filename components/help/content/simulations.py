@@ -66,7 +66,27 @@ UI_CONTENT = dmc.Stack(
                 "latest end-of-day), Bar (sim count), or Line. CT sims only — "
                 "sims on treatment machines are left out. Machine toggle "
                 "filters to a single CT (CT_Sim, CT_CEN).",
-                "Cancellation Rate — cancelled-sim fraction over time.",
+                "Cancellations — trend of one cancellation metric, picked by the "
+                "Rate / Notice / Refill / Rebook / Lost toggle. Rate: cancelled + "
+                "no-show share of all appointments. Notice: median hours of "
+                "notice (CancelLeadHours) shown in days, no-shows excluded. "
+                "Refill: average % of the vacated slot's minutes re-booked by "
+                "another patient (SlotRefilledPct), counted only for slots "
+                "actually vacated (Refilled / Partially / Not refilled). Rebook: % "
+                "of cancelled patients with a later appointment of the same "
+                "kind (NextSimAfterCancel). Lost: hours of booked slot time no patient used (SlotIdleMinutes), "
+                "stacked when sliced.",
+                "Cancellations by Notice — cancellations bucketed by notice "
+                "(No-Show, < 24 hrs, 1–3, 3–7, > 7 days), stacked by what "
+                "happened to the slot; the label above each bar gives n and the "
+                "refill % of vacated slots. No Slot Lost = same patient re-booked, "
+                "shared slot, or seen the same day. Upcoming = slot date not yet "
+                "reached. The summary line above the chart totals the filtered set. "
+                "Bucket edges are editable in the card header: type values like "
+                "4h, 2d or 1w (a bare number = hours) and press Enter; buckets "
+                "become < first edge, between each pair, and > last edge. "
+                "Unrecognized entries are listed as ignored in the summary line. "
+                "Clear all edges to return to the default 24h / 3d / 7d.",
                 "Diagnosis Mix — body-system distribution of the filtered sims "
                 "with a current-vs-prior compare mode.",
                 "Billing — CPT code distribution for sim-associated charges.",
@@ -167,6 +187,11 @@ UI_CONTENT = dmc.Stack(
                 "count after filters.",
                 "Initial vs re-sim is based on ActivityName substring — a patient "
                 "getting 3 sims in a course shows as 1 initial + 2 re-sims.",
+                "Cancellation metrics come from ARIA slot-recovery columns on "
+                "cancelled rows (CancelLeadHours, SlotOutcome, SlotRefilledPct, "
+                "SlotIdleMinutes, NextSimAfterCancel). HOLD SIM TIME placeholder "
+                "cancellations are excluded. Recent cancellations under-count "
+                "Rebook — patients may not have rebooked yet.",
                 "Cancellation rate divides by total sims (attended + cancelled). "
                 "Cancelled sims are removed from the volume chart unless the "
                 "Status widen toggle is active.",

@@ -57,7 +57,27 @@ UI_CONTENT = dmc.Stack(
                 "Slice by Total, Visit Type, Department, or Physician.",
                 "Consult-to-Sim Conversion — percentage trend of consults that "
                 "reach simulation within 180 days.",
-                "Cancellation Rate — cancelled / no-show fraction over time.",
+                "Cancellations — trend of one cancellation metric, picked by the "
+                "Rate / Notice / Refill / Rebook / Lost toggle. Rate: cancelled + "
+                "no-show share of all appointments. Notice: median hours of "
+                "notice (CancelLeadHours) shown in days, no-shows excluded. "
+                "Refill: average % of the vacated slot's minutes re-booked by "
+                "another patient (SlotRefilledPct), counted only for slots "
+                "actually vacated (Refilled / Partially / Not refilled). Rebook: % "
+                "of cancelled patients with a later appointment of the same "
+                "kind (NextVisitAfterCancel). Lost: hours of booked slot time no patient used (SlotIdleMinutes), "
+                "stacked when sliced.",
+                "Cancellations by Notice — cancellations bucketed by notice "
+                "(No-Show, < 24 hrs, 1–3, 3–7, > 7 days), stacked by what "
+                "happened to the slot; the label above each bar gives n and the "
+                "refill % of vacated slots. No Slot Lost = same patient re-booked, "
+                "shared slot, or seen the same day. Upcoming = slot date not yet "
+                "reached. The summary line above the chart totals the filtered set. "
+                "Bucket edges are editable in the card header: type values like "
+                "4h, 2d or 1w (a bare number = hours) and press Enter; buckets "
+                "become < first edge, between each pair, and > last edge. "
+                "Unrecognized entries are listed as ignored in the summary line. "
+                "Clear all edges to return to the default 24h / 3d / 7d.",
                 "Diagnosis Mix — horizontal bar of visit counts by body-system "
                 "diagnosis category; supports a current-vs-prior compare mode.",
                 "Billing — CPT code or code-group distribution for the filtered "
@@ -117,6 +137,10 @@ UI_CONTENT = dmc.Stack(
                 "Simulations extract.",
                 "Cancel rate uses a case-insensitive substring match on Status "
                 "for \"cancel\" or \"no-show\".",
+                "Cancellation metrics come from ARIA slot-recovery columns on "
+                "cancelled rows (CancelLeadHours, SlotOutcome, SlotRefilledPct, "
+                "SlotIdleMinutes, NextVisitAfterCancel). Recent cancellations "
+                "under-count Rebook — patients may not have rebooked yet.",
                 "Diagnosis mix joins DiagnosisCodes (comma-separated) to the "
                 "Diagnosis lookup via build_code_to_category to resolve each "
                 "visit's body-system group. Visits can have multiple codes — "

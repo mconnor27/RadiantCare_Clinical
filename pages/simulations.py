@@ -12,7 +12,7 @@ from datetime import timedelta
 
 from config.settings import (
     DEPARTMENTS, DEPARTMENT_COLORS, CHART_COLORWAY,
-    CHART_PAPER_HEIGHT, CHART_PAPER_HEIGHT_SM, PRIMARY, FONT_FAMILY, PRIOR_PERIOD_COLORS,
+    CHART_PAPER_HEIGHT, PRIMARY, FONT_FAMILY, PRIOR_PERIOD_COLORS,
 )
 from components.filter_bar import department_chips
 from components.outlier_panel import outlier_panel, register_outlier_callbacks
@@ -23,6 +23,8 @@ from components.detail_table import detail_table
 from components.chart_settings import chart_settings_popover
 from components.phi import apply_phi_grid_rules
 from utils.charts import apply_default_layout, empty_figure, full_period_range
+from utils.cancellations import CANCEL_METRICS, prepare_cancel_trend, build_notice_figure
+from components.cancel_notice_card import cancel_notice_card
 from utils.tables import sanitize_for_grid
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, SLIDER_MARKS,
@@ -871,14 +873,14 @@ layout = dmc.Stack(
             ),
         ]),
 
-        # Row 3: Cancellation Rate + Diagnosis Mix + Billing (1/3 each)
+        # Row 3: Cancellation Trend + Cancellations by Notice (1/2 each)
         dmc.Grid(gutter="md", children=[
             dmc.GridCol(
                 chart_card(
                     "sim-chart-cancel-rate",
-                    "Cancellation Rate",
+                    "Cancellations",
                     settings_id="sim-cancel",
-                    paper_height=CHART_PAPER_HEIGHT_SM,
+                    paper_height=CHART_PAPER_HEIGHT,
                     chart_types=[
                         {"value": "line", "label": "Line"},
                         {"value": "area", "label": "Area"},
@@ -888,6 +890,12 @@ layout = dmc.Stack(
                     smooth_max=12,
                     smooth_default=1,
                     extra_controls_left=[
+                        dmc.SegmentedControl(
+                            id="sim-cancel-metric",
+                            data=CANCEL_METRICS,
+                            value="rate",
+                            size="xs",
+                        ),
                         dmc.SegmentedControl(
                             id="sim-cancel-slice",
                             data=[
@@ -907,13 +915,21 @@ layout = dmc.Stack(
                                 {"value": "M", "label": "Monthly"},
                                 {"value": "Y", "label": "Yearly"},
                             ],
-                            value="W",
+                            value="M",
                             size="xs",
                         ),
                     ],
                 ),
-                span={"base": 12, "md": 4},
+                span={"base": 12, "md": 6},
             ),
+            dmc.GridCol(
+                cancel_notice_card("sim"),
+                span={"base": 12, "md": 6},
+            ),
+        ]),
+
+        # Row 4: Diagnosis Mix + Billing (1/2 each)
+        dmc.Grid(gutter="md", children=[
             dmc.GridCol(
                 dmc.Paper(
                     children=[
@@ -977,9 +993,9 @@ layout = dmc.Stack(
                         ),
                     ],
                     p="sm", pb=8, radius="md", shadow="xs", withBorder=True,
-                    h="380px", style={"display": "flex", "flexDirection": "column"},
+                    h=CHART_PAPER_HEIGHT, style={"display": "flex", "flexDirection": "column"},
                 ),
-                span={"base": 12, "md": 4},
+                span={"base": 12, "md": 6},
             ),
             dmc.GridCol(
                 dmc.Paper(
@@ -1034,9 +1050,9 @@ layout = dmc.Stack(
                         ),
                     ],
                     p="sm", pb=8, radius="md", shadow="xs", withBorder=True,
-                    h="380px", style={"display": "flex", "flexDirection": "column"},
+                    h=CHART_PAPER_HEIGHT, style={"display": "flex", "flexDirection": "column"},
                 ),
-                span={"base": 12, "md": 4},
+                span={"base": 12, "md": 6},
             ),
         ]),
 
@@ -2117,19 +2133,46 @@ def _update_sim_cumulative(*args):
     Input("sim-cancel-agg", "value"),
     Input("sim-cancel-slice", "value"),
     Input("sim-table-filter-rows", "data"),
+    Input("sim-cancel-metric", "value"),
     running=[(Output("sim-chart-cancel-rate-loading", "visible"), True, False)],
 )
 def _update_sim_cancel(*args):
     ctx = _unpack_sim_filter_args(args)
-    cancel_agg, cancel_slice, grid_rows = (
-        args[_N_SIM_FILTER + 0], args[_N_SIM_FILTER + 1], args[_N_SIM_FILTER + 2])
+    cancel_agg, cancel_slice, grid_rows, cancel_metric = (
+        args[_N_SIM_FILTER + 0], args[_N_SIM_FILTER + 1], args[_N_SIM_FILTER + 2],
+        args[_N_SIM_FILTER + 3])
     data = _load_and_filter_sim(**ctx)
     if data is None:
         return None
     df_all = _apply_grid_row_filter_all_status(data["df"], data["df_all_status"], grid_rows)
     if df_all.empty:
         return None
-    return _prepare_cancel_data(df_all, data["start"], data["end"], cancel_agg, cancel_slice)
+    return _prepare_cancel_data(df_all, data["start"], data["end"], cancel_agg, cancel_slice,
+                                metric=cancel_metric or "rate")
+
+
+@callback(
+    Output("sim-chart-cancel-notice", "figure"),
+    Output("sim-cancel-notice-summary", "children"),
+    *_SIM_FILTER_INPUTS,
+    Input("sim-cancel-notice-mode", "value"),
+    Input("sim-table-filter-rows", "data"),
+    Input("sim-cancel-notice-edges", "value"),
+    running=[(Output("sim-cancel-notice-loading", "visible"), True, False)],
+)
+def _update_sim_cancel_notice(*args):
+    ctx = _unpack_sim_filter_args(args)
+    mode, grid_rows, edges = args[_N_SIM_FILTER:_N_SIM_FILTER + 3]
+    data = _load_and_filter_sim(**ctx)
+    if data is None:
+        return empty_figure(), ""
+    df_all = _apply_grid_row_filter_all_status(data["df"], data["df_all_status"], grid_rows)
+    if df_all is None or df_all.empty or "ScheduledDateTime" not in df_all.columns:
+        return empty_figure(), ""
+    df_all = df_all[(df_all["ScheduledDateTime"] >= data["start"])
+                    & (df_all["ScheduledDateTime"] <= data["end"])]
+    return build_notice_figure(df_all, mode=mode or "count", next_col="NextSimAfterCancel",
+                               edge_tags=edges)
 
 
 # ---------------------------------------------------------------------------
@@ -3481,72 +3524,29 @@ def _build_type_distribution(df):
     return fig
 
 
-def _prepare_cancel_data(dff_all, start, end, agg="M", slice_by=""):
-    """Prepare cancellation rate data for clientside rendering.
+def _prepare_cancel_data(dff_all, start, end, agg="M", slice_by="", metric="rate"):
+    """Prepare cancellation trend data for clientside rendering.
 
-    Computes cancel/no-show percentage per period, optionally sliced by type or dept.
+    metric: rate | notice | refill | rebook | idle (see utils/cancellations.py).
     Uses all-status data (not filtered to completed-only).
     """
     if dff_all.empty or "Status" not in dff_all.columns or "ScheduledDateTime" not in dff_all.columns:
         return None
-
-    dff = dff_all.copy()
-    # Apply date range
-    dff = dff[(dff["ScheduledDateTime"] >= start) & (dff["ScheduledDateTime"] <= end)]
+    dff = dff_all[(dff_all["ScheduledDateTime"] >= start) & (dff_all["ScheduledDateTime"] <= end)]
     if dff.empty:
         return None
 
-    period_code = "Y" if agg == "Y" else agg
-    dff["period"] = dff["ScheduledDateTime"].dt.to_period(period_code).dt.to_timestamp()
-    dff["_cancelled"] = dff["Status"].str.lower().str.contains("cancel|no-show|no show", na=False)
+    groups = []
+    if slice_by == "scope" and "ActivityName" in dff.columns:
+        init_mask = dff["ActivityName"].apply(_is_initial_sim)
+        groups = [("Initial", init_mask, CHART_COLORWAY[0]),
+                  ("Other", ~init_mask, CHART_COLORWAY[1])]
+    elif slice_by == "dept" and "Department" in dff.columns:
+        groups = [(d, dff["Department"] == d, DEPARTMENT_COLORS.get(d, CHART_COLORWAY[0]))
+                  for d in sorted(dff["Department"].dropna().unique())]
 
-    all_periods = full_period_range(dff["period"], period_code)
-    dates = [d.isoformat() for d in all_periods]
-
-    series = []
-
-    if not slice_by:
-        totals = dff.groupby("period").size().reindex(all_periods, fill_value=0)
-        cancels = dff[dff["_cancelled"]].groupby("period").size().reindex(all_periods, fill_value=0)
-        rates = ((cancels / totals) * 100).fillna(0)
-        series.append({
-            "name": "Cancel Rate",
-            "values": _trim_edges(rates.tolist()),
-            "color": PRIMARY,
-        })
-
-    elif slice_by == "scope":
-        if "ActivityName" in dff.columns:
-            init_mask = dff["ActivityName"].apply(_is_initial_sim)
-            for i, (label, subset) in enumerate([("Initial", dff[init_mask]), ("Other", dff[~init_mask])]):
-                if subset.empty:
-                    continue
-                totals = subset.groupby("period").size().reindex(all_periods, fill_value=0)
-                cancels = subset[subset["_cancelled"]].groupby("period").size().reindex(all_periods, fill_value=0)
-                rates = ((cancels / totals) * 100).fillna(0)
-                series.append({
-                    "name": label,
-                    "values": _trim_edges(rates.tolist()),
-                    "color": CHART_COLORWAY[i % len(CHART_COLORWAY)],
-                })
-
-    elif slice_by == "dept":
-        if "Department" in dff.columns:
-            for dept in sorted(dff["Department"].dropna().unique()):
-                subset = dff[dff["Department"] == dept]
-                if subset.empty:
-                    continue
-                totals = subset.groupby("period").size().reindex(all_periods, fill_value=0)
-                cancels = subset[subset["_cancelled"]].groupby("period").size().reindex(all_periods, fill_value=0)
-                rates = ((cancels / totals) * 100).fillna(0)
-                series.append({
-                    "name": dept,
-                    "values": _trim_edges(rates.tolist()),
-                    "color": DEPARTMENT_COLORS.get(dept, CHART_COLORWAY[0]),
-                })
-
-    return {"dates": dates, "series": series, "height": 320, "yTitle": "Cancellation Rate (%)", "stacked": False, "hideLegend": len(series) <= 1,
-            "compactX": True}  # 1/3-width card: short, sparse date ticks
+    return prepare_cancel_trend(dff, agg, metric, groups, "NextSimAfterCancel",
+                                trim_edges=_trim_edges)
 
 
 def _build_diagnosis_mix(dff, c2b=None, slice_by="", mode="count",
