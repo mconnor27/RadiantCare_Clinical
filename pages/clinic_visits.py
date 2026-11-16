@@ -23,8 +23,8 @@ from components.detail_table import detail_table
 from components.outlier_panel import outlier_panel, register_outlier_callbacks
 from components.phi import apply_phi_grid_rules
 from utils.charts import apply_default_layout, empty_figure, dept_color, full_period_range
-from utils.cancellations import CANCEL_METRICS, prepare_cancel_trend, build_notice_figure
-from components.cancel_notice_card import cancel_notice_card
+from utils.cancellations import CANCEL_METRICS, prepare_cancel_trend, build_notice_figure, addon_mask
+from components.cancel_notice_card import cancel_notice_card, cancel_addon_settings
 from utils.tables import sanitize_for_grid
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, DEFAULT_SLIDER, SLIDER_MARKS,
@@ -709,6 +709,7 @@ layout = dmc.Stack(
                     smooth_max=12,
                     smooth_default=1,
                     show_grouping=False,
+                    extra_settings=cancel_addon_settings("cv"),
                     extra_controls_left=[
                         dmc.SegmentedControl(
                             id="cv-cancel-metric",
@@ -1861,6 +1862,27 @@ def _update_cv_cumulative(*args):
 # Callback 6: Cancel Rate Store
 # ---------------------------------------------------------------------------
 
+# Add-on settings (gear menu of the Cancellations card) — drive both cancel charts
+_CV_ADDON_INPUTS = (
+    Input("cv-cancel-addon-mode", "value"),
+    Input("cv-cancel-addon-days", "value"),
+    Input("cv-cancel-addon-template", "checked"),
+)
+
+
+def _cv_addons(dff, addon_cfg):
+    """(add-on mask over dff, mode). Start-time template is per clinic (Department)."""
+    from data.loader import load_clinic_visits
+    mode, days, use_template = addon_cfg
+    days = None if days in (None, "") else days
+    try:
+        src = load_clinic_visits()
+    except Exception:
+        src = None
+    return (addon_mask(dff, src, "Department", max_lead_days=days,
+                       use_template=bool(use_template)),
+            mode or "include")
+
 @callback(
     Output("cv-store-cancel", "data"),
     *_CV_FILTER_INPUTS,
@@ -1868,18 +1890,21 @@ def _update_cv_cumulative(*args):
     Input("cv-cancel-slice", "value"),
     Input("cv-table-filter-rows", "data"),
     Input("cv-cancel-metric", "value"),
+    *_CV_ADDON_INPUTS,
     running=[(Output("cv-chart-cancel-rate-loading", "visible"), True, False)],
 )
 def _update_cv_cancel(*args):
     ctx = _unpack_filter_args(args)
     cancel_agg, cancel_slice, grid_rows, cancel_metric = args[16], args[17], args[18], args[19]
+    addon_cfg = args[20:23]
     data = _load_and_filter_cv(**ctx)
     if data is None or data["dff_all_status"].empty:
         return None
     dff_all = _apply_grid_row_filter_all_status(data["dff"], data["dff_all_status"], grid_rows)
     if dff_all.empty:
         return None
-    return _prepare_cancel_data(dff_all, cancel_agg, cancel_slice, metric=cancel_metric or "rate")
+    return _prepare_cancel_data(dff_all, cancel_agg, cancel_slice, metric=cancel_metric or "rate",
+                                addon_cfg=addon_cfg)
 
 
 @callback(
@@ -1889,17 +1914,20 @@ def _update_cv_cancel(*args):
     Input("cv-cancel-notice-mode", "value"),
     Input("cv-table-filter-rows", "data"),
     Input("cv-cancel-notice-edges", "value"),
+    *_CV_ADDON_INPUTS,
     running=[(Output("cv-cancel-notice-loading", "visible"), True, False)],
 )
 def _update_cv_cancel_notice(*args):
     ctx = _unpack_filter_args(args)
     mode, grid_rows, edges = args[16:19]
+    addon_cfg = args[19:22]
     data = _load_and_filter_cv(**ctx)
     if data is None or data["dff_all_status"].empty:
         return empty_figure(), ""
     dff_all = _apply_grid_row_filter_all_status(data["dff"], data["dff_all_status"], grid_rows)
+    addons, addon_mode = _cv_addons(dff_all, addon_cfg)
     return build_notice_figure(dff_all, mode=mode or "count", next_col="NextVisitAfterCancel",
-                               edge_tags=edges)
+                               edge_tags=edges, addons=addons, addon_mode=addon_mode)
 
 
 # ---------------------------------------------------------------------------
@@ -3035,7 +3063,8 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
 # Server-side chart builders
 # ---------------------------------------------------------------------------
 
-def _prepare_cancel_data(dff_all, agg="M", slice_by="type", metric="rate"):
+def _prepare_cancel_data(dff_all, agg="M", slice_by="type", metric="rate",
+                         addon_cfg=("include", 1, True)):
     """Prepare cancellation trend data for clientside rendering.
 
     metric: rate | notice | refill | rebook | idle (see utils/cancellations.py).
@@ -3060,8 +3089,9 @@ def _prepare_cancel_data(dff_all, agg="M", slice_by="type", metric="rate"):
         groups = [(d, dff["Department"] == d, DEPARTMENT_COLORS.get(d, CHART_COLORWAY[0]))
                   for d in sorted(dff["Department"].dropna().unique())]
 
+    addons, addon_mode = _cv_addons(dff, addon_cfg)
     return prepare_cancel_trend(dff, agg, metric, groups, "NextVisitAfterCancel",
-                                trim_edges=_trim_edges)
+                                trim_edges=_trim_edges, addons=addons, addon_mode=addon_mode)
 
 
 def _build_diagnosis_mix(dff, c2b=None, slice_by="", mode="count", prior_df=None,

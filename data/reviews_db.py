@@ -16,6 +16,7 @@ Thread-safe — each call opens and closes its own connection.
 import os
 import re
 import sqlite3
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -233,7 +234,16 @@ class _PgConnWrapper:
 
 def _connect():
     if _USE_POSTGRES:
-        conn = psycopg2.connect(_DB_URL)
+        # Every call opens a fresh connection; the Supabase pooler occasionally
+        # drops one mid-handshake. Retry connect failures only (never queries).
+        for attempt in range(3):
+            try:
+                conn = psycopg2.connect(_DB_URL, connect_timeout=10)
+                break
+            except psycopg2.OperationalError:
+                if attempt == 2:
+                    raise
+                time.sleep(0.5 * (attempt + 1))
         with conn.cursor() as cur:
             cur.execute(f'SET search_path TO "{_PG_SCHEMA}", public')
         return _PgConnWrapper(conn)

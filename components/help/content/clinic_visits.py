@@ -65,12 +65,13 @@ UI_CONTENT = dmc.Stack(
                 "another patient (SlotRefilledPct), counted only for slots "
                 "actually vacated (Refilled / Partially / Not refilled). Rebook: % "
                 "of cancelled patients with a later appointment of the same "
-                "kind (NextVisitAfterCancel). Lost: hours of booked slot time no patient used (SlotIdleMinutes), "
+                "kind (NextVisitAfterCancel). Lost: hours of booked slot time no patient used (SlotIdleMinutes); on Total it is split into Regular Slots vs Add-ons (see below), and it is "
                 "stacked when sliced.",
+                "Add-on appointments (gear menu on the Cancellations card) — an add-on is a visit squeezed in outside normal capacity, e.g. over lunch or late in the day, so cancelling it frees no time that was really on offer. A row is an add-on if it was booked within N business days of the slot (default 1; blank turns this off) or its start time is off-template: fewer than 3% of that clinic (Department)'s attended appointments that year start at that time. Include keeps them (Lost/Total shows them as a gray Add-ons layer; the notice summary shows add-on hours in brackets); Exclude drops add-on rows — cancelled and attended — from every cancellation metric and from Cancellations by Notice. Add-ons refill far less often than regular slots (~25% vs ~55%).",
                 "Cancellations by Notice — cancellations bucketed by notice "
                 "(No-Show, < 24 hrs, 1–3, 3–7, > 7 days), stacked by what "
                 "happened to the slot; the label above each bar gives n and the "
-                "refill % of vacated slots. No Slot Lost = same patient re-booked, "
+                "refill % of vacated slots. Slot Still Used = same patient re-booked, "
                 "shared slot, or seen the same day. Upcoming = slot date not yet "
                 "reached. The summary line above the chart totals the filtered set. "
                 "Bucket edges are editable in the card header: type values like "

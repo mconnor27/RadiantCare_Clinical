@@ -10,6 +10,12 @@ IDs (p = page prefix, e.g. "sim" / "cv"):
     {p}-cancel-notice-edges     bucket edges as tags ("4h", "3d", "1w", …)
     {p}-cancel-notice-summary   one-line summary text
     {p}-cancel-notice-loading   LoadingOverlay
+
+cancel_addon_settings(p) returns the add-on controls for the trend card's gear
+menu (they drive both cancellation charts):
+    {p}-cancel-addon-mode       "include" | "exclude"
+    {p}-cancel-addon-days       short-notice cutoff, business days (blank = off)
+    {p}-cancel-addon-template   bool — off-template start times count as add-ons
 """
 
 import dash_mantine_components as dmc
@@ -17,7 +23,53 @@ from dash import dcc
 from dash_iconify import DashIconify
 
 from config.settings import CHART_PAPER_HEIGHT
-from utils.cancellations import DEFAULT_NOTICE_EDGES, NOTICE_EDGE_SUGGESTIONS
+from utils.cancellations import (
+    ADDON_DEFAULT_DAYS, DEFAULT_NOTICE_EDGES, NOTICE_EDGE_SUGGESTIONS,
+)
+
+
+def cancel_addon_settings(p):
+    """Gear-menu controls for add-on handling (both cancellation charts)."""
+    label = {"size": "xs", "fw": 500, "c": "#6B7280"}
+    return [
+        dmc.Stack(gap=4, children=[
+            dmc.Group(gap=4, wrap="nowrap", children=[
+                dmc.Text("Add-on Appointments", **label),
+                dmc.Tooltip(
+                    label="Add-ons are squeezed in outside normal capacity — "
+                          "booked at short notice or at an unusual start time "
+                          "(e.g. over lunch, late in the day). Cancelling one "
+                          "doesn't free a slot that was really on offer. "
+                          "Include splits Lost hours into Regular vs Add-on; "
+                          "Exclude drops add-ons from both cancellation charts.",
+                    multiline=True, w=260, withArrow=True, position="left",
+                    zIndex=1000,
+                    children=DashIconify(icon="mdi:information-outline", width=13,
+                                         color="#9CA3AF", style={"cursor": "help"}),
+                ),
+            ]),
+            dmc.SegmentedControl(
+                id=f"{p}-cancel-addon-mode",
+                data=[{"value": "include", "label": "Include"},
+                      {"value": "exclude", "label": "Exclude"}],
+                value="include", size="xs", fullWidth=True,
+            ),
+        ]),
+        dmc.Stack(gap=4, children=[
+            dmc.Text("Add-on If Booked Within (Business Days)", **label),
+            dmc.NumberInput(
+                id=f"{p}-cancel-addon-days",
+                value=ADDON_DEFAULT_DAYS, min=0, max=10, step=1,
+                allowDecimal=False, size="xs",
+                placeholder="Off",
+            ),
+        ]),
+        dmc.Switch(
+            id=f"{p}-cancel-addon-template",
+            label="Off-template start times are add-ons",
+            checked=True, size="xs",
+        ),
+    ]
 
 
 def cancel_notice_card(p, height=CHART_PAPER_HEIGHT):

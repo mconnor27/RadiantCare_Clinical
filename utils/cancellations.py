@@ -130,7 +130,7 @@ _OUTCOME_STACK = [
     ("Partially Refilled", "#86EFAC"),
     ("Not Refilled", SEMANTIC_COLORS["error"]),
     ("No-Show", SEMANTIC_COLORS["warning"]),
-    ("No Slot Lost", "#9CA3AF"),
+    ("Slot Still Used", "#9CA3AF"),
     ("Upcoming", "#D1D5DB"),
 ]
 _OUTCOME_LABEL = {
@@ -139,7 +139,7 @@ _OUTCOME_LABEL = {
     "Not refilled": "Not Refilled",
     NO_SHOW_OUTCOME: "No-Show",
     PENDING_OUTCOME: "Upcoming",
-    **{o: "No Slot Lost" for o in NO_LOSS_OUTCOMES},
+    **{o: "Slot Still Used" for o in NO_LOSS_OUTCOMES},
 }
 
 
@@ -162,6 +162,77 @@ def _rebooked_mask(c, next_col):
     if "SlotOutcome" in c.columns:
         nxt = nxt | c["SlotOutcome"].isin(NO_LOSS_OUTCOMES - {"Shared slot"})
     return nxt
+
+
+# ---------------------------------------------------------------------------
+# Add-on detection
+# ---------------------------------------------------------------------------
+# An add-on is an appointment squeezed in outside normal capacity (an urgent
+# sim over lunch, a late-day consult). Cancelling one doesn't really lose a
+# bookable slot — the time wasn't on offer to begin with — and add-ons are
+# refilled far less often (~25% vs ~55%). A row counts as an add-on if either:
+#   short notice  — booked ≤ N business days before the slot (default 1)
+#   off-template  — its start time is rare for that resource that year
+#                   (< ADDON_TEMPLATE_MIN_SHARE of attended starts)
+ADDON_DEFAULT_DAYS = 1
+ADDON_TEMPLATE_MIN_SHARE = 0.03
+ADDON_COLOR = "#9CA3AF"
+_template_cache: dict = {}
+
+
+def _start_key(df, key_col):
+    t = df["ScheduledDateTime"]
+    k = df[key_col].astype(str) if key_col in df.columns else pd.Series("", index=df.index)
+    return k, t.dt.year, t.dt.strftime("%H:%M")
+
+
+def _template_shares(src, key_col):
+    """{(key, year, 'HH:MM'): share of that key-year's attended starts}.
+
+    Built from the full history (not the filtered view) so page filters don't
+    reshape the template. Cached per source frame.
+    """
+    ck = (id(src), len(src), key_col)
+    hit = _template_cache.get(ck)
+    if hit is not None:
+        return hit
+    att = src[~cancelled_mask(src) & src["ScheduledDateTime"].notna()]
+    if "ActivityName" in att.columns:   # HOLD placeholders aren't real bookings
+        att = att[~att["ActivityName"].astype(str).str.contains("HOLD", case=False, na=False)]
+    k, y, t = _start_key(att, key_col)
+    cnt = pd.DataFrame({"k": k, "y": y, "t": t}).groupby(["k", "y", "t"]).size()
+    shares = (cnt / cnt.groupby(level=[0, 1]).transform("sum")).to_dict()
+    _template_cache.clear()             # one live source per page is plenty
+    _template_cache[ck] = shares
+    return shares
+
+
+def addon_mask(dff, template_src, key_col, max_lead_days=ADDON_DEFAULT_DAYS,
+               use_template=True):
+    """Boolean Series over dff: True where the appointment looks like an add-on.
+
+    template_src: full (unfiltered) all-status frame the start-time template
+                  is learned from.
+    key_col:      column the template is per — the room/machine for sims
+                  (SimulationResource), the clinic for visits (Department).
+    max_lead_days: short-notice cutoff in business days; None disables it.
+    """
+    out = pd.Series(False, index=dff.index)
+    if dff.empty or "ScheduledDateTime" not in dff.columns:
+        return out
+    if max_lead_days is not None and "AppointmentCreatedDate" in dff.columns:
+        created = pd.to_datetime(dff["AppointmentCreatedDate"], errors="coerce")
+        ok = created.notna() & dff["ScheduledDateTime"].notna()
+        if ok.any():
+            bd = np.busday_count(created[ok].values.astype("datetime64[D]"),
+                                 dff.loc[ok, "ScheduledDateTime"].values.astype("datetime64[D]"))
+            out.loc[ok] = bd <= int(max_lead_days)
+    if use_template and template_src is not None and not template_src.empty:
+        shares = _template_shares(template_src, key_col)
+        k, y, t = _start_key(dff, key_col)
+        s = pd.Series([shares.get(x, 0.0) for x in zip(k, y, t)], index=dff.index)
+        out |= s < ADDON_TEMPLATE_MIN_SHARE
+    return out
 
 
 def _period_metric(sub, metric, periods, next_col):
@@ -199,11 +270,15 @@ def _clean(values, trim):
     return trim(out) if trim else out
 
 
-def prepare_cancel_trend(dff, agg, metric, groups, next_col, trim_edges=None):
+def prepare_cancel_trend(dff, agg, metric, groups, next_col, trim_edges=None,
+                         addons=None, addon_mode="include"):
     """Store payload for the clientside cancellation trend chart.
 
     dff:    all-status rows (already filtered to page filters + date range)
     groups: list of (name, boolean mask over dff, color); empty → single total
+    addons: boolean mask over dff from addon_mask(); None = no add-on logic.
+    addon_mode: "include" (Lost/Total splits Regular vs Add-on) | "exclude"
+                (add-on rows dropped from every metric).
     """
     if dff is None or dff.empty or "ScheduledDateTime" not in dff.columns:
         return None
@@ -211,6 +286,12 @@ def prepare_cancel_trend(dff, agg, metric, groups, next_col, trim_edges=None):
     meta = _METRIC_META[metric]
 
     dff = dff.copy()
+    if addons is not None:
+        dff["_addon"] = addons.reindex(dff.index, fill_value=False)
+        if addon_mode == "exclude":
+            dff = dff[~dff["_addon"]]
+            if dff.empty:
+                return None
     period_code = "Y" if agg == "Y" else (agg or "M")
     dff["period"] = dff["ScheduledDateTime"].dt.to_period(period_code).dt.to_timestamp()
     dff["_cancelled"] = cancelled_mask(dff)
@@ -221,7 +302,13 @@ def prepare_cancel_trend(dff, agg, metric, groups, next_col, trim_edges=None):
     trim = trim_edges if metric in ("rate", "idle") else None
 
     series = []
-    if not groups:
+    if not groups and metric == "idle" and addons is not None and addon_mode != "exclude":
+        # Lost / Total: split lost time into regular slots vs add-ons
+        for name, sub, color in [("Regular Slots", dff[~dff["_addon"]], PRIMARY),
+                                 ("Add-ons", dff[dff["_addon"]], ADDON_COLOR)]:
+            vals = _period_metric(sub, metric, periods, next_col)
+            series.append({"name": name, "values": _clean(vals.tolist(), trim), "color": color})
+    elif not groups:
         vals = _period_metric(dff, metric, periods, next_col)
         series.append({"name": meta["total"], "values": _clean(vals.tolist(), trim), "color": PRIMARY})
     else:
@@ -260,10 +347,12 @@ def _notice_bucket(c, edges, labels):
     return b
 
 
-def build_notice_figure(dff, mode="count", next_col="", edge_tags=None):
+def build_notice_figure(dff, mode="count", next_col="", edge_tags=None,
+                        addons=None, addon_mode="include"):
     """Stacked bars: cancellations by notice bucket, stacked by slot outcome.
 
     edge_tags: bucket edges as tags ("4h", "2d", …); None → defaults.
+    addons / addon_mode: see prepare_cancel_trend.
     Returns (figure, summary_text).
     """
     edges, bad = parse_notice_edges(edge_tags if edge_tags else DEFAULT_NOTICE_EDGES)
@@ -272,6 +361,12 @@ def build_notice_figure(dff, mode="count", next_col="", edge_tags=None):
     if dff is None or dff.empty:
         return empty_figure(), ""
     c = dff[cancelled_mask(dff)].copy()
+    n_excluded = 0
+    if addons is not None:
+        c["_addon"] = addons.reindex(c.index, fill_value=False)
+        if addon_mode == "exclude":
+            n_excluded = int(c["_addon"].sum())
+            c = c[~c["_addon"]]
     if c.empty:
         return empty_figure("No cancellations for selected filters"), ""
 
@@ -283,7 +378,7 @@ def build_notice_figure(dff, mode="count", next_col="", edge_tags=None):
     c["_outcome"] = outcome.map(_OUTCOME_LABEL)
     # No-show bucket rows are no-shows regardless of the slot-outcome label
     c.loc[c["_bucket"] == NO_SHOW_BUCKET, "_outcome"] = "No-Show"
-    c["_outcome"] = c["_outcome"].fillna("No Slot Lost")
+    c["_outcome"] = c["_outcome"].fillna("Slot Still Used")
 
     counts = (c.groupby(["_bucket", "_outcome"]).size()
                 .unstack(fill_value=0)
@@ -340,6 +435,8 @@ def build_notice_figure(dff, mode="count", next_col="", edge_tags=None):
         hovermode="closest",
     )
     summary = _summary_text(c, outcome, next_col)
+    if n_excluded:
+        summary += f" · excl. {n_excluded:,} add-ons"
     if bad:
         summary += f" · ignored: {', '.join(bad)}"
     return fig, summary
@@ -363,5 +460,8 @@ def _summary_text(c, outcome, next_col):
     if next_col:
         parts.append(f"{_rebooked_mask(c, next_col).mean() * 100:.0f}% rebooked")
     if "SlotIdleMinutes" in c.columns:
-        parts.append(f"{c['SlotIdleMinutes'].sum() / 60:,.0f} hrs lost")
+        txt = f"{c['SlotIdleMinutes'].sum() / 60:,.0f} hrs lost"
+        if "_addon" in c.columns and c["_addon"].any():
+            txt += f" ({c.loc[c['_addon'], 'SlotIdleMinutes'].sum() / 60:,.0f} add-on)"
+        parts.append(txt)
     return " · ".join(parts)

@@ -587,7 +587,10 @@ def build_code_to_category(diag_lookup: pd.DataFrame | None) -> dict[str, str]:
         new_records = []
         for _, row in diag_lookup.iterrows():
             code = str(row["DiagnosisCode"]).strip()
-            if code in result or code in _seen_new:
+            # Skip anything already in the DB — including codes stored with an
+            # empty category, which aren't in `result` and would otherwise be
+            # re-upserted (one round trip each) on every startup.
+            if code in overrides or code in _seen_new:
                 continue
             _seen_new.add(code)
             site = str(row["SiteDesc"]).strip() if has_site else ""

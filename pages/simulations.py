@@ -23,8 +23,8 @@ from components.detail_table import detail_table
 from components.chart_settings import chart_settings_popover
 from components.phi import apply_phi_grid_rules
 from utils.charts import apply_default_layout, empty_figure, full_period_range
-from utils.cancellations import CANCEL_METRICS, prepare_cancel_trend, build_notice_figure
-from components.cancel_notice_card import cancel_notice_card
+from utils.cancellations import CANCEL_METRICS, prepare_cancel_trend, build_notice_figure, addon_mask
+from components.cancel_notice_card import cancel_notice_card, cancel_addon_settings
 from utils.tables import sanitize_for_grid
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, SLIDER_MARKS,
@@ -889,6 +889,7 @@ layout = dmc.Stack(
                     show_smooth=True,
                     smooth_max=12,
                     smooth_default=1,
+                    extra_settings=cancel_addon_settings("sim"),
                     extra_controls_left=[
                         dmc.SegmentedControl(
                             id="sim-cancel-metric",
@@ -2127,6 +2128,28 @@ def _update_sim_cumulative(*args):
 # Callback 5: Cancel Rate Store
 # ---------------------------------------------------------------------------
 
+# Add-on settings (gear menu of the Cancellations card) — drive both cancel charts
+_SIM_ADDON_INPUTS = (
+    Input("sim-cancel-addon-mode", "value"),
+    Input("sim-cancel-addon-days", "value"),
+    Input("sim-cancel-addon-template", "checked"),
+)
+
+
+def _sim_addons(dff, addon_cfg):
+    """(add-on mask over dff, mode). Template is per CT/room (SimulationResource):
+    a sim's Department is the treatment site, not where it was simmed."""
+    from data.loader import load_simulations
+    mode, days, use_template = addon_cfg
+    days = None if days in (None, "") else days
+    try:
+        src = load_simulations()
+    except Exception:
+        src = None
+    return (addon_mask(dff, src, "SimulationResource", max_lead_days=days,
+                       use_template=bool(use_template)),
+            mode or "include")
+
 @callback(
     Output("sim-store-cancel", "data"),
     *_SIM_FILTER_INPUTS,
@@ -2134,6 +2157,7 @@ def _update_sim_cumulative(*args):
     Input("sim-cancel-slice", "value"),
     Input("sim-table-filter-rows", "data"),
     Input("sim-cancel-metric", "value"),
+    *_SIM_ADDON_INPUTS,
     running=[(Output("sim-chart-cancel-rate-loading", "visible"), True, False)],
 )
 def _update_sim_cancel(*args):
@@ -2141,6 +2165,7 @@ def _update_sim_cancel(*args):
     cancel_agg, cancel_slice, grid_rows, cancel_metric = (
         args[_N_SIM_FILTER + 0], args[_N_SIM_FILTER + 1], args[_N_SIM_FILTER + 2],
         args[_N_SIM_FILTER + 3])
+    addon_cfg = args[_N_SIM_FILTER + 4:_N_SIM_FILTER + 7]
     data = _load_and_filter_sim(**ctx)
     if data is None:
         return None
@@ -2148,7 +2173,7 @@ def _update_sim_cancel(*args):
     if df_all.empty:
         return None
     return _prepare_cancel_data(df_all, data["start"], data["end"], cancel_agg, cancel_slice,
-                                metric=cancel_metric or "rate")
+                                metric=cancel_metric or "rate", addon_cfg=addon_cfg)
 
 
 @callback(
@@ -2158,11 +2183,13 @@ def _update_sim_cancel(*args):
     Input("sim-cancel-notice-mode", "value"),
     Input("sim-table-filter-rows", "data"),
     Input("sim-cancel-notice-edges", "value"),
+    *_SIM_ADDON_INPUTS,
     running=[(Output("sim-cancel-notice-loading", "visible"), True, False)],
 )
 def _update_sim_cancel_notice(*args):
     ctx = _unpack_sim_filter_args(args)
     mode, grid_rows, edges = args[_N_SIM_FILTER:_N_SIM_FILTER + 3]
+    addon_cfg = args[_N_SIM_FILTER + 3:_N_SIM_FILTER + 6]
     data = _load_and_filter_sim(**ctx)
     if data is None:
         return empty_figure(), ""
@@ -2171,8 +2198,9 @@ def _update_sim_cancel_notice(*args):
         return empty_figure(), ""
     df_all = df_all[(df_all["ScheduledDateTime"] >= data["start"])
                     & (df_all["ScheduledDateTime"] <= data["end"])]
+    addons, addon_mode = _sim_addons(df_all, addon_cfg)
     return build_notice_figure(df_all, mode=mode or "count", next_col="NextSimAfterCancel",
-                               edge_tags=edges)
+                               edge_tags=edges, addons=addons, addon_mode=addon_mode)
 
 
 # ---------------------------------------------------------------------------
@@ -3524,7 +3552,8 @@ def _build_type_distribution(df):
     return fig
 
 
-def _prepare_cancel_data(dff_all, start, end, agg="M", slice_by="", metric="rate"):
+def _prepare_cancel_data(dff_all, start, end, agg="M", slice_by="", metric="rate",
+                         addon_cfg=("include", 1, True)):
     """Prepare cancellation trend data for clientside rendering.
 
     metric: rate | notice | refill | rebook | idle (see utils/cancellations.py).
@@ -3545,8 +3574,9 @@ def _prepare_cancel_data(dff_all, start, end, agg="M", slice_by="", metric="rate
         groups = [(d, dff["Department"] == d, DEPARTMENT_COLORS.get(d, CHART_COLORWAY[0]))
                   for d in sorted(dff["Department"].dropna().unique())]
 
+    addons, addon_mode = _sim_addons(dff, addon_cfg)
     return prepare_cancel_trend(dff, agg, metric, groups, "NextSimAfterCancel",
-                                trim_edges=_trim_edges)
+                                trim_edges=_trim_edges, addons=addons, addon_mode=addon_mode)
 
 
 def _build_diagnosis_mix(dff, c2b=None, slice_by="", mode="count",
