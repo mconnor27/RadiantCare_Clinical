@@ -161,7 +161,7 @@ UI_CONTENT = dmc.Stack(
                 "list.",
                 "Diagnosis accordion — ICD-10 categories + subcategories, "
                 "cascade resolution (ICD-10 code → free-text \"Rfl Prim Dx\" → "
-                "free-text \"Diagnoses\" → clinic-visit diagnosis fallback).",
+                "free-text \"Diagnoses\" → clinic-visit diagnosis fallback). Picking subcategories narrows that category to just those subcategories; only referrals whose Diagnoses field carries an ICD code can be matched to a subcategory.",
                 "Payor chip-dropdown — multi-select scope to one or more "
                 "payors. The mode toggle (Actual / Broad / PHDSC) at the top "
                 "of the panel changes both the chip list and how the trend / "

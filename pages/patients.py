@@ -23,6 +23,11 @@ from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, SLIDER_MARKS,
     preset_to_slider_val, preset_to_exact_dates,
 )
+from utils.diagnosis_categories import (
+    CATEGORIES as DX_CATEGORIES,
+    build_code_to_category,
+    primary_category,
+)
 from utils.geocoding import (
     prepare_patient_geo_data,
     get_department_patient_flows,
@@ -32,6 +37,9 @@ from utils.geocoding import (
     normalize_zip,
     build_zip3_geojson,
     DEPT_COORDS,
+    prepare_patient_point_data,
+    trigger_patient_address_geocode,
+    patient_geocode_progress,
 )
 
 
@@ -279,6 +287,24 @@ layout = dmc.Stack(
                                         ),
                                     ],
                                 ),
+                                dmc.Tooltip(
+                                    label="Address: one dot per home (rooftop geocode). "
+                                          "ZIP: one dot per ZIP centroid.",
+                                    position="bottom",
+                                    multiline=True,
+                                    w=220,
+                                    children=dmc.SegmentedControl(
+                                        id="patients-map-precision",
+                                        data=[
+                                            {"label": "Address", "value": "exact"},
+                                            {"label": "ZIP", "value": "zip"},
+                                        ],
+                                        value="exact",
+                                        size="xs",
+                                        persistence=True,
+                                        persistence_type="local",
+                                    ),
+                                ),
                                 dmc.SegmentedControl(
                                     id="patients-region-toggle",
                                     data=[
@@ -313,6 +339,13 @@ layout = dmc.Stack(
                 dmc.Alert(
                     id="patients-geocode-status",
                     children="Geocoding ZIP codes for the first time. Map will appear when complete...",
+                    color="violet",
+                    variant="light",
+                    style={"display": "none"},
+                ),
+                dmc.Alert(
+                    id="patients-addr-geocode-status",
+                    children="",
                     color="violet",
                     variant="light",
                     style={"display": "none"},
@@ -405,8 +438,103 @@ layout = dmc.Stack(
             ],
         ),
 
+        # Age by diagnosis: trend over time (full history) + distribution
+        # for the page date range. The New / All toggle drives both.
+        dmc.Grid(
+            gutter=16,
+            children=[
+                dmc.GridCol(
+                    span={"base": 12, "md": 6},
+                    children=chart_card(
+                        "patients-chart-age-dx",
+                        "Age at Treatment by Diagnosis",
+                        chart_types=[
+                            {"value": "line", "label": "Line"},
+                            {"value": "bar", "label": "Bar"},
+                        ],
+                        chart_type_default="line",
+                        show_smooth=False,
+                        show_grouping=False,
+                        settings_id="patients-age-dx",
+                        extra_controls=[
+                            dmc.Tooltip(
+                                label="New: each patient once per diagnosis, at their "
+                                      "first course for it. All: every patient treated "
+                                      "in the period, including retreatment. Applies to "
+                                      "both age-by-diagnosis charts.",
+                                position="bottom", multiline=True, w=260,
+                                children=dmc.SegmentedControl(
+                                    id="patients-age-dx-basis",
+                                    data=[
+                                        {"value": "new", "label": "New"},
+                                        {"value": "all", "label": "All"},
+                                    ],
+                                    value="new",
+                                    size="xs",
+                                ),
+                            ),
+                        ],
+                        extra_settings=[
+                            dmc.MultiSelect(
+                                id="patients-age-dx-diagnoses",
+                                label="Diagnoses",
+                                data=[{"value": c, "label": c} for c in DX_CATEGORIES],
+                                value=[],
+                                placeholder="Top 5 by volume",
+                                clearable=True,
+                                searchable=True,
+                                size="xs",
+                                maxValues=8,
+                                comboboxProps={"withinPortal": False},
+                                mb="xs",
+                            ),
+                            dmc.Text("Statistic", size="xs", fw=500, mb=4),
+                            dmc.SegmentedControl(
+                                id="patients-age-dx-stat",
+                                data=[
+                                    {"value": "median", "label": "Median"},
+                                    {"value": "mean", "label": "Mean"},
+                                ],
+                                value="median",
+                                size="xs",
+                                fullWidth=True,
+                                mb="xs",
+                            ),
+                            dmc.Text("Period", size="xs", fw=500, mb=4),
+                            dmc.SegmentedControl(
+                                id="patients-age-dx-period",
+                                data=[
+                                    {"value": "Y", "label": "Year"},
+                                    {"value": "Q", "label": "Quarter"},
+                                ],
+                                value="Q",
+                                size="xs",
+                                fullWidth=True,
+                                mb="xs",
+                            ),
+                        ],
+                    ),
+                ),
+                dmc.GridCol(
+                    span={"base": 12, "md": 6},
+                    children=chart_card(
+                        "patients-chart-age-dxdist",
+                        "Age Distribution by Diagnosis",
+                        chart_types=None,
+                        show_smooth=False,
+                        show_grouping=False,
+                        show_settings=True,
+                        settings_id="patients-age-dxdist",
+                    ),
+                ),
+            ],
+        ),
+
         # Stores
+        dcc.Store(id="patients-store-age-dx", data=None),
         dcc.Store(id="patients-store-geo", data=None),
+        dcc.Store(id="patients-store-points", data=None),
+        dcc.Store(id="patients-addr-geocode-tick", data=0),
         dcc.Store(id="patients-store-age-dist", data=None),
         dcc.Store(id="patients-map-selection", data=None),
 
@@ -416,10 +544,22 @@ layout = dmc.Stack(
             id="patients-geocode-check", interval=5_000,
             n_intervals=0, max_intervals=120,
         ),
+        # Polls the background patient-address geocode; enabled only while
+        # it is running (see update_patients / _poll_addr_geocode).
+        dcc.Interval(
+            id="patients-addr-geocode-check", interval=5_000,
+            n_intervals=0, disabled=True,
+        ),
     ],
 )
 
-register_chart_callbacks([("patients-age", "patients-chart-age-dist")])
+register_chart_callbacks([
+    ("patients-age", "patients-chart-age-dist"),
+    {"sid": "patients-age-dx", "gid": "patients-chart-age-dx", "store_id": None,
+     "show_smooth": False, "show_grouping": False},
+    {"sid": "patients-age-dxdist", "gid": "patients-chart-age-dxdist", "store_id": None,
+     "show_smooth": False, "show_grouping": False},
+])
 
 
 # Hide Histogram/Density + smoothing when the user switches to Gender.
@@ -841,11 +981,41 @@ _prepare_age_dist_data = _prepare_demog_data
 # Map builder
 # ---------------------------------------------------------------------------
 
+def _vector_arcs(from_lat, from_lon, to_lat, to_lon, n=6, curvature=0.2):
+    """Quadratic-bezier arcs from many origins to one destination.
+
+    Vectorized twin of utils.geocoding.bezier_arc. Returns flat (lats, lons)
+    lists with None separators between arcs, rounded to 5 decimals (~1 m) to
+    keep the figure JSON small.
+    """
+    mid_lat = (from_lat + to_lat) / 2
+    mid_lon = (from_lon + to_lon) / 2
+    dlat = to_lat - from_lat
+    dlon = to_lon - from_lon
+    cos_lat = np.cos(np.radians(mid_lat))
+    perp_lat = -dlon * cos_lat
+    perp_lon = dlat / cos_lat
+    plen = np.sqrt(perp_lat ** 2 + perp_lon ** 2)
+    plen[plen == 0] = 1.0
+    dist = np.sqrt(dlat ** 2 + (dlon * cos_lat) ** 2)
+    ctrl_lat = mid_lat + perp_lat / plen * curvature * dist
+    ctrl_lon = mid_lon + perp_lon / plen * curvature * dist
+    t = np.linspace(0, 1, n)[None, :]
+    lat = (1 - t) ** 2 * from_lat[:, None] + 2 * (1 - t) * t * ctrl_lat[:, None] + t ** 2 * to_lat
+    lon = (1 - t) ** 2 * from_lon[:, None] + 2 * (1 - t) * t * ctrl_lon[:, None] + t ** 2 * to_lon
+    sep = np.full((lat.shape[0], 1), np.nan)
+    lat = np.hstack([np.round(lat, 5), sep]).ravel()
+    lon = np.hstack([np.round(lon, 5), sep]).ravel()
+    to_list = lambda a: [None if np.isnan(v) else float(v) for v in a]
+    return to_list(lat), to_list(lon)
+
+
 def _build_patient_map(
     geo_df, departments_filter, selected_dept=None,
     show_flows=True, region="pnw", min_patients=1,
     uirevision="patients-map",
     map_style=None,
+    point_df=None,
 ):
     """Build Scattermapbox with patient origin bubbles, dept markers, and flow lines.
 
@@ -858,7 +1028,12 @@ def _build_patient_map(
     region : str
         "pnw" restricts to Pacific NW bounding box; "all" shows continental US.
     min_patients : int
-        Minimum patient count at an origin to display it.
+        Minimum patient count at an origin to display it. In address mode
+        this applies to the point's ZIP total (per department), so the
+        slider still hides sparse areas rather than every single household.
+    point_df : DataFrame or None
+        Per-address points (local mode, Address precision). When given, dots
+        are drawn at rooftop coordinates; flow lines stay ZIP-aggregated.
     """
     fig = go.Figure()
 
@@ -939,8 +1114,58 @@ def _build_patient_map(
                 showlegend=False,
             ))
 
+    # --- Per-address patient points (Address precision) ----------------------
+    point_frames = {}   # dept -> plotted points, reused for per-home flow lines
+    if (not phi_choropleth and render_depts and point_df is not None
+            and not point_df.empty):
+        zip_counts = {}
+        if {"zip5", "Department", "patient_count"}.issubset(geo_df.columns):
+            zip_counts = {
+                (z, d): c for z, d, c in
+                zip(geo_df["zip5"], geo_df["Department"], geo_df["patient_count"])
+            }
+        for dept in render_depts:
+            pts = point_df[point_df["Department"] == dept]
+            pts = pts[
+                (pts["lat"].between(*lat_bounds))
+                & (pts["lon"].between(*lon_bounds))
+            ]
+            if min_patients and min_patients > 1:
+                keep = [
+                    zip_counts.get((z, dept), 0) >= min_patients
+                    for z in pts["zip5"]
+                ]
+                pts = pts[keep]
+            if pts.empty:
+                continue
+            point_frames[dept] = pts
+            color = DEPARTMENT_COLORS.get(dept, CHART_COLORWAY[0])
+            for precise, sub in pts.groupby("precise"):
+                hover = [
+                    f"{city or 'Unknown'} ({z})<br>{dept}: {n:,} "
+                    f"patient{'s' if n != 1 else ''}"
+                    + ("" if precise else "<br><i>ZIP-level location</i>")
+                    for city, z, n in zip(sub["primary_city"], sub["zip5"], sub["patient_count"])
+                ]
+                fig.add_trace(go.Scattermapbox(
+                    lat=sub["lat"],
+                    lon=sub["lon"],
+                    mode="markers",
+                    marker=dict(
+                        size=[min(5 + 2 * (n - 1), 12) for n in sub["patient_count"]]
+                        if precise else 7,
+                        color=color,
+                        opacity=0.65 if precise else 0.35,
+                    ),
+                    customdata=sub[["zip5", "primary_city"]].values.tolist(),
+                    text=hover,
+                    hoverinfo="text",
+                    showlegend=False,
+                ))
+
     # --- Patient bubbles (one trace per department) --------------------------
-    if not phi_choropleth and render_depts and not geo_df.empty and "lat" in geo_df.columns:
+    if (not phi_choropleth and render_depts and not geo_df.empty and "lat" in geo_df.columns
+            and (point_df is None or point_df.empty)):
         for dept in render_depts:
             dept_data = (
                 geo_df[geo_df["Department"] == dept]
@@ -996,8 +1221,36 @@ def _build_patient_map(
                 showlegend=False,
             ))
 
+    # --- Per-home flow lines (Address precision) -----------------------------
+    # One faint, slightly curved line from every plotted home to its site.
+    # Thousands of lines, so: few points per arc, rounded coords, one trace
+    # per department, and no hover.
+    if show_flows and point_frames:
+        for dept, pts in point_frames.items():
+            dept_coord = DEPT_COORDS.get(dept)
+            if not dept_coord:
+                continue
+            far = (
+                ((pts["lat"] - dept_coord[0]).abs() >= 0.01)
+                | ((pts["lon"] - dept_coord[1]).abs() >= 0.01)
+            )
+            pts = pts[far]
+            if pts.empty:
+                continue
+            lats, lons = _vector_arcs(
+                pts["lat"].to_numpy(), pts["lon"].to_numpy(),
+                dept_coord[0], dept_coord[1],
+            )
+            fig.add_trace(go.Scattermapbox(
+                lat=lats, lon=lons, mode="lines",
+                line=dict(width=0.7, color=DEPARTMENT_COLORS.get(dept, CHART_COLORWAY[0])),
+                opacity=0.18,
+                hoverinfo="skip",
+                showlegend=False,
+            ))
+
     # --- Curved flow lines (bundled arcs scaled by relative volume) ----------
-    if show_flows and render_depts and not geo_df.empty and "Department" in geo_df.columns:
+    elif show_flows and render_depts and not geo_df.empty and "Department" in geo_df.columns:
         all_flows = get_department_patient_flows(geo_df, min_patients=min_patients)
 
         for dept in render_depts:
@@ -1114,20 +1367,65 @@ def _build_patient_map(
     Output("patients-filter-age", "min"),
     Output("patients-filter-age", "max"),
     Output("patients-filter-age", "marks"),
+    Output("patients-store-points", "data"),
+    Output("patients-addr-geocode-status", "children"),
+    Output("patients-addr-geocode-status", "style"),
+    Output("patients-addr-geocode-check", "disabled"),
     Input("patients-interval", "n_intervals"),
     Input("patients-date-slider", "value"),
     Input("patients-filter-date-preset", "value"),
     Input("patients-filter-department", "value"),
     Input("patients-filter-age", "value"),
     Input("patients-age-ref", "value"),
+    Input("patients-map-precision", "value"),
+    Input("patients-addr-geocode-tick", "data"),
     running=[
         (Output("patients-chart-top-cities-loading", "visible"), True, False),
         (Output("patients-chart-age-dist-loading", "visible"), True, False),
     ],
 )
 def update_patients(_n_interval, slider_val, date_preset,
-                    departments, age_range, age_ref):
+                    departments, age_range, age_ref, precision, _geo_tick):
     """Update all Patients page components based on filters."""
+    base = _update_patients_core(slider_val, departments, age_range, age_ref)
+    *outs, df = base
+    points, banner_text, banner_style, poll_disabled = _patient_points_payload(df, precision)
+    # Address-geocode progress ticks only need the map points refreshed.
+    if ctx.triggered_id in ("patients-addr-geocode-tick", "patients-map-precision"):
+        outs = [no_update] * len(outs)
+    return (*outs, points, banner_text, banner_style, poll_disabled)
+
+
+_HIDDEN = {"display": "none"}
+
+
+def _patient_points_payload(df, precision):
+    """Per-address points for the map store + geocode banner state.
+
+    Local (non-PHI) mode only. Points carry coordinates, ZIP, city, department
+    and a count — no names, IDs, or street text.
+    """
+    if PHI_MODE or precision != "exact" or df is None or df.empty:
+        return None, "", _HIDDEN, True
+    pts, pending = prepare_patient_point_data(df)
+    if pending:
+        trigger_patient_address_geocode(pending)
+    prog = patient_geocode_progress()
+    store = pts.to_dict("records") if not pts.empty else None
+    if prog["running"]:
+        done, total = prog["done"], max(prog["total"], 1)
+        text = (
+            f"Geocoding patient street addresses: {done:,} of {total:,} "
+            f"({done / total:.0%}). Addresses not yet resolved show at their "
+            f"ZIP centroid; the map fills in as geocoding proceeds."
+        )
+        return store, text, {}, False
+    if pending and not MAPBOX_TOKEN:
+        return store, "MAPBOX_TOKEN not set: showing ZIP centroids.", {}, True
+    return store, "", _HIDDEN, True
+
+
+def _update_patients_core(slider_val, departments, age_range, age_ref):
     df = _load_and_prepare()
 
     _empty = [kpi_card("—", "N/A")]
@@ -1135,7 +1433,7 @@ def update_patients(_n_interval, slider_val, date_preset,
 
     # --- Empty data ---
     if df.empty:
-        return _empty, None, None, empty_figure("No city data available"), {"display": "none"}, None, *_no_age
+        return _empty, None, None, empty_figure("No city data available"), {"display": "none"}, None, *_no_age, None
 
     # --- Apply date + department filters (before computing age range) ---
     df = _apply_date_filter(df, slider_val, None)
@@ -1143,7 +1441,7 @@ def update_patients(_n_interval, slider_val, date_preset,
         df = df[df["Department"].isin(departments)]
 
     if df.empty:
-        return _empty, None, None, empty_figure("No city data available"), {"display": "none"}, None, *_no_age
+        return _empty, None, None, empty_figure("No city data available"), {"display": "none"}, None, *_no_age, None
 
     # --- Compute dynamic age range from date+dept filtered data ---
     age_ref = age_ref or "last"
@@ -1171,7 +1469,7 @@ def update_patients(_n_interval, slider_val, date_preset,
     df = _apply_age_filter(df, age_range, age_ref=age_ref)
 
     if df.empty:
-        return _empty, None, None, empty_figure("No city data available"), {"display": "none"}, None, age_lo, age_hi, age_marks
+        return _empty, None, None, empty_figure("No city data available"), {"display": "none"}, None, age_lo, age_hi, age_marks, None
 
     # --- Trigger background geocoding on first visit ---
     if "Zip" in df.columns:
@@ -1206,7 +1504,7 @@ def update_patients(_n_interval, slider_val, date_preset,
         )
         else no_update
     )
-    return kpis, geo_store, age_dist_data, top_cities, status_style, clear_selection, age_lo, age_hi, age_marks
+    return kpis, geo_store, age_dist_data, top_cities, status_style, clear_selection, age_lo, age_hi, age_marks, df
 
 
 # ---------------------------------------------------------------------------
@@ -1228,6 +1526,20 @@ def _poll_geocode_status(_n):
     if is_geocoding_complete():
         return {"display": "none"}, True
     return no_update, no_update
+
+
+@callback(
+    Output("patients-addr-geocode-tick", "data"),
+    Input("patients-addr-geocode-check", "n_intervals"),
+    State("patients-addr-geocode-tick", "data"),
+    prevent_initial_call=True,
+)
+def _poll_addr_geocode(n, tick):
+    """Refresh map points every ~30 s while geocoding, and once at the end."""
+    prog = patient_geocode_progress()
+    if not prog["running"] or (n or 0) % 6 == 0:
+        return (tick or 0) + 1
+    return no_update
 
 
 # ---------------------------------------------------------------------------
@@ -1511,8 +1823,11 @@ def _update_age_dist(data, metric, mode, group, bandwidth_pct, gender_scale):
     Input("patients-min-slider", "value"),
     Input("patients-map-reset", "n_clicks"),
     Input("global-theme-store", "data"),
+    Input("patients-store-points", "data"),
+    Input("patients-map-precision", "value"),
 )
-def update_map(geo_data, selected_dept, departments, show_flows, region, min_patients, _reset, theme):
+def update_map(geo_data, selected_dept, departments, show_flows, region, min_patients, _reset, theme,
+               points_data, precision):
     """Build the Mapbox map from geocoded data in the store."""
     # In PHI mode the map card is hidden via CSS, but the dcc.Graph still
     # exists in the DOM. Building a Mapbox figure here triggers a Plotly +
@@ -1523,7 +1838,8 @@ def update_map(geo_data, selected_dept, departments, show_flows, region, min_pat
         return go.Figure()
     map_style = "dark" if theme == "dark" else MAPBOX_STYLE
     # Re-fit when view controls change; preserve zoom on data refresh / flow toggle
-    _preserve = {"patients-store-geo", "patients-flow-toggle", "global-theme-store"}
+    _preserve = {"patients-store-geo", "patients-flow-toggle", "global-theme-store",
+                 "patients-store-points", "patients-map-precision"}
     triggered = ctx.triggered_id
     if triggered and triggered not in _preserve:
         reset_rev = f"{region}-{selected_dept}-{departments}-{min_patients}-{_reset}"
@@ -1546,8 +1862,13 @@ def update_map(geo_data, selected_dept, departments, show_flows, region, min_pat
         return fig
 
     geo_df = pd.DataFrame(geo_data)
+    point_df = (
+        pd.DataFrame(points_data)
+        if precision == "exact" and points_data else None
+    )
     return _build_patient_map(
         geo_df, departments,
+        point_df=point_df,
         selected_dept=selected_dept,
         show_flows=show_flows,
         region=region,
@@ -1585,4 +1906,406 @@ def toggle_map_selection(click_data, current):
 
     return {"zip5": zip5, "city": city}
 
+
+# ---------------------------------------------------------------------------
+# Age at treatment by diagnosis over time
+#
+# One row per (patient, diagnosis category, period): a patient treated for
+# the same diagnosis twice in a period counts once, at their first course.
+# Age is at the course's first treatment date (falls back to course start).
+# Spans full history — the page date filter (which keys on appointment
+# dates in the patient lookup) does not apply; the department filter does.
+# ---------------------------------------------------------------------------
+
+_AGE_DX_MIN_N = 5          # suppress period points with fewer patients
+_AGE_DX_TOP_N = 5          # default selection when none is chosen
+_AGE_DX_MIN_COVERAGE = 0.8  # min share of courses with a diagnosis code per period
+_AGE_DX_WASHOUT_MONTHS = 12  # New-diagnosis view starts this long after coding begins
+
+
+def _age_dx_colors():
+    """Same per-category colors as the Diagnosis page."""
+    from pages.diagnosis import _DIAG_COLORS
+    return {c: _DIAG_COLORS[i % len(_DIAG_COLORS)] for i, c in enumerate(DX_CATEGORIES)}
+
+
+_AGE_DX_BASE_MEMO = {"key": None, "val": None}
+
+
+def _age_dx_base():
+    """Coded courses with Age + Category, all sites, plus derived helpers.
+
+    Returns dict(c, first, coverage, washout_start) or None. Memoized on the
+    identity of the (TTL-cached) loader frames so slider drags don't redo the
+    1 s+ join / categorization.
+    """
+    from data.loader import load_courses, load_diagnosis, load_patients
+
+    try:
+        courses = load_courses()
+        raw_pts = load_patients()
+    except Exception:
+        return None
+    key = (id(courses), id(raw_pts))
+    if _AGE_DX_BASE_MEMO["key"] == key:
+        return _AGE_DX_BASE_MEMO["val"]
+    val = _build_age_dx_base(courses, load_diagnosis)
+    _AGE_DX_BASE_MEMO.update(key=key, val=val)
+    return val
+
+
+def _build_age_dx_base(courses, load_diagnosis):
+    pts = _load_and_prepare()
+    if courses is None or courses.empty or pts.empty:
+        return None
+
+    cols = [c for c in ("PatientId", "CourseId", "CourseStartDate", "FirstTreatmentDate",
+                        "DiagnosisCodes", "Department") if c in courses.columns]
+    c = courses[cols].copy()
+    # Department filter is applied after first-course detection (below), so a
+    # patient's first course at another site still marks later ones as repeats.
+    tx = c["FirstTreatmentDate"] if "FirstTreatmentDate" in c.columns else pd.Series(pd.NaT, index=c.index)
+    c["TxDate"] = pd.to_datetime(tx, errors="coerce").fillna(
+        pd.to_datetime(c.get("CourseStartDate"), errors="coerce")
+    )
+    c = c.dropna(subset=["TxDate"])
+    # Diagnosis codes only populate courses from mid-2021 on (plus a partial
+    # 2004 migration batch). Keep periods where >= 80% of courses carry a
+    # code so sparse legacy periods don't plot as misleading lone points.
+    has_dx = c["DiagnosisCodes"].notna()
+    coverage = {
+        per: has_dx.groupby(c["TxDate"].dt.to_period(per)).mean()
+        for per in ("Y", "Q")
+    }
+    c = c[has_dx]
+    if c.empty:
+        return None
+
+    # Age at treatment
+    if "DateOfBirth" in pts.columns:
+        dob = pts.drop_duplicates("PatientId").set_index("PatientId")["DateOfBirth"]
+        c["Age"] = (c["TxDate"] - c["PatientId"].map(dob)).dt.days / 365.25
+    elif "AgeAtLoad" in pts.columns:
+        # PHI_MODE: DOB is dropped at build time. AgeAtLoad is integer age as
+        # of the latest LastAppointment in the file (see sanitize rules), so
+        # back-date it to the treatment date. ±0.5 yr; 90+ is capped at 90.
+        ref = pts["LastAppointment"].max() if "LastAppointment" in pts.columns else pd.Timestamp.now()
+        age_now = pts.drop_duplicates("PatientId").set_index("PatientId")["AgeAtLoad"]
+        c["Age"] = (c["PatientId"].map(age_now) + 0.5) - (ref - c["TxDate"]).dt.days / 365.25
+    else:
+        return None
+    c = c[c["Age"].between(0, 110)]
+
+    try:
+        diag_df = load_diagnosis()
+    except Exception:
+        diag_df = None
+    c2c = build_code_to_category(diag_df)
+    uniq = c["DiagnosisCodes"].unique()
+    cat_map = {v: primary_category(v, c2c) for v in uniq}
+    c["Category"] = c["DiagnosisCodes"].map(cat_map)
+    c = c[c["Category"].isin(DX_CATEGORIES)]
+    if c.empty:
+        return None
+
+    c = c.sort_values("TxDate")
+
+    # "New": each patient once per diagnosis category, at their first coded
+    # course for it (across all sites). A later second cancer of a different
+    # category still counts; a retreatment of the same category does not.
+    first = c.drop_duplicates(["PatientId", "Category"], keep="first")
+    # Washout: codes start ~Q4 2021, so a retreatment of a pre-coding cancer
+    # would look new. Begin the New view 12 months after coding coverage starts.
+    good_q = coverage["Q"][coverage["Q"] >= _AGE_DX_MIN_COVERAGE].index
+    washout_start = (
+        good_q.min().start_time + pd.DateOffset(months=_AGE_DX_WASHOUT_MONTHS)
+        if len(good_q) else None
+    )
+    return {"c": c, "first": first, "coverage": coverage, "washout_start": washout_start}
+
+
+def _prepare_age_dx_data(departments):
+    """Aggregate age-at-treatment stats per (period, category). Returns dict."""
+    base = _age_dx_base()
+    if not base:
+        return None
+    c, first = base["c"], base["first"]
+    coverage, washout_start = base["coverage"], base["washout_start"]
+    out = {"rows": [], "top": []}
+
+    def _dept(frame):
+        if departments and "Department" in frame.columns:
+            return frame[frame["Department"].isin(departments)]
+        return frame
+
+    sources = (("all", _dept(c)), ("new", _dept(first)))
+    for basis, src, period in [(b, f, per) for b, f in sources for per in ("Y", "Q")]:
+        pr = src["TxDate"].dt.to_period(period)
+        good = set(coverage[period][coverage[period] >= _AGE_DX_MIN_COVERAGE].index)
+        work = src.assign(Period=pr)
+        work = work[work["Period"].isin(good)]
+        if basis == "new" and washout_start is not None:
+            work = work[work["Period"].map(lambda p_: p_.start_time >= washout_start)]
+        if work.empty:
+            continue
+        per_cat = work.drop_duplicates(["PatientId", "Category", "Period"])
+        overall = work.drop_duplicates(["PatientId", "Period"]).assign(Category="All Diagnoses")
+        for frame in (per_cat, overall):
+            g = frame.groupby(["Period", "Category"])["Age"]
+            agg = pd.DataFrame({
+                "median": g.median(), "mean": g.mean(),
+                "q1": g.quantile(0.25), "q3": g.quantile(0.75), "n": g.size(),
+            }).reset_index()
+            for r in agg.itertuples(index=False):
+                label = str(r.Period.year) if period == "Y" else f"{r.Period.year} Q{r.Period.quarter}"
+                out["rows"].append({
+                    "basis": basis,
+                    "period": period,
+                    "x": r.Period.start_time.strftime("%Y-%m-%d"),
+                    "label": label,
+                    "cat": r.Category,
+                    "median": round(float(r.median), 1),
+                    "mean": round(float(r.mean), 1),
+                    "q1": round(float(r.q1), 1),
+                    "q3": round(float(r.q3), 1),
+                    "n": int(r.n),
+                })
+    out["top"] = _dept(first)["Category"].value_counts().head(_AGE_DX_TOP_N).index.tolist()
+    return out
+
+
+@callback(
+    Output("patients-store-age-dx", "data"),
+    Input("patients-interval", "n_intervals"),
+    Input("patients-filter-department", "value"),
+)
+def _update_age_dx_store(_n, departments):
+    return _prepare_age_dx_data(departments)
+
+
+@callback(
+    Output("patients-chart-age-dx", "figure"),
+    Input("patients-store-age-dx", "data"),
+    Input("patients-age-dx-diagnoses", "value"),
+    Input("patients-age-dx-stat", "value"),
+    Input("patients-age-dx-period", "value"),
+    Input("patients-age-dx-basis", "value"),
+    Input("patients-age-dx-settings-type", "value"),
+)
+def _update_age_dx_chart(data, selected, stat, period, basis, chart_type):
+    if not data or not data.get("rows"):
+        return empty_figure("No diagnosis data for selected filters")
+    return _build_age_dx_fig(data, selected, stat or "median", period or "Q",
+                             basis or "new", chart_type or "line")
+
+
+def _build_age_dx_fig(data, selected, stat, period, basis="new", chart_type="line"):
+    df = pd.DataFrame(data["rows"])
+    df = df[(df["basis"] == basis) & (df["period"] == period) & (df["n"] >= _AGE_DX_MIN_N)]
+    n_label = "New patients" if basis == "new" else "Patients"
+    cats = list(selected) if selected else list(data.get("top", []))
+    if df.empty or not cats:
+        return empty_figure("No diagnosis data for selected filters")
+
+    colors = _age_dx_colors()
+    stat_label = "Median" if stat == "median" else "Mean"
+    if chart_type == "bar":
+        return _build_age_dx_bar(df, cats, stat, stat_label, n_label, colors)
+    fig = go.Figure()
+
+    # Reference: all diagnoses combined
+    ref = df[df["cat"] == "All Diagnoses"].sort_values("x")
+    if not ref.empty:
+        fig.add_trace(go.Scatter(
+            x=ref["x"], y=ref[stat], mode="lines", name="All Diagnoses",
+            line=dict(color="#9CA3AF", width=2, dash="dash"),
+            customdata=ref[["label", "n", "q1", "q3"]].values.tolist(),
+            hovertemplate=(
+                "All Diagnoses, %{customdata[0]}<br>"
+                + stat_label + " age: %{y:.1f}<br>"
+                "IQR: %{customdata[2]:.0f}–%{customdata[3]:.0f}<br>"
+                + n_label + ": %{customdata[1]:,}<extra></extra>"
+            ),
+        ))
+
+    for cat in cats:
+        d = df[df["cat"] == cat].sort_values("x")
+        if d.empty:
+            continue
+        color = colors.get(cat, PRIMARY)
+        if len(cats) == 1:
+            # Single diagnosis: show the interquartile band
+            fig.add_trace(go.Scatter(
+                x=list(d["x"]) + list(d["x"])[::-1],
+                y=list(d["q3"]) + list(d["q1"])[::-1],
+                fill="toself", fillcolor=_hex_rgba(color, 0.15),
+                line=dict(width=0), hoverinfo="skip", showlegend=True,
+                name="Middle 50% of ages",
+            ))
+        fig.add_trace(go.Scatter(
+            x=d["x"], y=d[stat], mode="lines+markers", name=cat,
+            line=dict(color=color, width=2.5),
+            marker=dict(size=5, color=color),
+            customdata=d[["label", "n", "q1", "q3"]].values.tolist(),
+            hovertemplate=(
+                cat + ", %{customdata[0]}<br>"
+                + stat_label + " age: %{y:.1f}<br>"
+                "IQR: %{customdata[2]:.0f}–%{customdata[3]:.0f}<br>"
+                + n_label + ": %{customdata[1]:,}<extra></extra>"
+            ),
+        ))
+
+    apply_default_layout(
+        fig,
+        yaxis=dict(title=f"{stat_label} Age at Treatment"),
+        xaxis=dict(title=None),
+        hovermode="closest",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+    )
+    return fig
+
+
+def _age_dx_hover(name, stat_label, n_label):
+    return (
+        name + ", %{customdata[0]}<br>"
+        + stat_label + " age: %{y:.1f}<br>"
+        "IQR: %{customdata[2]:.0f}–%{customdata[3]:.0f}<br>"
+        + n_label + ": %{customdata[1]:,}<extra></extra>"
+    )
+
+
+def _build_age_dx_bar(df, cats, stat, stat_label, n_label, colors):
+    """Grouped bars per period (zero baseline — ages differ by a few years,
+    so value labels carry the comparison when bars are few enough)."""
+    order = (
+        df[["x", "label"]].drop_duplicates().sort_values("x")["label"].tolist()
+    )
+    fig = go.Figure()
+    plotted = [c for c in cats if not df[df["cat"] == c].empty]
+    n_bars = sum(len(df[df["cat"] == c]) for c in plotted)
+    show_text = n_bars <= 40
+    for cat in plotted:
+        d = df[df["cat"] == cat].sort_values("x")
+        color = colors.get(cat, PRIMARY)
+        fig.add_trace(go.Bar(
+            x=d["label"], y=d[stat], name=cat,
+            marker_color=color,
+            text=[f"{v:.0f}" for v in d[stat]] if show_text else None,
+            textposition="outside", textfont=dict(size=10), cliponaxis=False,
+            customdata=d[["label", "n", "q1", "q3"]].values.tolist(),
+            hovertemplate=_age_dx_hover(cat, stat_label, n_label),
+        ))
+    ref = df[df["cat"] == "All Diagnoses"].sort_values("x")
+    if not ref.empty:
+        fig.add_trace(go.Scatter(
+            x=ref["label"], y=ref[stat], mode="lines+markers", name="All Diagnoses",
+            line=dict(color="#9CA3AF", width=2, dash="dash"),
+            marker=dict(size=5, color="#9CA3AF"),
+            customdata=ref[["label", "n", "q1", "q3"]].values.tolist(),
+            hovertemplate=_age_dx_hover("All Diagnoses", stat_label, n_label),
+        ))
+    ymax = df[df["cat"].isin(plotted + ["All Diagnoses"])][stat].max()
+    apply_default_layout(
+        fig,
+        barmode="group",
+        bargap=0.25,
+        yaxis=dict(title=f"{stat_label} Age at Treatment", range=[0, ymax * 1.12]),
+        xaxis=dict(title=None, type="category", categoryorder="array", categoryarray=order),
+        hovermode="closest",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+    )
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# Age distribution by diagnosis (page date range)
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("patients-chart-age-dxdist", "figure"),
+    Input("patients-interval", "n_intervals"),
+    Input("patients-date-slider", "value"),
+    Input("patients-filter-department", "value"),
+    Input("patients-age-dx-basis", "value"),
+)
+def _update_age_dxdist(_n, slider_val, departments, basis):
+    base = _age_dx_base()
+    if not base:
+        return empty_figure("No diagnosis data available")
+    groups = _age_dxdist_groups(base, slider_val, departments, basis or "new")
+    if not groups:
+        return empty_figure("No diagnosis data for selected filters")
+    return _build_age_box(groups, basis or "new")
+
+
+def _age_dxdist_groups(base, slider_val, departments, basis):
+    """[(category, ages ndarray)] for the date range, sorted by median age
+    ascending, with "All Diagnoses" last. Each patient counts once per
+    diagnosis (New: at their first course for it; All: their first course
+    for it inside the range)."""
+    start, end = _get_date_range(slider_val, None)
+    src = base["first"] if basis == "new" else base["c"]
+    if departments and "Department" in src.columns:
+        src = src[src["Department"].isin(departments)]
+    src = src[(src["TxDate"] >= start) & (src["TxDate"] <= end)]
+    if basis == "new" and base["washout_start"] is not None:
+        src = src[src["TxDate"] >= base["washout_start"]]
+    if src.empty:
+        return []
+    per_cat = src.drop_duplicates(["PatientId", "Category"])
+    groups = []
+    for cat, g in per_cat.groupby("Category"):
+        if len(g) >= _AGE_DX_MIN_N:
+            groups.append((cat, g["Age"].to_numpy()))
+    if not groups:
+        return []
+    groups.sort(key=lambda t: np.median(t[1]))
+    groups.append(("All Diagnoses", src.drop_duplicates("PatientId")["Age"].to_numpy()))
+    return groups
+
+
+def _age_dx_group_label(cat, ages):
+    return f"{cat} ({len(ages):,})"
+
+
+def _build_age_box(groups, basis):
+    colors = _age_dx_colors()
+    n_label = "New patients" if basis == "new" else "Patients"
+    fig = go.Figure()
+    for cat, ages in groups:
+        color = colors.get(cat, "#9CA3AF")
+        q1, med, q3 = np.percentile(ages, [25, 50, 75])
+        fig.add_trace(go.Box(
+            x=ages, name=_age_dx_group_label(cat, ages), orientation="h",
+            marker_color=color, line=dict(width=1.5),
+            fillcolor=_hex_rgba(color, 0.35),
+            boxpoints=False,
+            hoverinfo="skip",
+        ))
+        # Invisible median point carries a readable hover
+        fig.add_trace(go.Scatter(
+            x=[med], y=[_age_dx_group_label(cat, ages)], mode="markers",
+            marker=dict(size=14, color="rgba(0,0,0,0)"),
+            hovertemplate=(
+                f"{cat}<br>Median age: {med:.1f}<br>"
+                f"Middle 50%: {q1:.0f}–{q3:.0f}<br>"
+                f"{n_label}: {len(ages):,}<extra></extra>"
+            ),
+            showlegend=False,
+        ))
+    apply_default_layout(
+        fig,
+        showlegend=False,
+        xaxis=dict(title="Age at Treatment", range=[0, 100]),
+        yaxis=dict(title=None, automargin=True),
+        hovermode="closest",
+        margin=dict(l=10, r=10, t=10, b=40),
+    )
+    return fig
+
+
+def _hex_rgba(hex_color, alpha):
+    h = hex_color.lstrip("#")
+    r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+    return f"rgba({r},{g},{b},{alpha})"
 

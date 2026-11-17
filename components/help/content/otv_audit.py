@@ -102,7 +102,7 @@ UI_CONTENT = dmc.Stack(
                 "Audit CSV directly; it's joined from the Courses dataset on "
                 "(PatientId, CourseId).",
                 "Diagnosis accordion — ICD-10 categories / sub-categories with "
-                "primary-dx-only or any-dx match modes.",
+                "primary-dx-only or any-dx match modes. Expanding a category and picking subcategories narrows that category to just those subcategories; categories without picks match whole.",
                 "Fraction RangeSlider — only engages when you drag it off the "
                 "min / max endpoints (dims when inactive).",
                 "Completed courses only — switch that hides active in-progress "

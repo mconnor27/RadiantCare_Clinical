@@ -86,7 +86,7 @@ UI_CONTENT = dmc.Stack(
                 "Completing MD — single-select, driven by AppointmentPhysician "
                 "(who actually saw the patient that week).",
                 "Diagnosis accordion — body-system picker with Primary / All "
-                "mode toggle; matches via DiagnosisCodes join.",
+                "mode toggle; matches via DiagnosisCodes join. Expanding a category and picking subcategories narrows that category to just those subcategories; categories without picks match whole.",
                 "Inpatient switch — include or exclude inpatient visits.",
                 "Smoothing slider — shared across trend charts.",
             ]),

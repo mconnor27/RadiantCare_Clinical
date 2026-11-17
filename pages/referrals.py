@@ -39,6 +39,7 @@ from utils.diagnosis_categories import (
     build_code_to_category, CATEGORIES as BODY_SYSTEMS,
     SUBCATEGORIES as DIAG_SUBCATEGORIES, ALL_SUBCATEGORIES,
     get_all_subcategory_entries,
+    referral_diagnosis_mask,
 )
 from utils.date_slider import (
     month_idx, idx_to_date, MAX_IDX, DEFAULT_SLIDER, SLIDER_MARKS,
@@ -4493,10 +4494,9 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
             ),
             axis=1,
         )
-        cat_set = set(diag_cats)
-        if diag_subs:
-            cat_set.update(diag_subs)
-        df = df[df["_diag_filt"].isin(cat_set)]
+        df = df[referral_diagnosis_mask(
+            df["_diag_filt"], df.get("Diagnoses", pd.Series(None, index=df.index)), diag_cats,
+        )]
         df = df.drop(columns=["_diag_filt"])
 
     # --- Payor filter ---
@@ -4710,10 +4710,9 @@ def update_referrals(_n, start_date, end_date, departments, specialty_filter,
                 ),
                 axis=1,
             )
-            _cat_set = set(diag_cats)
-            if diag_subs:
-                _cat_set.update(diag_subs)
-            prior_all = prior_all[prior_all["_diag_filt"].isin(_cat_set)]
+            prior_all = prior_all[referral_diagnosis_mask(
+                prior_all["_diag_filt"], prior_all.get("Diagnoses", pd.Series(None, index=prior_all.index)), diag_cats,
+            )]
             prior_all = prior_all.drop(columns=["_diag_filt"])
         if payor_selected:
             prior_all = _apply_payor_filter(prior_all, payor_selected, payor_mode)
@@ -4838,10 +4837,9 @@ def _update_ref_volume(_n, start_date, end_date, departments, specialty_filter,
                 r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("Onc Dx")
             ), axis=1,
         )
-        cat_set = set(diag_cats)
-        if diag_subs:
-            cat_set.update(diag_subs)
-        df = df[df["_diag_filt"].isin(cat_set)]
+        df = df[referral_diagnosis_mask(
+            df["_diag_filt"], df.get("Diagnoses", pd.Series(None, index=df.index)), diag_cats,
+        )]
     if payor_selected:
         df = _apply_payor_filter(df, payor_selected, payor_mode)
 
@@ -4911,10 +4909,9 @@ def _update_ref_cumulative(_n, start_date, end_date, departments, specialty_filt
                 r.get("Diagnoses"), r.get("Rfl Prim Dx"), r.get("Onc Dx")
             ), axis=1,
         )
-        cat_set = set(diag_cats)
-        if diag_subs:
-            cat_set.update(diag_subs)
-        df_all = df_all[df_all["_diag_filt"].isin(cat_set)]
+        df_all = df_all[referral_diagnosis_mask(
+            df_all["_diag_filt"], df_all.get("Diagnoses", pd.Series(None, index=df_all.index)), diag_cats,
+        )]
     if payor_selected:
         df_all = _apply_payor_filter(df_all, payor_selected, payor_mode)
 

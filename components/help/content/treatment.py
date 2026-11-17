@@ -103,7 +103,7 @@ UI_CONTENT = dmc.Stack(
                 "toggle so the same filter can target TreatingPhysician, "
                 "BillingPhysician, or ConsultPhysician.",
                 "Diagnosis — hierarchical accordion with category + subcategory "
-                "checkboxes.",
+                "checkboxes. Expanding a category and picking subcategories narrows that category to just those subcategories; categories without picks match whole.",
                 "Date preset + date picker + month slider — all three stay in sync. "
                 "Default is Prior 12 mo.",
                 "Smoothing slider — page-wide LOWESS smoothing default for the "

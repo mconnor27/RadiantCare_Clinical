@@ -30,7 +30,7 @@ from components.outlier_panel import outlier_panel, register_outlier_callbacks
 from components.phi import filter_phi_columns
 from utils.charts import apply_default_layout, empty_figure, full_period_range
 from utils.diagnosis_categories import (
-    build_code_to_category, categorise_referral,
+    build_code_to_category, categorise_referral, referral_diagnosis_mask,
 )
 
 
@@ -128,8 +128,9 @@ def _build_cohort(date_preset, site_filter, diag_cats, diag_mode,
     # Diagnosis filter — match on the derived DxCategory (not the accordion's
     # default ICD-code path, since our category signal is from free text).
     if diag_cats:
-        cat_set = set(diag_cats)
-        df = df[df["DxCategory"].isin(cat_set)]
+        df = df[referral_diagnosis_mask(
+            df["DxCategory"], df.get("Diagnoses", pd.Series(None, index=df.index)), diag_cats,
+        )]
 
     if df.empty:
         return df

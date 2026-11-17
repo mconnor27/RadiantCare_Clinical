@@ -91,7 +91,7 @@ UI_CONTENT = dmc.Stack(
                 "Department chips — Lacey / Centralia / Aberdeen, multi-select.",
                 "Physician — single-select with Treating / Consult role toggle "
                 "(TreatingPhysician vs ConsultPhysician).",
-                "Diagnosis — hierarchical accordion (category + subcategory).",
+                "Diagnosis — hierarchical accordion (category + subcategory). Expanding a category and picking subcategories narrows that category to just those subcategories; categories without picks match whole.",
                 "Technique — multi-select chip group (IMRT, VMAT, 3D, Electron, "
                 "SRS/SBRT).",
                 "Status — All / Active / Completed segmented control.",

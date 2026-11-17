@@ -14,13 +14,19 @@ Usage:
     # After layout:
     register_diagnosis_callbacks("cv")
 
-    # In main callback, read selected categories from the store:
+    # In main callback, read the selection from the store and pass it to
+    # utils.diagnosis_categories.filter_by_diagnosis (which decodes it):
     Input("cv-diag-store", "data")
+
+The store holds checked category names plus "Category::Subcategory" entries
+for selected subcategory chips. A subcategory pick implies its category and
+narrows that category to the picked subcategories; categories with no picks
+match whole. Use split_diagnosis_selection() to decode it elsewhere.
 
 Generated IDs (all prefixed with page_id):
     {page_id}-diag-trigger      Button (trigger)
     {page_id}-diag-clear        ActionIcon (clear)
-    {page_id}-diag-store        dcc.Store (selected categories list)
+    {page_id}-diag-store        dcc.Store (selection: categories + Cat::Sub pairs)
     {page_id}-diag-mode         dcc.Store ("primary" or "all")
     {page_id}-diag-mode-ctrl    SegmentedControl (Primary / All toggle)
     {page_id}-diag-panel        Paper (dropdown panel)
@@ -36,7 +42,7 @@ import dash_mantine_components as dmc
 from dash import ALL, Input, Output, State, callback, clientside_callback, dcc, html
 from dash_iconify import DashIconify
 
-from utils.diagnosis_categories import CATEGORIES, SUBCATEGORIES
+from utils.diagnosis_categories import CATEGORIES, SUBCATEGORIES, SUBCAT_SEP
 
 
 def diagnosis_accordion(page_id: str) -> html.Div:
@@ -103,7 +109,8 @@ def diagnosis_accordion(page_id: str) -> html.Div:
                                                     ),
                                                     dmc.AccordionPanel(
                                                         html.Div(
-                                                            [dmc.Chip(s, value=s, size="xs", variant="outline")
+                                                            [dmc.Chip(s, value=f"{cat}{SUBCAT_SEP}{s}",
+                                                                      size="xs", variant="outline")
                                                              for s in SUBCATEGORIES.get(cat, [])],
                                                             className="wf-subcat-chip-list",
                                                         ),
@@ -169,27 +176,49 @@ def register_diagnosis_callbacks(page_id: str) -> None:
         Input(subcat_id, "value"),
     )
 
-    # Checkbox → Store sync
+    # Checkboxes + subcategory chips → Store sync. Unchecking a category also
+    # drops its subcategory picks (same callback, so no circular chain).
     @callback(
         Output(store_id, "data"),
+        Output(subcat_id, "value", allow_duplicate=True),
         Input({"type": cat_type, "index": ALL}, "checked"),
+        Input(subcat_id, "value"),
+        State(store_id, "data"),
         prevent_initial_call=True,
     )
-    def _sync_cat_checkboxes(checked_list):
-        return [cat for cat, c in zip(CATEGORIES, checked_list) if c]
+    def _sync_selection(checked_list, subs, prev):
+        checked = [cat for cat, c in zip(CATEGORIES, checked_list) if c]
+        subs = list(subs or [])
+        subs_out = dash.no_update
+        if isinstance(dash.ctx.triggered_id, dict):
+            prev_checked = {v for v in (prev or []) if SUBCAT_SEP not in v}
+            unchecked = prev_checked - set(checked)
+            if unchecked:
+                kept = [s for s in subs if s.split(SUBCAT_SEP, 1)[0] not in unchecked]
+                if kept != subs:
+                    subs, subs_out = kept, kept
+        selection = checked + subs
+        if selection == (prev or []):
+            return dash.no_update, subs_out
+        return selection, subs_out
 
     # Trigger label
     clientside_callback(
-        """function(cats, subs) {
-            var total = (cats ? cats.length : 0) + (subs ? subs.length : 0);
-            if (total === 0) return "Diagnosis";
-            if (subs && subs.length > 0) {
-                if (subs.length === 1) return subs[0];
-                return subs.length + " subsites";
-            }
-            if (cats.length === 1) return cats[0];
-            return cats.length + " selected";
-        }""",
+        """function(sel, subs) {
+            var sep = "%s";
+            var items = sel || [];
+            var picks = items.filter(function (v) { return v.indexOf(sep) >= 0; });
+            var cats = items.filter(function (v) { return v.indexOf(sep) < 0; });
+            if (items.length === 0) return "Diagnosis";
+            // A category with subcategory picks is narrowed to those picks,
+            // so it isn't counted on its own.
+            var narrowed = {};
+            picks.forEach(function (p) { narrowed[p.split(sep)[0]] = true; });
+            var whole = cats.filter(function (c) { return !narrowed[c]; });
+            var n = picks.length + whole.length;
+            if (n === 1) return picks.length ? picks[0].split(sep)[1] : whole[0];
+            return n + " selected";
+        }""" % SUBCAT_SEP,
         Output(trigger_id, "children"),
         Input(store_id, "data"),
         Input(subcat_id, "value"),
@@ -226,21 +255,3 @@ def register_diagnosis_callbacks(page_id: str) -> None:
         Input(clear_id, "n_clicks"),
         prevent_initial_call=True,
     )
-
-    # Prune subcategory selections when categories change
-    @callback(
-        Output(subcat_id, "value", allow_duplicate=True),
-        Input(store_id, "data"),
-        State(subcat_id, "value"),
-        prevent_initial_call=True,
-    )
-    def _prune_subcategories(selected_cats, current_subs):
-        if not selected_cats:
-            return []
-        valid = set()
-        for cat in selected_cats:
-            valid.update(SUBCATEGORIES.get(cat, []))
-        kept = [s for s in (current_subs or []) if s in valid]
-        if kept == (current_subs or []):
-            return dash.no_update
-        return kept

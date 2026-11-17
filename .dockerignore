@@ -9,3 +9,4 @@ __pycache__/
 .data_cache_phi/
 data/rvu_files/*.zip
 data/rvu_files/extracted/
+.geocache_phi/

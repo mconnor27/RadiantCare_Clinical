@@ -454,13 +454,24 @@ def _geocode_mapbox(address, city, state, zip5):
     Nominatim silently drops to a town centroid. Uses stdlib urllib so no new
     dependency is introduced.
     """
-    if not MAPBOX_TOKEN or not (address and city and state):
-        return None
+    return _geocode_mapbox_status(address, city, state, zip5)[0]
+
+
+def _geocode_mapbox_status(address, city, state, zip5):
+    """Like _geocode_mapbox but returns (coords | None, status).
+
+    status: "ok" (rooftop match), "nomatch" (Mapbox answered, no confident
+    rooftop), or "error" (request failed — rate limit, timeout, network).
+    Callers that cache results must not record "error" as a miss.
+    """
+    if not MAPBOX_TOKEN or not (address and city):
+        return None, "nomatch"
     import json as _json
     import urllib.parse as _up
     import urllib.request as _ur
 
-    query = f"{address}, {city}, {state}"
+    # Patient lookup rows carry no State column — the ZIP disambiguates.
+    query = f"{address}, {city}, {state}" if state else f"{address}, {city}"
     if zip5:
         query += f" {zip5}"
     url = (
@@ -474,10 +485,10 @@ def _geocode_mapbox(address, city, state, zip5):
             data = _json.load(resp)
     except Exception as exc:
         logger.debug("Mapbox geocode failed for %r: %s", query, exc)
-        return None
+        return None, "error"
     feats = data.get("features") or []
     if not feats:
-        return None
+        return None, "nomatch"
     feat = feats[0]
     # Require a true rooftop match, not a street/town centroid:
     #   - place_type is exactly ["address"] (not poi / place / postcode)
@@ -488,18 +499,18 @@ def _geocode_mapbox(address, city, state, zip5):
     #     falls through to Seaview at 0.62) while still accepting rooftops that
     #     are only penalized for a stale ZIP in the source data (~0.89).
     if feat.get("place_type") != ["address"]:
-        return None
+        return None, "nomatch"
     if not feat.get("address"):
-        return None
+        return None, "nomatch"
     if feat.get("relevance", 0) < 0.8:
-        return None
+        return None, "nomatch"
     center = feat.get("center") or []
     if len(center) != 2:
-        return None
+        return None, "nomatch"
     lon, lat = float(center[0]), float(center[1])
     if not _is_valid_us_coord(lat, lon):
-        return None
-    return lat, lon
+        return None, "nomatch"
+    return (lat, lon), "ok"
 
 
 def geocode_addresses(addr_records, max_nominatim=20, max_mapbox=200):
@@ -652,6 +663,261 @@ def geocode_addresses(addr_records, max_nominatim=20, max_mapbox=200):
         )
 
     return cache
+
+
+# ---------------------------------------------------------------------------
+# Patient street-address geocoding (local / PHI-allowed mode only)
+#
+# Patient home coordinates are PHI. They live in their own cache under
+# .geocache_phi/ — git-ignored and docker-ignored — and NEVER in
+# data/geocode_addr_cache.csv, which is committed and shipped to production.
+# The cache also sits outside DATA_CACHE because the data refresh wipes that
+# directory. Only Mapbox is used (no public Nominatim for patient addresses);
+# addresses Mapbox can't resolve to a rooftop fall back to the ZIP centroid.
+# ---------------------------------------------------------------------------
+
+PATIENT_ADDR_CACHE_PATH = PROJECT_ROOT / ".geocache_phi" / "patient_addresses.csv"
+
+_patient_geo_lock = threading.Lock()
+_patient_geo_state = {"running": False, "done": 0, "total": 0, "finished_at": None}
+_patient_cache_memo = {"mtime": None, "map": {}}
+
+# Mapbox Geocoding v5 allows 600 req/min; stay safely under it.
+_PATIENT_MAPBOX_RPS = 8.0
+_PATIENT_SAVE_EVERY = 250
+_PATIENT_MISS = "miss2"          # confirmed no-match (v1 "miss" rows are retried)
+_PATIENT_RETRIES = 3
+
+_UNIT_RE = re.compile(
+    r"\s*(?:,\s*)?(?:\b(?:APT|APARTMENT|UNIT|SPC|SPACE|LOT|STE|SUITE|TRLR|TRAILER|RM|ROOM|BLDG)\b\.?\s*|#\s*)[\w-]*\s*$",
+    re.IGNORECASE,
+)
+
+
+def _strip_unit(address):
+    """Drop a trailing unit designator ("APT 4", "# 12", "SPC 7")."""
+    return _UNIT_RE.sub("", address).strip()
+
+
+def _geocode_patient_address(address, city, zip5):
+    """Returns (coords | None, status). Retries request errors with backoff;
+    on a genuine no-match, retries once without the unit designator."""
+    import time
+    for attempt in range(_PATIENT_RETRIES):
+        coords, status = _geocode_mapbox_status(address, city, "", zip5)
+        if status != "error":
+            break
+        time.sleep(2 ** attempt)
+    if status == "nomatch":
+        stripped = _strip_unit(address)
+        if stripped and stripped != address:
+            coords2, status2 = _geocode_mapbox_status(stripped, city, "", zip5)
+            if status2 == "ok":
+                return coords2, "ok"
+    return coords, status
+
+
+def patient_addr_key(line1, line2, city, zip_raw):
+    """Normalized cache key for a patient's physical address, or None.
+
+    PO-box-only addresses return None (no physical location to plot).
+    """
+    addr = extract_physical_address(line1, line2)
+    if not addr or _PO_BOX.match(addr):
+        return None
+    c = str(city).strip().upper() if pd.notna(city) else ""
+    if not c:
+        return None
+    z = normalize_zip(zip_raw) or ""
+    return f"{addr.strip().upper()}|{c}|{z}"
+
+
+def _load_patient_addr_map():
+    """Return {addr_key: (lat, lon) or None}; None marks a Mapbox miss.
+
+    Memoized on file mtime so page callbacks don't re-read the CSV.
+    """
+    p = PATIENT_ADDR_CACHE_PATH
+    if not p.exists():
+        return {}
+    try:
+        mtime = p.stat().st_mtime
+    except OSError:
+        return {}
+    if _patient_cache_memo["mtime"] == mtime:
+        return _patient_cache_memo["map"]
+    try:
+        df = pd.read_csv(p, dtype={"addr_key": str})
+    except Exception as exc:
+        logger.warning("Failed to read patient address cache: %s", exc)
+        return _patient_cache_memo["map"]
+    out = {}
+    src = df["source"] if "source" in df.columns else pd.Series("", index=df.index)
+    for k, lat, lon, so in zip(df["addr_key"], df["lat"], df["lon"], src):
+        if pd.notna(lat) and pd.notna(lon):
+            out[k] = (float(lat), float(lon))
+        elif so == _PATIENT_MISS:
+            out[k] = None
+        # else: legacy "miss" rows from the first geocoder version, which
+        # recorded failed requests as misses — left out so they are retried.
+    _patient_cache_memo.update(mtime=mtime, map=out)
+    return out
+
+
+def _save_patient_addr_map(addr_map):
+    PATIENT_ADDR_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    rows = [
+        {"addr_key": k,
+         "lat": v[0] if v else None,
+         "lon": v[1] if v else None,
+         "source": "mapbox" if v else _PATIENT_MISS}
+        for k, v in addr_map.items()
+    ]
+    tmp = PATIENT_ADDR_CACHE_PATH.with_suffix(".tmp")
+    pd.DataFrame(rows, columns=["addr_key", "lat", "lon", "source"]).to_csv(tmp, index=False)
+    tmp.replace(PATIENT_ADDR_CACHE_PATH)
+
+
+def trigger_patient_address_geocode(addr_keys):
+    """Geocode any uncached patient addresses in a background thread.
+
+    Returns the number of addresses still pending (0 = cache complete).
+    No-op in PHI_MODE or without a Mapbox token.
+    """
+    if PHI_MODE or not MAPBOX_TOKEN:
+        return 0
+    cached = _load_patient_addr_map()
+    needed = sorted({k for k in addr_keys if k and k not in cached})
+    if not needed:
+        return 0
+
+    with _patient_geo_lock:
+        if _patient_geo_state["running"]:
+            return max(_patient_geo_state["total"] - _patient_geo_state["done"], 1)
+        _patient_geo_state.update(running=True, done=0, total=len(needed), finished_at=None)
+
+    def _run():
+        import time
+        from concurrent.futures import ThreadPoolExecutor
+
+        work = dict(_load_patient_addr_map())
+        interval = 1.0 / _PATIENT_MAPBOX_RPS
+        next_slot = [time.monotonic()]
+        slot_lock = threading.Lock()
+
+        def _one(key):
+            with slot_lock:
+                now = time.monotonic()
+                wait = next_slot[0] - now
+                next_slot[0] = max(now, next_slot[0]) + interval
+            if wait > 0:
+                time.sleep(wait)
+            addr, city, zip5 = key.split("|")
+            coords, status = _geocode_patient_address(addr, city, zip5 or None)
+            return key, coords, status
+
+        try:
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                errors = 0
+                for i, (key, coords, status) in enumerate(pool.map(_one, needed), 1):
+                    if status == "error":
+                        errors += 1     # left uncached → retried next pass
+                    else:
+                        work[key] = coords
+                    _patient_geo_state["done"] = i
+                    if i % _PATIENT_SAVE_EVERY == 0:
+                        _save_patient_addr_map(work)
+            _save_patient_addr_map(work)
+            hits = sum(1 for k in needed if work.get(k))
+            logger.info("Patient address geocode: %d/%d rooftop matches, %d request errors (will retry)",
+                        hits, len(needed), errors)
+        except Exception:
+            logger.exception("Patient address geocoding failed")
+            _save_patient_addr_map(work)
+        finally:
+            with _patient_geo_lock:
+                _patient_geo_state.update(running=False, finished_at=datetime.now().isoformat())
+
+    threading.Thread(target=_run, daemon=True, name="patient-geocode").start()
+    logger.info("Background patient address geocoding started for %d addresses", len(needed))
+    return len(needed)
+
+
+def patient_geocode_progress():
+    """Return dict(running, done, total) for the background patient geocode."""
+    with _patient_geo_lock:
+        return dict(_patient_geo_state)
+
+
+def prepare_patient_point_data(df):
+    """Per-address patient points for the local (non-PHI) map.
+
+    Returns (points_df, pending_keys):
+      points_df columns: lat, lon, Department, patient_count, zip5,
+      primary_city, precise. Rows sharing a rooftop (households) collapse
+      into one point. Patients whose address isn't geocoded yet, was a
+      Mapbox miss, or is a PO box fall back to their ZIP centroid with
+      precise=False.
+      pending_keys: address keys not yet in the cache.
+    """
+    cols = ["lat", "lon", "Department", "patient_count", "zip5", "primary_city", "precise"]
+    if df.empty or PHI_MODE:
+        return pd.DataFrame(columns=cols), []
+
+    work = df[[c for c in ("PatientId", "PatientAddressLine1", "PatientAddressLine2",
+                           "City", "Zip", "Department") if c in df.columns]].copy()
+    if "Department" not in work.columns:
+        work["Department"] = ""
+    work["zip5"] = work["Zip"].apply(normalize_zip) if "Zip" in work.columns else None
+    if "PatientAddressLine1" in work.columns:
+        work["addr_key"] = [
+            patient_addr_key(l1, l2, c, z)
+            for l1, l2, c, z in zip(
+                work["PatientAddressLine1"],
+                work.get("PatientAddressLine2", pd.Series(None, index=work.index)),
+                work.get("City", pd.Series(None, index=work.index)),
+                work.get("Zip", pd.Series(None, index=work.index)),
+            )
+        ]
+    else:
+        work["addr_key"] = None
+
+    addr_map = _load_patient_addr_map()
+    pending = sorted({k for k in work["addr_key"].dropna() if k not in addr_map})
+
+    zip_cache = load_geocode_cache()
+    zip_lookup = {}
+    if not zip_cache.empty:
+        zip_lookup = dict(zip(zip_cache["zip5"], zip(zip_cache["lat"], zip_cache["lon"])))
+
+    lats, lons, precise = [], [], []
+    for k, z in zip(work["addr_key"], work["zip5"]):
+        hit = addr_map.get(k) if k else None
+        if hit:
+            lats.append(hit[0]); lons.append(hit[1]); precise.append(True)
+        elif z and z in zip_lookup:
+            zl = zip_lookup[z]
+            lats.append(zl[0]); lons.append(zl[1]); precise.append(False)
+        else:
+            lats.append(None); lons.append(None); precise.append(False)
+    work["lat"], work["lon"], work["precise"] = lats, lons, precise
+    work = work.dropna(subset=["lat", "lon"])
+    if work.empty:
+        return pd.DataFrame(columns=cols), pending
+
+    work["lat"] = work["lat"].round(6)
+    work["lon"] = work["lon"].round(6)
+    work["City"] = work.get("City", pd.Series("", index=work.index)).fillna("").astype(str).str.strip().str.title()
+    pts = (
+        work.groupby(["lat", "lon", "Department", "precise"], dropna=False)
+        .agg(
+            patient_count=("PatientId", "nunique"),
+            zip5=("zip5", "first"),
+            primary_city=("City", "first"),
+        )
+        .reset_index()
+    )
+    return pts[cols], pending
 
 
 # ---------------------------------------------------------------------------

@@ -94,7 +94,7 @@ UI_CONTENT = dmc.Stack(
             bullets([
                 "Department chips — Lacey / Centralia / Aberdeen, multi-select.",
                 "Physician — multi-select with Treating / Consult role toggle.",
-                "Diagnosis — hierarchical accordion (category + subcategory).",
+                "Diagnosis — hierarchical accordion (category + subcategory). Expanding a category and picking subcategories narrows that category to just those subcategories; categories without picks match whole.",
                 "Status — All / Active / Completed segmented control.",
                 "Technique — multi-select chip group.",
                 "Date preset + date picker + month slider, all kept in sync. "

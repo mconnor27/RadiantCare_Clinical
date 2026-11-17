@@ -1791,11 +1791,8 @@ def _load_and_filter_tasks(slider_val, physician, planner, task_types,
     if planner and "CompletingUser" in df_all_dates.columns:
         df_all_dates = df_all_dates[df_all_dates["CompletingUser"] == planner]
     if diagnosis_cats and "DiagnosisCodes" in df_all_dates.columns and c2b:
-        bs_set = set(diagnosis_cats)
-        row_bs_all = df_all_dates["DiagnosisCodes"].apply(
-            lambda s: get_categories_for_codes(s, c2b) if pd.notna(s) else set()
-        )
-        df_all_dates = df_all_dates[row_bs_all.apply(lambda cats: bool(cats & bs_set))]
+        from utils.diagnosis_categories import filter_by_diagnosis
+        df_all_dates = filter_by_diagnosis(df_all_dates, diagnosis_cats, c2b, mode="all")
     if task_types and "ActivityName" in df_all_dates.columns:
         raw_types = []
         for g in task_types:

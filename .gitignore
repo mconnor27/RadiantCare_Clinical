@@ -18,3 +18,6 @@ data/rvu_files/download_rvu.sh
 
 # scripts/sync_schedules.py upload state
 .schedule_sync_state.json
+
+# Patient street-address geocode cache (PHI — never commit or ship)
+.geocache_phi/

@@ -150,7 +150,7 @@ UI_CONTENT = dmc.Stack(
                 "Diagnosis accordion — ICD-10 categories + subcategories. "
                 "Match is against the derived DxCategory (not the raw ICD "
                 "code) because this page's category signal is cascaded from "
-                "free-text fields.",
+                "free-text fields. Picking subcategories narrows that category to just those subcategories; only referrals whose Diagnoses field carries an ICD code can be matched to a subcategory.",
                 "Outlier caps — per-transition day caps for the first two "
                 "transitions (Created → Scheduled: 14d, Scheduled → Appt: "
                 "30d). The third transition (Appt → Rad-Onc Ref) uses a "

@@ -33,6 +33,25 @@ _KPI_BULLETS = [
 # ---------------------------------------------------------------------------
 
 _CHART_BULLETS_COMMON = [
+    "Age at Treatment by Diagnosis — median (or mean) age at the start "
+    "of treatment per diagnosis category, by quarter or year, as lines or "
+    "grouped bars (gear menu; bars start at zero, so values are labeled "
+    "when there are few enough bars). The gear menu also holds the "
+    "diagnosis picker, Median / Mean and Year / Quarter. New "
+    "(default) counts each patient once per diagnosis, at their "
+    "first course for it, so a later second cancer of a different type "
+    "counts but a retreatment doesn't. All Treated counts every patient "
+    "treated in the period, retreatments included. Leave the "
+    "diagnosis picker empty for the five highest-volume diagnoses; a "
+    "dashed gray line shows all diagnoses combined. Selecting a single "
+    "diagnosis adds a shaded band for the middle 50% of ages. Hover shows "
+    "the interquartile range and patient count.",
+    "Age Distribution by Diagnosis — the spread of ages at treatment per "
+    "diagnosis for the page date range, as box plots (box = middle 50%, line "
+    "= median, whiskers = typical range). "
+    "Diagnoses are sorted by median age, with all diagnoses combined on top. "
+    "Follows the New / All toggle on the trend chart; diagnoses with fewer "
+    "than 5 patients in the range are hidden.",
     "Top Cities by Patient Count — horizontal stacked bar, up to the top 12 "
     "cities, stacked by department with department colors and a total "
     "annotation at the end of each bar.",
@@ -59,17 +78,28 @@ def _map_overview_block():
     return [
         dmc.Text("Patient Origin Map", fw=600, size="xs", mb=4),
         body(
-            "Mapbox scatter layer, one dot per ZIP centroid colored by "
-            "department. Dot size scales with unique patient count at that "
-            "ZIP. Three fixed site markers (Lacey / Centralia / Aberdeen) "
+            "Mapbox scatter layer colored by department. In Address mode "
+            "(default) there is one dot per home, plotted at its rooftop "
+            "geocode; a household with several patients is one slightly "
+            "larger dot. In ZIP mode there is one dot per ZIP centroid, sized "
+            "by unique patient count. Three fixed site markers (Lacey / Centralia / Aberdeen) "
             "are anchored at their actual coordinates. Optional bezier "
             "\"flow lines\" draw from each ZIP cluster to the site(s) it "
             "feeds, line width proportional to volume.",
         ),
         bullets([
-            "Flow lines switch — toggle the bezier arcs on / off.",
+            "Address / ZIP toggle — exact home locations vs ZIP centroids. "
+            "Patients whose address can't be resolved to a rooftop (PO-box "
+            "only, unmatched, or not yet geocoded) appear as faint dots at "
+            "their ZIP centroid and are labeled \"ZIP-level location\" on "
+            "hover.",
+            "Flow lines switch — toggle the arcs on / off. In ZIP mode the "
+            "arcs are bundled per ZIP, thicker for more patients. In Address "
+            "mode every home gets its own faint line to its site, so dense "
+            "areas show as bright fans (turn them off to see the dots).",
             "Min slider (1–20) — hide ZIPs below a minimum patient count so "
-            "the map isn't dominated by one-offs.",
+            "the map isn't dominated by one-offs. In Address mode it hides "
+            "homes in ZIPs below the threshold.",
             "Region toggle — PNW (zoomed to WA / OR / ID) or All US.",
             "Flow department toggle — All or one of Lacey / Centralia / "
             "Aberdeen; filters the flow-line layer only, not the dots.",
@@ -91,10 +121,24 @@ def _geocoding_section():
             "utils.geocoding. The first page load triggers a background "
             "geocode for any ZIPs not already in the cache; the page polls "
             "is_geocoding_complete() every 5 seconds (up to 10 minutes) and "
-            "re-renders the map once the cache is warm. Aggregation is at "
-            "the 5-digit ZIP centroid, not street-address precision — that "
-            "keeps the visualization PHI-safe and avoids per-patient "
-            "geocoding costs.",
+            "re-renders the map once the cache is warm.",
+        ),
+        body(
+            "Address mode geocodes each patient's physical street address "
+            "with the Mapbox Geocoding API (Line 1, or the physical address "
+            "in Line 2 when Line 1 is a PO box). Only rooftop matches are "
+            "accepted. Results are cached locally in .geocache_phi/ — "
+            "excluded from git and from the deployed image, and separate "
+            "from the committed provider-address cache. The first run "
+            "geocodes every address in the background (rate-limited, about "
+            "30–40 minutes for the full patient list). Failed requests are "
+            "retried rather than recorded as misses, and an address that "
+            "doesn't match is tried once more without its unit number "
+            "(APT, #, SPC); a progress banner "
+            "shows the count and the map fills in every ~30 seconds. Later "
+            "loads only geocode new addresses. Patient addresses are never "
+            "sent to the public Nominatim service. Address mode is not "
+            "available in the PHI-safe build.",
         ),
         bullets([
             "ZIPs are normalized to 5-digit strings (leading zeros "
@@ -208,12 +252,29 @@ _data_processing_bullets = [
 
 if not PHI_MODE:
     _data_processing_bullets.append(
-        "Only aggregated ZIP-level data is serialized to the clientside "
-        "Store — patient IDs stay server-side to avoid exposing PHI in "
-        "the browser state."
+        "Only aggregated location data is serialized to the clientside "
+        "Store — ZIP-level counts, plus in Address mode per-home "
+        "coordinates, ZIP, city, department and count. Patient names, IDs "
+        "and street text stay server-side."
     )
 
 _data_processing_bullets.extend([
+    "Age at Treatment by Diagnosis joins Courses to the patient lookup on "
+    "PatientId. Age is taken at the course's first treatment date (course "
+    "start if no treatment yet) against DateOfBirth"
+    + (" — approximated in PHI-safe mode by back-dating AgeAtLoad, accurate "
+       "to about ±0.5 years, with ages 90+ capped at 90" if PHI_MODE else "")
+    + ". Diagnosis is the category of the course's first diagnosis code. "
+    "All Treated counts a patient once per diagnosis per period. New "
+    "Diagnoses keeps only each patient's first coded course per diagnosis, "
+    "found across all sites before the department filter is applied, and "
+    "starts 12 months after diagnosis coding begins (Q4 2022) so "
+    "retreatments of cancers first treated before coding don't look new. "
+    "Periods where fewer than "
+    "80% of courses carry a diagnosis code are omitted (ARIA courses only "
+    "have codes from late 2021 on), and points with fewer than 5 patients "
+    "are hidden. The chart spans the full history: the department filter "
+    "applies, the date and age filters do not.",
     "Demographics data is stored raw and rendered clientside so the "
     "Age / Gender, density / histogram, smoothing, Count / Percent, and "
     "per-site toggles don't trigger a server round-trip.",
@@ -230,9 +291,8 @@ if not PHI_MODE:
 _known_quirks_bullets = []
 if not PHI_MODE:
     _known_quirks_bullets.extend([
-        "Geocoding is ZIP-centroid only — a patient in a very large rural "
-        "ZIP shows up at the ZIP's geographic center, not their actual "
-        "address. Flow volumes are aggregated accordingly.",
+        "In ZIP mode a patient in a very large rural ZIP shows up at the "
+        "ZIP's geographic center, not their actual address.",
         "First-load geocode can take up to a few minutes the very first "
         "time a new ZIP appears. The banner will tell you when it's done; "
         "subsequent loads read from the cache and are instant.",

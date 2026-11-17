@@ -705,6 +705,65 @@ def assign_diagnosis_column(
     return out
 
 
+# The diagnosis accordion filter (components/diagnosis_filter.py) emits one
+# list: plain category names for checked categories, plus
+# "Category::Subcategory" entries for selected subcategory chips. Subcategory
+# names repeat across categories ("Other", "Neuroendocrine"), so the pair is
+# the identity.
+SUBCAT_SEP = "::"
+
+
+def split_diagnosis_selection(selection) -> tuple[list[str], dict[str, set[str]]]:
+    """Decode a diagnosis-filter selection into (categories, {cat: subs}).
+
+    A selected subcategory implies its category; within such a category only
+    the selected subcategories match. Categories with no subcategory picks
+    match whole.
+    """
+    cats: list[str] = []
+    subs: dict[str, set[str]] = {}
+    for v in selection or []:
+        if not isinstance(v, str) or not v:
+            continue
+        if SUBCAT_SEP in v:
+            c, s = v.split(SUBCAT_SEP, 1)
+            subs.setdefault(c, set()).add(s)
+            if c not in cats:
+                cats.append(c)
+        elif v not in cats:
+            cats.append(v)
+    return cats, subs
+
+
+def _code_to_subcategory_full() -> dict[str, str]:
+    """{code: subcategory}: curated CSV, overlaid with DB overrides."""
+    out = {code: sub for code, (_cat, sub) in _SUBCATEGORY_MAP.items() if sub}
+    try:
+        out.update(build_code_to_subcategory())
+    except Exception:
+        pass
+    return out
+
+
+def _primary_code(codes_str, c2c: dict[str, str]) -> str | None:
+    """First code in a comma-separated string that maps to a category."""
+    if pd.isna(codes_str) or not c2c:
+        return None
+    for code in str(codes_str).split(","):
+        code = code.strip()
+        if c2c.get(code):
+            return code
+    return None
+
+
+def _code_matches(code: str, c2c, c2s, cat_set, subs) -> bool:
+    cat = c2c.get(code, "")
+    if cat not in cat_set:
+        return False
+    wanted = subs.get(cat)
+    return not wanted or c2s.get(code, "") in wanted
+
+
 def filter_by_diagnosis(
     df: pd.DataFrame,
     selected_cats: list[str],
@@ -712,25 +771,67 @@ def filter_by_diagnosis(
     mode: str = "primary",
     codes_col: str = "DiagnosisCodes",
 ) -> pd.DataFrame:
-    """Filter *df* to rows matching *selected_cats* using the given mode.
+    """Filter *df* to rows matching the diagnosis selection.
+
+    *selected_cats* is the accordion filter's value: category names and/or
+    "Category::Subcategory" entries (see ``split_diagnosis_selection``).
 
     Parameters
     ----------
-    mode : ``"primary"`` — match only the first code's category.
-           ``"all"`` — match if any code's category is in *selected_cats*.
+    mode : ``"primary"`` — match only the first categorized code.
+           ``"all"`` — match if any code matches.
     """
-    if not selected_cats or codes_col not in df.columns or not c2c:
+    cats, subs = split_diagnosis_selection(selected_cats)
+    if not cats or codes_col not in df.columns or not c2c:
         return df
-    cat_set = set(selected_cats)
-    if mode == "primary":
-        mask = df[codes_col].apply(
-            lambda v: primary_category(v, c2c) in cat_set
-        )
+    cat_set = set(cats)
+    if not subs:
+        if mode == "primary":
+            fn = lambda v: primary_category(v, c2c) in cat_set
+        else:
+            fn = lambda v: bool(get_categories_for_codes(v, c2c) & cat_set)
     else:
-        mask = df[codes_col].apply(
-            lambda v: bool(get_categories_for_codes(v, c2c) & cat_set)
+        c2s = _code_to_subcategory_full()
+        if mode == "primary":
+            def fn(v):
+                code = _primary_code(v, c2c)
+                return bool(code) and _code_matches(code, c2c, c2s, cat_set, subs)
+        else:
+            def fn(v):
+                if pd.isna(v):
+                    return False
+                return any(
+                    _code_matches(c.strip(), c2c, c2s, cat_set, subs)
+                    for c in str(v).split(",")
+                )
+    col = df[codes_col]
+    uniq = col.dropna().unique()
+    hits = {v for v in uniq if fn(v)}
+    return df[col.isin(hits)]
+
+
+def referral_diagnosis_mask(categories: pd.Series, diagnoses: pd.Series, selection) -> pd.Series:
+    """Boolean mask for referral rows already categorized by
+    ``categorise_referral``.
+
+    Subcategory picks can only be confirmed when the referral's Diagnoses
+    field carries an ICD code; free-text-categorized referrals are excluded
+    from a category whose subcategories are narrowed.
+    """
+    cats, subs = split_diagnosis_selection(selection)
+    if not cats:
+        return pd.Series(True, index=categories.index)
+    mask = categories.isin(cats)
+    if subs:
+        c2s = _code_to_subcategory_full()
+        sub_series = diagnoses.map(lambda t: c2s.get(_extract_icd_code(t) or "", ""))
+        narrowed = categories.isin(list(subs))
+        sub_ok = pd.Series(
+            [s in subs.get(c, ()) for c, s in zip(categories, sub_series)],
+            index=categories.index,
         )
-    return df[mask]
+        mask &= ~narrowed | sub_ok
+    return mask
 
 
 def get_subcategory(code: str) -> str:
