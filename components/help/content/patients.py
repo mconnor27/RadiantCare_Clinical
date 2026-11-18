@@ -19,7 +19,9 @@ from ..renderers import body, bullets, section, subheading
 # ---------------------------------------------------------------------------
 
 _KPI_BULLETS = [
-    "Total Patients — distinct PatientId count for the filtered period.",
+    "Total Patients — distinct PatientId count for the filtered period "
+    "(\"Upcoming Consults\" in Upcoming view; in All view the card also "
+    "shows how many of them have an upcoming consult).",
     "Unique Cities — distinct non-blank City values after title-case "
     "normalization.",
     "Top City — single city with the largest patient count.",
@@ -79,8 +81,8 @@ def _map_overview_block():
         dmc.Text("Patient Origin Map", fw=600, size="xs", mb=4),
         body(
             "Mapbox scatter layer colored by department. In Address mode "
-            "(default) there is one dot per home, plotted at its rooftop "
-            "geocode; a household with several patients is one slightly "
+            "(default) there is one dot per home, plotted at its matched "
+            "address point or parcel; a household with several patients is one slightly "
             "larger dot. In ZIP mode there is one dot per ZIP centroid, sized "
             "by unique patient count. Three fixed site markers (Lacey / Centralia / Aberdeen) "
             "are anchored at their actual coordinates. Optional bezier "
@@ -89,8 +91,8 @@ def _map_overview_block():
         ),
         bullets([
             "Address / ZIP toggle — exact home locations vs ZIP centroids. "
-            "Patients whose address can't be resolved to a rooftop (PO-box "
-            "only, unmatched, or not yet geocoded) appear as faint dots at "
+            "Patients whose address can't be matched (PO-box only, outside "
+            "the covered counties, or not yet matched) appear as faint dots at "
             "their ZIP centroid and are labeled \"ZIP-level location\" on "
             "hover.",
             "Flow lines switch — toggle the arcs on / off. In ZIP mode the "
@@ -124,21 +126,39 @@ def _geocoding_section():
             "re-renders the map once the cache is warm.",
         ),
         body(
-            "Address mode geocodes each patient's physical street address "
-            "with the Mapbox Geocoding API (Line 1, or the physical address "
-            "in Line 2 when Line 1 is a PO box). Only rooftop matches are "
-            "accepted. Results are cached locally in .geocache_phi/ — "
-            "excluded from git and from the deployed image, and separate "
-            "from the committed provider-address cache. The first run "
-            "geocodes every address in the background (rate-limited, about "
-            "30–40 minutes for the full patient list). Failed requests are "
-            "retried rather than recorded as misses, and an address that "
-            "doesn't match is tried once more without its unit number "
-            "(APT, #, SPC); a progress banner "
-            "shows the count and the map fills in every ~30 seconds. Later "
-            "loads only geocode new addresses. Patient addresses are never "
-            "sent to the public Nominatim service. Address mode is not "
-            "available in the PHI-safe build.",
+            "Address mode places each patient's physical street address "
+            "(Line 1, or the physical address in Line 2 when Line 1 is a PO "
+            "box) entirely on this machine — patient addresses are not sent "
+            "to any geocoding service. Addresses are matched against public "
+            "reference data downloaded by scripts/build_address_reference.py: "
+            "Thurston County address points (placed on the building), the "
+            "Washington State Parcels Project for Lewis, Mason, Pacific, "
+            "Pierce, Cowlitz and Wahkiakum (parcel centre), and Grays "
+            "Harbor County's own parcel file (not in the statewide layer). "
+            "Matching uses house number + street after standardizing "
+            "abbreviations (directions, street types, ordinals, highway "
+            "names) and dropping unit numbers; if the exact street form "
+            "isn't found, a looser match ignores a missing direction or "
+            "street type (never a conflicting one). Then a spelling-tolerant "
+            "pass (same house number, near-identical street name in the same "
+            "ZIP or city), and finally an estimate between the nearest listed "
+            "house numbers on the same street when the exact number isn't in "
+            "the data (median ~70 m from a full geocoder's answer). Every "
+            "match must lie within 25 km of the patient's ZIP centre and the "
+            "patient's ZIP must be among the 8 ZIP centres nearest the point, "
+            "which rules out a same-named street in a neighbouring town; "
+            "same-ZIP, same-city and building-placed points are preferred. "
+            "About 90% of street addresses match.",
+        ),
+        body(
+            "Results are cached in .geocache_phi/ — excluded from git and "
+            "from the deployed image, and separate from the committed "
+            "provider-address cache. Rebuilding the reference re-matches "
+            "every address. Addresses with no local match use coordinates "
+            "from an earlier Mapbox run when one is on file, otherwise their "
+            "ZIP centroid. On rural acreage a parcel centre can sit a few "
+            "hundred metres from the house. Address mode is not available "
+            "in the PHI-safe build.",
         ),
         bullets([
             "ZIPs are normalized to 5-digit strings (leading zeros "
@@ -206,6 +226,14 @@ _filters_bullets = [
     "synced. Anchored data-relatively to the max of FirstAppointment / "
     "LastAppointment.",
     "Department chips — Lacey / Centralia / Aberdeen.",
+    "Seen / All / Upcoming — Seen (default) keeps patients whose last "
+    "appointment falls in the date range. Upcoming shows patients with a "
+    "scheduled consult (NextConsult in the export), ignoring the date range, "
+    "which only covers past months. All combines both. Brand-new patients "
+    "with nothing but a scheduled consult have no appointment dates, so "
+    "their age is computed at the consult date. About half of upcoming "
+    "patients aren't fully registered yet and have no address or ZIP, so "
+    "they count in the KPIs and charts but don't appear on the map.",
 ]
 if PHI_MODE:
     _filters_bullets.append(

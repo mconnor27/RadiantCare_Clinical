@@ -41,6 +41,7 @@ from utils.geocoding import (
     trigger_patient_address_geocode,
     patient_geocode_progress,
 )
+from utils.address_match import reference_available as address_reference_available
 
 
 dash.register_page(__name__, path="/patients", name="Patients", order=11)
@@ -128,6 +129,25 @@ def _build_patients_filter_bar():
                         style={"flex": "1", "minWidth": "200px"},
                     ),
                     department_chips("patients"),
+                    dmc.Tooltip(
+                        label="Seen: last appointment in the date range. "
+                              "Upcoming: patients with a scheduled consult "
+                              "(NextConsult), regardless of the date range. "
+                              "All: both.",
+                        position="bottom",
+                        multiline=True,
+                        w=260,
+                        children=dmc.SegmentedControl(
+                            id="patients-filter-status",
+                            data=[
+                                {"value": "seen", "label": "Seen"},
+                                {"value": "all", "label": "All"},
+                                {"value": "upcoming", "label": "Upcoming"},
+                            ],
+                            value="seen",
+                            size="xs",
+                        ),
+                    ),
                     dmc.Group(
                         gap="xs",
                         align="center",
@@ -204,7 +224,7 @@ def _load_and_prepare():
             df["Department"].str.replace("*", "", regex=False).str.strip()
         )
 
-    for col in ["FirstAppointment", "LastAppointment", "DateOfBirth"]:
+    for col in ["FirstAppointment", "LastAppointment", "DateOfBirth", "NextConsult"]:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], format="%m/%d/%Y", errors="coerce")
 
@@ -288,7 +308,7 @@ layout = dmc.Stack(
                                     ],
                                 ),
                                 dmc.Tooltip(
-                                    label="Address: one dot per home (rooftop geocode). "
+                                    label="Address: one dot per home (matched locally to county address points / parcels). "
                                           "ZIP: one dot per ZIP centroid.",
                                     position="bottom",
                                     multiline=True,
@@ -675,6 +695,25 @@ def _apply_date_filter(df, slider_val, daterange):
     return df[(df["LastAppointment"] >= start) & (df["LastAppointment"] <= end)]
 
 
+def _apply_status_filter(df, slider_val, status):
+    """Seen / Upcoming / All patient selection.
+
+    seen     — LastAppointment within the date range (the original behavior)
+    upcoming — any patient with a scheduled NextConsult; the date range is
+               ignored (it only spans past months)
+    all      — union of the two
+    """
+    status = status or "seen"
+    has_next = (df["NextConsult"].notna() if "NextConsult" in df.columns
+                else pd.Series(False, index=df.index))
+    if status == "upcoming":
+        return df[has_next]
+    seen = _apply_date_filter(df, slider_val, None)
+    if status == "all":
+        return df[df.index.isin(seen.index) | has_next]
+    return seen
+
+
 def _compute_age(df, ref="last"):
     """Compute age at first or last appointment.
 
@@ -697,6 +736,10 @@ def _compute_age(df, ref="last"):
 
     if ref_date is None:
         ref_date = pd.Timestamp.now()
+    # New patients with only a scheduled consult have no appointment dates
+    # yet — use the consult date so they keep an age.
+    if "NextConsult" in df.columns:
+        ref_date = ref_date.fillna(df["NextConsult"])
 
     age = (ref_date - df["DateOfBirth"]).dt.days / 365.25
     return age.clip(lower=0)
@@ -716,11 +759,15 @@ def _apply_age_filter(df, age_range, age_ref="last"):
 # KPI cards
 # ---------------------------------------------------------------------------
 
-def _build_kpis(df, geo_df):
+def _build_kpis(df, geo_df, status="seen"):
     """Build KPI cards: totals + per-department patient counts."""
     total_patients = (
         df["PatientId"].nunique() if "PatientId" in df.columns else len(df)
     )
+    total_detail = None
+    if status == "all" and "NextConsult" in df.columns:
+        n_up = df.loc[df["NextConsult"].notna(), "PatientId"].nunique()
+        total_detail = f"({n_up:,} upcoming)"
 
     unique_cities = 0
     if "City" in df.columns:
@@ -762,7 +809,9 @@ def _build_kpis(df, geo_df):
         dmc.GridCol(
             span={"base": 12, "sm": 6, "md": 2},
             children=kpi_card(
-                "Total Patients", f"{total_patients:,}",
+                "Upcoming Consults" if status == "upcoming" else "Total Patients",
+                f"{total_patients:,}",
+                value_detail=total_detail,
                 accent_color=PRIMARY,
             ),
         ),
@@ -1033,7 +1082,7 @@ def _build_patient_map(
         slider still hides sparse areas rather than every single household.
     point_df : DataFrame or None
         Per-address points (local mode, Address precision). When given, dots
-        are drawn at rooftop coordinates; flow lines stay ZIP-aggregated.
+        are drawn at home coordinates, with per-home flow lines.
     """
     fig = go.Figure()
 
@@ -1377,6 +1426,7 @@ def _build_patient_map(
     Input("patients-filter-department", "value"),
     Input("patients-filter-age", "value"),
     Input("patients-age-ref", "value"),
+    Input("patients-filter-status", "value"),
     Input("patients-map-precision", "value"),
     Input("patients-addr-geocode-tick", "data"),
     running=[
@@ -1385,9 +1435,9 @@ def _build_patient_map(
     ],
 )
 def update_patients(_n_interval, slider_val, date_preset,
-                    departments, age_range, age_ref, precision, _geo_tick):
+                    departments, age_range, age_ref, status, precision, _geo_tick):
     """Update all Patients page components based on filters."""
-    base = _update_patients_core(slider_val, departments, age_range, age_ref)
+    base = _update_patients_core(slider_val, departments, age_range, age_ref, status)
     *outs, df = base
     points, banner_text, banner_style, poll_disabled = _patient_points_payload(df, precision)
     # Address-geocode progress ticks only need the map points refreshed.
@@ -1415,17 +1465,18 @@ def _patient_points_payload(df, precision):
     if prog["running"]:
         done, total = prog["done"], max(prog["total"], 1)
         text = (
-            f"Geocoding patient street addresses: {done:,} of {total:,} "
-            f"({done / total:.0%}). Addresses not yet resolved show at their "
-            f"ZIP centroid; the map fills in as geocoding proceeds."
+            f"Matching {total:,} patient addresses to local county address "
+            f"data. Homes show at their ZIP centroid until it finishes "
+            f"(usually under a minute)."
         )
         return store, text, {}, False
-    if pending and not MAPBOX_TOKEN:
-        return store, "MAPBOX_TOKEN not set: showing ZIP centroids.", {}, True
+    if pending and not address_reference_available():
+        return store, ("Local address reference not built: showing ZIP centroids. "
+                       "Run scripts/build_address_reference.py."), {}, True
     return store, "", _HIDDEN, True
 
 
-def _update_patients_core(slider_val, departments, age_range, age_ref):
+def _update_patients_core(slider_val, departments, age_range, age_ref, status="seen"):
     df = _load_and_prepare()
 
     _empty = [kpi_card("—", "N/A")]
@@ -1436,7 +1487,7 @@ def _update_patients_core(slider_val, departments, age_range, age_ref):
         return _empty, None, None, empty_figure("No city data available"), {"display": "none"}, None, *_no_age, None
 
     # --- Apply date + department filters (before computing age range) ---
-    df = _apply_date_filter(df, slider_val, None)
+    df = _apply_status_filter(df, slider_val, status)
     if departments and "Department" in df.columns:
         df = df[df["Department"].isin(departments)]
 
@@ -1490,7 +1541,7 @@ def _update_patients_core(slider_val, departments, age_range, age_ref):
     age_dist_data = _prepare_age_dist_data(df, age_ref=age_ref)
 
     # --- KPIs ---
-    kpis = _build_kpis(df, geo_df)
+    kpis = _build_kpis(df, geo_df, status=status or "seen")
 
     # --- Top cities chart ---
     top_cities = _build_top_cities_bar(df)
@@ -1500,7 +1551,7 @@ def _update_patients_core(slider_val, departments, age_range, age_ref):
         None if ctx.triggered_id in (
             "patients-date-slider", "patients-filter-date-preset",
             "patients-filter-department", "patients-filter-age",
-            "patients-age-ref",
+            "patients-age-ref", "patients-filter-status",
         )
         else no_update
     )
