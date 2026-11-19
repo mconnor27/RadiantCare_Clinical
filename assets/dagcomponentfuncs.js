@@ -1148,3 +1148,103 @@ dagcomponentfuncs.PayorEntityDelete = function (props) {
         )
     );
 };
+
+
+/**
+ * Sim Timing — one appointment drawn as a compact timeline strip.
+ *
+ * Used by the Timelines view of the Simulation Timing detail table. Every row
+ * shares one axis (cellRendererParams lo/hi, minutes from each appointment's
+ * own booked start), so the strips line up and read as a stack. Row data
+ * carries TL = {m: {milestone: minutes}, b: booked length, r: CT clock
+ * reliable}. The pinned top row ({_axis: true}) draws the tick labels so the
+ * scale stays visible while scrolling. Colours match the timeline chart in
+ * assets/sim_timing.js.
+ */
+dagcomponentfuncs.SimTimelineStrip = function (props) {
+    var h = React.createElement;
+    var lo = Number(props.lo), hi = Number(props.hi);
+    var span = hi - lo;
+    if (!(span > 0)) return null;
+
+    var isDark = document.documentElement.getAttribute("data-theme") === "dark";
+    var muted = isDark ? "#9BA1AE" : "#6B7280";
+    var gridCol = isDark ? "rgba(155,161,174,0.20)" : "rgba(107,114,128,0.16)";
+    var zeroCol = isDark ? "#4B5060" : "#C4C8CF";
+
+    function frac(v) {
+        return (Math.max(lo, Math.min(hi, v)) - lo) / span;
+    }
+    function pct(v) { return (frac(v) * 100).toFixed(2) + "%"; }
+
+    var step = span > 300 ? 60 : 30;
+    var ticks = [];
+    for (var t = Math.ceil(lo / step) * step; t <= hi; t += step) ticks.push(t);
+
+    // Pinned axis row: tick labels only.
+    if (props.data && props.data._axis) {
+        return h("svg", {width: "100%", height: "100%", style: {display: "block", overflow: "visible"}},
+            ticks.map(function (tk) {
+                var f = frac(tk);
+                var anchor = f < 0.03 ? "start" : (f > 0.97 ? "end" : "middle");
+                return h("text", {
+                    key: tk, x: pct(tk), y: "65%", textAnchor: anchor,
+                    fontSize: 10, fill: muted,
+                    fontWeight: tk === 0 ? 600 : 400,
+                }, tk === 0 ? "0" : (tk > 0 ? "+" + tk : String(tk)));
+            })
+        );
+    }
+
+    var tl = props.data && props.data.TL;
+    if (!tl || !tl.m) return null;
+
+    var COLORS = {
+        sched_start: "#9CA3AF", checkin: "#2196F3", ct_first: "#7C2A83",
+        ct_done: "#7C2A83", note: "#4CAF50", appt_end: "#F44336",
+        sched_end: "#9CA3AF"
+    };
+    var LABELS = {
+        sched_start: "Scheduled Start", checkin: "Check-In",
+        ct_first: "CT First Series", ct_done: "CT Complete",
+        note: "Note Entered", appt_end: "Appointment End",
+        sched_end: "Scheduled End"
+    };
+    // Booked-slot markers first so the real events sit on top of them.
+    var ORDER = ["sched_start", "sched_end", "checkin", "ct_first",
+                 "ct_done", "note", "appt_end"];
+
+    var kids = [];
+    ticks.forEach(function (tk) {
+        kids.push(h("line", {
+            key: "g" + tk, x1: pct(tk), x2: pct(tk), y1: "8%", y2: "92%",
+            stroke: tk === 0 ? zeroCol : gridCol, strokeWidth: 1,
+        }));
+    });
+    if (tl.b) {
+        var x0 = Math.max(lo, 0), x1 = Math.min(hi, tl.b);
+        if (x1 > x0) {
+            kids.push(h("rect", {
+                key: "band", x: pct(x0), width: ((x1 - x0) / span * 100).toFixed(2) + "%",
+                y: "24%", height: "52%", rx: 2,
+                fill: isDark ? "rgba(124,42,131,0.24)" : "rgba(124,42,131,0.10)",
+            }));
+        }
+    }
+    ORDER.forEach(function (k) {
+        var v = tl.m[k];
+        if (v === undefined || v === null) return;
+        var off = v < lo || v > hi;
+        var hollow = (k === "ct_first" || k === "ct_done") && !tl.r;
+        var tip = LABELS[k] + ": " + (v > 0 ? "+" : "") + Math.round(v) + " min"
+            + (hollow ? " (CT clock corrected)" : "")
+            + (off ? " (beyond axis)" : "");
+        kids.push(h("circle", {
+            key: k, cx: pct(v), cy: "50%", r: 4.5,
+            fill: hollow ? "none" : COLORS[k],
+            stroke: COLORS[k], strokeWidth: 1.5,
+            opacity: off ? 0.45 : 1,
+        }, h("title", null, tip)));
+    });
+    return h("svg", {width: "100%", height: "100%", style: {display: "block"}}, kids);
+};

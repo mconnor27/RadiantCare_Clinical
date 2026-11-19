@@ -106,6 +106,43 @@ _SIM_MACHINE_COLORS = {
     "21iX_AB": DEPARTMENT_COLORS.get("Aberdeen", "#4CAF50"),
 }
 
+# IV contrast (ContrastIV, derived in data.loader._derive_sim_contrast).
+# Order is the legend / chip order.
+_CONTRAST_LABELS = ["IV Contrast", "No IV Contrast", "Not Documented"]
+_CONTRAST_COLORS = {
+    "IV Contrast": CHART_COLORWAY[0],
+    "No IV Contrast": CHART_COLORWAY[1],
+    "Not Documented": "#9CA3AF",
+}
+
+
+def _contrast_groups(df):
+    """[(label, color, mask), ...] for slicing by ContrastIV, in fixed order."""
+    if df is None or df.empty or "ContrastIV" not in df.columns:
+        return []
+    out = []
+    for label in _CONTRAST_LABELS:
+        mask = df["ContrastIV"] == label
+        if mask.any():
+            out.append((label, _CONTRAST_COLORS[label], mask))
+    return out
+
+
+_CONTRAST_SIGNALS_DEFAULT = ["appt", "note"]
+
+
+def _apply_contrast_settings(df, signals, undocumented):
+    """Re-derive ContrastIV when the Contrast panel's settings differ from the
+    loader defaults (both sources counted, undocumented kept separate)."""
+    signals = _CONTRAST_SIGNALS_DEFAULT if signals is None else list(signals)
+    undocumented = undocumented or "separate"
+    if sorted(signals) == sorted(_CONTRAST_SIGNALS_DEFAULT) and undocumented == "separate":
+        return df
+    from data.loader import derive_sim_contrast
+    return derive_sim_contrast(df.copy(), use_appt="appt" in signals,
+                               use_note="note" in signals, undocumented=undocumented)
+
+
 # Display-name mapping: raw ARIA ActivityName → clean label
 _SIM_TYPE_DISPLAY = {
     "Bite Block Fabrication-Stereotactic": "Bite Block Fabrication – SRS",
@@ -350,6 +387,79 @@ def _build_sim_filter_bar():
                         ],
                         style={"position": "relative", "display": "inline-block"},
                     ),
+                    # IV contrast dropdown
+                    html.Div(
+                        children=[
+                            html.Div(
+                                children=[
+                                    dmc.Button(
+                                        "Contrast",
+                                        id="sim-contrast-trigger",
+                                        variant="default",
+                                        size="sm",
+                                        rightSection=DashIconify(icon="mdi:chevron-down", width=14),
+                                    ),
+                                    dmc.ActionIcon(
+                                        DashIconify(icon="mdi:close-circle", width=18),
+                                        id="sim-contrast-clear",
+                                        variant="subtle",
+                                        color="gray",
+                                        size="sm",
+                                        className="wf-filter-clear-btn",
+                                    ),
+                                ],
+                                style={"position": "relative", "display": "inline-block"},
+                            ),
+                            dmc.Paper(
+                                children=[
+                                    dmc.ChipGroup(
+                                        children=[
+                                            dmc.Chip(c, value=c, size="xs", variant="filled")
+                                            for c in _CONTRAST_LABELS
+                                        ],
+                                        id="sim-filter-contrast",
+                                        multiple=True,
+                                        value=[],
+                                    ),
+                                    dmc.Divider(my="xs"),
+                                    dmc.Text("Count as IV Contrast", size="xs", c="#6B7280", mb=4),
+                                    dmc.CheckboxGroup(
+                                        id="sim-contrast-signals",
+                                        value=["appt", "note"],
+                                        children=dmc.Stack(gap=4, children=[
+                                            dmc.Checkbox(
+                                                value="appt", size="xs",
+                                                label="Start IV appointment (from Oct 2022)",
+                                            ),
+                                            dmc.Checkbox(
+                                                value="note", size="xs",
+                                                label="Sim note says IV / no contrast",
+                                            ),
+                                        ]),
+                                    ),
+                                    dmc.Text("No mention in note (pre-2023)", size="xs",
+                                             c="#6B7280", mt="xs", mb=4),
+                                    dmc.SegmentedControl(
+                                        id="sim-contrast-undoc",
+                                        data=[
+                                            {"value": "separate", "label": "Not Documented"},
+                                            {"value": "no", "label": "Count as No"},
+                                        ],
+                                        value="separate",
+                                        size="xs",
+                                        fullWidth=True,
+                                    ),
+                                ],
+                                p="xs",
+                                shadow="md",
+                                withBorder=True,
+                                radius="md",
+                                className="wf-chip-dropdown",
+                                style={"display": "none"},
+                            ),
+                        ],
+                        style={"position": "relative", "display": "inline-block"},
+                    ),
                     diagnosis_accordion("sim"),
                     # Duration range (pop-down panel with two-handle slider)
                     html.Div(
@@ -442,25 +552,6 @@ def _build_sim_filter_bar():
                         ("Sim \u2192 Tx", _CAP_TIME_TO_TX),
                         ("Lead Time", _CAP_LEAD_TIME),
                     ], allow_filter_mode=True, filter_max=_OUTLIER_FILTER_MAX),
-                    # Smoothing
-                    dmc.Group(
-                        children=[
-                            dmc.Text("Smoothing", size="xs", c="#6B7280", fw=500),
-                            dmc.Slider(
-                                id="sim-smooth-slider",
-                                min=0,
-                                max=1,
-                                step=0.01,
-                                value=0.3,
-                                size="xs",
-                                showLabelOnHover=False,
-                                w=120,
-                                updatemode="drag",
-                            ),
-                        ],
-                        gap=6,
-                        align="center",
-                    ),
                 ],
                 gap="md",
                 wrap="wrap",
@@ -527,6 +618,28 @@ def _build_sim_filter_bar():
                             ),
                         ],
                         style={"flex": "1", "minWidth": "280px"},
+                    ),
+                    # Smoothing — drives the KPI sparklines only (each chart
+                    # has its own smoothing in its gear). Lives on the date row
+                    # so the filter row doesn't wrap.
+                    dmc.Group(
+                        children=[
+                            dmc.Text("Smoothing", size="xs", c="#6B7280", fw=500),
+                            dmc.Slider(
+                                id="sim-smooth-slider",
+                                min=0,
+                                max=1,
+                                step=0.01,
+                                value=0.3,
+                                size="xs",
+                                showLabelOnHover=False,
+                                w=120,
+                                updatemode="drag",
+                            ),
+                        ],
+                        gap=6,
+                        align="center",
+                        wrap="nowrap",
                     ),
                 ],
                 gap="md",
@@ -616,6 +729,7 @@ layout = dmc.Stack(
                                 {"value": "dept", "label": "Dept"},
                                 {"value": "machine", "label": "Machine"},
                                 {"value": "bodysite", "label": "Dx"},
+                                {"value": "contrast", "label": "IVC"},
                             ],
                             value="scope",
                             size="xs",
@@ -683,6 +797,7 @@ layout = dmc.Stack(
                                 {"value": "dept", "label": "Dept"},
                                 {"value": "machine", "label": "Machine"},
                                 {"value": "bodysite", "label": "Dx"},
+                                {"value": "contrast", "label": "IVC"},
                             ],
                             value="scope",
                             size="xs",
@@ -802,6 +917,7 @@ layout = dmc.Stack(
                                 {"value": "dept", "label": "Dept"},
                                 {"value": "machine", "label": "Machine"},
                                 {"value": "bodysite", "label": "Dx"},
+                                {"value": "contrast", "label": "IVC"},
                             ],
                             value="",
                             size="xs",
@@ -903,6 +1019,7 @@ layout = dmc.Stack(
                                 {"value": "", "label": "Total"},
                                 {"value": "scope", "label": "Scope"},
                                 {"value": "dept", "label": "Dept"},
+                                {"value": "contrast", "label": "IVC"},
                             ],
                             value="",
                             size="xs",
@@ -956,6 +1073,7 @@ layout = dmc.Stack(
                                             {"value": "physician", "label": "MD"},
                                             {"value": "dept", "label": "Dept"},
                                             {"value": "machine", "label": "Machine"},
+                                            {"value": "contrast", "label": "IVC"},
                                         ],
                                         value="",
                                         size="xs",
@@ -1013,6 +1131,7 @@ layout = dmc.Stack(
                                             {"value": "scope", "label": "Scope"},
                                             {"value": "physician", "label": "MD"},
                                             {"value": "dept", "label": "Dept"},
+                                            {"value": "contrast", "label": "IVC"},
                                         ],
                                         value="",
                                         size="xs",
@@ -1215,6 +1334,15 @@ def _register_sim_filter_callbacks():
         Output("sim-machine-trigger", "children"),
         Input("sim-filter-machine", "value"),
     )
+    clientside_callback(
+        "function(vals) {"
+        "  if (!vals || vals.length === 0) return 'Contrast';"
+        "  if (vals.length === 1) return vals[0];"
+        "  return vals.length + ' selected';"
+        "}",
+        Output("sim-contrast-trigger", "children"),
+        Input("sim-filter-contrast", "value"),
+    )
 
     # --- Clear-button visibility ---
     clientside_callback(
@@ -1231,6 +1359,11 @@ def _register_sim_filter_callbacks():
         """function(vals) { return vals && vals.length > 0 ? {"display": "inline-flex"} : {"display": "none"}; }""",
         Output("sim-machine-clear", "style"),
         Input("sim-filter-machine", "value"),
+    )
+    clientside_callback(
+        """function(vals) { return vals && vals.length > 0 ? {"display": "inline-flex"} : {"display": "none"}; }""",
+        Output("sim-contrast-clear", "style"),
+        Input("sim-filter-contrast", "value"),
     )
 
     # --- Clear-button actions ---
@@ -1250,6 +1383,12 @@ def _register_sim_filter_callbacks():
         """function(n) { return []; }""",
         Output("sim-filter-machine", "value", allow_duplicate=True),
         Input("sim-machine-clear", "n_clicks"),
+        prevent_initial_call=True,
+    )
+    clientside_callback(
+        """function(n) { return []; }""",
+        Output("sim-filter-contrast", "value", allow_duplicate=True),
+        Input("sim-contrast-clear", "n_clicks"),
         prevent_initial_call=True,
     )
 
@@ -1329,10 +1468,14 @@ register_outlier_callbacks(PAGE_ID, n_transitions=3,
     Input("sim-inpatient-switch", "checked"),
     Input("sim-physician-role", "data"),
     Input("sim-filter-duration", "value"),
+    Input("sim-filter-contrast", "value"),
+    Input("sim-contrast-signals", "value"),
+    Input("sim-contrast-undoc", "value"),
 )
 def _populate_sim_physician_chips(_n, slider_val, departments, sim_types,
                                   machines, body_sites, diag_mode, volume_scope,
-                                  inpatient, physician_role, duration):
+                                  inpatient, physician_role, duration, contrast,
+                                  contrast_signals, contrast_undoc):
     from data.loader import load_simulations, load_diagnosis
     col = _SIM_PHYS_COL.get(physician_role or "consult", "ConsultPhysician")
     try:
@@ -1359,6 +1502,10 @@ def _populate_sim_physician_chips(_n, slider_val, departments, sim_types,
         df = df[df["SimulationResource"].isin(machines)]
     # Duration
     df = _apply_duration_filter(df, duration)
+    # IV contrast
+    df = _apply_contrast_settings(df, contrast_signals, contrast_undoc)
+    if contrast and "ContrastIV" in df.columns:
+        df = df[df["ContrastIV"].isin(contrast)]
     # Diagnosis
     if body_sites:
         try:
@@ -1528,7 +1675,8 @@ def _load_and_filter_sim(slider_val, departments, physician, sim_types,
                           machines, body_sites, diag_mode, volume_scope,
                           inpatient, weekend_only, date_preset,
                           physician_role="consult", duration="all",
-                          outlier_mode="cap", outlier_ranges=None):
+                          outlier_mode="cap", outlier_ranges=None,
+                          contrast=None, contrast_signals=None, contrast_undoc=None):
     """Load simulations data, apply filters. Returns dict or None."""
     from data.loader import load_simulations, load_diagnosis
 
@@ -1552,6 +1700,9 @@ def _load_and_filter_sim(slider_val, departments, physician, sim_types,
     if machines and "SimulationResource" in df.columns:
         df = df[df["SimulationResource"].isin(machines)]
     df = _apply_duration_filter(df, duration)
+    df = _apply_contrast_settings(df, contrast_signals, contrast_undoc)
+    if contrast and "ContrastIV" in df.columns:
+        df = df[df["ContrastIV"].isin(contrast)]
     if outlier_mode == "filter":
         df = _apply_outlier_range_filters(df, outlier_ranges)
 
@@ -1637,6 +1788,9 @@ _SIM_FILTER_INPUTS = [
     Input("sim-outlier-range-0", "value"),
     Input("sim-outlier-range-1", "value"),
     Input("sim-outlier-range-2", "value"),
+    Input("sim-filter-contrast", "value"),
+    Input("sim-contrast-signals", "value"),
+    Input("sim-contrast-undoc", "value"),
 ]
 
 # Number of shared filter inputs — per-callback "extra" inputs start at this
@@ -1650,7 +1804,8 @@ def _unpack_sim_filter_args(args):
     (_n, slider_val, departments, physician, sim_types,
      machines, body_sites, diag_mode, volume_scope, inpatient,
      weekend_only, date_preset, physician_role, duration,
-     outlier_mode, orange0, orange1, orange2) = args[:_N_SIM_FILTER]
+     outlier_mode, orange0, orange1, orange2, contrast,
+     contrast_signals, contrast_undoc) = args[:_N_SIM_FILTER]
     return dict(
         slider_val=slider_val, departments=departments, physician=physician,
         sim_types=sim_types, machines=machines, body_sites=body_sites,
@@ -1659,6 +1814,9 @@ def _unpack_sim_filter_args(args):
         physician_role=physician_role, duration=duration,
         outlier_mode=outlier_mode,
         outlier_ranges=[orange0, orange1, orange2],
+        contrast=contrast,
+        contrast_signals=contrast_signals,
+        contrast_undoc=contrast_undoc,
     )
 
 
@@ -2409,6 +2567,7 @@ _SIM_CUMUL_SLICE_ALL = [
     {"value": "dept", "label": "Dept"},
     {"value": "machine", "label": "Machine"},
     {"value": "bodysite", "label": "Dx"},
+    {"value": "contrast", "label": "IVC"},
 ]
 _SIM_CUMUL_SLICE_NO_TOTAL = [o for o in _SIM_CUMUL_SLICE_ALL if o["value"] != "total"]
 
@@ -2814,6 +2973,15 @@ def _prepare_volume_data(df, agg, slice_by="", c2b=None, diag_mode="primary"):
                     "color": CHART_COLORWAY[i % len(CHART_COLORWAY)],
                 })
 
+    elif slice_by == "contrast":
+        for label, color, mask in _contrast_groups(df):
+            counts = df[mask].groupby("period").size().reindex(all_periods, fill_value=0)
+            series.append({
+                "name": label,
+                "values": _trim_edges(counts.tolist()),
+                "color": color,
+            })
+
     return {
         "dates": dates,
         "series": series,
@@ -2897,6 +3065,8 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
         elif sb == "bodysite" and "DiagnosisCodes" in sub.columns and c2b:
             sub_bs = assign_diagnosis_column(sub, c2b, mode=diag_mode)
             return sub_bs.groupby("_bs").size().to_dict() if not sub_bs.empty else {}
+        elif sb == "contrast":
+            return {label: int(mask.sum()) for label, _c, mask in _contrast_groups(sub)}
         return {}
 
     n_days = period_days
@@ -2990,6 +3160,9 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
         _scope_colors = {"Initial": CHART_COLORWAY[0], "Other": CHART_COLORWAY[2]}
         slice_colors = {k: _scope_colors.get(k, CHART_COLORWAY[i % len(CHART_COLORWAY)])
                        for i, k in enumerate(slice_keys_sorted)}
+    elif slice_by == "contrast":
+        slice_keys_sorted = [k for k in _CONTRAST_LABELS if k in all_slice_keys]
+        slice_colors = {k: _CONTRAST_COLORS[k] for k in slice_keys_sorted}
     else:
         slice_colors = {k: CHART_COLORWAY[i % len(CHART_COLORWAY)]
                        for i, k in enumerate(slice_keys_sorted)}
@@ -3119,6 +3292,17 @@ def _prepare_cumulative_data(df_all, start, end, date_preset,
                 "color": CHART_COLORWAY[i % len(CHART_COLORWAY)],
             })
 
+    elif slice_by == "contrast":
+        for label, color, mask in _contrast_groups(dff_period):
+            sub = dff_period[mask]
+            daily = sub.groupby(sub["ScheduledDateTime"].dt.normalize()).size()
+            daily = daily.reindex(dates_range, fill_value=0)
+            series.append({
+                "name": label,
+                "values": _trimmed_cumsum(daily),
+                "color": color,
+            })
+
     dates_iso = [d.isoformat() for d in dates_range]
 
     return {
@@ -3173,6 +3357,8 @@ def _timing_groups(df, slice_by, c2b=None, diag_mode="primary"):
         df = assign_diagnosis_column(df, c2b, mode=diag_mode)
         for i, bs in enumerate(sorted(df["_bs"].dropna().unique())):
             groups.append((bs, CHART_COLORWAY[i % len(CHART_COLORWAY)], df[df["_bs"] == bs]))
+    elif slice_by == "contrast":
+        groups = [(label, color, df[mask]) for label, color, mask in _contrast_groups(df)]
     return groups
 
 
@@ -3573,6 +3759,8 @@ def _prepare_cancel_data(dff_all, start, end, agg="M", slice_by="", metric="rate
     elif slice_by == "dept" and "Department" in dff.columns:
         groups = [(d, dff["Department"] == d, DEPARTMENT_COLORS.get(d, CHART_COLORWAY[0]))
                   for d in sorted(dff["Department"].dropna().unique())]
+    elif slice_by == "contrast":
+        groups = [(label, mask, color) for label, color, mask in _contrast_groups(dff)]
 
     addons, addon_mode = _sim_addons(dff, addon_cfg)
     return prepare_cancel_trend(dff, agg, metric, groups, "NextSimAfterCancel",
@@ -3691,6 +3879,10 @@ def _build_diagnosis_mix(dff, c2b=None, slice_by="", mode="count",
             groups = sorted(work[col].dropna().unique())
             colors = {_SIM_MACHINE_DISPLAY.get(g, g): _SIM_MACHINE_COLORS.get(g, CHART_COLORWAY[i % len(CHART_COLORWAY)]) for i, g in enumerate(groups)}
             groups_data = [(_SIM_MACHINE_DISPLAY.get(g, g), work[work[col] == g]) for g in groups]
+        elif slice_by == "contrast":
+            cgroups = _contrast_groups(work)
+            colors = {label: color for label, color, _m in cgroups}
+            groups_data = [(label, work[mask]) for label, _c, mask in cgroups]
         else:
             groups_data = []
             colors = {}
@@ -3742,6 +3934,8 @@ def _build_sim_billing_mix(dff, slice_by="", mode="count"):
         cols.append("SupervisingPhysician")
     elif slice_by == "dept" and "Department" in dff.columns:
         cols.append("Department")
+    elif slice_by == "contrast" and "ContrastIV" in dff.columns:
+        cols.append("ContrastIV")
 
     work = dff[cols].copy()
     work = work.dropna(subset=["ProcedureCodes"])
@@ -3792,6 +3986,8 @@ def _build_sim_billing_mix(dff, slice_by="", mode="count"):
         slice_col = "SupervisingPhysician"
     elif slice_by == "dept" and "Department" in work.columns:
         slice_col = "Department"
+    elif slice_by == "contrast" and "ContrastIV" in work.columns:
+        slice_col = "ContrastIV"
 
     fig = go.Figure()
 
@@ -3826,7 +4022,10 @@ def _build_sim_billing_mix(dff, slice_by="", mode="count"):
         ))
     else:
         groups_list = sorted(work[slice_col].dropna().unique())
-        if slice_by == "dept":
+        if slice_by == "contrast":
+            groups_list = [g for g in _CONTRAST_LABELS if g in set(groups_list)]
+            colors = dict(_CONTRAST_COLORS)
+        elif slice_by == "dept":
             colors = {g: DEPARTMENT_COLORS.get(g, CHART_COLORWAY[i % len(CHART_COLORWAY)])
                       for i, g in enumerate(groups_list)}
         elif slice_by == "scope":
@@ -3884,7 +4083,7 @@ def _build_detail_table(df):
     """Build AG Grid table data and column definitions."""
     display_cols = [
         "ScheduledDateTime", "PatientFullName", "Department",
-        "SupervisingPhysician", "ActivityName", "DurationMinutes",
+        "SupervisingPhysician", "ActivityName", "ContrastIV", "DurationMinutes",
         "DaysFromClinicExamToSimulation", "DaysFromSimToTreatment",
         "DaysFromClinicExamToTreatment", "ActivityNote",
     ]
@@ -3911,6 +4110,7 @@ def _build_detail_table(df):
         "Department": "Department",
         "SupervisingPhysician": "Physician",
         "ActivityName": "Sim Type",
+        "ContrastIV": "Contrast",
         "DurationMinutes": "Duration (min)",
         "PatientFullName": "Patient",
         "DaysFromClinicExamToSimulation": "Consult\u2192Sim (days)",

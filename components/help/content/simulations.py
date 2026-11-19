@@ -122,6 +122,12 @@ UI_CONTENT = dmc.Stack(
                 "CTs (CT_Sim, CT_CEN) plus treatment machines used for sims "
                 "(electron CSUs, CBCT sims). Pick 21iX AB to see sims "
                 "physically done in Aberdeen.",
+                "Contrast — multi-select of IV Contrast / No IV Contrast / "
+                "Not Documented (see How the data is processed). The panel "
+                "also sets which evidence counts — the Start IV appointment, "
+                "the sim note, or both (default) — and whether pre-2023 sims "
+                "with no note mention stay Not Documented or count as No. "
+                "Those settings drive the IVC slice on every chart too.",
                 "Re-sim scope — toggles whether re-sims are counted as "
                 "\"resim of the original consult\" or as \"new sim with a "
                 "separate lead time\".",
@@ -177,6 +183,21 @@ UI_CONTENT = dmc.Stack(
                 "sim-store-cumulative, sim-store-cancel, sim-store-kpi-"
                 "sparklines). Chart-type, smoothing, and aggregation toggles "
                 "run clientside.",
+                "IV contrast — two columns from the ARIA query decide it. "
+                "IVStartDateTime is a same-day \"Start IV\" nursing "
+                "appointment (booked 15–30 min before a contrast CT sim; "
+                "cancelled ones are ignored). NoteContrast is read from the sim "
+                "note inside the query — IV for phrases like \"IV contrast\", "
+                "\"w/ contrast\", \"IVC\"; No for \"no contrast\", "
+                "\"w/o IV\", \"non-contrast\"; a no-phrase wins over an IV "
+                "phrase. It is done in the query because the de-identified "
+                "build drops the note itself.",
+                "Contrast label: IV Contrast when either source says IV (a "
+                "Start IV wins over a note saying no). No IV Contrast when the "
+                "note says no, or — from 2023 on — when there is neither a "
+                "Start IV nor a note mention. Not Documented for pre-2023 sims with no "
+                "note mention: Start IV was first booked 20 Oct 2022, so before "
+                "then the note was the only record.",
             ]),
         ),
 
@@ -245,6 +266,11 @@ UI_CONTENT = dmc.Stack(
                 "same DaysFromClinicExamToSimulation value appears on multiple "
                 "sim rows. The re-sim scope toggle controls whether that's "
                 "treated as a loopback or a separate measurement.",
+                "IV contrast before 2023 depends entirely on whether the sim "
+                "note mentioned it, so Not Documented is common there and IV Contrast "
+                "is an undercount. From 2023 the Start IV appointment flags "
+                "about 87% of contrast sims and the note about 92%; each alone "
+                "misses some, which is why either one counts.",
             ]),
         ),
     ],

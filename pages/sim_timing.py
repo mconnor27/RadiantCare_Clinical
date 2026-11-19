@@ -38,7 +38,7 @@ import pandas as pd
 import numpy as np
 
 from config.settings import (
-    CHART_COLORWAY, DEFAULT_GRAPH_CONFIG, PRIMARY, NEUTRAL,
+    CHART_COLORWAY, DEFAULT_GRAPH_CONFIG, PRIMARY, NEUTRAL, DEFAULT_GRID_OPTIONS,
 )
 from components.chart_card import chart_card, register_chart_callbacks
 from components.kpi_card import kpi_card, kpi_placeholder
@@ -125,6 +125,18 @@ MILESTONES = [
 # edited a median of ~10 days after the visit, so it measures how long notes
 # stay open for revision rather than when documentation was done. Note Entered
 # (the earliest system-set note stamp) is the documentation milestone.
+
+# Legend for the detail table's Timelines view. Colours match the strip
+# renderer (assets/dagcomponentfuncs.js SimTimelineStrip) and the timeline chart.
+_TABLE_STRIP_LEGEND = [
+    ("Check-In", "#2196F3"),
+    ("CT", "#7C2A83"),
+    ("Note", "#4CAF50"),
+    ("Appt End", "#F44336"),
+    ("Booked", "#9CA3AF"),
+]
+
+_CONTRAST_CHOICES = ["IV Contrast", "No IV Contrast"]
 
 _MS_BY_KEY = {k: (lbl, col, clock) for k, lbl, col, clock in MILESTONES}
 _MS_ORDER = {k: i for i, (k, _, _, _) in enumerate(MILESTONES)}
@@ -541,6 +553,14 @@ def _build_filter_bar(prefix, label=None):
                         prefix, "setup", "Setup",
                         [dmc.Chip(lbl, value=key, size="xs", variant="filled")
                          for key, lbl in SETUP_FLAGS],
+                    ),
+                    # IV contrast (ContrastIV from Simulations). This extract
+                    # starts Oct 2025 — all inside the Start IV era — so every
+                    # sim is IV or No IV; there is no Not Documented here.
+                    _chip_dropdown(
+                        prefix, "contrast", "Contrast",
+                        [dmc.Chip(c, value=c, size="xs", variant="filled")
+                         for c in _CONTRAST_CHOICES],
                     ),
 
                     diagnosis_accordion(prefix),
@@ -1022,6 +1042,7 @@ layout = dmc.Stack(
                                     {"value": "CompletedByUser", "label": "Therapist"},
                                     {"value": "ConsultPhysician", "label": "MD"},
                                     {"value": "SimTechnique", "label": "Technique"},
+                                    {"value": "ContrastIV", "label": "IVC"},
                                 ],
                                 value="ActivityName", size="xs",
                             ),
@@ -1190,7 +1211,32 @@ layout = dmc.Stack(
             export_id="st-table-export",
             accordion_id="st-detail-accordion",
             extra_controls=[
+                # Legend for the Timelines view (hidden in Table view)
+                dmc.Group(
+                    id="st-table-legend",
+                    gap=10,
+                    style={"display": "none"},
+                    children=[
+                        dmc.Group(gap=4, wrap="nowrap", children=[
+                            html.Span(style={
+                                "display": "inline-block", "width": 9, "height": 9,
+                                "borderRadius": "50%", "background": color,
+                            }),
+                            dmc.Text(label, size="xs", c="#6B7280"),
+                        ])
+                        for label, color in _TABLE_STRIP_LEGEND
+                    ],
+                ),
                 dmc.Text("Click a row to see its timeline", size="xs", c="#9CA3AF"),
+                dmc.SegmentedControl(
+                    id="st-table-view",
+                    data=[
+                        {"value": "table", "label": "Table"},
+                        {"value": "timelines", "label": "Timelines"},
+                    ],
+                    value="table",
+                    size="xs",
+                ),
             ],
         ),
 
@@ -1425,6 +1471,15 @@ def _register_filter_callbacks(prefix):
         Output(_id(prefix, "setup-trigger"), "children"),
         Input(_id(prefix, "filter-setup"), "value"),
     )
+    clientside_callback(
+        """function(v) {
+            if (!v || v.length === 0) return "Contrast";
+            if (v.length === 1) return v[0];
+            return "Contrast: all";
+        }""",
+        Output(_id(prefix, "contrast-trigger"), "children"),
+        Input(_id(prefix, "filter-contrast"), "value"),
+    )
 
     # Milestone trigger spells out the resulting chain, in canonical order.
     _ms_labels = {k: lbl for k, lbl, _, _ in MILESTONES}
@@ -1444,7 +1499,8 @@ def _register_filter_callbacks(prefix):
     # --- Clear-button visibility ---
     for key, empty_is_list in (("physician", False), ("therapist", True),
                                ("simtype", True), ("technique", True),
-                               ("setup", True), ("milestones", True)):
+                               ("setup", True), ("contrast", True),
+                               ("milestones", True)):
         clientside_callback(
             """function(v) {
                 var has = Array.isArray(v) ? v.length > 0 : !!v;
@@ -1461,7 +1517,7 @@ def _register_filter_callbacks(prefix):
         Input(_id(prefix, "physician-clear"), "n_clicks"),
         prevent_initial_call=True,
     )
-    for key in ("therapist", "simtype", "technique", "setup"):
+    for key in ("therapist", "simtype", "technique", "setup", "contrast"):
         clientside_callback(
             """function(n) { return []; }""",
             Output(_id(prefix, f"filter-{key}"), "value", allow_duplicate=True),
@@ -1665,7 +1721,8 @@ def _load_and_filter(slider_val, milestones, departments, physician,
                      physician_role, therapist, sim_types, body_sites,
                      diag_mode, scope, inpatient, era, windows=None,
                      drop_rows=False, duration=None, weekend_only=False,
-                     techniques=None, setup_flags=None, series=None):
+                     techniques=None, setup_flags=None, series=None,
+                     contrast=None):
     """Load the timing extract, apply every filter, and compute segment minutes.
 
     Returns None when there is nothing to chart (no data, or fewer than two
@@ -1723,6 +1780,8 @@ def _load_and_filter(slider_val, milestones, departments, physician,
         df = df[df["SetupFlags"].map(
             lambda v: bool(want & {x.strip() for x in str(v).split(",")})
             if pd.notna(v) else False)]
+    if contrast and "ContrastIV" in df.columns:
+        df = df[df["ContrastIV"].isin(contrast)]
     df = _apply_duration_filter(df, duration)
     df = _apply_series_filter(df, series)
     if weekend_only:
@@ -1970,7 +2029,8 @@ def _build_dumbbell(data, group_col):
         "groupLabel": {"ActivityName": "Sim Type",
                        "CompletedByUser": "Therapist",
                        "ConsultPhysician": "MD",
-                       "SimTechnique": "Technique"}.get(group_col, group_col),
+                       "SimTechnique": "Technique",
+                       "ContrastIV": "IV Contrast"}.get(group_col, group_col),
     }
 
 
@@ -2172,14 +2232,59 @@ def _build_heatmap(data, metric):
     }
 
 
-def _appointment_records(data, drill=None):
-    """Flat per-appointment records for the detail table and the drill-down."""
+def _timeline_strips(df):
+    """Per-appointment strip payload for the Timelines table view.
+
+    Returns (strips, (lo, hi)): strips is a Series aligned to df.index of
+    {"m": {milestone_key: minutes_from_booked_start}, "b": booked_len,
+    "r": ct_clock_reliable}; (lo, hi) is the shared minute axis. The axis is
+    clamped to the 1st-99th percentile of all marks, like the cohort strip, so
+    one appointment closed out hours late can't squash every other row; marks
+    beyond it are drawn faded at the edge.
+    """
+    base = df["ScheduledStartDateTime"]
+    offs = pd.DataFrame(index=df.index)
+    for key, _lbl, col, _clock in MILESTONES:
+        if col in df.columns:
+            offs[key] = ((df[col] - base).dt.total_seconds() / 60.0).round(1)
+    booked = pd.to_numeric(df.get("ScheduledDurationMinutes"), errors="coerce")
+    reliable = (df["CTClockReliable"].fillna(False).astype(bool)
+                if "CTClockReliable" in df.columns
+                else pd.Series(False, index=df.index))
+
+    marks = [
+        {k: v for k, v in row.items() if pd.notna(v)}
+        for row in offs.to_dict("records")
+    ]
+    strips = pd.Series(
+        [{"m": m, "b": None if pd.isna(b) else float(b), "r": bool(r)}
+         for m, b, r in zip(marks, booked, reliable)],
+        index=df.index,
+    )
+
+    vals = pd.concat([offs.stack(), booked.dropna()])
+    if vals.empty:
+        return strips, (-15, 75)
+    lo, hi = float(vals.quantile(0.01)), float(vals.quantile(0.99))
+    pad = max(30.0, hi - lo) * 0.06
+    lo = min(lo - pad, -5.0)
+    hi = max(hi + pad, 30.0)
+    # Round out to 15-minute boundaries so the axis ticks land on the edges.
+    return strips, (int(np.floor(lo / 15.0) * 15), int(np.ceil(hi / 15.0) * 15))
+
+
+def _appointment_records(data, drill=None, with_strips=False):
+    """Flat per-appointment records for the detail table and the drill-down.
+
+    with_strips adds a "TL" payload per row (see _timeline_strips) and returns
+    (records, (lo, hi)) instead of just records.
+    """
     df = data["df"]
     if drill and drill.get("dow") is not None and drill.get("hour") is not None:
         start = df["ScheduledStartDateTime"]
         df = df[(start.dt.dayofweek == drill["dow"]) & (start.dt.hour == drill["hour"])]
     if df.empty:
-        return []
+        return ([], (-15, 75)) if with_strips else []
 
     out = pd.DataFrame({
         "UniqueRowID": df["UniqueRowID"],
@@ -2191,6 +2296,7 @@ def _appointment_records(data, drill=None):
         "Therapist": df.get("CompletedByUser"),
         "Technique": df.get("SimTechnique"),
         "Setup": df.get("SetupFlags"),
+        "Contrast": df.get("ContrastIV"),
         "BookedMin": pd.to_numeric(df.get("ScheduledDurationMinutes"), errors="coerce"),
         "StartDelayMin": pd.to_numeric(df.get("StartDelayMinutes"), errors="coerce"),
         "VisitMin": _kpi_series(df, "checkin", "appt_end").round(0),
@@ -2202,7 +2308,12 @@ def _appointment_records(data, drill=None):
     })
     if "PatientFullName" in df.columns:
         out["Patient"] = df["PatientFullName"]
+    axis = None
+    if with_strips:
+        out["TL"], axis = _timeline_strips(df)
     out = out.sort_values("Date", ascending=False)
+    if with_strips:
+        return out.to_dict("records"), axis
     return out.to_dict("records")
 
 
@@ -2386,6 +2497,7 @@ def _filter_inputs(prefix, include_compare=False):
         Input(_id(prefix, "filter-series"), "value"),
         Input(_id(prefix, "filter-era"), "value"),
         Input(_id(prefix, "outlier-drop-switch"), "checked"),
+        Input(_id(prefix, "filter-contrast"), "value"),
     ] + [
         Input(_id(prefix, f"outlier-win-{i}"), "value")
         for i in range(len(MILESTONE_WINDOWS))
@@ -2395,7 +2507,7 @@ def _filter_inputs(prefix, include_compare=False):
 
 # Scalar filter args, then one range slider per screened milestone. Asserted
 # against the built input list below so the two can never drift apart.
-_N_SCALAR = 19
+_N_SCALAR = 20
 _N_SHARED = _N_SCALAR + len(MILESTONE_WINDOWS)
 
 
@@ -2411,7 +2523,7 @@ def _unpack(args, compare=False):
     (_n, slider_val, milestones, departments, physician, physician_role,
      therapist, sim_types, techniques, setup_flags, body_sites, diag_mode,
      scope, inpatient, weekend_only, duration, series,
-     era, drop_rows) = args[offset:offset + _N_SCALAR]
+     era, drop_rows, contrast) = args[offset:offset + _N_SCALAR]
     windows = list(args[offset + _N_SCALAR:offset + _N_SHARED])
     return dict(
         slider_val=slider_val, milestones=milestones, departments=departments,
@@ -2420,7 +2532,7 @@ def _unpack(args, compare=False):
         setup_flags=setup_flags, body_sites=body_sites,
         diag_mode=diag_mode, scope=scope, inpatient=inpatient,
         weekend_only=weekend_only, duration=duration, series=series,
-        era=era, windows=windows, drop_rows=drop_rows,
+        era=era, windows=windows, drop_rows=drop_rows, contrast=contrast,
     )
 
 
@@ -2688,17 +2800,72 @@ clientside_callback(
 )
 
 
+# Pinned-row-aware null formatter for the Timelines view: the pinned axis row
+# carries no values, so it must render blank rather than the usual dash.
+_STRIP_VALUE_FMT = {"function": (
+    "params.node && params.node.rowPinned ? '' : "
+    "(params.value == null || params.value === '' ? '–' : params.value)"
+)}
+
+
+def _strip_table(records, axis):
+    """Columns + grid options for the Timelines view of the detail table."""
+    lo, hi = axis
+    fmt = {"valueFormatter": _STRIP_VALUE_FMT}
+    num = {"type": "numericColumn", "width": 85, **fmt}
+    cols = [
+        {"field": "Date", "width": 105, "minWidth": 105, "pinned": "left", **fmt},
+        {"field": "Booked", "headerName": "Start", "width": 68, "minWidth": 68, **fmt},
+        {"field": "Patient", "headerName": "Patient", "width": 150, **fmt},
+        {"field": "ActivityName", "headerName": "Sim Type", "width": 160, **fmt},
+        {"field": "Contrast", "width": 110, **fmt},
+        {"field": "Therapist", "width": 130, **fmt},
+        # Sorting the strip column sorts by visit length (check-in -> end).
+        {"field": "VisitMin", "colId": "Timeline",
+         "headerName": "Timeline (min from booked start)",
+         "headerTooltip": "One row per appointment, on a shared axis of minutes "
+                          "from its own booked start. Sorts by visit length. "
+                          "Hollow CT marks = CT clock corrected; faded marks "
+                          "sit beyond the axis.",
+         "cellRenderer": "SimTimelineStrip",
+         "cellRendererParams": {"lo": lo, "hi": hi},
+         "cellStyle": {"padding": "0 8px"},
+         "filter": False, "width": 640, "minWidth": 360},
+        {"field": "VisitMin", "colId": "VisitMinNum", "headerName": "Visit", **num},
+        {"field": "OverrunMin", "headerName": "Overrun", **num},
+    ]
+    if records and "Patient" not in records[0]:
+        cols = [c for c in cols if c["field"] != "Patient"]
+    grid_opts = {
+        **DEFAULT_GRID_OPTIONS,
+        "domLayout": "normal",
+        "paginationPageSize": 100,
+        "pinnedTopRowData": [{"_axis": True}],
+    }
+    return apply_phi_grid_rules(cols), grid_opts
+
+
 @callback(
     Output("st-detail-grid", "rowData"),
     Output("st-detail-grid", "columnDefs"),
+    Output("st-detail-grid", "dashGridOptions"),
     *_A_INPUTS,
     Input("st-store-drill", "data"),
+    Input("st-table-view", "value"),
 )
 def _update_table(*args):
     drill = args[_N_A]
+    view = args[_N_A + 1] or "table"
+    table_opts = {**DEFAULT_GRID_OPTIONS, "domLayout": "normal"}
     data = _load_and_filter(**_unpack(args))
     if data is None:
-        return [], []
+        return [], [], table_opts
+
+    if view == "timelines":
+        records, axis = _appointment_records(data, drill, with_strips=True)
+        cols, grid_opts = _strip_table(records, axis)
+        return records, cols, grid_opts
+
     records = _appointment_records(data, drill)
 
     num = {"type": "numericColumn", "width": 110}
@@ -2712,6 +2879,7 @@ def _update_table(*args):
         {"field": "Therapist", "width": 150},
         {"field": "Technique", "width": 110},
         {"field": "Setup", "width": 170},
+        {"field": "Contrast", "width": 130},
         {"field": "BookedMin", "headerName": "Booked (min)", **num},
         {"field": "StartDelayMin", "headerName": "Start Delay", **num},
         {"field": "VisitMin", "headerName": "Visit (min)", **num},
@@ -2723,7 +2891,19 @@ def _update_table(*args):
     ]
     if records and "Patient" not in records[0]:
         cols = [c for c in cols if c["field"] != "Patient"]
-    return records, apply_phi_grid_rules(cols)
+    return records, apply_phi_grid_rules(cols), table_opts
+
+
+# Timelines legend only shows in the Timelines view.
+clientside_callback(
+    """function(view) {
+        return view === "timelines"
+            ? {"display": "flex", "alignItems": "center"}
+            : {"display": "none"};
+    }""",
+    Output("st-table-legend", "style"),
+    Input("st-table-view", "value"),
+)
 
 
 @callback(

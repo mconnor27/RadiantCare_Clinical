@@ -214,6 +214,20 @@ UI_CONTENT = dmc.Stack(
                 "±10-20 minutes. The ARIA-side milestones on that same row are "
                 "exact."
             ),
+            dmc.Space(h="xs"),
+            body(
+                "The Table / Timelines toggle on the detail table swaps the "
+                "numeric columns for a compact strip per appointment, drawn "
+                "the same way as the Timeline — minutes from each "
+                "appointment's own booked start, booked slot shaded — on one "
+                "shared axis, so you can scan hundreds of visits as a stack. "
+                "The axis labels sit in the pinned top row. The axis is "
+                "clamped to the 1st–99th percentile of all marks; a mark "
+                "beyond it is drawn faded at the edge, and hovering any mark "
+                "gives its exact minutes. Sorting the strip column sorts by "
+                "visit length. Rows still filter, export and open the full "
+                "Timeline when clicked."
+            ),
         ),
 
         section(
@@ -246,6 +260,12 @@ UI_CONTENT = dmc.Stack(
                 "only flagged when no breath-hold was acquired, because free "
                 "breathing is the default state and a DIBH sim takes both scans "
                 "by design. See the derivation note below.",
+                "Contrast — IV Contrast vs No IV Contrast, carried over from "
+                "the Simulations page (same-day Start IV nursing appointment "
+                "or a sim note saying IV contrast). Every sim in this extract "
+                "falls after Start IV came into use, so there is no Not "
+                "Documented group here. The booked-vs-actual chart can also "
+                "group by IVC, and the detail table has a Contrast column.",
                 "Series — distinct CT series on the appointment, with "
                 "Conventional (1–6) and 4D CT (10+) presets.",
                 "All / Initial, Inpatient, Duration and Weekend — the same "

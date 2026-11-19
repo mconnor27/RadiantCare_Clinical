@@ -4,6 +4,7 @@ import gc
 import os
 import threading
 import time as _time
+import numpy as np
 import pandas as pd
 from functools import lru_cache
 from pathlib import Path
@@ -1107,21 +1108,85 @@ def load_clinic_visits():
     return df
 
 
+# "Start IV" — the nursing appointment booked 15-30 min before an IV-contrast
+# CT sim — was first booked 2022-10-20 and in routine use from 2023. From this
+# date a sim with neither a Start IV nor a note mention is taken as no
+# contrast; before it, silence means Unknown (only the note was ever used).
+_START_IV_ERA = pd.Timestamp("2023-01-01")
+SIM_CONTRAST_LABELS = ["IV Contrast", "No IV Contrast", "Not Documented"]
+# Bump when the derived contrast columns change so stale parquet is rebuilt.
+_SIM_CACHE_TAG = "contrast-v2"
+
+
+def derive_sim_contrast(df, use_appt=True, use_note=True, undocumented="separate"):
+    """Add ContrastIV / ContrastSource from the two SQL contrast columns.
+
+    Simulations.sql supplies the raw evidence:
+      IVStartDateTime  same-day non-cancelled Start IV nursing appointment
+      NoteContrast     'IV' / 'No' / blank, read from the sim note in SQL
+                       (the de-identified build drops ActivityNote, so the
+                       note can't be parsed here)
+
+    Rule (defaults): 'IV Contrast' when a counted source says IV (a Start IV
+    beats a note saying no). 'No IV Contrast' when the note says no, or — when
+    the appointment is counted — the sim is in the Start IV era with no Start
+    IV. Otherwise 'Not Documented': pre-2023 sims whose note says nothing.
+
+    use_appt / use_note switch each source off (the Simulations page exposes
+    them). undocumented="no" folds Not Documented into No IV Contrast.
+    ContrastSource says which evidence decided it.
+    """
+    n = len(df.index)
+    if "IVStartDateTime" in df.columns and use_appt:
+        has_iv = df["IVStartDateTime"].notna()
+    else:
+        has_iv = pd.Series(False, index=df.index)
+    if "NoteContrast" in df.columns and use_note:
+        note = df["NoteContrast"].astype("string").str.strip().str.upper()
+        note_iv = (note == "IV").fillna(False)
+        note_no = (note == "NO").fillna(False)
+    else:
+        note_iv = note_no = pd.Series(False, index=df.index)
+    if use_appt and "ScheduledDateTime" in df.columns and "IVStartDateTime" in df.columns:
+        in_era = (df["ScheduledDateTime"] >= _START_IV_ERA).fillna(False)
+    else:
+        in_era = pd.Series(False, index=df.index)
+
+    silent = "No IV Contrast" if undocumented == "no" else "Not Documented"
+    if n == 0:
+        df["ContrastIV"] = pd.Series(dtype=object)
+        df["ContrastSource"] = pd.Series(dtype=object)
+        return df
+    df["ContrastIV"] = np.select(
+        [has_iv | note_iv, note_no | in_era],
+        ["IV Contrast", "No IV Contrast"],
+        default=silent,
+    ).astype(object)
+    df["ContrastSource"] = np.select(
+        [has_iv & note_iv, has_iv, note_iv, note_no, in_era],
+        ["Start IV + Note", "Start IV", "Note", "Note", "No Start IV"],
+        default=None,
+    ).astype(object)
+    return df
+
+
 @_ttl_cache()
 def load_simulations():
     """Load Simulations.csv.
 
     Department now included in source. ActivityStatus→Status for filtering.
+    Adds ContrastIV / ContrastSource (see derive_sim_contrast).
     """
     _src = _source_files_for_incremental(DATA_INCREMENTAL / "Simulations", "Simulations")
-    cached = _read_parquet_cache("Simulations", _src)
+    cached = _read_parquet_cache("Simulations", _src, extra=_SIM_CACHE_TAG)
     if cached is not None:
         return cached
     df = _load_incremental(DATA_INCREMENTAL / "Simulations", "Simulations", "UniqueRowID")
     df = _normalize_columns(df, {"ActivityStatus": "Status"})
     df = _parse_dates(df, ["ScheduledDateTime", "AppointmentCreatedDate",
                            "PriorClinicExamAppointmentDate", "FirstTreatmentDate",
-                           "ScheduledTreatmentDate"])
+                           "ScheduledTreatmentDate", "IVStartDateTime"])
+    df = derive_sim_contrast(df)
     # Department is now in source; fall back to Treatment Detail map if missing
     if "Department" not in df.columns and "PatientId" in df.columns:
         dept_map = _patient_department_map()
@@ -1129,7 +1194,7 @@ def load_simulations():
             df = df.merge(dept_map, on="PatientId", how="left")
     df = _clean_department(df)
     df = _rename_generic_physicians(df)
-    _write_parquet_cache("Simulations", df, _src)
+    _write_parquet_cache("Simulations", df, _src, extra=_SIM_CACHE_TAG)
     return df
 
 
@@ -1348,7 +1413,7 @@ def load_simulation_timing():
     """
     _src = _source_files_for_incremental(
         DATA_INCREMENTAL / "SimulationTiming", "Simulation Timing")
-    cached = _read_parquet_cache("SimulationTiming", _src)
+    cached = _read_parquet_cache("SimulationTiming", _src, extra=_SIM_CACHE_TAG)
     if cached is not None:
         return cached
 
@@ -1405,7 +1470,11 @@ def load_simulation_timing():
         carry = [c for c in ("ConsultPhysician", "AttendingPhysician",
                              "SupervisingPhysician", "DiagnosisCodes",
                              "DiagnosisDescriptions", "ProcedureCodes",
-                             "TreatmentModality", "InPatientFlag", "Department")
+                             "TreatmentModality", "InPatientFlag", "Department",
+                             # IV contrast evidence + default label, so the
+                             # timing page can re-derive with its own settings
+                             "IVStartDateTime", "NoteContrast", "ContrastIV",
+                             "ContrastSource")
                  if c in sims.columns and c not in df.columns]
         if carry:
             df = df.merge(
@@ -1418,7 +1487,7 @@ def load_simulation_timing():
 
     df = _clean_department(df)
     df = _rename_generic_physicians(df)
-    _write_parquet_cache("SimulationTiming", df, _src)
+    _write_parquet_cache("SimulationTiming", df, _src, extra=_SIM_CACHE_TAG)
     return df
 
 
